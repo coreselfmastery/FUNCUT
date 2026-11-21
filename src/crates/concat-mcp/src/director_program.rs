@@ -480,17 +480,28 @@ fn reframe_offsets(tile: &Value, aspect: &str, width: f64, height: f64) -> Optio
     let transform = tile.pointer("/reframeHint/clipTransform")?;
     let offset_x = transform["offsetX"].as_f64().unwrap_or(0.0);
     let offset_y = transform["offsetY"].as_f64().unwrap_or(0.0);
-    let portrait = matches!(aspect, "9:16" | "4:5" | "1:1");
-    let (x, y) = if portrait {
-        if width < height {
-            return None;
-        }
-        (offset_x, 0.0)
-    } else {
-        if height < width {
-            return None;
-        }
+    // The fill's own crop axis decides which hint it can spend: a source
+    // narrower than the frame's ratio crops VERTICALLY when filled (the
+    // 9:16 clip in a 4:5 reel), a wider one horizontally. The old
+    // portrait arm returned None for exactly the narrow source whose
+    // vertical hint the fill needed; the axis rule reads both arms the
+    // same way, and a source the frame ratio matches exactly crops
+    // nothing, so neither hint has an axis to spend.
+    let frame_ratio = match aspect {
+        "9:16" => 9.0 / 16.0,
+        "4:5" => 4.0 / 5.0,
+        "1:1" => 1.0,
+        _ => 16.0 / 9.0,
+    };
+    let height = height.max(1e-6);
+    let source_ratio = width / height;
+    if (source_ratio - frame_ratio).abs() < 1e-6 {
+        return None;
+    }
+    let (x, y) = if source_ratio < frame_ratio {
         (0.0, offset_y)
+    } else {
+        (offset_x, 0.0)
     };
     (x.abs() >= 0.05 || y.abs() >= 0.05).then_some((x, y))
 }
@@ -884,19 +895,27 @@ fn tail_words(text: &str, n: usize) -> String {
 /// could not run); an explicit `needBRoll: false` is not overruled by a
 /// second, less-informed scan.
 fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
-    let planned = slots_from_plan(log, takes);
-    let planner_has_suggestions = log.iter().any(|reply| {
-        reply.get("take").and_then(Value::as_str).is_some()
-            && reply
-                .get("suggestions")
-                .and_then(Value::as_array)
-                .is_some_and(|suggestions| !suggestions.is_empty())
-    });
-    if planner_has_suggestions {
-        planned
-    } else {
-        broll_slots_from_gaps(log, takes)
+    // The planner's answer is read PER TAKE, not per run: the planner is
+    // called once per take (each has an independent file clock), and one
+    // take's answered suggestions must not switch off another take's
+    // fallback scan - take A's plan would otherwise erase take B's gaps
+    // from the run entirely.
+    let mut slots = Vec::new();
+    for take in takes {
+        let planner_answered = log.iter().any(|reply| {
+            reply.get("take").and_then(Value::as_str) == Some(take.take.as_str())
+                && reply
+                    .get("suggestions")
+                    .and_then(Value::as_array)
+                    .is_some_and(|suggestions| !suggestions.is_empty())
+        });
+        if planner_answered {
+            slots.extend(slots_from_plan(log, std::slice::from_ref(take)));
+        } else {
+            slots.extend(broll_slots_from_gaps(log, std::slice::from_ref(take)));
+        }
     }
+    slots
 }
 
 /// The slots the footage planner asked for, in the order it ranked them.
@@ -1637,6 +1656,7 @@ fn motion_specs(
     motifs: &[Motif],
     questions: &[ScriptLine],
     claims: &[ScriptLine],
+    map: &dyn Fn(&str, f64) -> Option<f64>,
 ) -> Vec<MotionSpec> {
     const SPACING: f64 = 15.0;
     const MOST: usize = 8;
@@ -1810,14 +1830,32 @@ fn motion_specs(
         if kept.len() >= MOST {
             break;
         }
-        let crowded = kept
-            .iter()
-            .any(|other| (other.at - spec.at).abs() < SPACING);
+        // The spacing floor is a TIMELINE distance: two takes' file
+        // clocks are unrelated, so a card in take B must neither crowd
+        // out nor be crowded out by take A's file-seconds. The caller's
+        // map says where each card lands on the timeline; a card the
+        // map cannot place only crowds (and is only crowded by) its
+        // own take's clock.
+        let crowded =
+            kept.iter().any(
+                |other| match (map(&other.take, other.at), map(&spec.take, spec.at)) {
+                    (Some(left), Some(right)) => (left - right).abs() < SPACING,
+                    _ => other.take == spec.take && (other.at - spec.at).abs() < SPACING,
+                },
+            );
         if !crowded {
             kept.push(spec);
         }
     }
-    kept.sort_by(|left, right| left.at.total_cmp(&right.at));
+    // Play order is the timeline's, not the file's: the map says where
+    // each card lands, and an unmapped card rides beside its take-mates
+    // in file order.
+    kept.sort_by(
+        |left, right| match (map(&left.take, left.at), map(&right.take, right.at)) {
+            (Some(left_at), Some(right_at)) => left_at.total_cmp(&right_at),
+            _ => left.at.total_cmp(&right.at),
+        },
+    );
     kept
 }
 
@@ -4111,6 +4149,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut graded = false;
                 let mut keyed = false;
                 let mut mixed = false;
+                // The per-clip gain plan the level phase spends: each
+                // voice clip against its own take's measurement, drawn
+                // once and spent one call at a time.
+                let mut level_plan: Option<Vec<(String, f64)>> = None;
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
                         let read = emotion_lines(log, &grade_source);
@@ -4128,8 +4170,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // the body settles under it, and the call to act
                         // lifts back - the plan's own per-act intensity
                         // variation, keyed on the package's own parameter.
-                        // Values only ever move DOWN from the base the
-                        // package ships, so no key can leave the range.
+                        // The body's settle moves TOWARD NEUTRAL, not down
+                        // the number line: for a temperature parameter
+                        // (warm 4600 K, cool 8500 K) a multiplicative
+                        // 0.85 would change the colour itself - 4600 K
+                        // would settle into an even warmer 3910 K. Fifteen
+                        // percent toward the parameter's own neutral (6500 K
+                        // for temperature, no-effect for the rest) is the
+                        // settle every parameter reads the same way, and no
+                        // key can leave the range the package ships.
                         if !keyed {
                             keyed = true;
                             let layer = log
@@ -4153,7 +4202,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .map(|line| look_for_temperature(&line.temperature))
                                     .unwrap_or("concat.teal-orange");
                                 let (key, base) = grade_param(look);
-                                let body = base * 0.85;
+                                // The neutral the parameter settles toward:
+                                // 6500 K for a temperature key, no-effect
+                                // zero for every intensity key.
+                                let neutral = if key == "temperature" { 6500.0 } else { 0.0 };
+                                let body = base + (neutral - base) * 0.15;
                                 let mut commands = vec![json!({
                                     "op": "setEffectKey",
                                     "clipId": layer,
@@ -4216,36 +4269,58 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         if mixed {
                             return None;
                         }
-                        mixed = true;
-                        let target = match platform_target(log) {
-                            Some(target) => target,
-                            None => return None,
-                        };
-                        let loudest = voice_reads(log, &level_source)
-                            .into_iter()
-                            .filter(|read| read.take_wide.integrated_lufs.is_some())
-                            .max_by(|left, right| {
-                                left.take_wide
-                                    .integrated_lufs
-                                    .unwrap_or_default()
-                                    .total_cmp(&right.take_wide.integrated_lufs.unwrap_or_default())
-                            })?;
-                        let measured = loudest.take_wide.integrated_lufs?;
-                        let gain = round3(loudest.safe_gain(target - measured));
-                        if gain.abs() < 1.0 {
+                        // The gain plan is per clip, not per run: every
+                        // clip the timeline plays of a measured take is
+                        // levelled against that take's own integrated
+                        // loudness, so a multi-take cut does not leave one
+                        // voice corrected and the rest as they were
+                        // recorded. The plan is drawn once, then spent one
+                        // call at a time; a plan with nothing to do ends
+                        // the phase the way the single-clip pass did.
+                        let plan = level_plan.get_or_insert_with(|| {
+                            let Some(target) = platform_target(log) else {
+                                return Vec::new();
+                            };
+                            let Some(view) = latest_view(log) else {
+                                return Vec::new();
+                            };
+                            let media = media_paths(view);
+                            let reads = voice_reads(log, &level_source);
+                            let mut plan = Vec::new();
+                            for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
+                                let Some(clip_id) = clip["id"].as_str() else {
+                                    continue;
+                                };
+                                let Some(read) = clip["media"]
+                                    .as_str()
+                                    .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                                    .and_then(|(_, path)| voice_read_of(&reads, path))
+                                else {
+                                    continue;
+                                };
+                                let Some(measured) = read.take_wide.integrated_lufs else {
+                                    continue;
+                                };
+                                // The safety caps ride per take: a take
+                                // that already clips is never raised, one
+                                // near full scale only rises to the -1 dB
+                                // ceiling, and a compressed one takes at
+                                // most +6 dB.
+                                let gain = round3(read.safe_gain(target - measured));
+                                if gain.abs() >= 1.0 {
+                                    plan.push((clip_id.to_owned(), gain));
+                                }
+                            }
+                            plan
+                        });
+                        let Some((clip_id, gain)) = (!plan.is_empty()).then(|| plan.remove(0))
+                        else {
+                            mixed = true;
                             return None;
+                        };
+                        if plan.is_empty() {
+                            mixed = true;
                         }
-                        let view = latest_view(log)?;
-                        let media = media_paths(view);
-                        let clip = view["timeline"]["clips"].as_array()?.iter().find(|clip| {
-                            clip["media"]
-                                .as_str()
-                                .and_then(|id| media.iter().find(|(mid, _)| mid == id))
-                                .is_some_and(|(_, path)| {
-                                    level_source.iter().any(|take| &take.take == path)
-                                })
-                        })?;
-                        let clip_id = clip["id"].as_str()?.to_owned();
                         return Some(call(
                             "clip_audio_levels_db",
                             json!({
@@ -4536,6 +4611,26 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 }
                             });
                             if candidates.is_empty() {
+                                shopping += 1;
+                                phase = GatherPhase::Search;
+                                continue;
+                            }
+                            // A page the sheet measured and every frame of
+                            // which disqualified itself (black, blown,
+                            // letterboxed) is an empty slot, not a
+                            // refusal to rank: placing its first frame
+                            // would import exactly the frame the
+                            // measurements rejected. Unmeasured frames
+                            // keep the shelf-order fallback the comment
+                            // above promises - only a fully measured,
+                            // fully disqualified page stands down.
+                            let all_measured = candidates
+                                .iter()
+                                .all(|candidate| candidate.tile.is_object());
+                            let any_scored = candidates
+                                .iter()
+                                .any(|candidate| candidate.visual_score(&used_hashes).is_some());
+                            if all_measured && !any_scored {
                                 shopping += 1;
                                 phase = GatherPhase::Search;
                                 continue;
@@ -4990,9 +5085,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     ) else {
                                         continue;
                                     };
-                                    if to - at < 0.25 {
-                                        continue;
-                                    }
+                                    // A group shorter than a third of a
+                                    // second is HELD, not dropped: the
+                                    // words are still spoken, so the
+                                    // caption stretches to the hold the
+                                    // reader's own rate implies rather
+                                    // than vanishing from the screen.
+                                    let to = if to - at < 0.3 { at + 0.3 } else { to };
                                     groups.push((at, to, group));
                                 }
                             }
@@ -5001,6 +5100,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             phase = 2;
                             return None;
                         }
+                        // The groups arrive in transcript-reply order,
+                        // which is take order, not timeline order: a take
+                        // placed twice, or clips out of file order, would
+                        // leave the overlap cursor rejecting whole
+                        // stretches. One sort by the timeline start makes
+                        // the filter's assumption true instead of hoped
+                        // for.
+                        groups.sort_by(|left, right| left.0.total_cmp(&right.0));
                         // Overlaps cannot happen on a clean transcript, but a
                         // merged one can carry them: the later group waits
                         // for the one before it to leave.
@@ -5013,7 +5120,26 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             until = to;
                             kept.push((at, to, group));
                         }
-                        kept.truncate(240);
+                        // The cap bounds the batch, not the cut's
+                        // coverage: `truncate` on a timeline-ordered list
+                        // would delete the final minutes - the CTA among
+                        // them. The batch op carries no engine limit of
+                        // its own (it is one atomic Vec), so the house
+                        // cap sits at a thousand groups - well past a
+                        // twenty-minute longform - and only a cut beyond
+                        // that thins by density instead of losing its
+                        // tail.
+                        const HOUSE_CAP: usize = 1000;
+                        if kept.len() > HOUSE_CAP {
+                            let stride = (kept.len() + HOUSE_CAP - 1) / HOUSE_CAP;
+                            kept = kept
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(index, _)| index % stride == 0)
+                                .map(|(_, group)| group)
+                                .collect();
+                            kept.truncate(HOUSE_CAP);
+                        }
                         // The script's own font: the profile's language read
                         // names the family a non-Latin script needs, and the
                         // house face is only the fallback when the read did
@@ -5313,6 +5439,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             &motifs,
                             &question_acts(log, &motion_source),
                             &uncovered_claims(log, &motion_source),
+                            &(|take: &str, at: f64| {
+                                latest_view(log).and_then(|view| {
+                                    timeline_at(view, &media_paths(view), take, at)
+                                })
+                            }),
                         )
                     });
                     if at >= specs.len() {
@@ -5475,7 +5606,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         "command": {
                                             "op": "trimClip",
                                             "clipId": id,
-                                            "edge": "tail",
+                                            // The tail edge is `end`:
+                                            // the command's own enum has
+                                            // no `tail` arm, and a name
+                                            // it cannot deserialize
+                                            // breaks the whole stage at
+                                            // this one call.
+                                            "edge": "end",
                                             "delta": round3(delta),
                                         },
                                     }),
@@ -5523,6 +5660,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The bed the duck landed on: its clip id, start and
                 // duration, kept for the shape's key positions.
                 let mut bed_span: Option<(String, f64, f64)> = None;
+                // The base level the bed's own reply landed at, in dB: the
+                // duck's shape keys are absolute values on the same
+                // property, so every key must be the base gain or a
+                // fraction of it - never a bare 1.0 that would undo the
+                // level the act, the density, the room and the band
+                // measured.
+                let mut bed_level: Option<f64> = None;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever. The reading's own forensic
@@ -5622,25 +5766,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                         }
                         const DUCK: f64 = 0.45;
-                        const MOST_KEYS: usize = 28;
-                        let mut commands: Vec<Value> = vec![json!({
-                            "op": "setClipKey", "clipId": bed_id,
-                            "property": "volume", "at": 0.0, "value": 1.0,
-                        })];
+                        const MOST_KEYS: usize = 64;
+                        // Every key is the bed's own measured level or a
+                        // fraction of it: the shape rides on top of the
+                        // base the stage just set, instead of replacing
+                        // it with a full-scale value the mix never asked
+                        // for. An unmeasured base (the level call never
+                        // landed) keeps unity, so the shape degrades to
+                        // the old behaviour rather than to silence.
+                        let base_gain = bed_level.map(|db| 10.0f64.powf(db / 20.0)).unwrap_or(1.0);
+                        let mut keys: Vec<(f64, f64)> = Vec::new();
+                        // The bed breathes in and out: a fade from and to
+                        // silence at both ends, about a second each, so
+                        // the music never starts or stops on a hard edge.
+                        let fade = (0.9 / bed_len.max(0.1)).clamp(0.0, 0.1);
+                        keys.push((0.0, 0.0));
+                        keys.push((round3(fade), base_gain));
                         let at_fraction =
                             |moment: f64| ((moment - bed_start) / bed_len.max(0.1)).clamp(0.0, 1.0);
                         for (at, to) in &merged {
-                            if commands.len() >= MOST_KEYS {
+                            if keys.len() >= MOST_KEYS {
                                 break;
                             }
                             let duck_at = at_fraction(*at);
                             let lift_at = at_fraction(to + 0.2);
                             if duck_at > 0.0 && duck_at < 1.0 {
-                                commands.push(json!({
-                                    "op": "setClipKey", "clipId": bed_id,
-                                    "property": "volume",
-                                    "at": round3(duck_at), "value": DUCK,
-                                }));
+                                keys.push((round3(duck_at), base_gain * DUCK));
                             }
                             // Lift only where the gap can hold it: the
                             // next line more than half a second away, or
@@ -5650,13 +5801,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .find(|(next_at, _)| *next_at > to + 0.05)
                                 .map(|(next_at, _)| *next_at);
                             if lift_at < 1.0 && next.is_none_or(|next| next > to + 0.6) {
-                                commands.push(json!({
-                                    "op": "setClipKey", "clipId": bed_id,
-                                    "property": "volume",
-                                    "at": round3(lift_at), "value": 1.0,
-                                }));
+                                keys.push((round3(lift_at), base_gain));
                             }
                         }
+                        keys.push((round3(1.0 - fade), base_gain));
+                        keys.push((1.0, 0.0));
+                        // The keys must read in time order however the
+                        // spans fell: one sorted pass, then the batch.
+                        keys.sort_by(|left, right| left.0.total_cmp(&right.0));
+                        let commands: Vec<Value> = keys
+                            .into_iter()
+                            .map(|(at, value)| {
+                                json!({
+                                    "op": "setClipKey", "clipId": bed_id,
+                                    "property": "volume",
+                                    "at": at, "value": round3(value),
+                                })
+                            })
+                            .collect();
                         if commands.len() < 2 {
                             return None;
                         }
@@ -5854,6 +6016,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let base_db = round3(
                                 (act_db + density_db + room_db + band_db).clamp(-30.0, -6.0),
                             );
+                            bed_level = Some(base_db);
                             call(
                                 "clip_audio_levels_db",
                                 json!({
@@ -5979,7 +6142,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // accents are done", so answering it for one unplayed
                     // peak would drop every peak after it - the run would
                     // quietly lose the accents it was written to land.
-                    let at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
+                    // The moment is mut: an empty search steps to the next
+                    // playable peak, and the hook test must read the
+                    // moment it stepped to, not the one it skipped.
+                    let mut at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     // What the last call was decides what this one is: the
                     // search hands the id the add takes.
                     let last_was_search = log
@@ -6017,9 +6183,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // The shelf answered with nothing for this peak:
                         // step to the next peak the timeline plays and
                         // shop it, rather than ending the stage and
-                        // dropping every accent after it.
+                        // dropping every accent after it. The stepped-to
+                        // moment replaces the skipped one, so the hook
+                        // test below reads the peak it is about to shop
+                        // for - not the one the shelf refused.
                         placed += 1;
-                        next_played_peak(&mut placed, peaks, log, &sfx_source)?;
+                        at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     }
                     // The accent family the peak's own line asks for: the
                     // peak's file moment is the line's, so the emotion
@@ -6395,6 +6564,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 }
             }),
         )
+        .gate(ReplyGate::Empty {
+            field: "collisions",
+            what: "two clips share a lane in the finished timeline",
+        })
         .gate(ReplyGate::True {
             field: "platformTargetMet",
             what: "the mix missed the platform loudness target",
@@ -6792,7 +6965,7 @@ mod tests {
         let claims = uncovered_claims(&log, &takes);
         assert_eq!(claims.len(), 1, "the uncovered claim is the one read");
         assert_eq!(claims[0].text, "this ship sank in 1912");
-        let specs = motion_specs(&[], &[], &[], &[], &[], &claims);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &claims, &|_, at| Some(at));
         let card = specs
             .iter()
             .find(|spec| spec.earned_by == "claims")
@@ -6842,7 +7015,7 @@ mod tests {
         let questions = question_acts(&log, &takes);
         assert_eq!(questions.len(), 1, "only the question line is an ask");
         assert_eq!(questions[0].start, 0.0);
-        let specs = motion_specs(&[], &[], &[], &[], &questions, &[]);
+        let specs = motion_specs(&[], &[], &[], &[], &questions, &[], &|_, at| Some(at));
         assert!(
             specs
                 .iter()
@@ -9515,6 +9688,13 @@ mod tests {
         assert_eq!(
             reframe_offsets(&tile(0.2, -0.1), "9:16", 1080.0, 1920.0),
             None
+        );
+        // A 9:16 source into a 4:5 frame: the fill crops VERTICALLY (the
+        // source is narrower than the frame's ratio), so the vertical
+        // hint is the one the subject-following spends.
+        assert_eq!(
+            reframe_offsets(&tile(0.2, -0.15), "4:5", 1080.0, 1920.0),
+            Some((0.0, -0.15))
         );
         // A portrait source into a landscape frame: the vertical hint is
         // spent.

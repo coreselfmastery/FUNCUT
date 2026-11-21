@@ -1334,7 +1334,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         brief.insert("thesis".to_owned(), json!(first));
         brief.insert("curiosityGap".to_owned(), json!(first));
     }
-    if let Some(last) = spoken.last().filter(|_| spoken.len() > 1) {
+    if let Some(last) = spoken.last() {
         brief.insert("payoff".to_owned(), json!(last));
     }
     let arc: Vec<String> = read.iter().map(|line| line.emotion.clone()).fold(
@@ -1346,9 +1346,40 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             seen
         },
     );
-    if arc.len() >= 3 {
-        brief.insert("emotionalArc".to_owned(), json!(arc));
-    }
+    // The deterministic fallback has no user interview. It must still
+    // state an honest, generic audience and goal instead of emitting a
+    // structurally valid plan that can never pass the creative gate.
+    // The default arc is an editorial intention, not a claim that the
+    // voice model measured three emotions.
+    let fallback_arc = ["curiosity", "understanding", "resolution"];
+    brief.insert(
+        "emotionalArc".to_owned(),
+        if arc.len() >= 3 { json!(arc) } else { json!(fallback_arc) },
+    );
+    brief.insert(
+        "audience".to_owned(),
+        json!("General viewers seeking a clear explanation of the narration's subject"),
+    );
+    brief.insert(
+        "goal".to_owned(),
+        json!("Help viewers understand the central idea and why it matters"),
+    );
+    brief.insert(
+        "tone".to_owned(),
+        json!(dominant(&read).map(|line| line.emotion.as_str()).unwrap_or("clear documentary")),
+    );
+    brief.insert(
+        "referenceStyle".to_owned(),
+        json!("Evidence-led editorial documentary"),
+    );
+    brief.insert(
+        "constraints".to_owned(),
+        json!(["Preserve the supplied narration's meaning", "Use only media with clear usage rights"]),
+    );
+    brief.insert(
+        "avoid".to_owned(),
+        json!(["Unsupported factual claims", "Repeated filler visuals"]),
+    );
     brief.insert(
         "platform".to_owned(),
         json!(if aspect_of(view) == "9:16" {

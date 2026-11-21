@@ -343,6 +343,12 @@ struct StockCandidate {
     provider: String,
     id: String,
     url: String,
+    /// The shelf's own words for the clip - the caption the search hit
+    /// carried. The emotion gate judges candidates on their text; without
+    /// this, every candidate's blob was the slot's shared query plus a
+    /// tile ordinal, and the gate was deaf to the difference between
+    /// them.
+    caption: String,
     local_path: String,
     width: f64,
     height: f64,
@@ -697,7 +703,11 @@ impl SlotChoice {
     /// picture: a new clip id, a new frame hash, and not a clip another
     /// slot already chose. No such alternate leaves the flag standing,
     /// recorded by the check's own second pass.
-    fn swap_past(&mut self, used_ids: &[String], used_hashes: &[String]) {
+    fn swap_past(
+        &mut self,
+        used_ids: &[String],
+        used_hashes: &[String],
+    ) -> Option<(String, String)> {
         let current = &self.candidates[self.chosen];
         let current_hash = current.tile["hash"].as_str().unwrap_or_default().to_owned();
         let current_id = current.id.clone();
@@ -715,8 +725,13 @@ impl SlotChoice {
                 continue;
             }
             self.chosen = at;
-            return;
+            // The spend travels with the swap: two flagged slots used to
+            // be able to swap onto the SAME alternate, because neither
+            // recorded it as used - both then imported the same clip and
+            // the place pass styled only the first.
+            return Some((candidate.id.clone(), hash.to_owned()));
         }
+        None
     }
 }
 
@@ -2377,16 +2392,16 @@ fn shelf_orientation(aspect: &str) -> Option<&'static str> {
 }
 
 /// The aspect the project's own frame is nearest: a 9:16 project is a
-/// reel, a 16:9 one is not.
+/// reel, a 16:9 one is not. Every view the program ever reads is a
+/// `summary::view` product, and the summary puts the frame under
+/// `/project/width|height` - the old `/settings/*` read matched nothing
+/// real, so every project read as 16:9 and a vertical reel was shopped,
+/// captioned and graded landscape (the hand-built `/settings` views lived
+/// on only in the unit tests, codifying the wrong shape). The
+/// `/settings` read stays as the fallback for a raw editor view.
 fn aspect_of(view: &Value) -> &'static str {
-    let width = view
-        .pointer("/settings/width")
-        .and_then(Value::as_f64)
-        .unwrap_or(1920.0);
-    let height = view
-        .pointer("/settings/height")
-        .and_then(Value::as_f64)
-        .unwrap_or(1080.0);
+    let frame = frame_of(view);
+    let FrameOf { width, height } = frame;
     if height <= 0.0 {
         return "16:9";
     }
@@ -2402,6 +2417,26 @@ fn aspect_of(view: &Value) -> &'static str {
         .min_by(|left, right| (left.1 - ratio).abs().total_cmp(&(right.1 - ratio).abs()))
         .map(|(name, _)| *name)
         .unwrap_or("16:9")
+}
+
+/// The frame a view reports, from whichever shape it carries.
+struct FrameOf {
+    width: f64,
+    height: f64,
+}
+
+fn frame_of(view: &Value) -> FrameOf {
+    let width = view
+        .pointer("/project/width")
+        .or_else(|| view.pointer("/settings/width"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1920.0);
+    let height = view
+        .pointer("/project/height")
+        .or_else(|| view.pointer("/settings/height"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1080.0);
+    FrameOf { width, height }
 }
 
 /// The plan the run can write from what it measured - the spine it is
@@ -4691,6 +4726,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .to_owned(),
                                     id: hit["id"].as_str().unwrap_or_default().to_owned(),
                                     url: hit["url"].as_str().unwrap_or_default().to_owned(),
+                                    caption: hit["caption"]
+                                        .as_str()
+                                        .or_else(|| hit["name"].as_str())
+                                        .unwrap_or_default()
+                                        .to_owned(),
                                     local_path: path,
                                     width: hit["width"].as_f64().unwrap_or(0.0),
                                     height: hit["height"].as_f64().unwrap_or(0.0),
@@ -4791,11 +4831,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .iter()
                                 .enumerate()
                                 .map(|(index, candidate)| {
+                                    // The candidate's OWN words go to the
+                                    // gate: the shelf's caption names what
+                                    // the clip shows, and a caption-less
+                                    // hit falls back to the slot's query
+                                    // rather than a bare tile ordinal
+                                    // ("1 ", "2 ") that judges nothing.
+                                    let text = if candidate.caption.trim().is_empty() {
+                                        slot.query.clone()
+                                    } else {
+                                        candidate.caption.clone()
+                                    };
                                     json!({
                                         "index": index,
                                         "id": candidate.id,
-                                        "label": candidate.tile["label"].clone(),
-                                        "query": slot.query.clone(),
+                                        "caption": text,
                                     })
                                 })
                                 .collect();
@@ -4813,6 +4863,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // Among the candidates the gate passed, the
                             // sheet's own ranking decides: visual quality
                             // picks within the register the gate allowed.
+                            // A gate that ANSWERED is authoritative: its
+                            // `order` (possibly empty - every candidate
+                            // failed 2+ checks, and the beat is dropped,
+                            // never padded) decides among the visually
+                            // qualified candidates. A reply that did not
+                            // answer (a refusal shape, a hosted-model
+                            // error riding the log) is a DEGRADED gate,
+                            // not a rejected beat: the sheet's own ranking
+                            // decides, the way it did before the gate
+                            // existed, among candidates the pixels did
+                            // not disqualify.
+                            let gate_answered = log.last().is_some_and(|reply| {
+                                reply.get("order").is_some() || reply["ok"].as_bool() == Some(true)
+                            });
                             let passing: Vec<usize> = log
                                 .last()
                                 .and_then(|reply| reply["order"].as_array())
@@ -4824,10 +4888,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .collect()
                                 })
                                 .unwrap_or_default();
-                            let chosen = passing
-                                .into_iter()
-                                .filter(|index| pending_gate.get(*index).is_some())
-                                .min();
+                            let visual: Vec<usize> = pending_gate
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, candidate)| {
+                                    candidate.visual_score(&used_hashes).is_some()
+                                })
+                                .map(|(index, _)| index)
+                                .collect();
+                            let chosen = if gate_answered {
+                                passing
+                                    .into_iter()
+                                    .filter(|index| visual.contains(index))
+                                    .min()
+                            } else {
+                                visual.into_iter().min()
+                            };
                             if let Some(chosen) = chosen {
                                 let best = &pending_gate[chosen];
                                 used_ids.push(best.id.clone());
@@ -4883,8 +4959,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 };
                                 match rule {
                                     // A colour jump the sheet measured:
-                                    // the swap the alternates exist for.
-                                    "colour" => shop.swap_past(&used_ids, &used_hashes),
+                                    // the swap the alternates exist for -
+                                    // and the new choice is SPENT, so a
+                                    // second flagged slot can never swap
+                                    // onto the same clip.
+                                    "colour" => {
+                                        if let Some((id, hash)) =
+                                            shop.swap_past(&used_ids, &used_hashes)
+                                        {
+                                            used_ids.push(id);
+                                            if !hash.is_empty() {
+                                                used_hashes.push(hash);
+                                            }
+                                        }
+                                    }
                                     // A category run: the gate's own
                                     // remedy is the treatment's, and the
                                     // treatment the program has is the
@@ -7578,7 +7666,7 @@ mod tests {
             ],
         });
         let view = json!({
-            "settings": { "width": 1080, "height": 1920 },
+            "project": { "name": "Reel", "width": 1080, "height": 1920 },
             "timeline": { "clips": [
                 { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
                   "sourceStart": 0.0, "speed": 1.0 },
@@ -8686,7 +8774,7 @@ mod tests {
             enhanced: String::new(),
         }];
         let view = json!({
-            "settings": { "width": 1920.0, "height": 1080.0 },
+            "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
             "timeline": { "clips": [
                 { "id": "c1", "media": "m1", "start": 0.0, "duration": 3.0,
                   "sourceStart": 0.0, "speed": 1.0 },
@@ -9092,7 +9180,7 @@ mod tests {
         };
         let view = json!({
             "project": { "name": "Reel" },
-            "settings": { "width": 1920.0, "height": 1080.0 },
+            "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
             "timeline": { "id": "t1", "clips": [{
                 "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
                 "sourceStart": 0.0, "speed": 1.0,
@@ -9158,7 +9246,7 @@ mod tests {
         };
         let view = json!({
             "project": { "name": "Reel" },
-            "settings": { "width": 1920.0, "height": 1080.0 },
+            "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
             "timeline": { "id": "t1", "clips": [{
                 "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
                 "sourceStart": 0.0, "speed": 1.0,
@@ -10029,6 +10117,7 @@ mod tests {
             provider: "pexels".to_owned(),
             id: id.to_owned(),
             url: format!("https://x/{id}"),
+            caption: format!("caption for {id}"),
             local_path: format!("/cache/{id}.mp4"),
             width: 1080.0,
             height: 1920.0,
@@ -10172,7 +10261,7 @@ mod tests {
         };
 
         let view = json!({
-            "settings": { "width": 1080, "height": 1920 },
+            "project": { "name": "Reel", "width": 1080, "height": 1920 },
             "timeline": { "clips": [
                 {
                     "id": "voice",
@@ -10214,6 +10303,7 @@ mod tests {
                 "provider": "pexels",
                 "url": "https://videos.pexels.com/files/hd.mp4",
                 "license": "Pexels License",
+                "caption": "aerial city skyline at dusk",
                 "width": 1080.0,
                 "height": 1920.0,
                 "seconds": 10.0
@@ -10251,13 +10341,24 @@ mod tests {
             }],
         }));
         // The emotion gate rides between the sheet and the choice: the
-        // register the slot's own line reads in gates the candidates
-        // before the import is paid for.
-        let gate = (gather.next)(&log).expect("the candidates are gated");
+        // candidate it weighs carries the shelf's own caption (not the
+        // slot's shared query), and the segment defaults to neutral - the
+        // exact shape that used to crash the Python gate.
+        let gate = (gather.next)(&log).expect("the sheet's choice is gated");
         assert_eq!(gate.tool, "emotion");
         assert_eq!(gate.arguments["action"], "gate");
-        log.push(json!({ "order": [0] }));
-        let import = (gather.next)(&log).expect("the looked-at hit is imported");
+        assert_eq!(
+            gate.arguments["segment"],
+            json!({ "emotion": "neutral", "act": "setup" }),
+            "no emotion line covers the gap, so the segment is the neutral default"
+        );
+        assert_eq!(
+            gate.arguments["candidates"],
+            json!([{ "index": 0, "id": "2499611", "caption": "aerial city skyline at dusk" }]),
+            "the gate judges the shelf's own words for the clip"
+        );
+        log.push(json!({ "ok": true, "order": [0] }));
+        let import = (gather.next)(&log).expect("the gate-passed hit is imported");
         assert_eq!(import.tool, "stock_import");
         assert_eq!(import.arguments["provider"], "pexels");
         assert_eq!(import.arguments["id"], "2499611");
@@ -10309,6 +10410,136 @@ mod tests {
         assert!(commands.iter().any(|command| command["op"] == "frameClip"));
         assert!(commands.iter().any(|command| command["op"] == "updateClip"));
         assert!((gather.next)(&log).is_none(), "one gap is placed only once");
+    }
+
+    /// The gate's two failure shapes behave differently: an ANSWERED
+    /// gate that rejected every candidate drops the beat (never pads),
+    /// while a gate that never answered (a refusal shape in the log)
+    /// degrades to the sheet's own ranking rather than dropping work on
+    /// a technicality.
+    #[test]
+    fn the_gate_s_rejection_drops_and_its_degradation_falls_back() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let view = json!({
+            "project": { "name": "Reel", "width": 1080, "height": 1920 },
+            "timeline": { "clips": [{
+                "id": "voice", "media": "voice-media",
+                "start": 0.0, "duration": 10.0,
+                "sourceStart": 0.0, "speed": 1.0,
+            }]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 4.0, "end": 6.0, "text": "the crowds crossing" },
+            ],
+        });
+        let base = |log: Vec<Value>| -> Vec<Value> {
+            let mut log = log;
+            log.insert(0, view.clone());
+            log.insert(1, json!({ "path": take, "output": transcript.to_string() }));
+            log
+        };
+        let search_reply = json!({
+            "provider": "pexels",
+            "license": "Pexels License",
+            "hits": [{
+                "id": "2499611", "provider": "pexels",
+                "url": "https://videos.pexels.com/files/hd.mp4",
+                "license": "Pexels License",
+                "caption": "aerial city skyline at dusk",
+                "width": 1080.0, "height": 1920.0, "seconds": 10.0,
+            }],
+        });
+        let fetch_reply = json!({
+            "id": "2499611", "provider": "pexels",
+            "path": "/cache/stock/pexels/2499611.mp4", "bytes": 8_000_000,
+        });
+        let sheet_reply = json!({
+            "pngPath": "/cache/sense/sheet-1.png",
+            "tiles": [{
+                "index": 0,
+                "localPath": "/cache/stock/pexels/2499611.mp4",
+                "luma": 128.0, "contrast": 40.0, "detail": 4.0,
+                "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+                "saturation": 0.4, "warmth": 0.2,
+                "hash": "ab12cd34ef56ab12",
+                "cropHint": { "x": 0.0, "y": 0.0 },
+                "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
+            }],
+        });
+        let drive_to_gate =
+            |log: &mut Vec<Value>,
+             gather: &mut (dyn FnMut(&[Value]) -> Option<ToolCall> + Send)| {
+                let _ = (gather)(log); // stock_search
+                log.push(search_reply.clone());
+                let _ = (gather)(log); // stock_fetch
+                log.push(fetch_reply.clone());
+                let _ = (gather)(log); // stock_contact_sheet
+                log.push(sheet_reply.clone());
+                let gate = (gather)(log).expect("the gate is asked");
+                assert_eq!(gate.tool, "emotion");
+            };
+
+        // An answered gate that rejected every candidate: the beat is
+        // dropped, nothing is imported for it, and - this transcript
+        // opens exactly one shop-able gap - the stage ends.
+        let mut log = base(vec![]);
+        let step = gather;
+        {
+            let gather = &mut *step.next;
+            drive_to_gate(&mut log, gather);
+        }
+        log.push(json!({ "ok": true, "order": [] }));
+        assert!(
+            (step.next)(&log).is_none(),
+            "a rejected beat is dropped, not imported, and the stage ends"
+        );
+
+        // A gate that never answered: the sheet's ranking decides among
+        // the visually qualified candidates. A fresh program - the
+        // closure above spent its one slot.
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let mut log = base(vec![]);
+        {
+            let gather = &mut *gather.next;
+            drive_to_gate(&mut log, gather);
+        }
+        log.push(json!({ "ok": false, "error": "the hosted model is unreachable" }));
+        let import = (gather.next)(&log).expect("the degraded gate falls back to the sheet");
+        assert_eq!(import.tool, "stock_import");
+        assert_eq!(import.arguments["id"], "2499611");
     }
 
     /// A malformed live-stock hit without a provider licence is not
@@ -10963,7 +11194,7 @@ mod tests {
         };
         let log = vec![
             json!({
-                "settings": { "width": 1080, "height": 1920 },
+                "project": { "name": "Reel", "width": 1080, "height": 1920 },
                 "timeline": { "clips": [
                     { "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
                       "sourceStart": 0.0, "speed": 1.0 },

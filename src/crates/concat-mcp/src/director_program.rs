@@ -447,6 +447,99 @@ fn reframe_offsets(tile: &Value, aspect: &str, width: f64, height: f64) -> Optio
     (x.abs() >= 0.05 || y.abs() >= 0.05).then_some((x, y))
 }
 
+/// One word of a caption group: the word as the recogniser heard it, the
+/// times it measured for it, and the character offset the word holds in
+/// the group's own shown text - the number the title's range styling
+/// counts.
+struct CaptionWord {
+    text: String,
+    start: f64,
+    end: f64,
+    at: usize,
+}
+
+/// One caption group: two to four words cut on the delivery's own seams,
+/// the span they occupy in the take's file seconds, and every word's
+/// place in the text - so the accent pass can style the word that
+/// carried the line without re-deriving anything.
+struct CaptionGroup {
+    /// The take file the group was read from.
+    take: String,
+    start: f64,
+    end: f64,
+    text: String,
+    words: Vec<CaptionWord>,
+}
+
+/// The caption groups one transcript segment carries: the recogniser's
+/// own word times, chunked where a viewer reads a seam - the sentence's
+/// own punctuation, a breath gap the recogniser measured, four words,
+/// or three and a half seconds, whichever comes first. The safe-remove
+/// fillers the profile timed are dropped here, so the viewer never sees
+/// the `um` they already heard.
+fn caption_groups(segment: &Value, fillers: &[String]) -> Vec<CaptionGroup> {
+    fn close(groups: &mut Vec<CaptionGroup>, current: &mut Vec<CaptionWord>, text: &mut String) {
+        if current.is_empty() {
+            text.clear();
+            return;
+        }
+        let start = current.first().map(|word| word.start).unwrap_or(0.0);
+        let end = current.last().map(|word| word.end).unwrap_or(start);
+        groups.push(CaptionGroup {
+            take: String::new(),
+            start,
+            end,
+            text: std::mem::take(text),
+            words: std::mem::take(current),
+        });
+    }
+
+    let mut groups: Vec<CaptionGroup> = Vec::new();
+    let mut current: Vec<CaptionWord> = Vec::new();
+    let mut text = String::new();
+    for word in segment["words"].as_array().into_iter().flatten() {
+        let Some(word_text) = word["text"].as_str().map(str::trim) else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (word["start"].as_f64(), word["end"].as_f64()) else {
+            continue;
+        };
+        if word_text.is_empty() || end <= start {
+            continue;
+        }
+        let bare = word_text
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        if !bare.is_empty() && fillers.iter().any(|filler| filler == &bare) {
+            continue;
+        }
+        // A breath gap the recogniser measured is a seam the reader
+        // reads: the group closes before the gap, not across it.
+        if current.last().is_some_and(|last| start - last.end > 0.6) {
+            close(&mut groups, &mut current, &mut text);
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        let at = text.chars().count();
+        text.push_str(word_text);
+        let ends_sentence =
+            word_text.ends_with('.') || word_text.ends_with('!') || word_text.ends_with('?');
+        current.push(CaptionWord {
+            text: word_text.to_owned(),
+            start,
+            end,
+            at,
+        });
+        let span = end - current.first().map(|first| first.start).unwrap_or(end);
+        if ends_sentence || current.len() >= 4 || span >= 3.5 {
+            close(&mut groups, &mut current, &mut text);
+        }
+    }
+    close(&mut groups, &mut current, &mut text);
+    groups
+}
+
 /// Where the shopping of one B-roll slot stands. The stage shops every
 /// slot first - search, fetch, look, choose - so the continuity gate
 /// can judge the whole picture run before anything is imported, and a
@@ -1689,27 +1782,6 @@ impl MotionSpec {
         };
         round3(paced.clamp(1.2, 5.0))
     }
-}
-
-/// A caption's words with one filler removed, matched whole and
-/// case-insensitively, and never left with a double space or a dangling
-/// comma where the word stood.
-fn strip_word(text: &str, word: &str) -> String {
-    let word = word.trim().to_lowercase();
-    if word.is_empty() {
-        return text.to_owned();
-    }
-    let mut kept: Vec<&str> = Vec::new();
-    for piece in text.split_whitespace() {
-        let bare = piece
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .to_lowercase();
-        if bare == word {
-            continue;
-        }
-        kept.push(piece);
-    }
-    kept.join(" ")
 }
 
 /// The words a card can hold: the line's own, cut at a word boundary so a
@@ -4588,12 +4660,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 7. The captions: the transcript's own measured words, placed where
     //    the timeline now plays them - through the pieces the tighten
     //    left, so a cut that moved a word moves its caption too - as one
-    //    undoable batch of titles in the reading's house style. The style
-    //    follows the read at each line: a line that reads loud is set
-    //    heavier, a hot or split line takes the accent colour, and a calm
-    //    informational line stays plain - the same words do not all earn
-    //    the same look, which is the difference between captions and a
-    //    transcript.
+    //    undoable batch of titles in the reading's house style, then a
+    //    second pass that gives the words that carried the delivery a
+    //    look of their own.
+    //
+    //    A caption is not a transcript: the groups are two to four words
+    //    long, cut on the delivery's own seams (the recogniser's word
+    //    times, the sentence's own punctuation, the breath gaps the
+    //    profile measured), so a viewer reads a phrase, not a paragraph.
+    //    The style follows the read at each group: a line that reads loud
+    //    is set heavier, a hot or split line takes the accent colour on
+    //    the word that carried it, and a calm informational line stays
+    //    plain - the same words do not all earn the same look.
+    //
+    //    The frame the project is shapes the band the captions sit in: a
+    //    vertical reel keeps its words clear of the platform UI at the
+    //    bottom, and a horizontal cut keeps the classic lower third.
     let caption_source = takes.clone();
     let caption_project = project.clone();
     let caption_emotion = takes.clone();
@@ -4605,80 +4687,107 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // reply is a timeline view carrying the titles just
                 // placed, and re-deriving from it would place every
                 // caption a second time.
-                let mut issued = false;
+                let mut phase = 0u8;
+                // The groups the batch placed, kept for the accent pass:
+                // each carries the timeline span it landed at and the
+                // character ranges of its own words.
+                let mut placed_groups: Vec<(f64, CaptionGroup)> = Vec::new();
                 move |log| {
-                    if issued {
+                    if phase == 2 {
                         return None;
                     }
                     let view = latest_view(log)?;
+                    let aspect = aspect_of(view).to_owned();
+                    let portrait = matches!(aspect.as_str(), "9:16" | "4:5" | "1:1");
                     let media = media_paths(view);
-                    let read = emotion_lines(log, &caption_emotion);
-                    let emphasis = stressed_words(log, &caption_source);
-                    let voice = voice_reads(log, &caption_source);
-                    let mut captions: Vec<Value> = Vec::new();
-                    for (take, segments) in transcripts_of(log, &caption_source) {
-                        for segment in segments {
-                            let words = segment["words"].as_array();
-                            let start = words
-                                .and_then(|words| words.first())
-                                .and_then(|word| word["start"].as_f64())
-                                .or_else(|| segment["start"].as_f64());
-                            let end = words
-                                .and_then(|words| words.last())
-                                .and_then(|word| word["end"].as_f64())
-                                .or_else(|| segment["end"].as_f64());
-                            let text = segment["text"].as_str().unwrap_or_default().trim();
-                            let (Some(start), Some(end)) = (start, end) else {
-                                continue;
-                            };
-                            if text.is_empty() || end - start < 0.3 {
-                                continue;
-                            }
-                            let (Some(at), Some(to)) = (
-                                timeline_at(view, &media, &take, start),
-                                timeline_at(view, &media, &take, end),
-                            ) else {
-                                continue;
-                            };
-                            if to - at < 0.3 {
-                                continue;
-                            }
-                            let line = emotion_at(&read, &take, start);
-                            let intensity = line.map(|line| line.intensity).unwrap_or(0.5);
-                            let hot = line.is_some_and(|line| {
-                                matches!(line.temperature.as_str(), "hot" | "split")
-                            });
-                            // The fillers the profile timed: `um`, `uh` and
-                            // their kin are safe removals, and a caption is
-                            // the one place they are pure noise - the
-                            // viewer hears the pause, not the syllable. The
-                            // discourse markers (`like`, `you know`) are
-                            // context calls the profile does not decide,
-                            // so they stay: cutting them would be editing
-                            // the speaker's meaning, not their noise.
+                    if phase == 0 {
+                        let voice = voice_reads(log, &caption_source);
+                        let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                        for (take, segments) in transcripts_of(log, &caption_source) {
                             let take_read = voice_read_of(&voice, &take);
-                            let mut shown = text.to_owned();
-                            if let Some(take_read) = take_read {
-                                for filler in take_read.fillers_between(start, end) {
-                                    shown = strip_word(&shown, &filler.word);
+                            for segment in segments {
+                                // The safe-remove fillers the profile timed
+                                // for this segment: `um`, `uh` and their kin
+                                // are pure noise in a caption - the viewer
+                                // hears the pause, not the syllable. The
+                                // discourse markers (`like`, `you know`) are
+                                // context calls the profile does not
+                                // decide, so they stay.
+                                let fillers: Vec<String> = take_read
+                                    .map(|take_read| {
+                                        let start = segment["start"].as_f64().unwrap_or(0.0);
+                                        let end = segment["end"].as_f64().unwrap_or(0.0);
+                                        take_read
+                                            .fillers_between(start, end)
+                                            .into_iter()
+                                            .map(|filler| filler.word.to_lowercase())
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                for mut group in caption_groups(&segment, &fillers) {
+                                    group.take = take.clone();
+                                    let (Some(at), Some(to)) = (
+                                        timeline_at(view, &media, &take, group.start),
+                                        timeline_at(view, &media, &take, group.end),
+                                    ) else {
+                                        continue;
+                                    };
+                                    if to - at < 0.25 {
+                                        continue;
+                                    }
+                                    groups.push((at, to, group));
                                 }
                             }
-                            let shown = shown.trim();
-                            if shown.is_empty() {
+                        }
+                        if groups.is_empty() {
+                            phase = 2;
+                            return None;
+                        }
+                        // Overlaps cannot happen on a clean transcript, but a
+                        // merged one can carry them: the later group waits
+                        // for the one before it to leave.
+                        let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                        let mut until = 0.0;
+                        for (at, to, group) in groups {
+                            if at < until - 0.05 {
                                 continue;
                             }
-                            // The word-confidence gate: a line most of
-                            // whose words the gate could not hear is not
-                            // a line to set heavy or accent - it is a
-                            // line to show plainly, so a misheard word
-                            // does not become the caption's loudest claim.
+                            until = to;
+                            kept.push((at, to, group));
+                        }
+                        kept.truncate(240);
+                        // The script's own font: the profile's language read
+                        // names the family a non-Latin script needs, and the
+                        // house face is only the fallback when the read did
+                        // not name one. A caption set in Hanken Grotesk over
+                        // a Devanagari or Cyrillic take renders as boxes.
+                        let font = voice
+                            .iter()
+                            .map(|read| read.take_wide.font.as_str())
+                            .find(|font| !font.is_empty())
+                            .map(bundled_font)
+                            .unwrap_or("Hanken Grotesk");
+                        let read = emotion_lines(log, &caption_emotion);
+                        let mut commands: Vec<Value> = Vec::new();
+                        placed_groups.clear();
+                        for (at, to, group) in kept {
+                            let take_of = group.take.clone();
+                            // The line the group sits in: its read decides
+                            // the group's look, exactly as it decided the
+                            // old whole-segment caption's.
+                            let line = emotion_at(&read, &take_of, group.start);
+                            let intensity = line.map(|line| line.intensity).unwrap_or(0.5);
+                            // The word-confidence gate: a group most of
+                            // whose words the gate could not hear is not a
+                            // group to set heavy or accent - it is a group
+                            // to show plainly, so a misheard word does not
+                            // become the caption's loudest claim.
+                            let take_read = voice_read_of(&voice, &take_of);
                             let unsure_share = take_read
                                 .map(|take_read| {
-                                    let flagged = take_read.unsure_between(start, end).len();
-                                    let total = take_read
-                                        .line_at(start)
-                                        .map(|line| line.text.split_whitespace().count())
-                                        .unwrap_or(0);
+                                    let flagged =
+                                        take_read.unsure_between(group.start, group.end).len();
+                                    let total = group.words.len();
                                     if total == 0 {
                                         0.0
                                     } else {
@@ -4692,123 +4801,173 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // lifted, so the caption carries weight even
                             // when the mood is mild. This is the one place
                             // the profile's per-line `relativeLufs` reaches
-                            // the picture; without it the reading was named
-                            // in the pacing entry and spent by nothing.
+                            // the picture.
                             let lifted = take_read
-                                .and_then(|take_read| take_read.line_at(start))
+                                .and_then(|take_read| take_read.line_at(group.start))
                                 .and_then(|line| line.relative_lu)
                                 .is_some_and(|lu| lu >= 3.0);
-                            // A caption that carries one of the take's own
-                            // stressed words takes the accent even on a
-                            // neutral line: the emphasis signal is the
-                            // delivery's, not the mood's, and the log
-                            // promises the caption stage spends it.
-                            let stressed = !gated
-                                && !emphasis.is_empty()
-                                && shown
-                                    .split_whitespace()
-                                    .map(|word| {
-                                        word.trim_matches(|c: char| !c.is_alphanumeric())
-                                            .to_lowercase()
-                                    })
-                                    .any(|word| emphasis.contains(&word));
+                            let performed = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(group.start)
+                                    .and_then(|line| take_read.performs(line))
+                            });
                             // A fast line is read at a glance, so its
                             // caption is set a touch smaller; a slow line
-                            // can carry a larger one. The measured delivery
-                            // is what decides, and an unmeasured line keeps
-                            // the house size rather than guessing.
-                            let size = match line.map(|line| line.pace.as_str()) {
+                            // can carry a larger one.
+                            let mut size = match line.map(|line| line.pace.as_str()) {
                                 Some("punchy") => 0.036,
                                 Some("slow") => 0.046,
                                 _ => 0.04,
                             };
-                            // The profile's own 6-semitone bar separates a
-                            // line *performed* from one *reported*. A
-                            // performed line has room for a heavier, larger
-                            // setting; a reported one is set plainly even
-                            // where its emotion is intense, because the
-                            // delivery is not carrying the feeling - the
-                            // words are. `None` (never measured) leaves the
-                            // house setting alone rather than guessing.
-                            let performed = take_read.and_then(|take_read| {
-                                take_read
-                                    .line_at(start)
-                                    .and_then(|line| take_read.performs(line))
-                            });
-                            let size = match performed {
-                                Some(true) if !gated => size + 0.003,
-                                _ => size,
-                            };
-                            captions.push(json!({
-                                "start": round3(at),
-                                "end": round3(to),
-                                "text": shown,
-                                "weight": if (intensity >= 0.65 || lifted) && !gated {
-                                    800
-                                } else if performed == Some(true) && !gated {
-                                    700
-                                } else {
-                                    600
-                                },
-                                "accent": (hot || stressed) && !gated,
-                                "size": size,
-                            }));
-                        }
-                    }
-                    if captions.is_empty() {
-                        return None;
-                    }
-                    // Overlaps cannot happen on a clean transcript, but a
-                    // merged one can carry them: the later caption waits
-                    // for the one before it to leave.
-                    let mut kept: Vec<Value> = Vec::new();
-                    let mut until = 0.0;
-                    for caption in captions {
-                        if caption["start"].as_f64().unwrap_or(0.0) < until - 0.05 {
-                            continue;
-                        }
-                        until = caption["end"].as_f64().unwrap_or(0.0);
-                        kept.push(caption);
-                    }
-                    kept.truncate(240);
-                    // The script's own font: the profile's language read
-                    // names the family a non-Latin script needs, and the
-                    // house face is only the fallback when the read did
-                    // not name one. A caption set in Hanken Grotesk over a
-                    // Devanagari or Cyrillic take renders as boxes.
-                    let font = voice
-                        .iter()
-                        .map(|read| read.take_wide.font.as_str())
-                        .find(|font| !font.is_empty())
-                        .map(bundled_font)
-                        .unwrap_or("Hanken Grotesk");
-                    let commands: Vec<Value> = kept
-                        .iter()
-                        .map(|caption| {
-                            let mut style = json!({
-                                "fontFamily": font,
-                                "fontSize": caption["size"],
-                                "fontWeight": caption["weight"],
-                                "content": caption["text"],
-                            });
-                            if caption["accent"] == json!(true) {
-                                style["color"] = json!("#ffd400");
+                            if performed == Some(true) && !gated {
+                                size += 0.003;
                             }
-                            json!({
+                            // The vertical band is narrower and sits higher
+                            // than the horizontal one: the words stay clear
+                            // of the platform UI a reel carries at the
+                            // bottom, and a touch larger because the frame
+                            // they sit in is narrower.
+                            let offset_y = if portrait { 0.22 } else { 0.35 };
+                            if portrait {
+                                size *= 1.12;
+                            }
+                            // The hook is the only part of a short cut a
+                            // viewer is guaranteed to see: its words are a
+                            // notch bigger, whatever the mood.
+                            if at < 3.0 {
+                                size += 0.006;
+                            }
+                            commands.push(json!({
                                 "op": "addTextClip",
                                 "trackId": null,
                                 "above": true,
-                                "start": caption["start"],
-                                "duration": round3(
-                                    caption["end"].as_f64().unwrap_or(0.0)
-                                        - caption["start"].as_f64().unwrap_or(0.0)
-                                ),
-                                "style": style,
-                                "offsetY": 0.35,
-                            })
+                                "start": round3(at),
+                                "duration": round3(to - at),
+                                "style": {
+                                    "fontFamily": font,
+                                    "fontSize": round3(size),
+                                    "fontWeight": if (intensity >= 0.65 || lifted)
+                                        && !gated
+                                    {
+                                        800
+                                    } else if performed == Some(true) && !gated {
+                                        700
+                                    } else {
+                                        600
+                                    },
+                                    "content": group.text,
+                                },
+                                "offsetY": offset_y,
+                            }));
+                            placed_groups.push((at, group));
+                        }
+                        if commands.is_empty() {
+                            phase = 2;
+                            return None;
+                        }
+                        phase = 1;
+                        return Some(ToolCall {
+                            tool: "edit_apply".to_owned(),
+                            arguments: json!({
+                                "path": caption_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        });
+                    }
+                    // The accent pass: the batch's own reply is a view
+                    // carrying the titles just placed, in order. The words
+                    // the delivery actually stressed - or, on a hot line
+                    // with no stressed word, the group's own longest word -
+                    // take the accent colour and a touch of scale, one
+                    // patch per word, through the title's own range
+                    // styling.
+                    let view = latest_view(log)?;
+                    let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|clip| clip["kind"] == json!("text"))
+                        .filter_map(|clip| {
+                            Some((clip["start"].as_f64()?, clip["id"].as_str()?.to_owned()))
                         })
                         .collect();
-                    issued = true;
+                    titles.sort_by(|left, right| left.0.total_cmp(&right.0));
+                    let emphasis = stressed_words(log, &caption_source);
+                    let read = emotion_lines(log, &caption_emotion);
+                    let voice = voice_reads(log, &caption_source);
+                    let mut commands: Vec<Value> = Vec::new();
+                    for (at, group) in &placed_groups {
+                        let Some((_, clip_id)) =
+                            titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
+                        else {
+                            continue;
+                        };
+                        let line = emotion_at(&read, &group.take, group.start);
+                        let take_read = voice_read_of(&voice, &group.take);
+                        let unsure_share = take_read
+                            .map(|take_read| {
+                                let flagged =
+                                    take_read.unsure_between(group.start, group.end).len();
+                                let total = group.words.len();
+                                if total == 0 {
+                                    0.0
+                                } else {
+                                    flagged as f64 / total as f64
+                                }
+                            })
+                            .unwrap_or(0.0);
+                        if unsure_share > 0.5 {
+                            continue;
+                        }
+                        let hot = line.is_some_and(|line| {
+                            matches!(line.temperature.as_str(), "hot" | "split")
+                        });
+                        // The words the profile's own emphasis read named:
+                        // the delivery's, not the mood's.
+                        let mut accents: Vec<&CaptionWord> = group
+                            .words
+                            .iter()
+                            .filter(|word| {
+                                let bare = word
+                                    .text
+                                    .trim_matches(|c: char| !c.is_alphanumeric())
+                                    .to_lowercase();
+                                !bare.is_empty() && emphasis.contains(&bare)
+                            })
+                            .collect();
+                        // A hot line with no stressed word still earns its
+                        // accent: the group's own longest word is the one
+                        // carrying the claim.
+                        if accents.is_empty() && hot {
+                            let longest = group
+                                .words
+                                .iter()
+                                .max_by_key(|word| word.text.chars().count());
+                            if let Some(longest) = longest {
+                                accents.push(longest);
+                            }
+                        }
+                        for word in accents {
+                            let chars = word.text.chars().count();
+                            if chars == 0 || word.at + chars > group.text.chars().count() {
+                                continue;
+                            }
+                            commands.push(json!({
+                                "op": "styleTextRange",
+                                "clipId": clip_id,
+                                "start": word.at,
+                                "end": word.at + chars,
+                                "patch": {
+                                    "color": "#ffd400",
+                                    "fontScale": 1.18,
+                                },
+                            }));
+                        }
+                    }
+                    phase = 2;
+                    if commands.is_empty() {
+                        return None;
+                    }
                     Some(ToolCall {
                         tool: "edit_apply".to_owned(),
                         arguments: json!({
@@ -7364,7 +7523,10 @@ mod tests {
             let transcript = json!({
                 "segments": [{
                     "start": 0.5, "end": 1.5, "text": "hello there",
-                    "words": [{ "start": 0.5, "end": 1.5 }],
+                    "words": [
+                        { "text": "hello", "start": 0.5, "end": 0.9 },
+                        { "text": "there", "start": 0.95, "end": 1.5 },
+                    ],
                 }],
             });
             let mut prosody = json!({});
@@ -8168,7 +8330,10 @@ mod tests {
         let transcript = json!({
             "segments": [{
                 "start": 0.5, "end": 1.5, "text": "hello there",
-                "words": [{ "start": 0.5, "end": 1.5 }],
+                "words": [
+                        { "text": "hello", "start": 0.5, "end": 0.9 },
+                        { "text": "there", "start": 0.95, "end": 1.5 },
+                    ],
             }],
         });
         let mut log = vec![
@@ -8184,6 +8349,135 @@ mod tests {
             None,
             "the captions are issued once"
         );
+    }
+
+    /// The caption groups are cut on the delivery's own seams: the
+    /// sentence's punctuation closes a group, a measured breath gap
+    /// closes it, four words is the cap - and the safe-remove fillers
+    /// never reach the screen at all. The character offsets the accent
+    /// pass patches are the group's own text's, counted in characters.
+    #[test]
+    fn the_caption_groups_are_cut_on_the_delivery_s_own_seams() {
+        let word =
+            |text: &str, start: f64, end: f64| json!({ "text": text, "start": start, "end": end });
+        let segment = json!({
+            "start": 0.0, "end": 10.0, "text": "one two. three um four five six seven",
+            "words": [
+                word("one", 0.0, 0.3), word("two.", 0.35, 0.6),
+                // The breath gap: 1.4 s of silence the recogniser measured.
+                word("three", 2.0, 2.3), word("um", 2.35, 2.5),
+                word("four", 2.55, 2.8), word("five", 2.85, 3.1),
+                word("six", 3.15, 3.4), word("seven", 3.45, 3.7),
+            ],
+        });
+        let groups = caption_groups(&segment, &["um".to_owned()]);
+        let texts: Vec<&str> = groups.iter().map(|group| group.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["one two.", "three four five six", "seven"],
+            "punctuation closes, four words is the cap, the filler is dropped"
+        );
+        // The breath gap closed the first group before `three`.
+        assert_eq!(groups[0].start, 0.0);
+        assert_eq!(groups[0].end, 0.6);
+        assert_eq!(groups[1].start, 2.0);
+        // The character offsets are the group's own: `three` holds 0..5,
+        // `four` 6..10, in the group's text.
+        assert_eq!(groups[1].words[0].text, "three");
+        assert_eq!(groups[1].words[0].at, 0);
+        assert_eq!(groups[1].words[1].text, "four");
+        assert_eq!(groups[1].words[1].at, 6);
+    }
+
+    /// The accent pass styles the words the delivery actually stressed -
+    /// one `styleTextRange` per word, on the title the batch just placed -
+    /// and a hot line with no stressed word accents its own longest
+    /// word instead. A third ask is the stage's end.
+    #[test]
+    fn the_accent_pass_styles_the_stressed_words() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(captions) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "captions")
+            .expect("the program has a captions stage")
+        else {
+            panic!("the captions stage is derived");
+        };
+        let view = json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [{
+                "start": 0.5, "end": 1.5, "text": "hello there",
+                "words": [
+                    { "text": "hello", "start": 0.5, "end": 0.9 },
+                    { "text": "there", "start": 0.95, "end": 1.5 },
+                ],
+            }],
+        });
+        let signals = json!({
+            "audio": { "path": take },
+            "lines": [{
+                "start": 0.5, "end": 1.5,
+                "prosody": { "emphasisWords": [
+                    { "t": 0.6, "strength": 0.8, "wordIndex": 0, "wordText": "hello" },
+                ]},
+            }],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+            signals,
+        ];
+        let first = (captions.next)(log.as_slice()).expect("the groups are placed");
+        assert_eq!(first.tool, "edit_apply");
+        assert_eq!(
+            first.arguments["command"]["commands"][0]["style"]["content"], "hello there",
+            "the group's own words are the caption"
+        );
+        // The batch's reply: a view carrying the title the run placed.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "title-1", "kind": "text", "start": 0.5, "duration": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        }));
+        let accents = (captions.next)(log.as_slice()).expect("the accent pass runs");
+        assert_eq!(accents.tool, "edit_apply");
+        let commands = accents.arguments["command"]["commands"]
+            .as_array()
+            .expect("one undoable accent batch");
+        assert_eq!(commands.len(), 1, "one patch per stressed word");
+        assert_eq!(commands[0]["op"], "styleTextRange");
+        assert_eq!(commands[0]["clipId"], "title-1");
+        assert_eq!(commands[0]["start"], 0, "`hello` begins the group's text");
+        assert_eq!(commands[0]["end"], 5, "`hello` is five characters");
+        assert_eq!(commands[0]["patch"]["color"], "#ffd400");
+        // A third ask is the stage's end, whatever the log grew by.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [] },
+            "media": [],
+        }));
+        assert_eq!((captions.next)(log.as_slice()), None);
     }
 
     /// A line the speaker lifted above the take's own level is set
@@ -8224,7 +8518,10 @@ mod tests {
             let transcript = json!({
                 "segments": [{
                     "start": 0.5, "end": 1.5, "text": "hello there",
-                    "words": [{ "start": 0.5, "end": 1.5 }],
+                    "words": [
+                        { "text": "hello", "start": 0.5, "end": 0.9 },
+                        { "text": "there", "start": 0.95, "end": 1.5 },
+                    ],
                 }],
             });
             let log = vec![

@@ -2617,3 +2617,18 @@ The regression test creates a real temporary sibling layout and verifies
 that a complete handoff is retryable, while a missing mapping or source
 take is not. The test was added in this change; it was not executed in
 this session.
+
+
+## 60. Do not show 100% before the AI export is accepted
+
+The Director's twelfth phase is export, but AUTO EDIT still has an
+independent acceptance pass after Forge exits: revalidate the saved plan,
+probe the export, measure the mix, inspect the exported contact sheet,
+critique it, and verify the narration mapping. The progress bar used to
+jump to 100% as soon as Forge exited, before any of those gates answered.
+
+The AI path now holds at 98% while acceptance is pending and reaches
+100% only when the required gates return an accepted receipt. A rejected
+or incomplete export remains visibly short of completion. A small
+regression test pins both values. It was added but not executed in this
+session.

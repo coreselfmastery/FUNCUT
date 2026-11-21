@@ -22,13 +22,15 @@ use std::time::Duration;
 
 use crate::route::Route;
 
+const DEFAULT_REDIRECTS: u32 = 5;
+
 /// An agent with these timeouts that trusts the shipped roots and the
 /// system's: for the shelf downloads that still speak to their hosts
 /// directly, without a route and without a manifest vouching for them.
 /// What goes through the proxy, or trusts the shipped roots alone, goes
 /// through [`get`] instead.
 pub fn agent(connect: Duration, read: Duration) -> ureq::Agent {
-    routed(None, connect, read, Trust::System)
+    routed(None, connect, read, Trust::System, DEFAULT_REDIRECTS)
 }
 
 /// Which roots a connection trusts.
@@ -171,7 +173,7 @@ pub fn get(
     prepare: &dyn Fn(ureq::Request) -> ureq::Request,
 ) -> Result<ureq::Response, Box<Failure>> {
     let send = |route: Option<&Route>| {
-        prepare(routed(route, connect, read, trust).get(url))
+        prepare(routed(route, connect, read, trust, DEFAULT_REDIRECTS).get(url))
             .call()
             .map_err(|error| {
                 let cause = classify(&error, route.is_some());
@@ -201,7 +203,7 @@ pub fn get(
 
 /// An agent with these timeouts, through `route` when there is one and
 /// trusting what `trust` names.
-fn routed(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust) -> ureq::Agent {
+fn routed(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust, redirects: u32) -> ureq::Agent {
     let tls = match trust {
         Trust::System => tls(),
         Trust::Shipped => shipped_tls(),
@@ -209,7 +211,8 @@ fn routed(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust
     let mut builder = ureq::AgentBuilder::new()
         .timeout_connect(connect)
         .timeout_read(read)
-        .tls_config(Arc::clone(tls));
+        .tls_config(Arc::clone(tls))
+        .redirects(redirects);
     if let Some(route) = route {
         builder = builder.proxy(route.proxy.clone());
     }
@@ -240,6 +243,8 @@ pub struct Shelf {
     /// differently-routed host needs.
     connect: Duration,
     read: Duration,
+    /// How many redirects this shelf follows; stock validates each hop itself.
+    redirects: u32,
 }
 
 impl Shelf {
@@ -247,15 +252,26 @@ impl Shelf {
     /// system's roots beside the shipped ones - the trust of a file whose
     /// digest the shelf's own manifest already vouches for.
     pub fn new(for_url: &str, connect: Duration, read: Duration) -> Shelf {
+        Self::with_redirects(for_url, connect, read, DEFAULT_REDIRECTS)
+    }
+
+    /// A shelf that returns 3xx responses to its caller instead of following them.
+    /// The live-stock downloader validates every redirect target before its next GET.
+    pub fn new_without_redirects(for_url: &str, connect: Duration, read: Duration) -> Shelf {
+        Self::with_redirects(for_url, connect, read, 0)
+    }
+
+    fn with_redirects(for_url: &str, connect: Duration, read: Duration, redirects: u32) -> Shelf {
         let proxied = crate::route::for_url(for_url).map(|route| {
-            let agent = routed(Some(&route), connect, read, Trust::System);
+            let agent = routed(Some(&route), connect, read, Trust::System, redirects);
             (route.shown, agent)
         });
         Shelf {
             proxied,
-            direct: routed(None, connect, read, Trust::System),
+            direct: routed(None, connect, read, Trust::System, redirects),
             connect,
             read,
+            redirects,
         }
     }
 
@@ -288,7 +304,7 @@ impl Shelf {
         let (agent, shown): (&ureq::Agent, Option<&str>) = match (&route, &self.proxied) {
             (Some(route), Some((shown, agent))) if *shown == route.shown => (agent, Some(shown)),
             (Some(route), _) => {
-                own = routed(Some(route), self.connect, self.read, Trust::System);
+                own = routed(Some(route), self.connect, self.read, Trust::System, self.redirects);
                 (&own, Some(route.shown.as_str()))
             }
             (None, _) => (&self.direct, None),
@@ -528,4 +544,66 @@ mod tests {
         let name = rustls::pki_types::ServerName::try_from("github.com").expect("a valid name");
         assert!(rustls::ClientConnection::new(Arc::clone(tls()), name).is_ok());
     }
+    #[test]
+    fn a_shelf_can_return_a_redirect_without_following_it() {
+        use std::io::{Read as _, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a local listener");
+        let address = listener.local_addr().expect("the listener's address");
+        let server = std::thread::spawn(move || {
+            let (mut first, _) = listener.accept().expect("the first request");
+            let mut request = [0_u8; 1024];
+            let _ = first.read(&mut request).expect("read the first request");
+            write!(
+                first,
+                "HTTP/1.1 302 Found\\r\\nLocation: http://{address}/second\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+            )
+            .expect("write the redirect");
+            first.flush().expect("flush the redirect");
+
+            listener.set_nonblocking(true).expect("nonblocking listener");
+            let deadline = std::time::Instant::now() + Duration::from_millis(500);
+            let mut followed = false;
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut second, _)) => {
+                        followed = true;
+                        let _ = second.read(&mut request);
+                        write!(
+                            second,
+                            "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                        )
+                        .expect("write the followed response");
+                        let _ = second.flush();
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept the possible redirect: {error}"),
+                }
+            }
+            followed
+        });
+
+        let shelf = Shelf::new_without_redirects(
+            &format!("http://{address}/"),
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+        );
+        let result = shelf.get(&format!("http://{address}/first"), &|request| request);
+        let status = match result {
+            Ok(response) => response.status(),
+            Err(failure) => match failure.error {
+                ureq::Error::Status(code, _) => code,
+                error => panic!("expected the redirect response, got {error}"),
+            },
+        };
+        assert_eq!(status, 302, "the caller must see the redirect before following it");
+        assert!(
+            !server.join().expect("the local server"),
+            "the shelf must not connect to the redirect target on its own"
+        );
+    }
+
 }

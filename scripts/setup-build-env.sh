@@ -73,9 +73,13 @@ esac
 
 # The version a deps.lock URL carries, so no second copy of it lives
 # here: the row's own filename names the extract. deps.lock is the one
-# source of truth - bump it there and this script follows.
+# source of truth - bump it there and this script follows. A mirror URL
+# that ends in `/download` (SourceForge's redirect suffix) is stripped
+# first: its basename is the word "download", not the archive's name,
+# and a cold checkout would die at the stem check below for want of a
+# version that the URL does carry.
 version_from_url() {
-  basename "$1" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
+  basename "${1%/download}" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
 }
 
 ort_url=$("$fetch" --url "$ort_row")

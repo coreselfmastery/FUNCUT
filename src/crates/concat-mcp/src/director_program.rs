@@ -1932,6 +1932,12 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     let measured_pace = reads
         .iter()
         .any(|read| read.lines.iter().any(|line| !line.pace.is_empty()));
+    // The profile's own 6-semitone bar: a wide pitch range is a line
+    // *performed*, a narrow one a line *reported*. It is measured per
+    // line, so a run where no line was measured must not claim it.
+    let measured_performance = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| line.pitch_range.is_some()));
     let measured_loudness = reads
         .iter()
         .any(|read| read.lines.iter().any(|line| line.relative_lu.is_some()));
@@ -2009,6 +2015,9 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         }
         if measured_sentence {
             signals.push("sentence.type");
+        }
+        if measured_performance {
+            signals.push("prosody.range");
         }
         signal_log.push(json!({
             "at": 0.0,
@@ -4248,12 +4257,31 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 Some("slow") => 0.046,
                                 _ => 0.04,
                             };
+                            // The profile's own 6-semitone bar separates a
+                            // line *performed* from one *reported*. A
+                            // performed line has room for a heavier, larger
+                            // setting; a reported one is set plainly even
+                            // where its emotion is intense, because the
+                            // delivery is not carrying the feeling - the
+                            // words are. `None` (never measured) leaves the
+                            // house setting alone rather than guessing.
+                            let performed = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(start)
+                                    .and_then(|line| take_read.performs(line))
+                            });
+                            let size = match performed {
+                                Some(true) if !gated => size + 0.003,
+                                _ => size,
+                            };
                             captions.push(json!({
                                 "start": round3(at),
                                 "end": round3(to),
                                 "text": shown,
                                 "weight": if (intensity >= 0.65 || lifted) && !gated {
                                     800
+                                } else if performed == Some(true) && !gated {
+                                    700
                                 } else {
                                     600
                                 },
@@ -6636,6 +6664,95 @@ mod tests {
         assert!(
             pacing(&unmeasured).is_empty(),
             "a take with no measured rate logs no pacing"
+        );
+    }
+
+    /// The profile measures a line's pitch range and rates it against its
+    /// own 6-semitone bar: wide is a line *performed*, narrow is a line
+    /// *reported*. Nothing spent that reading, so a whispered confession
+    /// and a read-out of a phone number were set identically. The caption
+    /// now takes the difference - and a line whose range was never
+    /// measured keeps the house setting rather than being guessed at.
+    #[test]
+    fn a_performed_line_is_set_heavier_than_a_reported_one() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        // The weight and the size, for a line whose pitch range was read
+        // as `range`. `None` is a take whose prosody was never measured.
+        let set_for = |range: Option<f64>| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(captions) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "captions")
+                .expect("the program has a captions stage")
+            else {
+                panic!("the captions stage is derived");
+            };
+            let view = json!({
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1",
+                            "path": "/edits/Reel/voiceover/take-000-a.wav" }],
+            });
+            let transcript = json!({
+                "segments": [{
+                    "start": 0.5, "end": 1.5, "text": "hello there",
+                    "words": [{ "start": 0.5, "end": 1.5 }],
+                }],
+            });
+            let mut prosody = json!({});
+            if let Some(range) = range {
+                prosody = json!({ "pitchRangeSemitones": range });
+            }
+            let log = vec![
+                view,
+                json!({
+                    "path": "/edits/Reel/voiceover/take-000-a.wav",
+                    "output": transcript.to_string(),
+                }),
+                json!({
+                    "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                    "lines": [{ "start": 0.5, "end": 1.5, "prosody": prosody }],
+                }),
+            ];
+            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            let style = &call.arguments["command"]["commands"][0]["style"];
+            (
+                style["fontWeight"].as_f64().expect("a weight"),
+                style["fontSize"].as_f64().expect("a size"),
+            )
+        };
+        let (wide_weight, wide_size) = set_for(Some(9.0));
+        let (narrow_weight, narrow_size) = set_for(Some(2.0));
+        assert!(
+            wide_weight > narrow_weight,
+            "a performed line should be set heavier: {wide_weight} vs {narrow_weight}"
+        );
+        assert!(
+            wide_size > narrow_size,
+            "a performed line should be set larger: {wide_size} vs {narrow_size}"
+        );
+        // Never measured: the house setting, and no claim either way.
+        let (none_weight, none_size) = set_for(None);
+        assert_eq!(
+            none_weight, narrow_weight,
+            "an unmeasured range leaves the weight where it was"
+        );
+        assert_eq!(
+            none_size, narrow_size,
+            "an unmeasured range leaves the size where it was"
         );
     }
 

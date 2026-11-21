@@ -162,11 +162,15 @@ seven sense selftests, the harness self-test exit 0):
    utterance count (absence read as a measured "not punchy"), and the
    entity's own confidence gates its stat/timeline cards.
 
-Found and left for the next pass (verified, not yet fixed): the
-consumer-guard's quoted-literal arm passes same-name strings
-(`LineRead.speaker`, `PhraseSpan.label` ride it); the Sfx stage
-re-walks the emphasis reply raw where a typed read exists; the brief
-reads crest and degradations raw beside the typed fields.
+Closed in follow-up work on this branch:
+- The consumer guard no longer treats quoted JSON keys or method-name
+  prefixes as typed field reads; the phrase label is explicitly
+  documented as descriptive-only until a decision uses it.
+- The SFX stage builds emphasis peaks from typed VoiceRead rows, with a
+  focused regression test.
+- The brief carries crest and degradations through the typed VoiceRead
+  model, with regression coverage for both.
+The updated head needs fresh CI before merge.
 
 ## Next actions
 

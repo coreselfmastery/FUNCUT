@@ -123,8 +123,14 @@ forge run "Using the funcut-director skill, make a 30-second faceless video abou
 
 Or do it from the editor: the **Forge** page (page 12, beside Stickers) — paste the script, pick a
 niche preset, voice and music mood, press **Start Forge**. Every line the agent
-prints streams into the pane; the edits land on the open project's timeline,
-undoable, while you watch. `funcut-director` finds tools through Forge's
+prints streams into the pane. A run whose narration comes from the timeline's
+own voiceover edits a sibling of it, and **the window follows that edit live**:
+the timeline becomes the run's project while the Director works - every landed
+edit visible as it happens, B-roll arriving, captions appearing, motion cards
+placed - read-only while the run owns the document, and when the run ends well
+the finished edit opens on the timeline for real, with a claim, an undo
+history and a place in the recents. A run that fails or is cancelled hands the
+window back the project it held, saved. `funcut-director` finds tools through Forge's
 deferred discovery (`mcp_search_tools` then `mcp_call funcut__clip_trim`,
 `funcut__openvid_search`, …) and follows the plan-first pipeline:
 
@@ -148,13 +154,16 @@ then hands that sibling to the Director:
 ```
 AUTO EDIT
   -> sibling project (narration reconstructed, mapping written)
+  -> the window follows the sibling LIVE: the timeline shows the edit
+       as the Director makes it, read-only, proxies built as media lands
   -> the Director (`forge run`, same skill, same keys, same MCP tools)
        understands the footage and the voice
        plans, validates the plan (plan_validate: valid + creativeReady)
        cuts, gathers B-roll, builds motion, captions, grades, scores music
        watch_render -> craft_critique -> revises -> watch_render again
        exports, then verifies the exported file
-  -> the finished edit opens on the timeline
+  -> the finished edit opens on the timeline (the server lets the
+       project go and the window claims it, undoable from the first edit)
 ```
 
 The Director receives the sibling the button built, with the narration
@@ -193,7 +202,8 @@ open the sibling -> repair the take (enhance + clean, landing on the
 ```
 
 The fallback's own progress is the runner's: the stage, the clock, the
-fraction of the program's stages. A green toast and the finished edit
+fraction of the program's stages - and the timeline follows the edit live
+on this path too. A green toast and the finished edit
 opens on the timeline; a **yellow** toast means it shipped with warnings
 written down - `auto-edit-report.json`, beside the edit, carries each
 one; a red toast names the failure and the button answers with **Retry**

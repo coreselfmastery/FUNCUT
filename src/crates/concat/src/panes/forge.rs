@@ -2134,6 +2134,7 @@ fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<Atom
             command.env(name, value.trim());
         }
     }
+    configure_forge_process_group(&mut command);
     let spawned = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

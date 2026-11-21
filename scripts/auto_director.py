@@ -2856,7 +2856,6 @@ def run_pipeline(
                     "slotId": slot_id,
                     "clipId": str(clip.get("id", clip.get("name", slot_id))),
                     "dominantDirection": _direction(clip.get("camera")),
-                    "shotScale": visual.get("shotScale", "medium"),
                     "category": str(visual.get("category") or clip.get("category") or clip.get("source") or "unknown"),
                     "motionMin": float(visual.get("motionMin") or 0.0),
                 }
@@ -2867,6 +2866,14 @@ def run_pipeline(
                     value = clip.get(key)
                     if isinstance(value, (int, float)) and not isinstance(value, bool):
                         entry[key] = float(value)
+                # The scale follows the same rule. It used to be written as
+                # "medium" whenever the segment named none, which is every
+                # slot of a plan that never sizes its shots - so the gate
+                # read a row of mediums and flagged every adjacent pair as
+                # two of one scale in a row.
+                scale = visual.get("shotScale")
+                if isinstance(scale, str) and scale:
+                    entry["shotScale"] = scale
                 result.append(entry)
             return result
 
@@ -6235,6 +6242,7 @@ def self_test() -> int:
     # replacement, then pass the second continuity read before importing.
     repair_rank_calls: list[dict[str, Any]] = []
     continuity_calls = [0]
+    continuity_manifests: list[list[dict[str, Any]]] = []
 
     def repair_rank(args: dict[str, Any]) -> dict[str, Any]:
         repair_rank_calls.append(args)
@@ -6251,6 +6259,7 @@ def self_test() -> int:
 
     def repair_continuity(args: dict[str, Any]) -> dict[str, Any]:
         continuity_calls[0] += 1
+        continuity_manifests.append(args.get("clips") or [])
         if continuity_calls[0] == 1:
             return {
                 "count": 1,
@@ -6290,6 +6299,18 @@ def self_test() -> int:
         print(f"FAIL: continuity was not rechecked after replacement: {continuity_calls}")
         return 1
     print("continuity ok: rejected footage excluded, replacement placed, second gate clean")
+
+    # The manifest carries what the plan measured and nothing else. A scale
+    # the segment never named used to be written as "medium" for every slot,
+    # which the gate read as two of one scale in a row on every adjacent
+    # pair - flags earned by a reading nobody took.
+    fabricated = [
+        clip for clip in continuity_manifests[0] if "shotScale" in clip
+    ]
+    if fabricated:
+        print(f"FAIL: an unmeasured shot scale was written into the manifest: {fabricated}")
+        return 1
+    print("continuity manifest ok: a scale the plan never named is omitted")
 
     # An unknown remedy is replaced away from, not crashed on.
     remedy_replies = selftest_world()

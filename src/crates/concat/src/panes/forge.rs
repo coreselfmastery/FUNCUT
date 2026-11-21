@@ -2445,7 +2445,12 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::director_phase;
     use super::director_skill_listed;
+    use super::other_run_refusal;
+    use super::voiceover_copy_name;
+    use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn only_the_director_skill_satisfies_forge_preflight() {
@@ -2456,13 +2461,6 @@ mod tests {
         assert!(!director_skill_listed(0, "maestro\nclip-skills"));
         assert!(!director_skill_listed(1, "funcut-director"));
     }
-
-
-    use super::director_phase;
-    use super::other_run_refusal;
-    use super::voiceover_copy_name;
-    use std::path::Path;
-    use std::time::Duration;
 
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about

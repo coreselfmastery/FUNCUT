@@ -153,8 +153,14 @@ impl ForensicOut {
 }
 
 /// The shortest slice the voice analyzer accepts without producing
-/// noise: two FFT frames of the default 2048-point config.
-const MIN_VOICE_SLICE: f64 = 0.25;
+/// noise: PitchTracker refuses a slice under two max-lags (2 x 2048
+/// samples) and frames at 4096 points, so the floor is 4200 samples in
+/// the take's own rate - 0.26 s at 16 kHz, less than a tenth of that at
+/// 48 kHz. A fixed seconds floor handed 8 and 16 kHz takes slices the
+/// tracker refuses outright.
+fn min_voice_slice(rate: f32) -> f64 {
+    4200.0 / f64::from(rate.max(1.0))
+}
 
 /// Read the forensics of a take.
 pub fn analyse(
@@ -163,12 +169,13 @@ pub fn analyse(
     max_line_secs: f64,
 ) -> Result<ForensicOut, Error> {
     let rate = take.sample_rate as f32;
+    let min_slice = min_voice_slice(rate);
     let mut by_index = std::collections::HashMap::new();
     for (index, line) in timed {
         let start = line.start.unwrap_or(0.0);
         let end = line.end.unwrap_or(0.0);
         let span = end - start;
-        if span < MIN_VOICE_SLICE || span > max_line_secs {
+        if span < min_slice || span > max_line_secs {
             continue;
         }
         by_index.insert(*index, line_forensic(take.slice(start, end), rate));
@@ -683,7 +690,20 @@ fn reverb_tail_sec(samples: &[f32], rate: f32, onsets: &[f32]) -> Option<f32> {
 
 /// The analysis configuration every analyzer here shares.
 fn default_config() -> oximedia_audio_analysis::AnalysisConfig {
-    oximedia_audio_analysis::AnalysisConfig::default()
+    // A window the YIN tracker can actually search. PitchTracker::new
+    // fixes max_lag at 2048 samples and frames the take at
+    // `fft_size.min(4096)`, so the default 2048-point config hands the
+    // estimator a frame exactly max_lag long: its difference loop
+    // `for j in 0..(len - max_lag)` is an empty range, the CMND stays
+    // 1.0, every frame reads unvoiced, and the voice characteristics
+    // (f0, jitter, shimmer, HNR) were null on every take the ear ever
+    // read - the whole-take meanF0Hz and voicingRate were always 0.0,
+    // and every decision downstream of them never fired. 4096 points
+    // give the loop half a window of overlap; the lag range still
+    // covers 7.8 Hz (16 kHz) to 23 Hz (48 kHz), far under any voice.
+    let mut config = oximedia_audio_analysis::AnalysisConfig::default();
+    config.fft_size = 4096;
+    config
 }
 
 /// Round to three decimals.
@@ -739,6 +759,33 @@ mod tests {
         assert!(
             reading.formants_hz.as_ref().is_some_and(|f| !f.is_empty()),
             "formants {reading:?}"
+        );
+    }
+
+    #[test]
+    fn a_voice_like_slice_actually_reads_its_voice() {
+        // The ear's dead window: with the default 2048-point config the
+        // YIN tracker's difference loop was an empty range, every frame
+        // read unvoiced, and f0/hnr/jitter/shimmer were null on every
+        // take the ear ever read - while absences were honest nulls no
+        // test failed. This is the pin: a periodic, voice-like slice
+        // MUST answer its f0 (and the quality trio a voiced frame
+        // carries), or the ear has died silently again.
+        let take = take_with(140.0, 1.5, 16000);
+        let reading = line_forensic(&take.samples[..24000.min(take.samples.len())], 16000.0);
+        assert!(
+            reading.f0_hz.is_some_and(|f0| (f0 - 140.0).abs() < 3.0),
+            "f0 {reading:?}"
+        );
+        assert!(reading.hnr_db.is_some(), "hnr {reading:?}");
+        assert!(reading.jitter.is_some(), "jitter {reading:?}");
+        assert!(reading.shimmer.is_some(), "shimmer {reading:?}");
+        let whole = whole_forensic(&take).expect("a whole tone analyses");
+        assert!(
+            whole.mean_f0_hz > 100.0 && whole.voicing_rate > 0.5,
+            "mean f0 {} voicing {}",
+            whole.mean_f0_hz,
+            whole.voicing_rate
         );
     }
 

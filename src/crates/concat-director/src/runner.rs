@@ -783,6 +783,16 @@ impl Runner {
             warnings.clone(),
         )
         .with_assets(provenance_of(&observed));
+        // A completed render is not an accepted edit. Keep the exported
+        // sibling for inspection, but force the warning terminal state
+        // whenever any required quality gate is rejected or unmeasured.
+        if receipt.verdict.label() != "accepted" {
+            warnings.push(format!(
+                "quality acceptance {}: {}",
+                receipt.verdict.label(),
+                receipt.summary()
+            ));
+        }
         if warnings.is_empty() {
             self.emit(
                 AutoEditState::Completed {

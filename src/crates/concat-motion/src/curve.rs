@@ -208,6 +208,127 @@ impl Curve {
         }
     }
 
+    /// GSAP's `expo.out` - all of the distance almost immediately, then
+    /// the last fraction of it as a long glide. The curve a hook lands
+    /// with: no wind-up, all arrival. Shares its numbers with the settle
+    /// curve a critically damped spring reads as, because they are the
+    /// same opinion said twice.
+    pub const EXPO_OUT: Curve = Curve::Bezier {
+        x1: 0.16,
+        y1: 1.0,
+        x2: 0.3,
+        y2: 1.0,
+    };
+    /// GSAP's `expo.in` - the mirror of [`Curve::EXPO_OUT`]: a held breath,
+    /// then everything at once. The leave that gathers and is gone.
+    pub const EXPO_IN: Curve = Curve::Bezier {
+        x1: 0.7,
+        y1: 0.0,
+        x2: 0.84,
+        y2: 0.0,
+    };
+    /// GSAP's `expo.inOut` - both of the above, half a span each.
+    pub const EXPO_IN_OUT: Curve = Curve::Bezier {
+        x1: 0.87,
+        y1: 0.0,
+        x2: 0.13,
+        y2: 1.0,
+    };
+    /// GSAP's `back.out` - overshoots past the mark and returns to it.
+    /// The spring's overshoot as a bezier, for when the caller wants the
+    /// landing exactly, cheaply, and in CSS.
+    pub const BACK_OUT: Curve = Curve::Bezier {
+        x1: 0.34,
+        y1: 1.56,
+        x2: 0.64,
+        y2: 1.0,
+    };
+    /// GSAP's `back.in` - dips under its start before it leaves. The same
+    /// wind-up [`Curve::ANTICIPATE`] draws, under the name the GSAP
+    /// adapter's imports already carry.
+    pub const BACK_IN: Curve = Curve::Bezier {
+        x1: 0.36,
+        y1: 0.0,
+        x2: 0.66,
+        y2: -0.56,
+    };
+    /// GSAP's `back.inOut` - the dip and the overshoot, one per side.
+    pub const BACK_IN_OUT: Curve = Curve::Bezier {
+        x1: 0.68,
+        y1: -0.6,
+        x2: 0.32,
+        y2: 1.6,
+    };
+    /// GSAP's `sine.in` - the quarter of a sine's rise, the gentlest way
+    /// in that is still accelerating.
+    pub const SINE_IN: Curve = Curve::Bezier {
+        x1: 0.47,
+        y1: 0.0,
+        x2: 0.745,
+        y2: 0.715,
+    };
+    /// GSAP's `sine.out` - the mirror: the gentlest arrival.
+    pub const SINE_OUT: Curve = Curve::Bezier {
+        x1: 0.39,
+        y1: 0.575,
+        x2: 0.565,
+        y2: 1.0,
+    };
+    /// GSAP's `sine.inOut` - both quarters, the breathing curve.
+    pub const SINE_IN_OUT: Curve = Curve::Bezier {
+        x1: 0.445,
+        y1: 0.05,
+        x2: 0.55,
+        y2: 0.95,
+    };
+    /// GSAP's `circ.in` - a circle's quarter as a ramp: slow, then
+    /// impossibly steep. Reads as a mechanical pull.
+    pub const CIRC_IN: Curve = Curve::Bezier {
+        x1: 0.6,
+        y1: 0.04,
+        x2: 0.98,
+        y2: 0.335,
+    };
+    /// GSAP's `circ.out` - the mirror: impossibly steep at first, then
+    /// flattening into the mark.
+    pub const CIRC_OUT: Curve = Curve::Bezier {
+        x1: 0.075,
+        y1: 0.82,
+        x2: 0.165,
+        y2: 1.0,
+    };
+    /// GSAP's `circ.inOut` - both quarters.
+    pub const CIRC_IN_OUT: Curve = Curve::Bezier {
+        x1: 0.785,
+        y1: 0.135,
+        x2: 0.15,
+        y2: 0.86,
+    };
+    /// GSAP's `power2.out` - the cubic ease-out, the middle weight of the
+    /// family the adapter already parses. The workhorse card entrance.
+    pub const POWER2_OUT: Curve = Curve::Bezier {
+        x1: 0.215,
+        y1: 0.61,
+        x2: 0.355,
+        y2: 1.0,
+    };
+    /// GSAP's `power3.out` - the quart ease-out, harder out of the gate
+    /// and a longer settle than `power2`.
+    pub const POWER3_OUT: Curve = Curve::Bezier {
+        x1: 0.165,
+        y1: 0.84,
+        x2: 0.44,
+        y2: 1.0,
+    };
+    /// GSAP's `power4.out` - the quint ease-out, the hardest arrival the
+    /// family has short of `expo`.
+    pub const POWER4_OUT: Curve = Curve::Bezier {
+        x1: 0.23,
+        y1: 1.0,
+        x2: 0.32,
+        y2: 1.0,
+    };
+
     /// The curve a document names - the easing library, exposed as a
     /// vocabulary instead of five structs' worth of construction.
     ///
@@ -230,6 +351,22 @@ impl Curve {
             "anticipate" => Some(Curve::ANTICIPATE),
             "spring" => Some(Curve::SPRING),
             "spring-pop" => Some(Curve::SPRING_POP),
+            "elastic-out" => Some(Curve::SPRING_POP),
+            "expo-in" => Some(Curve::EXPO_IN),
+            "expo-out" => Some(Curve::EXPO_OUT),
+            "expo-in-out" => Some(Curve::EXPO_IN_OUT),
+            "back-in" => Some(Curve::BACK_IN),
+            "back-out" => Some(Curve::BACK_OUT),
+            "back-in-out" => Some(Curve::BACK_IN_OUT),
+            "sine-in" => Some(Curve::SINE_IN),
+            "sine-out" => Some(Curve::SINE_OUT),
+            "sine-in-out" => Some(Curve::SINE_IN_OUT),
+            "circ-in" => Some(Curve::CIRC_IN),
+            "circ-out" => Some(Curve::CIRC_OUT),
+            "circ-in-out" => Some(Curve::CIRC_IN_OUT),
+            "power2-out" => Some(Curve::POWER2_OUT),
+            "power3-out" => Some(Curve::POWER3_OUT),
+            "power4-out" => Some(Curve::POWER4_OUT),
             "typewriter" => Some(Curve::TYPEWRITER),
             "bounce" => Some(Curve::bounce()),
             _ => None,
@@ -237,8 +374,9 @@ impl Curve {
     }
 
     /// The names the easing library answers to, in the order a gallery
-    /// would show them.
-    pub const NAMES: [&str; 14] = [
+    /// would show them: the CSS five, the house curves, the GSAP
+    /// families the adapter already parsed, then the mechanical two.
+    pub const NAMES: [&str; 30] = [
         "linear",
         "ease",
         "ease-in",
@@ -251,6 +389,22 @@ impl Curve {
         "anticipate",
         "spring",
         "spring-pop",
+        "elastic-out",
+        "back-in",
+        "back-out",
+        "back-in-out",
+        "expo-in",
+        "expo-out",
+        "expo-in-out",
+        "sine-in",
+        "sine-out",
+        "sine-in-out",
+        "circ-in",
+        "circ-out",
+        "circ-in-out",
+        "power2-out",
+        "power3-out",
+        "power4-out",
         "typewriter",
         "bounce",
     ];
@@ -576,6 +730,51 @@ mod tests {
         assert_eq!(Curve::named("anticipate"), Some(Curve::ANTICIPATE));
         // Case and padding are the document's, not the library's.
         assert_eq!(Curve::named("  Ease-Out "), Some(Curve::EASE_OUT));
+        // The GSAP families the adapter parsed now answer by name, so a
+        // storyboard or an op carries `expo-out` instead of the bezier it
+        // had to spell out before - and `elastic.out`'s translation is
+        // the pop spring, the same one the adapter picks.
+        assert_eq!(Curve::named("expo-out"), Some(Curve::EXPO_OUT));
+        assert_eq!(Curve::named("back-out"), Some(Curve::BACK_OUT));
+        assert_eq!(Curve::named("elastic-out"), Some(Curve::SPRING_POP));
+        assert_eq!(Curve::named("power4-out"), Some(Curve::POWER4_OUT));
+    }
+
+    /// The new families behave as their names say: `back-out` overshoots
+    /// past 1, `expo-out` arrives faster than `ease-out`, and the sines
+    /// stay inside the unit square the way a designer expects.
+    #[test]
+    fn the_gsap_families_read_as_their_names() {
+        assert!(
+            Curve::BACK_OUT.apply(0.7) > 1.0,
+            "back-out overshoots on the way in: {}",
+            Curve::BACK_OUT.apply(0.7)
+        );
+        assert!(
+            Curve::BACK_IN.apply(0.2) < 0.0,
+            "back-in dips under its start: {}",
+            Curve::BACK_IN.apply(0.2)
+        );
+        assert!(Curve::EXPO_OUT.apply(0.1) > Curve::EASE_OUT.apply(0.1));
+        // Half the distance inside the first tenth, three quarters inside
+        // the first fifth, and everything but the glide by halfway - the
+        // numbers GSAP's own `expo.out` reads (0.5, 0.75, 0.969), which
+        // the bezier carries to within a rounding.
+        assert!(Curve::EXPO_OUT.apply(0.1) > 0.45);
+        assert!(Curve::EXPO_OUT.apply(0.2) > 0.7);
+        assert!(Curve::EXPO_OUT.apply(0.5) > 0.95);
+        for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            for curve in [Curve::SINE_IN_OUT, Curve::CIRC_IN_OUT] {
+                let eased = curve.apply(t);
+                assert!(
+                    (-0.001..=1.001).contains(&eased),
+                    "{curve:?} stays a plain ramp: {eased} at {t}"
+                );
+            }
+        }
+        // A named curve is the same bytes as its constant, so a document
+        // that names it and a preset that constructs it cache together.
+        assert_eq!(Curve::named("sine-out"), Some(Curve::SINE_OUT));
     }
 
     /// The drift is gentle at both ends and honest in the middle - the

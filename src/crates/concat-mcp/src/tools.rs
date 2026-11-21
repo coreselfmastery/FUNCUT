@@ -1058,7 +1058,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_import",
             title: "Motion made elsewhere, read here",
-            description: "Import Lottie JSON or apply a GSAP timeline; report skipped or approximated content.",
+            description: "Import Lottie JSON, apply a GSAP timeline, or read an SVG/Rive/SRT document; report skipped or approximated content.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1194,6 +1194,10 @@ impl Tool {
             "sense_prosody_style",
             "sense_audio_repair",
             "sense_captions",
+            // The subject tracker's own Python budget is 240 s: a long
+            // span on a slow machine is not a stuck call, and the 60 s
+            // default cancelled it mid-track.
+            "track_subject",
             // The library work whose cost is the network's: a semantic
             // stock search runs a 240 s rerank budget inside it, and an
             // import fetches and copies up to twenty items - a slow link
@@ -1937,6 +1941,18 @@ fn motion_schema(name: &str) -> Option<Value> {
             "items": { "type": "object" }
         }),
     );
+    // The template variables a comp's placeholders resolve from: five
+    // tool implementations accept `vars` and resolve_comp needs it, but
+    // no schema carried it - every call naming it was refused at the door
+    // by additionalProperties: false.
+    shared.insert(
+        "vars".to_owned(),
+        json!({
+            "type": "object",
+            "description": "Template variables the comp's placeholders resolve from, \
+             e.g. {\"count\": 42, \"label\": \"renders this week\"}."
+        }),
+    );
     let with = |mut properties: Map<String, Value>, extra: &[(&str, Value)]| {
         for (key, value) in extra {
             properties.insert((*key).to_owned(), value.clone());
@@ -1967,8 +1983,8 @@ fn motion_schema(name: &str) -> Option<Value> {
                 "action".to_owned(),
                 json!({
                     "type": "string",
-                    "enum": ["lottie", "gsap"],
-                    "description": "lottie: import bodymovin JSON. gsap: apply a GSAP-style timeline."
+                    "enum": ["lottie", "gsap", "svg", "rive", "srt"],
+                    "description": "lottie: import bodymovin JSON. gsap: apply a GSAP-style timeline. svg: import a vector scene. rive: report what a Rive file carries. srt: time a subtitle track."
                 }),
             );
             if let Some(project) = shared.get("project") {
@@ -1978,7 +1994,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                 "file".to_owned(),
                 json!({
                     "type": "string",
-                    "description": "Readable Lottie JSON path (action lottie)."
+                    "description": "Readable JSON path for the action's document (lottie bodymovin, svg scene, rive state machine, srt subtitles)."
                 }),
             );
             properties.insert(
@@ -1988,7 +2004,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                     "description": "GSAP timeline (action gsap): x/y/scale/rotation/opacity/blur tweens, easing, delay, stagger, repeat, yoyo."
                 }),
             );
-            for key in ["preset", "comp"] {
+            for key in ["preset", "comp", "vars"] {
                 if let Some(value) = shared.get(key) {
                     properties.insert(key.to_owned(), value.clone());
                 }

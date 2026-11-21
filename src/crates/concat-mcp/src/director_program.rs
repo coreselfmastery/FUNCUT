@@ -79,7 +79,7 @@ fn latest_view(log: &[Value]) -> Option<&Value> {
 }
 
 /// The bin's media rows, id to path, from a timeline view.
-fn media_paths(view: &Value) -> Vec<(String, String)> {
+pub(crate) fn media_paths(view: &Value) -> Vec<(String, String)> {
     view["media"]
         .as_array()
         .map(|media| {
@@ -98,7 +98,7 @@ fn media_paths(view: &Value) -> Vec<(String, String)> {
 
 /// A clip's file span and rate: where it begins in its file, where it
 /// ends, and how fast it plays what it shows.
-fn clip_file_span(clip: &Value) -> (f64, f64, f64) {
+pub(crate) fn clip_file_span(clip: &Value) -> (f64, f64, f64) {
     let source_start = clip["sourceStart"].as_f64().unwrap_or(0.0);
     let duration = clip["duration"].as_f64().unwrap_or(0.0);
     let speed = clip["speed"].as_f64().unwrap_or(1.0).max(1e-6);

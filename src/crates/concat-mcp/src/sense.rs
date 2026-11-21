@@ -695,15 +695,19 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
     let samples = (number(&fields, "samples", 12.0).round() as usize).clamp(2, 24);
     let cols = (number(&fields, "cols", 4.0).round() as usize).clamp(1, 6);
     let tile_width = (number(&fields, "tileWidth", 320.0).round() as u32).clamp(64, 480);
-    let tile_height = (number(&fields, "tileHeight", 180.0).round() as u32).clamp(48, 360);
     let project = fields.get("project").and_then(Value::as_str);
     let mut spec = json!({
         "samples": samples,
         "cols": cols,
         "tileWidth": tile_width,
-        "tileHeight": tile_height,
         "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
     });
+    // The tile's height is the source's own shape unless the caller named
+    // one: a forced 16:9 tile letterboxes a vertical cut in black, and the
+    // sheet's own metrics then read the padding as baked-in bars.
+    if let Some(height) = fields.get("tileHeight").and_then(Value::as_f64) {
+        spec["tileHeight"] = json!((height.round() as u32).clamp(48, 360));
+    }
     for key in ["targetLufs", "targetTruePeakDbtp"] {
         if let Some(value) = fields.get(key) {
             spec[key] = value.clone();
@@ -1005,6 +1009,39 @@ pub fn stock_contact_sheet(
         "tileWidth": (number(&fields, "tileWidth", 320.0).round() as u32).clamp(64, 480),
         "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
     });
+    // The tile is the edit's own aspect, not a forced 16:9: a vertical
+    // edit shops a vertical tile, so a vertical candidate is shown clean
+    // and the sheet's bar metrics read the clip's content instead of the
+    // padding a fixed tile would add. A candidate of the wrong aspect
+    // still shows its bars - which is honest: that is how it would sit in
+    // the cut unless reframed.
+    {
+        let aspect = fields
+            .get("aspect")
+            .and_then(Value::as_str)
+            .unwrap_or("9:16");
+        let (w, h) = match aspect {
+            "9:16" => (9u32, 16u32),
+            "1:1" => (1, 1),
+            "4:5" => (4, 5),
+            _ => (16, 9),
+        };
+        let width = (number(&fields, "tileWidth", 320.0).round() as u32).clamp(64, 480);
+        let (tile_width, tile_height) = if w >= h {
+            (
+                width,
+                ((width as f64) * (h as f64) / (w as f64)).round() as u32,
+            )
+        } else {
+            let long = width.min(360);
+            (
+                ((long as f64) * (w as f64) / (h as f64)).round() as u32,
+                long,
+            )
+        };
+        spec["tileWidth"] = json!(tile_width);
+        spec["tileHeight"] = json!(tile_height.clamp(48, 360));
+    }
     if let Some(out) = fields.get("out").and_then(Value::as_str) {
         spec["out"] = json!(
             write_target(
@@ -2188,7 +2225,11 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         name,
         "sense_discourse" | "sense_voice_quality" | "sense_prosody_style"
     );
-    let takes_audio = name != "sense_discourse";
+    // detect_sarcasm is an acoustic read: its door needs the audio file
+    // even though the rest of the discourse family works from text, and
+    // the family schema refusing the field would refuse the member's own
+    // contract.
+    let takes_audio = name != "sense_discourse" || members.contains(&"detect_sarcasm");
     if takes_audio {
         props.insert(
             "audio".to_owned(),
@@ -2403,6 +2444,43 @@ pub fn sense_family(name: &str, arguments: Value) -> Result<Outcome, ApiError> {
         .as_object()
         .cloned()
         .ok_or_else(|| invalid("the arguments are an object"))?;
+    // The writers' `out` is confined the way every other sense write is:
+    // a repair writes beside the take it reads - the auto edit's own chain
+    // lands its enhancement on the take the timeline plays, both files in
+    // the project's voiceover folder - and never on the input itself (a
+    // repair that overwrites its own source re-encodes the take on every
+    // retry and destroys what it went to read) and never on an absolute
+    // path outside the take's own folder. Before this the write went
+    // wherever an agent - or a prompt-injected agent - pointed it.
+    if row.fields.contains(&"out")
+        && let Some(out) = fields.get("out").and_then(Value::as_str).map(str::to_owned)
+        && Path::new(&out).is_absolute()
+    {
+        let audio = fields
+            .get("audio")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(audio) = &audio
+            && Path::new(&out) == Path::new(audio)
+        {
+            return Err(invalid(
+                "`out` cannot be the input itself: name the enhanced copy, or the repair \
+                 destroys the take it reads",
+            ));
+        }
+        let beside = audio.as_deref().and_then(|audio| Path::new(audio).parent());
+        let confined = beside.is_some_and(|folder| {
+            Path::new(&out)
+                .parent()
+                .is_some_and(|parent| parent == folder)
+        });
+        if !confined {
+            return Err(invalid(
+                "`out` writes beside the take it reads: an absolute path outside the \
+                 audio's own folder is refused",
+            ));
+        }
+    }
     let mut spec = json!({ "tool": name });
     if let Some(action) = fields.get("action") {
         spec["action"] = action.clone();

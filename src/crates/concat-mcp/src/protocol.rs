@@ -280,12 +280,14 @@ pub const DIRECTOR_REQUIRED: &[&str] = &[
     "project_open",
     "timeline_read",
     "transcribe",
+    "analysis_wait",
     "voice_signals",
     "emotion",
     "creative_brief",
     "plan_validate",
     "edit_apply",
     "stock_search",
+    "stock_fetch",
     "stock_contact_sheet",
     "stock_import",
     "captions_add",
@@ -295,8 +297,11 @@ pub const DIRECTOR_REQUIRED: &[&str] = &[
     "motion_probe",
     "watch_render",
     "craft_critique",
+    "local_vlm",
+    "tts_generate",
     "export_start",
     "export_wait",
+    "export_status",
 ];
 
 /// The names in `required` that the surface this process would serve does

@@ -139,6 +139,43 @@ fn expected_takes(project: &str) -> Result<Vec<Value>, String> {
     Ok(rows)
 }
 
+/// The expected narration coordinates the EDIT ITSELF ended with: the
+/// timeline's voiceover clips, each mapped as the take it plays. A
+/// Director that tightened the narration - the skill's own Phase 2, the
+/// ripple the auto prompt permits - moves every later word, and the
+/// mapping the pane wrote before the run would then fail a compliant
+/// edit. The mapping remains the fallback when no timeline answers: the
+/// placements the run began with, as they always were.
+fn timeline_takes(view: &Value, takes: &[String]) -> Vec<Value> {
+    let media = crate::director_program::media_paths(view);
+    view["timeline"]["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|clip| {
+            clip["media"].as_str().is_some_and(|id| {
+                media
+                    .iter()
+                    .any(|(mid, path)| mid == id && takes.iter().any(|take| take == path))
+            })
+        })
+        .map(|clip| {
+            let (source_in, source_out, speed) = crate::director_program::clip_file_span(clip);
+            json!({
+                "path": media
+                    .iter()
+                    .find(|(mid, _)| Some(mid.as_str()) == clip["media"].as_str())
+                    .map(|(_, path)| path.clone())
+                    .unwrap_or_default(),
+                "start": clip["start"].as_f64().unwrap_or(0.0),
+                "sourceIn": source_in,
+                "sourceOut": source_out,
+                "speed": speed,
+            })
+        })
+        .collect()
+}
+
 /// Runs the check: every call, the replies it drew, and the receipt those
 /// replies earn. Nothing here can pass on a promise - a gate reads only an
 /// answer this function itself received.
@@ -210,16 +247,34 @@ pub fn check(
         }
     }
 
-    // Verify the rendered narration against source takes and their exact
-    // timeline placement from voiceover-mapping.json. An absent mapping
-    // leaves the required words gate skipped, never falsely passed.
+    // Verify the rendered narration against the take pieces the EDIT
+    // ITSELF ended with - read live from the timeline, the same
+    // derivation the fixed spine verifies with - and against the mapping
+    // the pane wrote when no timeline answers. An absent mapping leaves
+    // the required words gate skipped, never falsely passed.
     let mut warnings = Vec::new();
     match expected_takes(check.project) {
-        Ok(takes) => {
+        Ok(mapping_rows) => {
+            let take_paths: Vec<String> = mapping_rows
+                .iter()
+                .filter_map(|row| row.get("path").and_then(Value::as_str).map(str::to_owned))
+                .collect();
+            // The live timeline, when it answers: a Director that rippled
+            // the dead air out moved every later word, and verifying
+            // those words against the pre-run mapping would fail a
+            // compliant edit.
+            let expected = caller
+                .ask("timeline_read", json!({ "path": check.project }))
+                .and_then(|view| {
+                    let rows = timeline_takes(&view, &take_paths);
+                    (!rows.is_empty()).then_some(rows)
+                })
+                .unwrap_or(mapping_rows);
             let arguments = json!({
                 "action": "verify",
-                "expectedTakes": takes,
+                "expectedTakes": expected,
                 "actualPath": check.export,
+                "toleranceMs": 150,
             });
             if let Some(reply) = caller.ask("emotion", arguments.clone()) {
                 answered.push("emotion".to_owned());
@@ -354,6 +409,33 @@ mod tests {
         assert_eq!(rows[0]["sourceOut"], 5.0);
         assert_eq!(rows[0]["speed"], 2.0);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The words gate verifies the edit the Director actually made: the
+    /// live timeline's placements outrank the pre-run mapping, so a
+    /// ripple that moved every later word is verified where the words
+    /// now sit - not failed against where the pane first put them.
+    #[test]
+    fn the_live_timeline_speaks_over_the_pre_run_mapping() {
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 1.5, "duration": 3.0,
+                  "sourceStart": 2.0, "speed": 1.0 },
+                { "id": "t1", "kind": "text", "start": 0.0, "duration": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/voice/take.wav" }],
+        });
+        let rows = timeline_takes(&view, &["/voice/take.wav".to_owned()]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["path"], "/voice/take.wav");
+        assert_eq!(rows[0]["start"], 1.5);
+        assert_eq!(rows[0]["sourceIn"], 2.0);
+        assert_eq!(rows[0]["sourceOut"], 5.0);
+        assert_eq!(rows[0]["speed"], 1.0);
+        // A take the mapping never named is not the narration, and a
+        // timeline with none of them answers nothing - the mapping stays
+        // the expected side then.
+        assert!(timeline_takes(&view, &["/voice/other.wav".to_owned()]).is_empty());
     }
 
     #[test]

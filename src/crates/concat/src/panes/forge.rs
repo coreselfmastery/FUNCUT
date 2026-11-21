@@ -197,6 +197,8 @@ pub struct AutoEditPane {
     /// its tools poll, and the clock the elapsed line reads.
     runner: Option<Runner>,
     tool_cancel: Option<Arc<AtomicBool>>,
+    /// Stops the independent acceptance pass after Forge itself has exited.
+    check_cancel: Option<Arc<AtomicBool>>,
     started: Option<Instant>,
     /// The sibling this run edits: where the report is written, and the
     /// project that opens when the run ships.
@@ -365,6 +367,9 @@ impl ForgePane {
                     // flight gives up at its next look instead of
                     // running out its clock.
                     if let Some(flag) = &self.auto.tool_cancel {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                    if let Some(flag) = &self.auto.check_cancel {
                         flag.store(true, Ordering::Relaxed);
                     }
                     self.set_status(t("forge.autoEditStopping"));
@@ -830,16 +835,20 @@ impl ForgePane {
     /// and its final watch_render are what judged the file, and the pane
     /// does not invent a score of its own.
     fn auto_director_ended(&mut self, code: i32, studio: &mut Studio) {
-        self.auto.running = false;
         self.auto.started = None;
         self.auto.kill = None;
         self.auto.fraction = 1.0;
         if code == 0 {
+            // Keep the UI's running state during acceptance so the same
+            // Stop button can cancel the remaining independent checks.
+            self.auto.running = true;
             // The agent has exited, but the export is not accepted yet. Keep
             // the project locked while the independent checks run: otherwise
             // a second Start/AUTO EDIT can replace the active project and the
             // first run's receipt can be written beside the wrong project.
             self.auto.checking = true;
+            let check_cancel = Arc::new(AtomicBool::new(false));
+            self.auto.check_cancel = Some(Arc::clone(&check_cancel));
             // The Director phases have ended, but independent acceptance is
             // still outstanding. Do not display 100% until every required
             // export gate has actually passed.
@@ -858,6 +867,8 @@ impl ForgePane {
                 self.auto.source.as_ref().map(|s| s.export.clone()),
             ) else {
                 self.auto.checking = false;
+                self.auto.running = false;
+                self.auto.check_cancel = None;
                 self.auto.outcome = 2;
                 self.auto.stage = t("forge.autoEditDirectorFailedStage");
                 self.set_status(t("forge.autoEditDirectorFailedStage"));
@@ -871,12 +882,11 @@ impl ForgePane {
                 let checked = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
                     Ok(mut backend) => {
                         let toolbox = concat_mcp::tools::Toolbox::new();
-                        let cancelled = AtomicBool::new(false);
                         let check = concat_mcp::acceptance::DirectorCheck {
                             project: &project,
                             export: &export,
                         };
-                        concat_mcp::acceptance::check(&check, &toolbox, &mut *backend, &cancelled)
+                        concat_mcp::acceptance::check(&check, &toolbox, &mut *backend, &check_cancel)
                     }
                     // The window's server is how the check reaches the
                     // tools; without it there is no measurement, and an
@@ -918,6 +928,7 @@ impl ForgePane {
     ) {
         self.auto.checking = false;
         self.auto.running = false;
+        self.auto.check_cancel = None;
         let accepted = checked.accepted();
         self.auto.fraction = director_acceptance_fraction(accepted);
         let receipt = checked.receipt;
@@ -965,6 +976,7 @@ impl ForgePane {
     fn auto_director_check_failed(&mut self, error: String, studio: &mut Studio) {
         self.auto.checking = false;
         self.auto.running = false;
+        self.auto.check_cancel = None;
         self.auto.outcome = 2;
         self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
         self.set_status(tf("forge.autoEditDirectorUnproven", &[&error]));

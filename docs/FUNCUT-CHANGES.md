@@ -2485,7 +2485,7 @@ inspectable rather than a toast that faded.
 could not have answered that check: `motion_probe` was left off the
 director's allowlist, and it is the one tool that proves an export is a
 readable file. It is now on the default surface - 104 of the 113 tools -
-and `DIRECTOR_REQUIRED` names the thirteen calls a run cannot finish
+and `DIRECTOR_REQUIRED` names the seventeen calls a run cannot finish
 without. `director_ready` refuses the handover before anything is cut when
 the server's surface does not serve one of them, because a run told to
 verify its export meets a refusal mid-edit otherwise, and the edits it has

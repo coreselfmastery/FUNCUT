@@ -2708,3 +2708,20 @@ This is cooperative cancellation for the acceptance phase: a tool
 already executing must honor the shared context flag to stop promptly.
 The regression and UI behavior still require a full application build
 and manual run; they were not executed in this session.
+
+## 64. Reap inherited-pipe descendants after a normal Forge exit too
+
+Process-group cancellation fixed the explicit Stop path, but the same
+pipe-ownership failure could happen if Forge's parent exited normally
+while a detached helper still held stdout or stderr open. The supervisor
+would see the parent exit and then block forever joining the readers.
+
+Both Forge supervisors now terminate any remaining members of their
+private process group after the parent has been reaped and before they
+join the output readers. This cleanup runs on normal exit as well as
+cancellation, so the terminal UI event no longer depends on every helper
+remembering to close inherited pipes.
+
+Unix is covered by the process-group implementation. Non-Unix still
+uses direct-child termination and does not yet have equivalent process
+tree cleanup. Compilation and subprocess integration tests were not run.

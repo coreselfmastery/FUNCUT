@@ -123,6 +123,48 @@ passes; the GUI crate is CI's as always):
    tool. mcp.toml, FORGE.md, MCP.md, README and AGENTS.md say the
    same count, and the allowlist test holds the eight left off.
 
+## Session 9 log (2026-11-21, later) - the timeline-live branch
+
+Branch `auto-edit/timeline-live-2026-11-21`, delivered as **PR #190**
+(open against main at this writing; the user's standing instruction is
+commit-early-push-often and do not babysit CI). Six units, one per
+commit, plus the evidence doc:
+
+1. `fix(build-env)`: the SourceForge `/download` suffix (pushed first,
+   before this log's session began).
+2. `feat(geneva)`: the GSAP ease families by name (30 named curves),
+   colour/size/sweep tracks, validator diagnostics, native scene
+   rendering. concat-motion 612/612.
+3. `feat(mcp)`: the motion tools choose the engine the compositor would
+   (`EnginePreference::choose`): native for comps the sidecar would
+   drop or approximate and for machines without the sidecar; markup
+   keeps Geneva and its honest installer refusal; the incremental seam
+   inherits only from a bake the same engine drew; native bakes encode
+   through ffmpeg (`.mov`/ProRes 4444 keeps alpha).
+4. `feat(project)`: `AddMotionClip { engine }` - the clip records the
+   engine that drew the bake it points at; unknown engines refused.
+5. `fix(mcp)`: the director program's motion cards carry the bake's
+   engine into `addMotionClip`.
+6. `feat(auto-edit)`: **the live timeline follow** - the window takes
+   the run's sibling as a claim-free display (Session::open_info, no
+   claim), a watcher polls the document fingerprint and the studio
+   re-reads on the run's autosaves (playhead held, art re-asked, proxies
+   built as media lands); user edits/undo/save refused while the follow
+   holds; the landing now asks the server to release the run's session
+   first (`concat_mcp::backend::release_window_session`, ProjectClose
+   without save - proven over a real server in a new test) because the
+   server's Api claim otherwise refuses the window's claim forever
+   ("open through a remote connection") - the landing could never have
+   worked before; failed/cancelled runs hand the window back its parked
+   project, saved, and keep the sibling for the retry. Three locale keys
+   x 26 languages via the repo's own updater; FORGE.md updated.
+
+Environment finding worth keeping: this box's disk (9.9 GB) fills during
+test linking; `prune-dupes.sh` finds nothing (no identical duplicates),
+so `scripts/prune-stale.sh` (in /home/z/my-project/scripts, OUTSIDE the
+repo - it is a machine tool, not a deliverable) drops stale fingerprints
+and old test binaries; ~3 GB per cycle.
+
 ## Next actions
 
 1. Finish review and exact-head CI/Geneva/Nix validation for PR #91's supported native Lottie/dotLottie renderer; merge only when all required checks pass, retaining explicit unsupported-feature diagnostics.

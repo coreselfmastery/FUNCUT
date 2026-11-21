@@ -444,7 +444,12 @@ impl Library {
                 .header("Location")
                 .map(str::to_owned)
                 .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| format!("{} redirected the clip without a Location header", provider.name()))?;
+                .ok_or_else(|| {
+                    format!(
+                        "{} redirected the clip without a Location header",
+                        provider.name()
+                    )
+                })?;
             url = redirected_url(provider, &url, &location)?;
         }
         Err(format!("{} sent too many redirects", provider.name()))
@@ -469,9 +474,9 @@ impl Library {
             .map_err(|error| format!("{}'s cache could not be made: {error}", provider.name()))?;
         let target = folder.join(format!("{}.mp4", safe_stem(id)));
         let partial = target.with_extension("mp4.part");
-        // The API hosts answer a redirect to their CDN; the shelf's agent
-        // follows it, the key rides the first hop only, and the CDN's
-        // own answer is the file.
+        // Provider hosts may redirect to their CDN. The fetch shelf returns
+        // each 3xx without following it; fetch_response validates every
+        // Location before making the next request.
         let response = self.fetch_response(provider, url)?;
         if response.status() != 200 {
             let status = response.status();

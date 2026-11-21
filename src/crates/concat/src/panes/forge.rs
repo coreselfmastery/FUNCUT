@@ -1966,6 +1966,20 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          signal that drove it in the plan's signalLog - an edit that never read the voice is \
          an edit that guessed, and an unavailable signal must be reported as missing rather \
          than claimed.\n\n\
+         READ THE PROFILE WHOLE, THEN SPEND IT. voice_signals returns more than highlights: \
+         read `decisionPolicy` (which signals drive cut, caption, graphic, bgm and \
+         transition), `signalConfidence.perSignal` (what was measured, how strongly, and on \
+         what basis), `directorHints` (cutStyle, bgm.recommendation, speakerChanges, \
+         questions, emphasisWords, captionGate, protectedPauses) and `wholeTake` (the \
+         forensic numbers, the loudness, the rhythm layers, speechRatio). Spend each family \
+         on the decision the policy names for it: pauses and emphasis size the cuts, \
+         speechRate.pace sets their length, words and sentence drive captions, entities and \
+         claims become graphics, speakerChanges and topics cut the angle or the colour, \
+         noiseFloor and the forensic numbers choose and duck the bed, loudness and prosody \
+         set the pacing, motifs and rhythmLayers keep the shape. A family the profile rated \
+         low (see `signalConfidence`) is spent with less weight and its basis is named; a \
+         family at confidence 0 was not measured, so say so and do not cite it. Never dump \
+         the profile into a note: every signal you read must land on a choice.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
          (plan_validate must return valid:true AND creativeReady:true), B-roll shopped with \
          stock_contact_sheet rank:true and LOOKED AT before choosing, captions on the \

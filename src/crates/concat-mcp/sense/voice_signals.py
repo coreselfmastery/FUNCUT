@@ -183,12 +183,12 @@ SIGNAL_CATALOGUE = [
             "verdict (decision: bgm).",
      "where": ("take", "wholeTake.speechRatio"), "rust": False, "new": False},
     # The rate family, arithmetic on the word timings.
-    {"name": "speechRate.wordsPerSec", "family": "Speech rate",
-     "label": "Words per second",
-     "reads": "Words per second, per line.",
+    {"name": "speechRate.wordsPerMinute", "family": "Speech rate",
+     "label": "Words per minute",
+     "reads": "Words per minute, per line.",
      "why": "The pacing class (punchy, conversational, slow) sizes every "
             "shot's drift (decision: pacing).",
-     "where": ("line", "speechRate.wordsPerSec"), "rust": False, "new": False},
+     "where": ("line", "speechRate.wordsPerMinute"), "rust": False, "new": False},
     {"name": "speechRate.syllablesPerSec", "family": "Speech rate",
      "label": "Syllables per second",
      "reads": "Syllables per second, per line.",
@@ -408,7 +408,7 @@ SIGNAL_CATALOGUE = [
      "where": ("take", "wholeTake.forensic.sibilanceRatio"), "rust": True, "new": True},
     {"name": "forensic.spectralRolloffHz", "family": "Forensics",
      "label": "Spectral rolloff",
-     "reads": "The frequency under which 85% of the take's energy sits, in "
+     "reads": "The frequency under which 95% of the take's energy sits, in "
               "Hz.",
      "why": "A low rolloff with a narrow band is a muffled take: a "
             "presence lift, not a denoise.",
@@ -1483,7 +1483,11 @@ def _bgm_decision(rust, speech_ratio):
                     "reason": f"music likelihood {likelihood:.2f}: dense, regular "
                               "onsets with a music-like spectrum - this take "
                               "already carries music"}
-        if flatness is not None and flatness > 0.25 and onsets > 30:
+        if flatness is not None and flatness > 0.25 and onsets >= 60:
+            # 60 onsets in ANY window is a length claim, not a density one:
+            # a 30-minute narration clears it in dead speech. The rate is
+            # the measured form (onsetRatePerMin >= 60 is one onset per
+            # second sustained, the same bar the director reads).
             return {"recommendation": "skip",
                     "reason": f"spectral flatness {flatness:.2f} with {onsets} flux onsets: "
                               "this take already carries music-like content"}

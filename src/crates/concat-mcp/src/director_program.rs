@@ -2231,9 +2231,16 @@ fn sfx_queries_for_emotion(emotion: &str) -> &'static [&'static str] {
 /// was paid for. The gain follows the peak's own strength, inside the
 /// skill's -6..-24 dB table.
 fn accent_gain_db(strength: f64) -> f64 {
-    if strength >= 0.8 {
+    // The prosody ear's strength is a z-score over the line's own energy
+    // envelope, and it only reports peaks above mean+1sigma - so every
+    // measured strength is > 1.0 and the old 0.8/0.65 buckets put every
+    // accent at -9 dB, deaf to the difference between a shout and a
+    // lean-in. The buckets read in sigma space now: 2+ sigma is the
+    // shout, 1.4 the lean-in, anything else the whisper the floor
+    // always was.
+    if strength >= 2.0 {
         -9.0
-    } else if strength >= 0.65 {
+    } else if strength >= 1.4 {
         -12.0
     } else {
         -15.0
@@ -2366,6 +2373,12 @@ fn confidence_family(signal: &str) -> &str {
         "musicSegments" => "forensic",
         "noiseFloor" => "forensic",
         "emphasisWords" => "prosody",
+        // The pulse and the density are rated under the families that
+        // measured them (prosody's rhythm layers; the pauses the speech
+        // ratio is the complement of) - unmapped, their log entries read
+        // 0.0 despite full measurements behind them.
+        "rhythmLayers" => "prosody",
+        "speechRatio" => "pauses",
         _ => signal,
     }
 }
@@ -4521,19 +4534,28 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .total_cmp(&right.take_wide.integrated_lufs.unwrap_or_default())
                             })?;
                         let measured = loudest.take_wide.integrated_lufs?;
-                        let gain = round3(loudest.safe_gain(target - measured));
+                        let gain = round3(loudest.safe_gain(target - measured))
+                            // clip_audio_levels_db refuses baseDb outside
+                            // -60..+24; a very quiet take's wanted gain
+                            // (e.g. -40 LUFS asking for +26) used to get
+                            // the mix call refused after the grade had
+                            // already landed.
+                            .min(24.0);
                         if gain.abs() < 1.0 {
                             return None;
                         }
                         let view = latest_view(log)?;
                         let media = media_paths(view);
+                        // The gain belongs on the clip that plays the
+                        // LOUDEST take - the measurement's own clip - not
+                        // the first clip that plays any take: with takes
+                        // of differing loudness, the first-played clip
+                        // took a gain computed for a different file.
                         let clip = view["timeline"]["clips"].as_array()?.iter().find(|clip| {
                             clip["media"]
                                 .as_str()
                                 .and_then(|id| media.iter().find(|(mid, _)| mid == id))
-                                .is_some_and(|(_, path)| {
-                                    level_source.iter().any(|take| &take.take == path)
-                                })
+                                .is_some_and(|(_, path)| path == &loudest.take)
                         })?;
                         let clip_id = clip["id"].as_str()?.to_owned();
                         return Some(call(
@@ -5503,7 +5525,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let lifted = take_read
                                 .and_then(|take_read| take_read.line_at(group.start))
                                 .and_then(|line| line.relative_lu)
-                                .is_some_and(|lu| lu >= 3.0)
+                                // 1.5 LU is the profile's own definition of
+                                // a lifted line (the same bar its hint
+                                // counts by); 3.0 matched nothing the
+                                // producer documents.
+                                .is_some_and(|lu| lu >= 1.5)
                                 || (at < 3.0
                                     && take_read
                                         .and_then(|take_read| take_read.hook_lift())

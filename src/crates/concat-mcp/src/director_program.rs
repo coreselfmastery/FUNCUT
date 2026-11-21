@@ -997,6 +997,60 @@ fn seam_transition(
 /// does not echo the path it was asked about, so the replies that carry
 /// `musicPresent` are matched to the takes in the order the Understand
 /// stage issued them - one per take, in `takes` order.
+/// The timeline's extent over the narration's own clips - the number a
+/// bed must be trimmed to and a runtime read must not inflate. The bed
+/// itself (a clip whose media lives in the project's bgm/ folder) is
+/// excluded, because the question is always "how long is the speech",
+/// asked both before and after a bed was placed.
+fn narration_runtime(log: &[Value]) -> f64 {
+    latest_view(log)
+        .and_then(|view| {
+            let media = media_paths(view);
+            view["timeline"]["clips"].as_array().map(|clips| {
+                clips
+                    .iter()
+                    .filter(|clip| {
+                        clip["media"]
+                            .as_str()
+                            .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                            .map(|(_, path)| !path.contains("/bgm/"))
+                            .unwrap_or(false)
+                    })
+                    .map(|clip| {
+                        clip["start"].as_f64().unwrap_or(0.0)
+                            + clip["duration"].as_f64().unwrap_or(0.0)
+                    })
+                    .fold(0.0_f64, f64::max)
+            })
+        })
+        .unwrap_or(0.0)
+}
+
+/// The bed's beats, translated from the timeline's clock (the bed plays
+/// from zero, so its file seconds are timeline seconds) into one take's
+/// own file seconds - the clock that take's transcript segments and
+/// planner suggestions are read in. A beat outside the take's placements
+/// is dropped: it belongs to another take or to silence.
+fn beats_in_take_clock(beats: &Value, source: &AutoEditProgramSource, take: &str) -> Value {
+    let rows = beats.as_array().cloned().unwrap_or_default();
+    let translated: Vec<Value> = rows
+        .iter()
+        .filter_map(|beat| {
+            let at = beat["seconds"].as_f64()?;
+            let strength = beat["strength"].as_f64().unwrap_or(0.5);
+            let placement = source.placements.iter().find(|placed| {
+                placed.take == take && {
+                    let duration = (placed.source_out - placed.source_in) / placed.speed;
+                    (placed.start..placed.start + duration).contains(&at)
+                }
+            })?;
+            let in_take = (at - placement.start) * placement.speed + placement.source_in;
+            Some(json!({ "seconds": round3(in_take), "strength": strength }))
+        })
+        .collect();
+    Value::Array(translated)
+}
+
 fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
     let reads: Vec<bool> = log
         .iter()
@@ -4770,6 +4824,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     earn.
     let plan_source = takes.clone();
     let plan_settings = source.clone();
+    let plan_project = project.clone();
     steps.push(
         DerivedStep::react(
             Stage::Plan,
@@ -4777,27 +4832,230 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The beat analysis must finish BEFORE the planner call is
                 // built: constructing both calls in one queue used to bake
                 // an empty beat list into the planner request.
+                //
+                // The grid's source is whichever music the cut will
+                // actually carry: a take that already holds its own music
+                // is analyzed as it stands, and a dry voiceover gets the
+                // BED this run will ship - shopped, imported and trimmed
+                // here, before the tighten and the grade read a runtime
+                // the bed would otherwise inflate. A cold shelf (missing,
+                // still loading, failed) is not waited on here: the music
+                // stage owns the shelf's preparation, and a run on a cold
+                // machine plans without a grid - the coverage floor still
+                // tiles the picture, only the beat-snapping goes without.
                 let mut phase = 0u8;
                 let mut queue: Vec<ToolCall> = Vec::new();
+                // The bed shopping's own cursor and findings: which door
+                // of the query chain is open, and the bed file the import
+                // landed (the beats' clock).
+                let mut query_cursor = 0usize;
+                let mut shelf_polls = 0usize;
+                let mut bed_path: Option<String> = None;
                 move |log| {
                     if phase == 0 {
                         phase = 1;
                         if let Some(music) = musical_take(log, &plan_source) {
                             return Some(call("analyze_beats", json!({ "path": music })));
                         }
+                        // A dry voiceover: the bed is the beat source, so
+                        // the shelf's state is the first question.
+                        return Some(call("bgm_status", json!({})));
                     }
                     if phase == 1 {
-                        phase = 2;
-                        // The beat analysis is a job: its first reply only
-                        // says it started, and the grid itself lands when
-                        // the wait returns - a planner built without the
-                        // wait was built before a single beat was measured.
+                        // A take that carries its own music: the analysis
+                        // is a job, and the grid lands when the wait
+                        // returns.
                         if let Some(music) = musical_take(log, &plan_source) {
+                            phase = 2;
                             return Some(call(
                                 "analysis_wait",
                                 json!({ "path": music, "timeoutSeconds": 590 }),
                             ));
                         }
+                        // The bed question's answer: only a ready shelf is
+                        // shopped here. A loading one is given a few short
+                        // looks (a warm shelf that is finishing its fetch
+                        // should not cost the run its grid), and anything
+                        // else - missing, failed - moves the plan on.
+                        let state = log.last().and_then(|reply| {
+                            reply
+                                .get("freepd")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        });
+                        match state.as_deref() {
+                            Some("ready") => {
+                                phase = 10;
+                                let query = bed_query_chain(log, &plan_source)
+                                    .get(query_cursor)
+                                    .cloned()
+                                    .flatten();
+                                let mut arguments = json!({
+                                    "source": "freepd",
+                                    "limit": 5,
+                                    "sort": "relevance",
+                                });
+                                if let Some(query) = query {
+                                    arguments["query"] = json!(query);
+                                }
+                                return Some(call("bgm_search", arguments));
+                            }
+                            Some(word) if word.starts_with("loading") => {
+                                shelf_polls += 1;
+                                if shelf_polls > 4 {
+                                    // A cold shelf is the music stage's to
+                                    // warm: the plan moves on without a
+                                    // grid, falling through to the
+                                    // planner below in this same call.
+                                    phase = 2;
+                                } else {
+                                    std::thread::sleep(Duration::from_millis(3000));
+                                    return Some(call("bgm_status", json!({})));
+                                }
+                            }
+                            _ => {
+                                // Missing or failed: the same fall-through,
+                                // in the same call.
+                                phase = 2;
+                            }
+                        }
+                    }
+                    if phase == 10 {
+                        // The search's answer: the bed is the track that
+                        // fits the cut. An empty page walks the chain's
+                        // next door; a chain with no doors left leaves the
+                        // plan without a grid, and the music stage shops
+                        // for itself later.
+                        let Some(tracks) = log
+                            .last()
+                            .and_then(|reply| reply["tracks"].as_array().cloned())
+                        else {
+                            phase = 2;
+                            return None;
+                        };
+                        // (A reply that is not a search answer ends the
+                        // bed question: the fall-through below plans
+                        // without a grid.)
+                        let runtime = narration_runtime(log);
+                        let chosen = best_bed(&tracks, runtime)
+                            .or_else(|| tracks.first().cloned())
+                            .and_then(|track| track["id"].as_str().map(str::to_owned));
+                        let Some(id) = chosen else {
+                            query_cursor += 1;
+                            let chain = bed_query_chain(log, &plan_source);
+                            if query_cursor >= chain.len() {
+                                phase = 2;
+                                return None;
+                            }
+                            // (The chain's last door answered nothing: the
+                            // plan falls through below, without a grid.)
+                            let query = chain.get(query_cursor).cloned().flatten();
+                            let mut arguments = json!({
+                                "source": "freepd",
+                                "limit": 5,
+                                "sort": "relevance",
+                            });
+                            if let Some(query) = query {
+                                arguments["query"] = json!(query);
+                            }
+                            return Some(call("bgm_search", arguments));
+                        };
+                        phase = 11;
+                        return Some(call(
+                            "bgm_import",
+                            json!({
+                                "path": plan_project,
+                                "ids": [id],
+                                "start": 0.0,
+                                "monetized": true,
+                            }),
+                        ));
+                    }
+                    if phase == 11 {
+                        // The import's reply: read the timeline back to
+                        // find the bed clip the import placed.
+                        phase = 12;
+                        return Some(call("timeline_read", json!({ "path": plan_project })));
+                    }
+                    if phase == 12 {
+                        // The bed clip, found by its folder: trimmed to
+                        // the narration's own extent so no later runtime
+                        // read is inflated by a three-minute bed under a
+                        // thirty-second cut, then analyzed for its beats.
+                        let view = latest_view(log);
+                        let media = view.map(media_paths);
+                        let bed = view.and_then(|view| {
+                            view["timeline"]["clips"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .find(|clip| {
+                                    clip["media"].as_str().is_some_and(|id| {
+                                        media.as_ref().is_some_and(|media| {
+                                            media
+                                                .iter()
+                                                .find(|(mid, _)| mid == id)
+                                                .is_some_and(|(_, path)| path.contains("/bgm/"))
+                                        })
+                                    })
+                                })
+                                .cloned()
+                        });
+                        if let Some(bed) = bed {
+                            let bed_file = bed["media"].as_str().and_then(|id| {
+                                media
+                                    .as_ref()
+                                    .and_then(|media| media.iter().find(|(mid, _)| mid == id))
+                                    .map(|(_, path)| path.clone())
+                            });
+                            bed_path = bed_file;
+                            let runtime = narration_runtime(log);
+                            let duration = bed["duration"].as_f64().unwrap_or(0.0);
+                            if runtime > 0.5 && duration > runtime + 0.05 {
+                                phase = 13;
+                                return Some(call(
+                                    "edit_apply",
+                                    json!({
+                                        "path": plan_project,
+                                        "command": {
+                                            "op": "trimClip",
+                                            "clipId": bed["id"],
+                                            "edge": "end",
+                                            "delta": round3(runtime - duration),
+                                        },
+                                    }),
+                                ));
+                            }
+                            // Already the right length: the analysis is
+                            // the next question, in this same call.
+                            phase = 13;
+                        } else {
+                            // The import landed no bed clip: no grid, and
+                            // the fall-through plans on.
+                            phase = 2;
+                        }
+                    }
+                    if phase == 13 {
+                        // The trim's own reply, or the fall-through from a
+                        // bed already the right length: analyze the bed
+                        // file the import landed.
+                        if let Some(bed) = bed_path.clone() {
+                            phase = 14;
+                            return Some(call("analyze_beats", json!({ "path": bed })));
+                        }
+                        // No bed file to analyze: the fall-through plans
+                        // on without a grid.
+                        phase = 2;
+                    }
+                    if phase == 14 {
+                        if let Some(bed) = bed_path.clone() {
+                            phase = 2;
+                            return Some(call(
+                                "analysis_wait",
+                                json!({ "path": bed, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                        phase = 2;
                     }
                     if phase == 2 {
                         phase = 3;
@@ -4815,10 +5073,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "take": take.take,
                                 "segments": segments,
                             });
-                            if music.as_deref() == Some(take.take.as_str())
-                                && let Some(beats) = beats.clone()
-                            {
-                                spec["beats"] = beats;
+                            if let Some(beats) = beats.clone() {
+                                if music.as_deref() == Some(take.take.as_str()) {
+                                    // The take's own music: its beats are
+                                    // already in this take's clock.
+                                    spec["beats"] = beats;
+                                } else if bed_path.is_some() {
+                                    // The bed's beats are in the timeline's
+                                    // clock (the bed plays from zero):
+                                    // translated into this take's own file
+                                    // seconds, the clock its segments are
+                                    // read in.
+                                    spec["beats"] =
+                                        beats_in_take_clock(&beats, &plan_settings, &take.take);
+                                }
                             }
                             queue.push(call("footage_plan_suggest", spec));
                         }
@@ -6567,6 +6835,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     let base = *base.get_or_insert(log.len());
                     if log.len() == base {
+                        // A bed the plan stage already landed - shopped
+                        // early so its beats could drive the planner - is
+                        // this stage's bed: no second search, no second
+                        // import. The timeline is read back and the
+                        // existing-bed path below trims and ducks it.
+                        let bed_already = log.iter().any(|reply| {
+                            reply.pointer("/timeline/clips").is_some_and(|clips| {
+                                let media = media_paths(reply);
+                                clips.as_array().is_some_and(|rows| {
+                                    rows.iter().any(|clip| {
+                                        clip["media"]
+                                            .as_str()
+                                            .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                                            .is_some_and(|(_, path)| path.contains("/bgm/"))
+                                    })
+                                })
+                            })
+                        });
+                        if bed_already {
+                            return Some(call("timeline_read", json!({ "path": music_project })));
+                        }
                         // The stage's own first call: the shelf's state.
                         return Some(call("bgm_status", json!({})));
                     }
@@ -11771,10 +12060,18 @@ mod tests {
                 ],
             }),
         ];
+        // A dry voiceover asks the bed question first - the bed is the
+        // beat source - and a cold shelf (missing) is answered by moving
+        // straight on: the planner runs without a grid.
+        let bed = (plan.next)(&log).expect("the bed question is asked");
+        assert_eq!(bed.tool, "bgm_status");
+        let mut dry = log.clone();
+        dry.push(json!({ "freepd": "missing" }));
+
         // The footage shopping list is planned first: the planner reads the
         // transcript and says where coverage is wanted, before the plan
         // that names the signals is validated.
-        let first = (plan.next)(&log).expect("the footage plan is asked for");
+        let first = (plan.next)(&dry).expect("the footage plan is asked for");
         assert_eq!(first.tool, "footage_plan_suggest");
         assert!(
             !first.arguments["segments"]
@@ -11783,7 +12080,7 @@ mod tests {
                 .is_empty(),
             "the planner reads the narration's own spans: {first:?}"
         );
-        let ask = (plan.next)(&log).expect("the plan is validated");
+        let ask = (plan.next)(&dry).expect("the plan is validated");
         assert_eq!(ask.tool, "plan_validate");
         let plan = &ask.arguments["plan"];
         // The frame the project is: a 1080x1920 project is a vertical reel.
@@ -11842,6 +12139,180 @@ mod tests {
             }
         }
     }
+    /// The audit's Q9, answered: a dry voiceover's cuts land on the BED's
+    /// beats, not only on a take that already carried music. The plan
+    /// stage shops the bed early (search, import, trim to the
+    /// narration's own extent), analyzes it, and hands the planner the
+    /// grid translated into the take's own file clock.
+    #[test]
+    fn the_bed_s_beats_drive_the_planner_on_a_dry_voiceover() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let bed = "/edits/Reel/bgm/warm-piano.mp3";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: vec![TakePlacement {
+                take: take.to_owned(),
+                start: 0.0,
+                source_in: 0.0,
+                source_out: 10.0,
+                speed: 1.0,
+            }],
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(plan) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "plan")
+            .expect("the program has a plan stage")
+        else {
+            panic!("the plan stage is derived");
+        };
+        let view = json!({
+            "settings": { "width": 1080, "height": 1920 },
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 4.0, "text": "we found the wreck below the harbour wall" },
+                { "start": 6.0, "end": 9.0, "text": "and it was not empty" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+
+        // The bed question, answered ready: the shelf is shopped.
+        let status = (plan.next)(&log).expect("the bed question is asked");
+        assert_eq!(status.tool, "bgm_status");
+        log.push(json!({ "freepd": "ready" }));
+        let search = (plan.next)(&log).expect("the shelf is shopped");
+        assert_eq!(search.tool, "bgm_search");
+        assert_eq!(search.arguments["source"], "freepd");
+        log.push(json!({
+            "tracks": [
+                { "id": "warm-piano", "title": "Warm Piano Nocturne", "seconds": 200.0 }
+            ],
+        }));
+        let import = (plan.next)(&log).expect("the bed is imported");
+        assert_eq!(import.tool, "bgm_import");
+        assert_eq!(import.arguments["ids"], json!(["warm-piano"]));
+        assert_eq!(import.arguments["monetized"], json!(true));
+        log.push(json!({ "mediaIds": ["m-bed"] }));
+
+        // The timeline is read back for the placed bed.
+        let read = (plan.next)(&log).expect("the timeline is read for the bed");
+        assert_eq!(read.tool, "timeline_read");
+        let placed = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "bed", "kind": "audio", "media": "m-bed", "start": 0.0,
+                  "duration": 200.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m1", "path": take },
+                { "id": "m-bed", "path": bed },
+            ],
+        });
+        log.push(placed);
+
+        // A three-minute bed under a ten-second cut is trimmed, so no
+        // later runtime read is inflated by the bed.
+        let trim = (plan.next)(&log).expect("the bed is trimmed to the cut");
+        assert_eq!(trim.tool, "edit_apply");
+        assert_eq!(trim.arguments["command"]["op"], "trimClip");
+        assert_eq!(trim.arguments["command"]["clipId"], "bed");
+        assert_eq!(trim.arguments["command"]["delta"], json!(-190.0));
+        log.push(json!({ "applied": true }));
+
+        // The trimmed bed is analyzed, and the grid is waited on.
+        let analyze = (plan.next)(&log).expect("the bed is analyzed");
+        assert_eq!(analyze.tool, "analyze_beats");
+        assert_eq!(analyze.arguments["path"], bed);
+        log.push(json!({ "job": "analysis-9", "path": bed, "output": "" }));
+        let wait = (plan.next)(&log).expect("the grid is waited on");
+        assert_eq!(wait.tool, "analysis_wait");
+        assert_eq!(wait.arguments["path"], bed);
+        log.push(json!({
+            "path": bed,
+            "output": json!({ "beatsMs": [2000.0, 5000.0], "bpm": 90.0 }).to_string(),
+        }));
+
+        // The planner is handed the grid, in the take's own file clock.
+        let spec = (plan.next)(&log).expect("the planner is asked");
+        assert_eq!(spec.tool, "footage_plan_suggest");
+        assert_eq!(
+            spec.arguments["beats"],
+            json!([
+                { "seconds": 2.0, "strength": 0.5 },
+                { "seconds": 5.0, "strength": 0.5 },
+            ]),
+            "the bed's timeline-clock beats are translated into the take's file clock"
+        );
+    }
+
+    /// The music stage does not shop twice: a bed the plan stage landed so
+    /// its beats could drive the planner is trimmed and ducked where it
+    /// lies, and the stage's first call reads the timeline instead of the
+    /// shelf's state.
+    #[test]
+    fn the_music_stage_reuses_the_bed_the_plan_landed() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "music")
+            .expect("the program has a music stage")
+        else {
+            panic!("the music stage is derived");
+        };
+        let log = vec![json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "bed", "kind": "audio", "media": "m-bed", "start": 0.0,
+                  "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m1", "path": take },
+                { "id": "m-bed", "path": "/edits/Reel/bgm/warm-piano.mp3" },
+            ],
+        })];
+        let first = (music.next)(&log).expect("the stage starts");
+        assert_eq!(
+            first.tool, "timeline_read",
+            "an existing bed is read back, not re-shopped"
+        );
+    }
+
     /// The plan the run writes VALIDATES: the stage's hard gate on
     /// `valid` is only honest if the fixed program's own plan clears it.
     /// The audience blocker may stand (a transcript that names nothing),

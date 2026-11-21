@@ -8180,13 +8180,25 @@ mod tests {
                 uses.contains(&field) && body.contains(&format!(".{helper}("))
             })
         };
+        // Match a complete field access: `.speaker_at(` is a helper
+        // call, not a read of a field named `speaker`.
+        let field_access = |field: &str| {
+            let needle = format!(".{field}");
+            body.match_indices(&needle).any(|(at, _)| {
+                let after = &body[at + needle.len()..];
+                !after
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        };
         let unspent: Vec<&str> = fields
             .iter()
             .copied()
             .filter(|field| !NOT_SPENT.iter().any(|(name, _)| name == field))
             .filter(|field| {
                 !body.contains(&format!("{field}("))
-                    && !body.contains(&format!(".{field}"))
+                    && !field_access(field)
                     && !spent_through_helper(field)
             })
             .collect();

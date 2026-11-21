@@ -2855,7 +2855,7 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
                 .iter()
                 .find(|(known, suffix, _)| *known == number && *suffix == &after_digits[..letters])
         {
-            return Some(at(index));
+            return Some(at(*index));
         }
         cursor += found + "phase ".len();
     }

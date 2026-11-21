@@ -733,9 +733,7 @@ impl Runner {
                     // stage happened to make (the motion probe), which
                     // used to overwrite the verdict, matchRate and drift
                     // the report is read for.
-                    if call.tool == "emotion" {
-                        verification = reply.clone();
-                    } else if verification.is_null() {
+                    if call.tool == "emotion" || verification.is_null() {
                         verification = reply.clone();
                     }
                 }
@@ -1735,6 +1733,40 @@ mod tests {
         assert_eq!(last.progress.detail, "the export is complete");
         // progress() reads the last event: the one source of truth.
         assert_eq!(runner.progress(), Some(last.progress.clone()));
+    }
+
+    #[test]
+    fn the_verify_stage_keeps_the_emotion_reply_over_later_probes() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "valid": true })),
+            Ok(json!({ "job": "e1" })),
+            Ok(json!({ "path": "/edits/Reel/export.mp4" })),
+            Ok(json!({ "overlaps": 0, "gaps": 0 })),
+            Ok(json!({ "emotion": "verified", "matchRate": 1.0 })),
+            Ok(json!({ "frames": 1 })),
+        ]);
+        let mut program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan_validate")]),
+            StageStep::run(
+                Stage::Export,
+                vec![call("export_start"), call("export_wait")],
+            ),
+            StageStep::run(
+                Stage::Verify,
+                vec![call("timeline_read"), call("emotion"), call("watch_render")],
+            ),
+        ]);
+
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Completed);
+        let AutoEditState::Completed { verification, .. } = runner.state() else {
+            panic!("the run completed");
+        };
+        assert_eq!(
+            verification,
+            json!({ "emotion": "verified", "matchRate": 1.0 }),
+            "the later render probe must not replace the emotion verification"
+        );
     }
 
     #[test]

@@ -976,7 +976,12 @@ impl ForgePane {
                     match concat_host::projects::open(&path)
                         .and_then(|info| studio.open_project(info))
                     {
-                        Ok(()) => studio.notify(&tf("forge.editReady", &[&path]), false),
+                        // A warned export is opened for inspection and repair,
+                        // not announced as ready to publish.
+                        Ok(()) if warnings == 0 => {
+                            studio.notify(&tf("forge.editReady", &[&path]), false)
+                        }
+                        Ok(()) => {}
                         Err(error) => studio.notify(&tf("forge.openFailed", &[&error]), true),
                     }
                 }
@@ -2182,23 +2187,19 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
 /// Whether the harness is wired to Concat and the skill is where it
 /// reads: `forge mcp get funcut` says the one, `forge commands` lists the
 /// other. Neither is a reason to fail: the buttons say what is missing.
+fn director_skill_listed(code: i32, words: &str) -> bool {
+    code == 0 && words.to_ascii_lowercase().contains("funcut-director")
+}
+
 fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
     let connected = match forge(&["mcp", "get", "funcut"]) {
         Ok((code, _)) => Ok(code == 0),
         Err(error) => Err(error),
     };
     let installed = match forge(&["commands"]) {
-        // The door and the shelves both: a harness that serves
-        // funcut-director but not maestro or clip-skills still runs - the
-        // run prompt points the agent at the shelves the skill's own
-        // sections keep - but a full install serves all three, and every
-        // one it finds is one the director can be told to read.
-        Ok((_, words)) => {
-            let words = words.to_ascii_lowercase();
-            Ok(["funcut-director", "maestro", "clip-skills"]
-                .iter()
-                .any(|name| words.contains(name)))
-        }
+        // Supporting shelves do not replace the required Director entry
+        // point. A partial install must not pass preflight.
+        Ok((code, words)) => Ok(director_skill_listed(code, &words)),
         Err(error) => Err(error),
     };
     (connected, installed)
@@ -2444,6 +2445,17 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_director_skill_satisfies_forge_preflight() {
+        assert!(director_skill_listed(
+            0,
+            "funcut-director\nmaestro\nclip-skills"
+        ));
+        assert!(!director_skill_listed(0, "maestro\nclip-skills"));
+        assert!(!director_skill_listed(1, "funcut-director"));
+    }
+
+
     use super::director_phase;
     use super::other_run_refusal;
     use super::voiceover_copy_name;

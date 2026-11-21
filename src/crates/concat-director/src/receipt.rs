@@ -819,14 +819,14 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                         .map(|overall| format!("{overall}"))
                         .unwrap_or_else(|| score.to_string())
                 ),
-                true,
+                false,
             ));
         }
         None => gates.push(GateRecord::new(
             "visual",
             GateStatus::Skipped,
             "no craft score was taken",
-            true,
+            false,
         )),
     }
 
@@ -903,6 +903,71 @@ mod tests {
     }
 
     #[test]
+    fn a_run_the_critic_could_not_see_is_accepted_when_the_required_gates_answered() {
+        let call = |tool: &str| ToolCall {
+            tool: tool.to_owned(),
+            arguments: json!({}),
+        };
+        let observed = vec![
+            (
+                call("plan_validate"),
+                json!({ "valid": true, "creativeReady": true, "score": 8.5 }),
+            ),
+            (call("emotion"), json!({ "verdict": "pass", "matched": 12 })),
+            (
+                call("measure_loudness"),
+                json!({ "platformTargetMet": true, "integratedLufs": -14.1 }),
+            ),
+            (
+                call("motion_probe"),
+                json!({ "file": "/p/out.mp4", "probe": {} }),
+            ),
+        ];
+        let gates = derive_gates(&observed);
+        let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
+        assert_eq!(
+            receipt.verdict,
+            Verdict::Accepted,
+            "the four required gates answered; a missing craft score is recorded, not a refusal"
+        );
+        let visual = receipt
+            .gates
+            .iter()
+            .find(|gate| gate.gate == "visual")
+            .expect("the visual gate is recorded");
+        assert_eq!(visual.status, GateStatus::Skipped);
+        assert!(!visual.required);
+    }
+
+    #[test]
+    fn an_optional_gate_that_failed_still_rejects_the_run() {
+        let call = |tool: &str| ToolCall {
+            tool: tool.to_owned(),
+            arguments: json!({}),
+        };
+        let observed = vec![
+            (
+                call("plan_validate"),
+                json!({ "valid": true, "creativeReady": true }),
+            ),
+            (call("emotion"), json!({ "verdict": "pass" })),
+            (
+                call("measure_loudness"),
+                json!({ "platformTargetMet": true }),
+            ),
+            (call("motion_probe"), json!({ "probe": {} })),
+            (call("craft_critique"), json!({ "overall": 6.0 })),
+        ];
+        let gates = derive_gates(&observed);
+        let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
+        assert_eq!(
+            receipt.verdict,
+            Verdict::Rejected,
+            "optional means not required to run, not that a measured failure is ignored"
+        );
+    }
+
+    #[test]
     fn coverage_is_read_from_the_tools_that_answered_not_from_intent() {
         let stages = vec![
             StageRecord::completed(
@@ -969,7 +1034,7 @@ mod tests {
         let gates = derive_gates(&[]);
         // Nothing measured: every required dimension is skipped, never a
         // pass the run did not earn.
-        for name in ["story", "words", "audio", "export-integrity", "visual"] {
+        for name in ["story", "words", "audio", "export-integrity"] {
             let gate = gates
                 .iter()
                 .find(|gate| gate.gate == name)
@@ -977,6 +1042,15 @@ mod tests {
             assert_eq!(gate.status, GateStatus::Skipped, "{name} was not measured");
             assert!(gate.required);
         }
+        // The craft score is a judgement, not proof of the file: it is
+        // recorded when the critic saw the frames and never blocks a run
+        // whose required gates all answered.
+        let visual = gates
+            .iter()
+            .find(|gate| gate.gate == "visual")
+            .expect("the visual gate is listed");
+        assert_eq!(visual.status, GateStatus::Skipped);
+        assert!(!visual.required);
         let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
         assert_eq!(receipt.verdict, Verdict::Incomplete);
     }

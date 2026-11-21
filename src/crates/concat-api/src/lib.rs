@@ -1810,26 +1810,10 @@ impl Api {
     /// internal-network fetch primitive beside it. The host must be one
     /// of the shelf's own, over https.
     fn stock_host_allowed(provider: Provider, url: &str) -> Result<(), ApiError> {
-        let parsed = url::Url::parse(url)
-            .map_err(|error| ApiError::failed(format!("the clip URL does not parse: {error}")))?;
-        if parsed.scheme() != "https" {
-            return Err(ApiError::failed(
-                "the clip URL must be https - the shelves serve no plain http",
-            ));
-        }
-        let host = parsed.host_str().unwrap_or_default();
-        let allowed: &[&str] = match provider {
-            Provider::Pexels => &["videos.pexels.com", "www.pexels.com", "player.vimeo.com"],
-            Provider::Pixabay => &["cdn.pixabay.com", "i.pixabay.com"],
-        };
-        if !allowed.contains(&host) {
-            return Err(ApiError::failed(format!(
-                "the clip URL's host {host} is not one of {}'s own ({}) - a fetch from                  anywhere else would stamp bytes this shelf never licensed",
-                provider.name(),
-                allowed.join(", ")
-            )));
-        }
-        Ok(())
+        provider
+            .validate_download_url(url)
+            .map(|_| ())
+            .map_err(ApiError::failed)
     }
 
     /// The fetched-and-checked path of one live clip: cached as it lies,

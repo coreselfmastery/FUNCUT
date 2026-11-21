@@ -22,12 +22,13 @@
 # in half a minute. So each asset is fetched up to eight times with an
 # exponential backoff (2s, 4s, 8s, 16s, 32s, then 60s a time, slept
 # before the first through the eighth attempt). Transient failures -- any HTTP 5xx, a
-# timeout (curl exit 28), a connection that died mid-answer (curl exit
-# 56) -- ride the backoff; an HTTP 4xx such as a 404 or 403 fails at
-# once, because retrying those cannot help. The digest is verified on
-# every attempt and a mismatch is never retried: a file that does not
-# match deps.lock is a wrong release or a broken download, not a flaky
-# CDN.
+# timeout (curl exit 28), a connection that died mid-answer (exit 18
+# with a truncated body, 52 with no reply at all, 55 on the send side,
+# 56 on the receive side, 92 on an HTTP/2 stream) -- ride the backoff; an
+# HTTP 4xx such as a 404 or 403 fails at once, because retrying those
+# cannot help. The digest is verified on every attempt and a mismatch is
+# never retried: a file that does not match deps.lock is a wrong release
+# or a broken download, not a flaky CDN.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -139,8 +140,16 @@ while :; do
     reason="HTTP $code"
   elif [ "$rc" -eq 28 ]; then
     reason="HTTP $code, curl exit 28 (timeout)"
+  elif [ "$rc" -eq 18 ]; then
+    reason="HTTP $code, curl exit 18 (partial file)"
+  elif [ "$rc" -eq 52 ]; then
+    reason="HTTP $code, curl exit 52 (empty reply)"
+  elif [ "$rc" -eq 55 ]; then
+    reason="HTTP $code, curl exit 55 (send failure)"
   elif [ "$rc" -eq 56 ]; then
     reason="HTTP $code, curl exit 56 (recv failure)"
+  elif [ "$rc" -eq 92 ]; then
+    reason="HTTP $code, curl exit 92 (HTTP/2 stream)"
   fi
 
   if [ -n "$reason" ] && [ "$attempt" -lt "$attempts" ]; then

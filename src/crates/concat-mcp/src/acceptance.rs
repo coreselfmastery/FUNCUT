@@ -283,12 +283,16 @@ mod tests {
 
     #[test]
     fn expected_takes_are_reconstructed_from_the_handoff_mapping() {
-        let dir = std::env::temp_dir().join(format!("funcut-acceptance-map-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "funcut-acceptance-map-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("voiceover-mapping.json"),
             br#"{"segments":[{"take":"/voice/take.wav","start":3.0,"source_in":1.0,"source_out":5.0,"speed":2.0}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         let rows = expected_takes(dir.to_str().unwrap());
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["path"], "/voice/take.wav");
@@ -301,7 +305,14 @@ mod tests {
 
     #[test]
     fn every_check_is_a_tool_the_director_surface_serves() {
-        for tool in ["plan_validate", "motion_probe", "measure_loudness", "watch_render", "craft_critique", "emotion"] {
+        for tool in [
+            "plan_validate",
+            "motion_probe",
+            "measure_loudness",
+            "watch_render",
+            "craft_critique",
+            "emotion",
+        ] {
             assert!(
                 crate::protocol::DIRECTOR_ALLOWLIST.contains(&tool),
                 "{tool} is asked for but not served to the Director"

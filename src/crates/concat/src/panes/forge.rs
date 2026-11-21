@@ -1058,16 +1058,6 @@ impl ForgePane {
             studio.notify(&t("forge.autoEditCancelled"), true);
             return;
         }
-        self.auto.started = None;
-        self.auto.kill = None;
-        self.auto.fraction = 1.0;
-        if cancelled {
-            self.auto.outcome = 1;
-            self.auto.stage = t("forge.autoEditCancelledStage");
-            self.set_status(t("forge.autoEditCancelledStage"));
-            studio.notify(&t("forge.autoEditCancelled"), true);
-            return;
-        }
         if code == 0 {
             // Keep the UI's running state during acceptance so the same
             // Stop button can cancel the remaining independent checks.

@@ -17,7 +17,7 @@ so work survives without `project_save`.
 default surface a director runs on refuses both, deliberately.)
 
 Start tools return `{"job":"jN"}` at once. Wait with `analysis_wait` /
-`export_wait` `{job, timeoutSeconds}` (default 60, max 600; call again while
+`export_wait` `{job, timeoutSeconds}` (default 60, max 590; call again while
 `state == "running"`). `export_status {job}` works on ANY job. Results of
 analyses and transcription arrive as JSON in the waited status's `output`;
 `tts_generate`'s `output` is the WAV path (import it with `media_import`).
@@ -152,6 +152,11 @@ packages)
 
 ## Libraries
 
+The licensed live shelves a monetized brief MUST shop (Pexels, Pixabay):
+- `stock_search {provider: "pexels"|"pixabay", query, orientation}` - hits carry `id`, `caption`, `url`, `license`, `width`, `height`, `seconds`
+- `stock_fetch {provider, id, url}` - downloads to the cache, replies `{path, bytes}`
+- `stock_import {path, provider, id, url}` - imports with licence metadata, replies `{mediaIds, view}`; keep the provider/id/url triple - the receipt's provenance reads it
+
 `openvid_status/prepare/search/search_batch/rank_for_slot/get/fetch/import`
 (937k clips;
 sources `pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square`
@@ -205,7 +210,7 @@ where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
 height?, rateNum?, rateDen?, codec?, tenBit?, colorRange?, hdr?}` ·
 `export_status` · `export_wait`
 
-- Export: crf 20 default (63 max, lower = better), preset "medium",
+- Export: crf 20 default (0-63 for export_start; a plan's export.crf is validated 0-51), preset "medium",
   codec `h264|hevc|av1`. Stages you will see in status: `cutout`, `stabilize`,
   `rendering` (status stage "video"), `mixing audio` ("audio"), `muxing`
   ("mux"); states `running|done|cancelled|failed`.

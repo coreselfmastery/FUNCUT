@@ -2454,30 +2454,43 @@ pub fn sense_family(name: &str, arguments: Value) -> Result<Outcome, ApiError> {
     // wherever an agent - or a prompt-injected agent - pointed it.
     if row.fields.contains(&"out")
         && let Some(out) = fields.get("out").and_then(Value::as_str).map(str::to_owned)
-        && Path::new(&out).is_absolute()
     {
         let audio = fields
             .get("audio")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        // Resolve BOTH sides before comparing: the whole confinement used
+        // to apply only to absolute `out` paths, so a RELATIVE out
+        // ("../../../home/z/.bashrc", or a name landing in the server's
+        // working directory) wrote anywhere the caller pleased - and a
+        // relative `out == audio` destroyed the take it read.
+        let resolved = |named: &str| -> PathBuf {
+            let path = Path::new(named);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(path)
+            }
+        };
+        let out_path = resolved(&out);
         if let Some(audio) = &audio
-            && Path::new(&out) == Path::new(audio)
+            && out_path == resolved(audio)
         {
             return Err(invalid(
                 "`out` cannot be the input itself: name the enhanced copy, or the repair \
                  destroys the take it reads",
             ));
         }
-        let beside = audio.as_deref().and_then(|audio| Path::new(audio).parent());
-        let confined = beside.is_some_and(|folder| {
-            Path::new(&out)
-                .parent()
-                .is_some_and(|parent| parent == folder)
-        });
+        let beside = audio
+            .as_deref()
+            .and_then(|audio| resolved(audio).parent().map(|p| p.to_path_buf()));
+        let confined = beside.is_some_and(|folder| out_path.parent() == Some(folder.as_path()));
         if !confined {
             return Err(invalid(
-                "`out` writes beside the take it reads: an absolute path outside the \
-                 audio's own folder is refused",
+                "`out` writes beside the take it reads: a path outside the audio's own \
+                 folder is refused, absolute or relative",
             ));
         }
     }

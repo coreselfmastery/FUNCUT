@@ -1803,6 +1803,35 @@ impl Api {
         })
     }
 
+    /// The hosts each live shelf actually serves its clips from. A fetch
+    /// that takes any caller-named URL would download from anywhere and
+    /// stamp the bytes with the provider's licence - licence laundering
+    /// on exactly the provenance chain the receipt stands on, and an
+    /// internal-network fetch primitive beside it. The host must be one
+    /// of the shelf's own, over https.
+    fn stock_host_allowed(provider: Provider, url: &str) -> Result<(), ApiError> {
+        let parsed = url::Url::parse(url)
+            .map_err(|error| ApiError::failed(format!("the clip URL does not parse: {error}")))?;
+        if parsed.scheme() != "https" {
+            return Err(ApiError::failed(
+                "the clip URL must be https - the shelves serve no plain http",
+            ));
+        }
+        let host = parsed.host_str().unwrap_or_default();
+        let allowed: &[&str] = match provider {
+            Provider::Pexels => &["videos.pexels.com", "www.pexels.com", "player.vimeo.com"],
+            Provider::Pixabay => &["cdn.pixabay.com", "i.pixabay.com"],
+        };
+        if !allowed.contains(&host) {
+            return Err(ApiError::failed(format!(
+                "the clip URL's host {host} is not one of {}'s own ({}) - a fetch from                  anywhere else would stamp bytes this shelf never licensed",
+                provider.name(),
+                allowed.join(", ")
+            )));
+        }
+        Ok(())
+    }
+
     /// The fetched-and-checked path of one live clip: cached as it lies,
     /// fetched when it is not, and refused - with the bad copy dropped -
     /// when the bytes that arrive do not read as MP4 media.
@@ -1812,6 +1841,7 @@ impl Api {
         id: &str,
         url: &str,
     ) -> Result<PathBuf, ApiError> {
+        Self::stock_host_allowed(provider, url)?;
         let library = self.live_library();
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let path = library

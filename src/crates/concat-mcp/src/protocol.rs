@@ -344,7 +344,21 @@ impl Serving {
                     .filter(|name| !name.is_empty())
                     .map(str::to_owned)
                     .collect();
-                (!names.is_empty()).then_some(names)
+                if names.is_empty() {
+                    // An empty list named nothing, and the old answer was
+                    // `None` - the whole catalogue, `project_close` and
+                    // `export_cancel` included, served silently because a
+                    // set-but-empty variable looked like "the operator
+                    // spoke". It is the director's default surface or
+                    // nothing.
+                    return Some(
+                        DIRECTOR_ALLOWLIST
+                            .iter()
+                            .map(|name| (*name).to_owned())
+                            .collect(),
+                    );
+                }
+                Some(names)
             }),
         }
         .with_director_default()

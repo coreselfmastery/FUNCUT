@@ -878,7 +878,7 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
     let known = [
-        "action", "project", "file", "name", "preset", "comp", "timeline", "vars",
+        "action", "project", "file", "name", "preset", "comp", "timeline", "vars", "ops",
     ];
     for key in fields.keys() {
         if !known.contains(&key.as_str()) {

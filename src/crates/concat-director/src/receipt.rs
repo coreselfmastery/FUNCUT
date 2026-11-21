@@ -687,7 +687,12 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     };
     let mut gates = Vec::new();
 
-    // The story: a plan that passed both halves of the gate.
+    // The story: a plan that passed the structural gate. creativeReady is
+    // the DIRECTOR's bar - an unattended run cannot invent an audience or
+    // a goal, so its honest answer is `false`, and a gate that demanded
+    // it made every deterministic run's verdict Rejected no matter how
+    // good the edit was. The readiness travels in the note; the gate
+    // itself asks whether the plan's structure held.
     match last("plan_validate") {
         Some(reply) => {
             let valid = reply.get("valid").and_then(Value::as_bool).unwrap_or(false);
@@ -696,18 +701,19 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let score = reply
-                .get("score")
+                .get("craftScore")
+                .or_else(|| reply.get("score"))
                 .and_then(Value::as_f64)
                 .map(|score| format!("{score}"))
                 .unwrap_or_else(|| "unscored".to_owned());
             gates.push(GateRecord::new(
                 "story",
-                if valid && ready {
+                if valid {
                     GateStatus::Pass
                 } else {
                     GateStatus::Fail
                 },
-                format!("plan_validate valid={valid} creativeReady={ready} score={score}"),
+                format!("plan_validate valid={valid} creativeReady={ready} craftScore={score}"),
                 true,
             ));
         }

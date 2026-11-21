@@ -289,10 +289,29 @@ impl Library {
         } else {
             url
         };
-        let response = self
-            .shelf
-            .get(&url, &send)
-            .map_err(|failure| format!("{} search failed: {failure}", provider.name()))?;
+        let response = self.shelf.get(&url, &send).map_err(|failure| {
+            // The full URL carries the Pixabay key, and ureq prints the
+            // URL in a status error - the secret went to the caller, the
+            // log and the receipt. Print only what happened.
+            let status = match &failure.cause {
+                crate::net::Cause::Status(code) => Some(*code),
+                _ => None,
+            };
+            let hint = match status {
+                Some(401) | Some(403) => " - the key was refused",
+                Some(404) => " - the endpoint moved",
+                Some(429) => " - the rate limit for this key is spent; a minute's wait",
+                Some(500..=599) => " - the provider is having a moment; retry",
+                _ => "",
+            };
+            match status {
+                Some(code) => format!(
+                    "{} search failed: the server answered HTTP {code}{hint}",
+                    provider.name()
+                ),
+                None => format!("{} search failed: {failure}", provider.name()),
+            }
+        })?;
         if response.status() != 200 {
             let status = response.status();
             let body = response.into_string().unwrap_or_default();
@@ -342,10 +361,26 @@ impl Library {
         // follows it, the key rides the first hop only, and the CDN's
         // own answer is the file.
         let send = |request: ureq::Request| request;
-        let response = self
-            .shelf
-            .get(url, &send)
-            .map_err(|failure| format!("{} fetch failed: {failure}", provider.name()))?;
+        let response = self.shelf.get(url, &send).map_err(|failure| {
+            let status = match &failure.cause {
+                crate::net::Cause::Status(code) => Some(*code),
+                _ => None,
+            };
+            let hint = match status {
+                Some(401) | Some(403) => " - the key was refused",
+                Some(404) => " - the clip moved",
+                Some(429) => " - the rate limit for this key is spent; a minute's wait",
+                Some(500..=599) => " - the provider is having a moment; retry",
+                _ => "",
+            };
+            match status {
+                Some(code) => format!(
+                    "{} fetch failed: the server answered HTTP {code}{hint}",
+                    provider.name()
+                ),
+                None => format!("{} fetch failed: {failure}", provider.name()),
+            }
+        })?;
         if response.status() != 200 {
             let status = response.status();
             let body = response.into_string().unwrap_or_default();
@@ -397,6 +432,16 @@ impl Library {
         if written == 0 {
             let _ = std::fs::remove_file(&partial);
             return Err(format!("{} sent an empty clip", provider.name()));
+        }
+        // A body that ends "cleanly" short of its own Content-Length is a
+        // truncated download (a proxy cut, a dropped connection): the old
+        // code renamed it into the cache anyway, and the cache serves by
+        // existence - a head-mangled file was served forever.
+        if let Some(bytes) = declared.filter(|bytes| *bytes > 0 && written != *bytes) {
+            let _ = std::fs::remove_file(&partial);
+            return Err(format!(
+                "the clip stopped at {written} of its {bytes} bytes: a truncated download, not a clip"
+            ));
         }
         std::fs::rename(&partial, &target)
             .map_err(|error| format!("the clip could not be landed: {error}"))?;

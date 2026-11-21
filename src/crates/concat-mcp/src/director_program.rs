@@ -343,6 +343,12 @@ struct StockCandidate {
     provider: String,
     id: String,
     url: String,
+    /// The shelf's own words for the clip - the caption the search hit
+    /// carried. The emotion gate judges candidates on their text; without
+    /// this, every candidate's blob was the slot's shared query plus a
+    /// tile ordinal, and the gate was deaf to the difference between
+    /// them.
+    caption: String,
     local_path: String,
     width: f64,
     height: f64,
@@ -697,7 +703,11 @@ impl SlotChoice {
     /// picture: a new clip id, a new frame hash, and not a clip another
     /// slot already chose. No such alternate leaves the flag standing,
     /// recorded by the check's own second pass.
-    fn swap_past(&mut self, used_ids: &[String], used_hashes: &[String]) {
+    fn swap_past(
+        &mut self,
+        used_ids: &[String],
+        used_hashes: &[String],
+    ) -> Option<(String, String)> {
         let current = &self.candidates[self.chosen];
         let current_hash = current.tile["hash"].as_str().unwrap_or_default().to_owned();
         let current_id = current.id.clone();
@@ -715,8 +725,13 @@ impl SlotChoice {
                 continue;
             }
             self.chosen = at;
-            return;
+            // The spend travels with the swap: two flagged slots used to
+            // be able to swap onto the SAME alternate, because neither
+            // recorded it as used - both then imported the same clip and
+            // the place pass styled only the first.
+            return Some((candidate.id.clone(), hash.to_owned()));
         }
+        None
     }
 }
 
@@ -1237,6 +1252,10 @@ struct EmotionLine {
     /// extract's own `queries`, emotion register x act shot, in priority
     /// order - what a B-roll slot overlapping this line shops with.
     queries: Vec<String>,
+    /// The delivery's own curve, as the extract emitted it (the bezier
+    /// x1/y1/x2/y2 of "tense eases in, warm settles out"): the caption
+    /// entrance keys ride it. Springs and unread lines take the settle.
+    easing: Vec<f64>,
     /// The line's own words, as the transcript measured them: a motion
     /// card carries the narration it was earned by, never a sample's text.
     text: String,
@@ -1302,6 +1321,25 @@ impl EmotionLine {
                         .collect()
                 })
                 .unwrap_or_default(),
+            easing: row
+                .pointer("/easing/curve")
+                .filter(|curve| curve["kind"] == json!("bezier"))
+                .map(|curve| {
+                    [
+                        curve["x1"].as_f64(),
+                        curve["y1"].as_f64(),
+                        curve["x2"].as_f64(),
+                        curve["y2"].as_f64(),
+                    ]
+                })
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .map(|part| part.unwrap_or_default())
+                        .collect::<Vec<f64>>()
+                })
+                .filter(|ease| ease.len() == 4 && ease.iter().all(|v| v.is_finite()))
+                .unwrap_or_else(default_ease),
             text: text.to_owned(),
             pace: pace.to_owned(),
             confidence: row["confidence"].as_f64().or(read),
@@ -1789,6 +1827,12 @@ fn motion_specs(
     motifs: &[Motif],
     questions: &[ScriptLine],
     claims: &[ScriptLine],
+    // Whether the captions stage already placed word-timed captions: a
+    // kinetic question card sits in the same band the captions occupy
+    // (~80% of frame height), so with captions on, the question's own
+    // words are already on screen and a second copy would collide with
+    // them - the card is a captions-off run's answer, not a bonus.
+    captions_placed: bool,
 ) -> Vec<MotionSpec> {
     const SPACING: f64 = 15.0;
     const MOST: usize = 8;
@@ -1813,6 +1857,7 @@ fn motion_specs(
                     earned_by: "emotion",
                     chapter: false,
                     slot: None,
+                    slots: Vec::new(),
                 },
             ))
         })
@@ -1846,6 +1891,7 @@ fn motion_specs(
                 earned_by: "entities",
                 chapter: false,
                 slot: None,
+                slots: Vec::new(),
             },
         ));
     }
@@ -1853,7 +1899,7 @@ fn motion_specs(
     // tiling's own headline. They rank above a line's beat - a chapter is
     // the strongest thing the script said - but still obey the spacing
     // floor, because a chapter card landing on a stat card is a pile.
-    for chapter in chapters {
+    for (index, chapter) in chapters.iter().enumerate() {
         let words = card_words(&chapter.headline);
         if words.is_empty() {
             continue;
@@ -1871,6 +1917,10 @@ fn motion_specs(
                 earned_by: "topics",
                 chapter: true,
                 slot: Some("Title"),
+                slots: vec![
+                    ("Number", format!("{:02}", index + 1)),
+                    ("Kicker", "CHAPTER".to_owned()),
+                ],
             },
         ));
     }
@@ -1901,6 +1951,7 @@ fn motion_specs(
                     earned_by: "motifs",
                     chapter: false,
                     slot: None,
+                    slots: Vec::new(),
                 },
             ));
         }
@@ -1911,7 +1962,7 @@ fn motion_specs(
     // profile's graphic policy names exactly this signal.
     for question in questions {
         let words = card_words(&question.text);
-        if words.is_empty() {
+        if words.is_empty() || captions_placed {
             continue;
         }
         ranked.push((
@@ -1927,6 +1978,7 @@ fn motion_specs(
                 earned_by: "speechActs",
                 chapter: false,
                 slot: None,
+                slots: Vec::new(),
             },
         ));
     }
@@ -1953,6 +2005,7 @@ fn motion_specs(
                 earned_by: "claims",
                 chapter: false,
                 slot: None,
+                slots: Vec::new(),
             },
         ));
     }
@@ -2005,6 +2058,14 @@ struct MotionSpec {
     /// for the preset's first text slot. A chapter card's headline is its
     /// title, not its kicker.
     slot: Option<&'static str>,
+    /// Extra (label, value) fills beside the words: a chapter's Number and
+    /// Kicker. Every slot the preset carries that neither the words nor
+    /// this list fills is BLANKED at the bake - the preset's sample text
+    /// ("-- FUNCUT, MOTION NOTES", "RENDERS THIS WEEK", "REAR ADMIRAL")
+    /// is a placeholder for a designer, never a fact the narration said,
+    /// and shipping it fabricated an attribution, a statistic and a
+    /// credential the video never made.
+    slots: Vec<(&'static str, String)>,
 }
 
 impl MotionSpec {
@@ -2216,9 +2277,16 @@ fn sfx_queries_for_emotion(emotion: &str) -> &'static [&'static str] {
 /// was paid for. The gain follows the peak's own strength, inside the
 /// skill's -6..-24 dB table.
 fn accent_gain_db(strength: f64) -> f64 {
-    if strength >= 0.8 {
+    // The prosody ear's strength is a z-score over the line's own energy
+    // envelope, and it only reports peaks above mean+1sigma - so every
+    // measured strength is > 1.0 and the old 0.8/0.65 buckets put every
+    // accent at -9 dB, deaf to the difference between a shout and a
+    // lean-in. The buckets read in sigma space now: 2+ sigma is the
+    // shout, 1.4 the lean-in, anything else the whisper the floor
+    // always was.
+    if strength >= 2.0 {
         -9.0
-    } else if strength >= 0.65 {
+    } else if strength >= 1.4 {
         -12.0
     } else {
         -15.0
@@ -2263,10 +2331,16 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
 /// keyed. The captions stage places them a batch earlier, so they are
 /// the words the run just landed - the one place a one-click run can
 /// give its type motion without a designer.
-fn entrance_targets(log: &[Value]) -> Vec<(String, f64, f64)> {
+fn entrance_targets(log: &[Value], takes: &[TakePaths]) -> Vec<(String, f64, f64, Vec<f64>)> {
     let Some(view) = latest_view(log) else {
         return Vec::new();
     };
+    // The delivery's own curve, where a line was read: a tense line eases
+    // in, a warm one settles out (EMOTION.md's headline law, dead since
+    // the field was first emitted). The default is the settle every
+    // caption used to take regardless of what the voice did.
+    let read = emotion_lines(log, takes);
+    let media = media_paths(view);
     view["timeline"]["clips"]
         .as_array()
         .into_iter()
@@ -2286,9 +2360,24 @@ fn entrance_targets(log: &[Value]) -> Vec<(String, f64, f64)> {
             // of the frame, so the rise is keyed around wherever the
             // caption actually sits.
             let offset_y = clip["offsetY"].as_f64().unwrap_or(0.0);
-            (duration >= 0.4).then_some((id, duration, offset_y))
+            let ease = clip["media"]
+                .as_str()
+                .and_then(|mid| media.iter().find(|(id, _)| id == mid))
+                .and_then(|(_, path)| {
+                    let source = clip["sourceStart"].as_f64().unwrap_or(0.0);
+                    emotion_at(&read, path, source)
+                })
+                .map(|line| line.easing.clone())
+                .unwrap_or_else(default_ease);
+            (duration >= 0.4).then_some((id, duration, offset_y, ease))
         })
         .collect()
+}
+
+/// The settle every caption takes when no emotion line was read: the
+/// emphasis curve (0.16, 1.0, 0.3, 1.0).
+fn default_ease() -> Vec<f64> {
+    vec![0.16, 1.0, 0.3, 1.0]
 }
 
 /// One title's entrance, as the batch of keys that draws it: the words
@@ -2300,9 +2389,9 @@ fn entrance_targets(log: &[Value]) -> Vec<(String, f64, f64)> {
 /// settles, instead of being dragged to mid-frame. The settle curve is
 /// the engine's own ease-out; a title too short to hold an entrance is
 /// left still, and one already keyed is left alone.
-fn entrance_keys(clip_id: &str, duration: f64, placed: f64) -> Vec<Value> {
+fn entrance_keys(clip_id: &str, duration: f64, placed: f64, ease: &[f64]) -> Vec<Value> {
     let span = (0.35 / duration).clamp(0.05, 0.6);
-    let ease = json!([0.16, 1.0, 0.3, 1.0]);
+    let ease = json!(ease);
     vec![
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "scale",
@@ -2351,6 +2440,12 @@ fn confidence_family(signal: &str) -> &str {
         "musicSegments" => "forensic",
         "noiseFloor" => "forensic",
         "emphasisWords" => "prosody",
+        // The pulse and the density are rated under the families that
+        // measured them (prosody's rhythm layers; the pauses the speech
+        // ratio is the complement of) - unmapped, their log entries read
+        // 0.0 despite full measurements behind them.
+        "rhythmLayers" => "prosody",
+        "speechRatio" => "pauses",
         _ => signal,
     }
 }
@@ -2377,16 +2472,16 @@ fn shelf_orientation(aspect: &str) -> Option<&'static str> {
 }
 
 /// The aspect the project's own frame is nearest: a 9:16 project is a
-/// reel, a 16:9 one is not.
+/// reel, a 16:9 one is not. Every view the program ever reads is a
+/// `summary::view` product, and the summary puts the frame under
+/// `/project/width|height` - the old `/settings/*` read matched nothing
+/// real, so every project read as 16:9 and a vertical reel was shopped,
+/// captioned and graded landscape (the hand-built `/settings` views lived
+/// on only in the unit tests, codifying the wrong shape). The
+/// `/settings` read stays as the fallback for a raw editor view.
 fn aspect_of(view: &Value) -> &'static str {
-    let width = view
-        .pointer("/settings/width")
-        .and_then(Value::as_f64)
-        .unwrap_or(1920.0);
-    let height = view
-        .pointer("/settings/height")
-        .and_then(Value::as_f64)
-        .unwrap_or(1080.0);
+    let frame = frame_of(view);
+    let FrameOf { width, height } = frame;
     if height <= 0.0 {
         return "16:9";
     }
@@ -2402,6 +2497,26 @@ fn aspect_of(view: &Value) -> &'static str {
         .min_by(|left, right| (left.1 - ratio).abs().total_cmp(&(right.1 - ratio).abs()))
         .map(|(name, _)| *name)
         .unwrap_or("16:9")
+}
+
+/// The frame a view reports, from whichever shape it carries.
+struct FrameOf {
+    width: f64,
+    height: f64,
+}
+
+fn frame_of(view: &Value) -> FrameOf {
+    let width = view
+        .pointer("/project/width")
+        .or_else(|| view.pointer("/settings/width"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1920.0);
+    let height = view
+        .pointer("/project/height")
+        .or_else(|| view.pointer("/settings/height"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1080.0);
+    FrameOf { width, height }
 }
 
 /// The plan the run can write from what it measured - the spine it is
@@ -2442,7 +2557,8 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // clip, in order, each naming the media it plays.
     let segments: Vec<Value> = clips
         .iter()
-        .map(|clip| {
+        .enumerate()
+        .map(|(index, clip)| {
             let start = clip["start"].as_f64().unwrap_or(0.0);
             let end = start + clip["duration"].as_f64().unwrap_or(0.0);
             let mut segment = json!({
@@ -2464,6 +2580,21 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                     let (source_in, _, _) = clip_file_span(clip);
                     emotion_at(&read, path, source_in).cloned()
                 });
+            // Every clip enters on purpose (floor M): the opening pops,
+            // a reveal or a turn punches, tension whips, the landing
+            // dissolves, and the calm middle alternates slide and
+            // dissolve - an entrance the gate can read, and a vocabulary
+            // the timeline's transition pass already speaks.
+            let last = index + 1 == clips.len();
+            let anim = match mood.as_ref().map(|line| line.act.as_str()) {
+                Some("hook") | Some("reveal") | Some("turn") => "punch",
+                Some("tension") => "whip",
+                _ if index == 0 => "pop",
+                _ if last => "dissolve",
+                _ if index % 2 == 0 => "slide",
+                _ => "dissolve",
+            };
+            segment["in"] = json!({ "anim": anim });
             if let Some(line) = mood {
                 segment["emotion"] = json!(line.emotion);
                 segment["colourTemp"] = json!(line.temperature);
@@ -2474,16 +2605,22 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         })
         .collect();
     // The sections the runtime falls into. A piece over 12 s owes a payoff
-    // somewhere, so it gets a cta; a short one is hook and body alone.
-    let hook_end = if runtime > 12.0 { 3.0 } else { runtime };
+    // somewhere, so it gets a cta; a 4-12 s piece is hook and body (the
+    // hook inside 3 s, or the creative gate names it); a very short one
+    // is all hook.
     let sections = if runtime > 12.0 {
         json!([
             { "role": "hook", "start": 0.0, "end": 3.0 },
             { "role": "body", "start": 3.0, "end": round3(runtime - 2.0) },
             { "role": "cta", "start": round3(runtime - 2.0), "end": round3(runtime) },
         ])
+    } else if runtime > 4.0 {
+        json!([
+            { "role": "hook", "start": 0.0, "end": 3.0 },
+            { "role": "body", "start": 3.0, "end": round3(runtime) },
+        ])
     } else {
-        json!([{ "role": "hook", "start": 0.0, "end": round3(hook_end) }])
+        json!([{ "role": "hook", "start": 0.0, "end": round3(runtime) }])
     };
     // The brief, only where the narration answers it: the opening line is
     // the claim, the closing line its payoff, the ordered emotions the
@@ -4121,7 +4258,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             ]
         })
         .collect();
-    steps.push(FanStep::fan(Stage::Transcribe, words).into());
+    // The waits give up with "still running" rather than an error when
+    // their budget ends; without a gate the stage then "completes" over a
+    // transcription that never arrived, and every word-derived stage
+    // downstream silently ships defaults - no captions, no B-roll slots,
+    // no emotion lines. The gate names the transcription (the job-start
+    // replies carry no state, so only the waits are judged).
+    steps.push(
+        FanStep::fan(Stage::Transcribe, words)
+            .gate(ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "a take's transcription was still running when its waits ran out",
+            })
+            .into(),
+    );
     // 4. The delivery: pauses, emphasis, the read itself - one lane per
     //    take, each reply carrying its own audio path so the fan's
     //    landing order is no one's guess.
@@ -4450,19 +4601,28 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .total_cmp(&right.take_wide.integrated_lufs.unwrap_or_default())
                             })?;
                         let measured = loudest.take_wide.integrated_lufs?;
-                        let gain = round3(loudest.safe_gain(target - measured));
+                        let gain = round3(loudest.safe_gain(target - measured))
+                            // clip_audio_levels_db refuses baseDb outside
+                            // -60..+24; a very quiet take's wanted gain
+                            // (e.g. -40 LUFS asking for +26) used to get
+                            // the mix call refused after the grade had
+                            // already landed.
+                            .min(24.0);
                         if gain.abs() < 1.0 {
                             return None;
                         }
                         let view = latest_view(log)?;
                         let media = media_paths(view);
+                        // The gain belongs on the clip that plays the
+                        // LOUDEST take - the measurement's own clip - not
+                        // the first clip that plays any take: with takes
+                        // of differing loudness, the first-played clip
+                        // took a gain computed for a different file.
                         let clip = view["timeline"]["clips"].as_array()?.iter().find(|clip| {
                             clip["media"]
                                 .as_str()
                                 .and_then(|id| media.iter().find(|(mid, _)| mid == id))
-                                .is_some_and(|(_, path)| {
-                                    level_source.iter().any(|take| &take.take == path)
-                                })
+                                .is_some_and(|(_, path)| path == &loudest.take)
                         })?;
                         let clip_id = clip["id"].as_str()?.to_owned();
                         return Some(call(
@@ -4691,6 +4851,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .to_owned(),
                                     id: hit["id"].as_str().unwrap_or_default().to_owned(),
                                     url: hit["url"].as_str().unwrap_or_default().to_owned(),
+                                    caption: hit["caption"]
+                                        .as_str()
+                                        .or_else(|| hit["name"].as_str())
+                                        .unwrap_or_default()
+                                        .to_owned(),
                                     local_path: path,
                                     width: hit["width"].as_f64().unwrap_or(0.0),
                                     height: hit["height"].as_f64().unwrap_or(0.0),
@@ -4791,11 +4956,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .iter()
                                 .enumerate()
                                 .map(|(index, candidate)| {
+                                    // The candidate's OWN words go to the
+                                    // gate: the shelf's caption names what
+                                    // the clip shows, and a caption-less
+                                    // hit falls back to the slot's query
+                                    // rather than a bare tile ordinal
+                                    // ("1 ", "2 ") that judges nothing.
+                                    let text = if candidate.caption.trim().is_empty() {
+                                        slot.query.clone()
+                                    } else {
+                                        candidate.caption.clone()
+                                    };
                                     json!({
                                         "index": index,
                                         "id": candidate.id,
-                                        "label": candidate.tile["label"].clone(),
-                                        "query": slot.query.clone(),
+                                        "caption": text,
                                     })
                                 })
                                 .collect();
@@ -4813,6 +4988,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // Among the candidates the gate passed, the
                             // sheet's own ranking decides: visual quality
                             // picks within the register the gate allowed.
+                            // A gate that ANSWERED is authoritative: its
+                            // `order` (possibly empty - every candidate
+                            // failed 2+ checks, and the beat is dropped,
+                            // never padded) decides among the visually
+                            // qualified candidates. A reply that did not
+                            // answer (a refusal shape, a hosted-model
+                            // error riding the log) is a DEGRADED gate,
+                            // not a rejected beat: the sheet's own ranking
+                            // decides, the way it did before the gate
+                            // existed, among candidates the pixels did
+                            // not disqualify.
+                            let gate_answered = log.last().is_some_and(|reply| {
+                                reply.get("order").is_some() || reply["ok"].as_bool() == Some(true)
+                            });
                             let passing: Vec<usize> = log
                                 .last()
                                 .and_then(|reply| reply["order"].as_array())
@@ -4824,10 +5013,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .collect()
                                 })
                                 .unwrap_or_default();
-                            let chosen = passing
-                                .into_iter()
-                                .filter(|index| pending_gate.get(*index).is_some())
-                                .min();
+                            let visual: Vec<usize> = pending_gate
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, candidate)| {
+                                    candidate.visual_score(&used_hashes).is_some()
+                                })
+                                .map(|(index, _)| index)
+                                .collect();
+                            let chosen = if gate_answered {
+                                passing
+                                    .into_iter()
+                                    .filter(|index| visual.contains(index))
+                                    .min()
+                            } else {
+                                visual.into_iter().min()
+                            };
                             if let Some(chosen) = chosen {
                                 let best = &pending_gate[chosen];
                                 used_ids.push(best.id.clone());
@@ -4883,8 +5084,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 };
                                 match rule {
                                     // A colour jump the sheet measured:
-                                    // the swap the alternates exist for.
-                                    "colour" => shop.swap_past(&used_ids, &used_hashes),
+                                    // the swap the alternates exist for -
+                                    // and the new choice is SPENT, so a
+                                    // second flagged slot can never swap
+                                    // onto the same clip.
+                                    "colour" => {
+                                        if let Some((id, hash)) =
+                                            shop.swap_past(&used_ids, &used_hashes)
+                                        {
+                                            used_ids.push(id);
+                                            if !hash.is_empty() {
+                                                used_hashes.push(hash);
+                                            }
+                                        }
+                                    }
                                     // A category run: the gate's own
                                     // remedy is the treatment's, and the
                                     // treatment the program has is the
@@ -5379,7 +5592,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let lifted = take_read
                                 .and_then(|take_read| take_read.line_at(group.start))
                                 .and_then(|line| line.relative_lu)
-                                .is_some_and(|lu| lu >= 3.0)
+                                // 1.5 LU is the profile's own definition of
+                                // a lifted line (the same bar its hint
+                                // counts by); 3.0 matched nothing the
+                                // producer documents.
+                                .is_some_and(|lu| lu >= 1.5)
                                 || (at < 3.0
                                     && take_read
                                         .and_then(|take_read| take_read.hook_lift())
@@ -5606,16 +5823,42 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The cards this run will bake, decided on the first ask
                 // from the read: file second and preset, in play order.
                 let mut specs: Option<Vec<MotionSpec>> = None;
-                // The preset library's own slot labels, read once: a
-                // preset's text slot is not called the same thing in every
-                // card, and guessing the label is how a bake is refused.
-                let mut labels: Option<Vec<(String, String)>> = None;
+                // The preset library's own shape, read once: the first
+                // text slot (a preset's text slot is not called the same
+                // thing in every card, and guessing the label is how a
+                // bake is refused), every slot label the preset carries
+                // (the bake fills or blanks each one), and the comp's own
+                // duration (a hold longer than the comp freezes its last
+                // frame).
+                let mut labels: Option<Vec<(String, String, Vec<String>, f64)>> = None;
                 // Where the stage is: which card, and which of its calls
                 // (the library, the bake, then the placement) is next.
                 let mut at = 0usize;
                 let mut phase = 0u8;
                 let mut entrances = false;
                 move |log| loop {
+                    // The captions' entrance keys land FIRST: under the
+                    // warn policy one failed bake used to abort the whole
+                    // derive loop and take the entrance pass with it - a
+                    // machine without the Geneva sidecar lost every card
+                    // AND every caption entrance in one refusal.
+                    if !entrances {
+                        entrances = true;
+                        let targets = entrance_targets(log, &motion_source);
+                        if !targets.is_empty() {
+                            let mut commands: Vec<Value> = Vec::new();
+                            for (id, duration, placed, ease) in &targets {
+                                commands.extend(entrance_keys(id, *duration, *placed, ease));
+                            }
+                            return Some(call(
+                                "edit_apply",
+                                json!({
+                                    "path": motion_project,
+                                    "command": { "op": "batch", "commands": commands },
+                                }),
+                            ));
+                        }
+                    }
                     let specs = specs.get_or_insert_with(|| {
                         let reads = voice_reads(log, &motion_source);
                         let motifs: Vec<Motif> = reads
@@ -5629,30 +5872,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             &motifs,
                             &question_acts(log, &motion_source),
                             &uncovered_claims(log, &motion_source),
+                            // Captions land before motion does: a timeline
+                            // that already carries text clips answers the
+                            // question-card collision by not asking it.
+                            latest_view(log).is_some_and(|view| {
+                                view["timeline"]["clips"].as_array().is_some_and(|clips| {
+                                    clips.iter().any(|clip| clip["kind"] == json!("text"))
+                                })
+                            }),
                         )
                     });
                     if at >= specs.len() {
-                        // The cards are placed: the captions' entrance is
-                        // the stage's last act, issued once.
-                        if entrances {
-                            return None;
-                        }
-                        entrances = true;
-                        let targets = entrance_targets(log);
-                        if targets.is_empty() {
-                            return None;
-                        }
-                        let mut commands: Vec<Value> = Vec::new();
-                        for (id, duration, placed) in &targets {
-                            commands.extend(entrance_keys(id, *duration, *placed));
-                        }
-                        return Some(call(
-                            "edit_apply",
-                            json!({
-                                "path": motion_project,
-                                "command": { "op": "batch", "commands": commands },
-                            }),
-                        ));
+                        // The cards are placed and the entrances were keyed
+                        // before the first bake: the stage is done.
+                        return None;
                     }
                     let spec = &specs[at];
                     match phase {
@@ -5677,15 +5910,41 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // A card that names its own slot uses it; the
                             // rest take the preset's first text slot, which
                             // is what the library's own labels say.
-                            let chosen = spec.slot.map(str::to_owned).or_else(|| {
-                                labels
-                                    .as_ref()
-                                    .and_then(|labels| {
-                                        labels.iter().find(|(id, _)| id == spec.preset)
-                                    })
-                                    .map(|(_, slot)| slot.clone())
+                            let shape = labels.as_ref().and_then(|labels| {
+                                labels.iter().find(|(id, ..)| id == spec.preset)
                             });
-                            if let Some(slot) = chosen {
+                            let chosen = spec
+                                .slot
+                                .map(str::to_owned)
+                                .or_else(|| shape.map(|(_, slot, ..)| slot.clone()));
+                            if let Some((_, _, all, _)) = shape {
+                                // One op per slot the preset carries: the
+                                // extra fills (a chapter's Number), the
+                                // words in their own slot, and a BLANK
+                                // everywhere else - the sample text never
+                                // ships as a fact the video never said.
+                                let ops: Vec<Value> = all
+                                    .iter()
+                                    .map(|label| {
+                                        let value = spec
+                                            .slots
+                                            .iter()
+                                            .find(|(fill, _)| fill == label)
+                                            .map(|(_, value)| value.clone())
+                                            .or_else(|| {
+                                                (chosen.as_deref() == Some(label.as_str()))
+                                                    .then(|| spec.words.clone())
+                                            })
+                                            .unwrap_or_default();
+                                        json!({
+                                            "op": "set-slot",
+                                            "slot": label,
+                                            "value": value,
+                                        })
+                                    })
+                                    .collect();
+                                arguments["ops"] = json!(ops);
+                            } else if let Some(slot) = chosen {
                                 arguments["ops"] = json!([{
                                     "op": "set-slot", "slot": slot, "value": spec.words,
                                 }]);
@@ -5694,7 +5953,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         }
                         1 => {
                             // The library's reply, read once and kept: the
-                            // first text slot of each preset, by id.
+                            // first text slot, every label, and the
+                            // duration of each preset, by id.
                             labels = Some(
                                 log.last()
                                     .and_then(|reply| reply["presets"].as_array())
@@ -5702,13 +5962,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .flatten()
                                     .filter_map(|preset| {
                                         let id = preset["id"].as_str()?.to_owned();
-                                        let slot = preset["slots"]
-                                            .as_array()?
+                                        let slots = preset["slots"].as_array()?;
+                                        let slot = slots
                                             .iter()
                                             .find(|slot| slot["field"] == json!("text"))?["label"]
                                             .as_str()?
                                             .to_owned();
-                                        Some((id, slot))
+                                        let all = slots
+                                            .iter()
+                                            .filter_map(|slot| {
+                                                slot["label"].as_str().map(str::to_owned)
+                                            })
+                                            .collect();
+                                        let duration = preset["duration"].as_f64()?;
+                                        Some((id, slot, all, duration))
                                     })
                                     .collect(),
                             );
@@ -5776,7 +6043,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .and_then(|clip| clip["duration"].as_f64());
                             let change = match (id, default) {
                                 (Some(id), Some(duration)) => {
-                                    let delta = spec.hold() - duration;
+                                    // A hold longer than the comp's own
+                                    // duration freezes the last frame; the
+                                    // comp's duration is the ceiling.
+                                    let comp = labels
+                                        .as_ref()
+                                        .and_then(|labels| {
+                                            labels.iter().find(|(id, ..)| id == spec.preset)
+                                        })
+                                        .map(|(.., duration)| *duration)
+                                        .unwrap_or(f64::MAX);
+                                    let hold = spec.hold().min(comp);
+                                    let delta = hold - duration;
                                     (delta.abs() > 0.05).then_some((id, delta))
                                 }
                                 _ => None,
@@ -6438,13 +6716,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .is_some_and(|id| !used.iter().any(|spent| spent == id))
                                 })
                                 .collect();
-                            let chosen = fresh
-                                .iter()
-                                .copied()
-                                .find(|hit| {
-                                    hit["duration"].as_f64().is_some_and(|secs| secs <= 3.0)
-                                })
-                                .or_else(|| fresh.first().copied());
+                            // An accent is a hit, not a bed: when every
+                            // unspent hit runs past three seconds the word
+                            // moves on to its next query rather than
+                            // placing a six-second ambience at -9 dB (the
+                            // shelf carries sounds up to 40 s; "drone" and
+                            // "ambience" families return nothing shorter).
+                            let chosen = fresh.iter().copied().find(|hit| {
+                                hit["duration"].as_f64().map_or(true, |secs| secs <= 3.0)
+                            });
                             if let Some(hit) = chosen {
                                 let id = hit["id"].as_str().unwrap_or_default().to_owned();
                                 // The manifest's own `syncAt` says how far
@@ -6614,11 +6894,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // A sheet that named none is a preview that could
                         // not be looked at: end the stage rather than hand
                         // the critic an empty path.
-                        let png = log
+                        let sheet = log
                             .iter()
                             .rev()
-                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .filter(|png| !png.trim().is_empty())?;
+                            .find(|reply| {
+                                reply
+                                    .get("pngPath")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|png| !png.trim().is_empty())
+                            })
+                            .cloned()?;
+                        let png = sheet["pngPath"].as_str().unwrap_or_default();
                         // The brief carries the arc the voice measured, so
                         // the critic judges the cut against the story it
                         // was cut to and not the pictures alone.
@@ -6631,11 +6917,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // `autoSetup` is the difference between a review
                         // and a pixel count: without it a machine with no
                         // vision model yet answers from measurements alone
-                        // and the stage would call that a critique.
+                        // and the stage would call that a critique. The
+                        // SHEET travels with the pixels: its craft and
+                        // audio measurements are what the critique scores
+                        // against - pngPath alone left every reading empty
+                        // and the heuristic answered a constant 6.7.
                         return Some(call(
                             "craft_critique",
                             json!({
                                 "pngPath": png,
+                                "sheet": sheet,
                                 "project": preview_project,
                                 "brief": brief,
                                 "autoSetup": true,
@@ -6713,6 +7004,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .rev()
                             .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
                             .filter(|png| !png.trim().is_empty())?;
+                        let sheet = log
+                            .iter()
+                            .rev()
+                            .find(|reply| {
+                                reply
+                                    .get("pngPath")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|png| !png.trim().is_empty())
+                            })
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
                         let measured = signal_brief(log);
                         let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
                             measured
@@ -6723,6 +7025,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             "craft_critique",
                             json!({
                                 "pngPath": png,
+                                "sheet": sheet,
                                 "project": revise_project,
                                 "brief": brief,
                                 "autoSetup": true,
@@ -6750,7 +7053,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         "path": project.clone(),
                         "output": export.clone(),
                         "crf": 20,
-                        "codec": "h264"
                     }),
                 ),
                 call(
@@ -6992,10 +7294,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         } else {
                             json!({})
                         };
+                        // The watch's own sheet travels whole: its craft
+                        // (variety, black frames, letterboxing, static
+                        // cuts) and audio measurements are the critique's
+                        // evidence - pngPath alone answered a constant 6.7
+                        // and the 7.0 bar below could never pass.
+                        let sheet = log
+                            .iter()
+                            .rev()
+                            .find(|reply| {
+                                reply
+                                    .get("pngPath")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|png| !png.trim().is_empty())
+                            })
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
                         return Some(call(
                             "craft_critique",
                             json!({
                                 "pngPath": png,
+                                "sheet": sheet,
                                 "project": watch_project,
                                 "brief": brief,
                                 "autoSetup": true,
@@ -7245,6 +7564,18 @@ mod tests {
                 what: "the render was still running when its waits ran out",
             }]
         );
+        // The transcription's own done gate: a wait that gives up with
+        // "still running" used to complete the stage over a transcript
+        // that never arrived, and every word-derived stage downstream
+        // silently shipped defaults.
+        assert_eq!(
+            program.steps[2].gates(),
+            vec![ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "a take's transcription was still running when its waits ran out",
+            }]
+        );
         assert_eq!(
             program.steps[16].gates(),
             vec![ReplyGate::AtLeast {
@@ -7255,7 +7586,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 14 && at != 15 && at != 16 {
+            if at != 2 && at != 14 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -7339,7 +7670,7 @@ mod tests {
         let claims = uncovered_claims(&log, &takes);
         assert_eq!(claims.len(), 1, "the uncovered claim is the one read");
         assert_eq!(claims[0].text, "this ship sank in 1912");
-        let specs = motion_specs(&[], &[], &[], &[], &[], &claims);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &claims, false);
         let card = specs
             .iter()
             .find(|spec| spec.earned_by == "claims")
@@ -7389,7 +7720,7 @@ mod tests {
         let questions = question_acts(&log, &takes);
         assert_eq!(questions.len(), 1, "only the question line is an ask");
         assert_eq!(questions[0].start, 0.0);
-        let specs = motion_specs(&[], &[], &[], &[], &questions, &[]);
+        let specs = motion_specs(&[], &[], &[], &[], &questions, &[], false);
         assert!(
             specs
                 .iter()
@@ -7578,7 +7909,7 @@ mod tests {
             ],
         });
         let view = json!({
-            "settings": { "width": 1080, "height": 1920 },
+            "project": { "name": "Reel", "width": 1080, "height": 1920 },
             "timeline": { "clips": [
                 { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
                   "sourceStart": 0.0, "speed": 1.0 },
@@ -8686,7 +9017,7 @@ mod tests {
             enhanced: String::new(),
         }];
         let view = json!({
-            "settings": { "width": 1920.0, "height": 1080.0 },
+            "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
             "timeline": { "clips": [
                 { "id": "c1", "media": "m1", "start": 0.0, "duration": 3.0,
                   "sourceStart": 0.0, "speed": 1.0 },
@@ -9092,7 +9423,7 @@ mod tests {
         };
         let view = json!({
             "project": { "name": "Reel" },
-            "settings": { "width": 1920.0, "height": 1080.0 },
+            "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
             "timeline": { "id": "t1", "clips": [{
                 "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
                 "sourceStart": 0.0, "speed": 1.0,
@@ -9158,7 +9489,7 @@ mod tests {
         };
         let view = json!({
             "project": { "name": "Reel" },
-            "settings": { "width": 1920.0, "height": 1080.0 },
+            "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
             "timeline": { "id": "t1", "clips": [{
                 "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
                 "sourceStart": 0.0, "speed": 1.0,
@@ -10029,6 +10360,7 @@ mod tests {
             provider: "pexels".to_owned(),
             id: id.to_owned(),
             url: format!("https://x/{id}"),
+            caption: format!("caption for {id}"),
             local_path: format!("/cache/{id}.mp4"),
             width: 1080.0,
             height: 1920.0,
@@ -10172,7 +10504,7 @@ mod tests {
         };
 
         let view = json!({
-            "settings": { "width": 1080, "height": 1920 },
+            "project": { "name": "Reel", "width": 1080, "height": 1920 },
             "timeline": { "clips": [
                 {
                     "id": "voice",
@@ -10214,6 +10546,7 @@ mod tests {
                 "provider": "pexels",
                 "url": "https://videos.pexels.com/files/hd.mp4",
                 "license": "Pexels License",
+                "caption": "aerial city skyline at dusk",
                 "width": 1080.0,
                 "height": 1920.0,
                 "seconds": 10.0
@@ -10251,13 +10584,24 @@ mod tests {
             }],
         }));
         // The emotion gate rides between the sheet and the choice: the
-        // register the slot's own line reads in gates the candidates
-        // before the import is paid for.
-        let gate = (gather.next)(&log).expect("the candidates are gated");
+        // candidate it weighs carries the shelf's own caption (not the
+        // slot's shared query), and the segment defaults to neutral - the
+        // exact shape that used to crash the Python gate.
+        let gate = (gather.next)(&log).expect("the sheet's choice is gated");
         assert_eq!(gate.tool, "emotion");
         assert_eq!(gate.arguments["action"], "gate");
-        log.push(json!({ "order": [0] }));
-        let import = (gather.next)(&log).expect("the looked-at hit is imported");
+        assert_eq!(
+            gate.arguments["segment"],
+            json!({ "emotion": "neutral", "act": "setup" }),
+            "no emotion line covers the gap, so the segment is the neutral default"
+        );
+        assert_eq!(
+            gate.arguments["candidates"],
+            json!([{ "index": 0, "id": "2499611", "caption": "aerial city skyline at dusk" }]),
+            "the gate judges the shelf's own words for the clip"
+        );
+        log.push(json!({ "ok": true, "order": [0] }));
+        let import = (gather.next)(&log).expect("the gate-passed hit is imported");
         assert_eq!(import.tool, "stock_import");
         assert_eq!(import.arguments["provider"], "pexels");
         assert_eq!(import.arguments["id"], "2499611");
@@ -10309,6 +10653,136 @@ mod tests {
         assert!(commands.iter().any(|command| command["op"] == "frameClip"));
         assert!(commands.iter().any(|command| command["op"] == "updateClip"));
         assert!((gather.next)(&log).is_none(), "one gap is placed only once");
+    }
+
+    /// The gate's two failure shapes behave differently: an ANSWERED
+    /// gate that rejected every candidate drops the beat (never pads),
+    /// while a gate that never answered (a refusal shape in the log)
+    /// degrades to the sheet's own ranking rather than dropping work on
+    /// a technicality.
+    #[test]
+    fn the_gate_s_rejection_drops_and_its_degradation_falls_back() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let view = json!({
+            "project": { "name": "Reel", "width": 1080, "height": 1920 },
+            "timeline": { "clips": [{
+                "id": "voice", "media": "voice-media",
+                "start": 0.0, "duration": 10.0,
+                "sourceStart": 0.0, "speed": 1.0,
+            }]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 4.0, "end": 6.0, "text": "the crowds crossing" },
+            ],
+        });
+        let base = |log: Vec<Value>| -> Vec<Value> {
+            let mut log = log;
+            log.insert(0, view.clone());
+            log.insert(1, json!({ "path": take, "output": transcript.to_string() }));
+            log
+        };
+        let search_reply = json!({
+            "provider": "pexels",
+            "license": "Pexels License",
+            "hits": [{
+                "id": "2499611", "provider": "pexels",
+                "url": "https://videos.pexels.com/files/hd.mp4",
+                "license": "Pexels License",
+                "caption": "aerial city skyline at dusk",
+                "width": 1080.0, "height": 1920.0, "seconds": 10.0,
+            }],
+        });
+        let fetch_reply = json!({
+            "id": "2499611", "provider": "pexels",
+            "path": "/cache/stock/pexels/2499611.mp4", "bytes": 8_000_000,
+        });
+        let sheet_reply = json!({
+            "pngPath": "/cache/sense/sheet-1.png",
+            "tiles": [{
+                "index": 0,
+                "localPath": "/cache/stock/pexels/2499611.mp4",
+                "luma": 128.0, "contrast": 40.0, "detail": 4.0,
+                "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+                "saturation": 0.4, "warmth": 0.2,
+                "hash": "ab12cd34ef56ab12",
+                "cropHint": { "x": 0.0, "y": 0.0 },
+                "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
+            }],
+        });
+        let drive_to_gate =
+            |log: &mut Vec<Value>,
+             gather: &mut (dyn FnMut(&[Value]) -> Option<ToolCall> + Send)| {
+                let _ = (gather)(log); // stock_search
+                log.push(search_reply.clone());
+                let _ = (gather)(log); // stock_fetch
+                log.push(fetch_reply.clone());
+                let _ = (gather)(log); // stock_contact_sheet
+                log.push(sheet_reply.clone());
+                let gate = (gather)(log).expect("the gate is asked");
+                assert_eq!(gate.tool, "emotion");
+            };
+
+        // An answered gate that rejected every candidate: the beat is
+        // dropped, nothing is imported for it, and - this transcript
+        // opens exactly one shop-able gap - the stage ends.
+        let mut log = base(vec![]);
+        let step = gather;
+        {
+            let gather = &mut *step.next;
+            drive_to_gate(&mut log, gather);
+        }
+        log.push(json!({ "ok": true, "order": [] }));
+        assert!(
+            (step.next)(&log).is_none(),
+            "a rejected beat is dropped, not imported, and the stage ends"
+        );
+
+        // A gate that never answered: the sheet's ranking decides among
+        // the visually qualified candidates. A fresh program - the
+        // closure above spent its one slot.
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let mut log = base(vec![]);
+        {
+            let gather = &mut *gather.next;
+            drive_to_gate(&mut log, gather);
+        }
+        log.push(json!({ "ok": false, "error": "the hosted model is unreachable" }));
+        let import = (gather.next)(&log).expect("the degraded gate falls back to the sheet");
+        assert_eq!(import.tool, "stock_import");
+        assert_eq!(import.arguments["id"], "2499611");
     }
 
     /// A malformed live-stock hit without a provider licence is not
@@ -10389,16 +10863,16 @@ mod tests {
             ]},
         });
         let log = vec![view];
-        let targets = entrance_targets(&log);
+        let targets = entrance_targets(&log, &[]);
         assert_eq!(
             targets,
-            vec![("t1".to_owned(), 2.0, 0.0)],
-            "only the picture-free title long enough to hold an entrance"
+            vec![("t1".to_owned(), 2.0, 0.0, default_ease())],
+            "only the picture-free title long enough to hold an entrance, on the settle a line was never read for"
         );
 
         // Two seconds of title: the entrance settles within the first
         // 0.35 s, a fraction of the title's own span.
-        let keys = entrance_keys("t1", 2.0, 0.0);
+        let keys = entrance_keys("t1", 2.0, 0.0, &default_ease());
         assert_eq!(keys.len(), 4);
         assert_eq!(keys[0]["property"], "scale");
         assert_eq!(keys[0]["at"], 0.0);
@@ -10410,12 +10884,12 @@ mod tests {
 
         // A placed caption rises around its own placement, not around
         // zero: a lower-third stays a lower-third while it settles.
-        let placed = entrance_keys("t1", 2.0, 0.22);
+        let placed = entrance_keys("t1", 2.0, 0.22, &default_ease());
         assert_eq!(placed[2]["value"], 0.27);
         assert_eq!(placed[3]["value"], 0.22);
 
         // A very short title still settles inside its span, not past it.
-        let keys = entrance_keys("t", 0.5, 0.0);
+        let keys = entrance_keys("t", 0.5, 0.0, &default_ease());
         assert!(keys[1]["at"].as_f64().unwrap() <= 0.6);
     }
 
@@ -10561,6 +11035,7 @@ mod tests {
             earned_by: "emotion",
             chapter: false,
             slot: None,
+            slots: Vec::new(),
         };
         assert!(card("punchy").hold() < card("").hold());
         assert!(card("slow").hold() > card("").hold());
@@ -10584,6 +11059,7 @@ mod tests {
                 sfx_type: "bright chime, pop, uplifting swell".to_owned(),
                 bgm_words: vec!["warm".to_owned()],
                 queries: Vec::new(),
+                easing: default_ease(),
                 text: String::new(),
                 pace: String::new(),
                 confidence: None,
@@ -10600,6 +11076,7 @@ mod tests {
                 sfx_type: String::new(),
                 bgm_words: Vec::new(),
                 queries: Vec::new(),
+                easing: default_ease(),
                 text: String::new(),
                 pace: String::new(),
                 confidence: None,
@@ -10708,6 +11185,7 @@ mod tests {
             sfx_type: "hit + beat of silence (stinger)".to_owned(),
             bgm_words: Vec::new(),
             queries: Vec::new(),
+            easing: default_ease(),
             text: String::new(),
             pace: String::new(),
             confidence: None,
@@ -10746,6 +11224,7 @@ mod tests {
             sfx_type: String::new(),
             bgm_words: Vec::new(),
             queries: Vec::new(),
+            easing: default_ease(),
             text: String::new(),
             pace: String::new(),
             confidence: None,
@@ -10963,7 +11442,7 @@ mod tests {
         };
         let log = vec![
             json!({
-                "settings": { "width": 1080, "height": 1920 },
+                "project": { "name": "Reel", "width": 1080, "height": 1920 },
                 "timeline": { "clips": [
                     { "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
                       "sourceStart": 0.0, "speed": 1.0 },

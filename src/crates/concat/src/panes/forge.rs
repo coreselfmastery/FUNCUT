@@ -2174,17 +2174,11 @@ fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
         Err(error) => Err(error),
     };
     let installed = match forge(&["commands"]) {
-        // The door and the shelves both: a harness that serves
-        // funcut-director but not maestro or clip-skills still runs - the
-        // run prompt points the agent at the shelves the skill's own
-        // sections keep - but a full install serves all three, and every
-        // one it finds is one the director can be told to read.
-        Ok((_, words)) => {
-            let words = words.to_ascii_lowercase();
-            Ok(["funcut-director", "maestro", "clip-skills"]
-                .iter()
-                .any(|name| words.contains(name)))
-        }
+        // Supporting shelves do not replace the required Director entry
+        // point. A partial install must not pass preflight.
+        Ok((code, words)) => Ok(
+            code == 0 && words.to_ascii_lowercase().contains("funcut-director")
+        ),
         Err(error) => Err(error),
     };
     (connected, installed)

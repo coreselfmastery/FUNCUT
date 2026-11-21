@@ -349,14 +349,26 @@ impl ForgePane {
                 // stage is read from the harness's own words as they come:
                 // the phase names the director skill prints, mapped onto
                 // the fraction of its twelve phases they sit at. A line
-                // that names no phase moves nothing, so the bar only ever
-                // advances on evidence.
+                // that names no phase moves nothing, and a line naming an
+                // earlier phase than the one the run is in - a recap, a
+                // quoted plan - moves it backwards neither: the bar only
+                // ever advances on evidence.
                 if self.auto.running
                     && self.auto.runner.is_none()
                     && let Some((phase, fraction)) = director_phase(&line)
+                    && fraction > self.auto.fraction
                 {
                     self.auto.stage = director_phase_stage(phase);
                     self.auto.fraction = fraction;
+                }
+                // The handed-over run has no ticker of its own: its clock
+                // is the harness's own output, which arrives as long as
+                // the agent is speaking - and a multi-minute Director
+                // run used to read 0s from start to finish.
+                if self.auto.running
+                    && let Some(started) = self.auto.started
+                {
+                    self.auto.elapsed = elapsed_text(started.elapsed());
                 }
                 self.log.push(line.into());
                 let extra = self.log.len().saturating_sub(LOG_KEPT);
@@ -522,10 +534,11 @@ impl ForgePane {
         }
         // One edit at a time: the lab reads the open project's own
         // voiceover, and while a run is editing the same material the
-        // reading would describe a take in motion. The refusal is the
-        // same sentence the other entry points speak.
-        if let Some(refusal) = other_run_refusal(self.running, false) {
-            studio.notify(&refusal, true);
+        // reading would describe a take in motion. The refusal names the
+        // run that is going - neither entry point's own wording, but the
+        // lab's.
+        if self.running {
+            studio.notify(&t("forge.signalsBusy"), true);
             return;
         }
         if self.auto.running || self.auto.checking {
@@ -779,7 +792,7 @@ impl ForgePane {
             && let Some(source) = self.auto.source.clone()
             && director_retry_available(&source)
         {
-            if let Err(why) = director_ready(studio) {
+            if let Err(why) = director_ready(self.connected, self.installed, studio) {
                 studio.notify(&why, true);
                 return;
             }
@@ -960,7 +973,7 @@ impl ForgePane {
         // is missing does the run fall back to the fixed spine - and the
         // pane says which one is missing, so a lesser edit is never
         // mistaken for the Director's.
-        let handed_over = match director_ready(studio) {
+        let handed_over = match director_ready(self.connected, self.installed, studio) {
             Ok(()) => {
                 let kill = Arc::new(AtomicBool::new(false));
                 self.auto = AutoEditPane {
@@ -1047,7 +1060,6 @@ impl ForgePane {
             .is_some_and(|kill| kill.load(Ordering::Relaxed));
         self.auto.started = None;
         self.auto.kill = None;
-        self.auto.fraction = 1.0;
         if cancelled {
             self.auto.running = false;
             self.auto.checking = false;
@@ -1224,8 +1236,12 @@ impl ForgePane {
             && let Some(progress) = runner.progress()
         {
             self.auto.stage = stage_label(&progress.stage);
+            // A stage in progress sits halfway through its own slot: the
+            // bar reads 100% only when the run's own accepted end says
+            // so, not while its longest stage - the export, the watch -
+            // is still running.
             let total = progress.total_stages.max(1) as f32;
-            self.auto.fraction = (progress.stage_index as f32 + 1.0) / total;
+            self.auto.fraction = (progress.stage_index as f32 + 0.5) / total;
         }
         if let Some(started) = self.auto.started {
             self.auto.elapsed = elapsed_text(started.elapsed());
@@ -1378,6 +1394,13 @@ impl ForgePane {
                 }
                 let summary = receipt.summary();
                 studio.handle(Msg::Forge(ForgeMsg::Line(format!("acceptance: {summary}"))));
+                // The pane's own log carries the line too: the nested
+                // handle above lands in the blank pane `update` runs
+                // against, so without this the fixed spine's one-line
+                // summary never appears in the log the user reads.
+                self.log.push(format!("acceptance: {summary}").into());
+                let extra = self.log.len().saturating_sub(LOG_KEPT);
+                self.log.drain(0..extra);
             }
         }
     }
@@ -1428,7 +1451,10 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     let err = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
         if let Some(pipe) = out {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -1437,7 +1463,10 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     });
     let stderr_reader = std::thread::spawn(move || {
         if let Some(pipe) = err {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -1895,17 +1924,18 @@ fn is_bed(item: &concat_project::model::MediaItem, source_root: &std::path::Path
 /// write one sibling through the same server; letting them overlap
 /// interleaves two edits into a timeline neither planned, so the second is
 /// refused and told which run to stop. `starting_start` is true for the
-/// Start button and false for the AUTO EDIT button. The labels are written
-/// as `t(...)` calls here, not returned as keys, so the locale inventory
-/// sees them used.
+/// Start button and false for the AUTO EDIT button: a Start pressed while
+/// the auto edit runs is told to stop the AUTO EDIT, and the other way
+/// round. The labels are written as `t(...)` calls here, not returned as
+/// keys, so the locale inventory sees them used.
 fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<String> {
     if !other_running {
         return None;
     }
     Some(if starting_start {
-        t("forge.startBusy")
-    } else {
         t("forge.autoEditBusy")
+    } else {
+        t("forge.startBusy")
     })
 }
 
@@ -2426,9 +2456,12 @@ fn director_run_prompt(
          MANDATORY QUALITY LOOP (do not skip, do not just describe it):\n\
          1. plan_validate must return BOTH valid:true AND creativeReady:true. Fix every \
             creativeBlockers entry before cutting. A score below 7 means rewrite the plan.\n\
-         2. Never choose B-roll from caption text. Call stock_contact_sheet with rank:true \
-            and LOOK at the returned image; use cropHint when fitting square or landscape \
-            clips into a vertical frame.\n\
+         2. Never choose B-roll from caption text. Shop the licensed live shelves \
+            (stock_search; the Pexels/Pixabay keys are in your environment and this edit \
+            is monetized - OpenVid has no licence record and its import is refused), \
+            fetch, then stock_contact_sheet with the fetched paths and LOOK at the \
+            returned image; use cropHint when fitting square or landscape clips into a \
+            vertical frame.\n\
          3. motion_frame returns an inline image - check legibility, contrast and safe \
             margins before every motion_bake.\n\
          4. After the edit, call watch_render (the WHOLE cut as one contact sheet image) \
@@ -2445,9 +2478,13 @@ fn director_run_prompt(
     )
 }
 
-/// Whether a model key is saved for the harness: any provider the Forge
-/// page keeps. A harness with no key cannot think, so a Director run
-/// without one would only fail after the sibling was built.
+/// Whether a model key is saved for the harness: one of the eight LLM
+/// provider keys the pane hands the harness for thinking. The HuggingFace
+/// key is not among them - it only feeds the emotion sidecar - and a bare
+/// `FUNCUT_FORGE_MODEL` names a model without paying for one, so neither
+/// can carry a Director run on its own. A harness with no key cannot
+/// think, so a Director run without one would only fail after the sibling
+/// was built.
 fn a_model_key_is_saved(studio: &Studio) -> bool {
     let forge = &studio.prefs.forge;
     [
@@ -2459,13 +2496,9 @@ fn a_model_key_is_saved(studio: &Studio) -> bool {
         &forge.cerebras,
         &forge.sambanova,
         &forge.nim,
-        &forge.hf,
     ]
     .iter()
     .any(|key| !key.trim().is_empty())
-        || std::env::var("FUNCUT_FORGE_MODEL")
-            .or_else(|_| std::env::var("FORGE_MODEL"))
-            .is_ok_and(|model| !model.trim().is_empty())
 }
 
 /// Whether the AUTO EDIT can hand its edit to the Director: the harness
@@ -2474,7 +2507,16 @@ fn a_model_key_is_saved(studio: &Studio) -> bool {
 /// user can see on the page, so a run that cannot hand over says which is
 /// missing instead of quietly running the fixed spine and calling it the
 /// same edit.
-fn director_ready(studio: &Studio) -> Result<(), String> {
+///
+/// The wiring answers come in as arguments, read from the pane's own
+/// fields: while `update` runs, the studio's copy of the pane is a blank
+/// `mem::take` left behind, so reading `studio.forge` here would answer
+/// "not connected" on every call and the handover could never happen.
+fn director_ready(
+    connected: Option<bool>,
+    installed: Option<bool>,
+    studio: &Studio,
+) -> Result<(), String> {
     // A saved key is enough to know the user means to use a model; the
     // harness itself still has to exist and be wired, which the page's
     // own probe answers.
@@ -2484,13 +2526,13 @@ fn director_ready(studio: &Studio) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    if studio.forge.connected != Some(true) {
+    if connected != Some(true) {
         return Err(
             "the Forge harness is not connected to this editor (press Connect on the Forge page)"
                 .to_owned(),
         );
     }
-    if studio.forge.installed != Some(true) {
+    if installed != Some(true) {
         return Err(
             "the funcut-director skill is not installed (press Install on the Forge page)"
                 .to_owned(),
@@ -2553,8 +2595,10 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          family at confidence 0 was not measured, so say so and do not cite it. Never dump \
          the profile into a note: every signal you read must land on a choice.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
-         (plan_validate must return valid:true AND creativeReady:true), B-roll shopped with \
-         stock_contact_sheet rank:true and LOOKED AT before choosing and gated with \
+         (plan_validate must return valid:true AND creativeReady:true), B-roll shopped on \
+         the licensed live shelves (stock_search with the keys in your environment, \
+         stock_fetch, then stock_contact_sheet with the fetched paths) and LOOKED AT \
+         before choosing and gated with \
          footage_continuity before anything is imported (a flagged slot gets a different \
          clip or holds), captions cut on the measured words in groups of two to four \
          (punctuation, breath gaps and four words are the seams; the safe-remove fillers \
@@ -2657,7 +2701,10 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
     let err = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
         if let Some(pipe) = out {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -2666,7 +2713,10 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
     });
     let stderr_reader = std::thread::spawn(move || {
         if let Some(pipe) = err {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -2703,23 +2753,48 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
 }
 
 /// The director skill's phases, in the order it runs them, with the
-/// words its own headings carry. A handed-over AUTO EDIT has no runner
-/// to name its stage, so the pane reads the harness's output instead and
-/// advances only when a phase is actually named - the twelve the skill
-/// prints, which is the same sequence a Start Forge run walks.
+/// words its own headings and tool calls carry. A handed-over AUTO EDIT
+/// has no runner to name its stage, so the pane reads the harness's
+/// output instead and advances only when a phase is actually named -
+/// the twelve headings the skill prints (0, 1, 1b, 1c, 2, 3, 4, 5, 5b,
+/// 6, 7, 8), which is the same sequence a Start Forge run walks.
+///
+/// The words are the *fallback*: the skill numbers every heading, so the
+/// numbered match in `director_phase` decides almost every line, and a
+/// word here only places a line the harness emitted without its number.
 const DIRECTOR_PHASES: [&[&str]; 12] = [
-    &["phase 1", "creative brief"],
-    &["phase 2", "understand"],
-    &["phase 3", "voice signal", "emotion"],
-    &["phase 4", "transcri"],
-    &["phase 5", "plan_validate", "plan"],
-    &["phase 6", "b-roll", "stock_"],
-    &["phase 7", "rough cut"],
-    &["phase 8", "motion_", "geneva"],
-    &["phase 9", "caption"],
-    &["phase 10", "bgm_", "sounds_", "music"],
-    &["phase 11", "watch_render", "craft_critique"],
-    &["phase 12", "export_"],
+    &["creative direction", "creative_brief"],
+    &["understand the material"],
+    &["emotion"],
+    &["voice_signals", "voice signal"],
+    &["tighten", "clip_cut_spans"],
+    &["plan_validate", "the edit plan"],
+    &["gather", "stock_search", "b-roll"],
+    &["place", "rough cut"],
+    &["motion_bake", "motion design", "geneva"],
+    &["grade", "the look", "effect_layer"],
+    &["watch_render", "craft_critique"],
+    &["export_start", "export_wait"],
+];
+
+/// The skill's numbered ladder: the number each heading prints, the
+/// letter suffix three of them carry (1b, 1c, 5b), and the pane's
+/// phase index for that pair. A number the ladder does not carry - a
+/// "phase 12" an older prompt might still echo - matches nothing by
+/// number, so it can never be read as "phase 1".
+const DIRECTOR_PHASE_LADDER: [(u32, &str, usize); 12] = [
+    (0, "", 0),
+    (1, "", 1),
+    (1, "b", 2),
+    (1, "c", 3),
+    (2, "", 4),
+    (3, "", 5),
+    (4, "", 6),
+    (5, "", 7),
+    (5, "b", 8),
+    (6, "", 9),
+    (7, "", 10),
+    (8, "", 11),
 ];
 
 /// The stage the pane shows for a phase. The words are spelled out here
@@ -2731,42 +2806,60 @@ fn director_phase_stage(index: usize) -> String {
         0 => t("forge.directorPhaseBrief"),
         1 => t("forge.directorPhaseUnderstand"),
         2 => t("forge.directorPhaseAudio"),
-        3 => t("forge.directorPhaseTranscribe"),
-        4 => t("forge.directorPhasePlan"),
-        5 => t("forge.directorPhaseFootage"),
-        6 => t("forge.directorPhaseCut"),
-        7 => t("forge.directorPhaseMotion"),
-        8 => t("forge.directorPhaseCaption"),
-        9 => t("forge.directorPhaseSound"),
+        3 => t("forge.directorPhaseSignals"),
+        4 => t("forge.directorPhaseTighten"),
+        5 => t("forge.directorPhasePlan"),
+        6 => t("forge.directorPhaseFootage"),
+        7 => t("forge.directorPhaseCut"),
+        8 => t("forge.directorPhaseMotion"),
+        9 => t("forge.directorPhaseGrade"),
         10 => t("forge.directorPhaseReview"),
         _ => t("forge.directorPhaseExport"),
     }
 }
 
 /// The phase a line of the harness's output names, and how far through
-/// the skill's twelve phases that is. The last phase a line matches wins
-/// nothing: a line that mentions two phases is a sentence about them,
-/// not a stage, so only the earliest match is taken and the fraction is
-/// that phase's own position.
+/// the skill's twelve phases that is. A phase sits halfway through its
+/// own slot while it runs - the last phase is 11.5/12, never 1.0, which
+/// only the accepted end of the run may show. A line that mentions two
+/// phases is a sentence about them, not a stage, so only the earliest
+/// match is taken and the fraction is that phase's own position.
 fn director_phase(line: &str) -> Option<(usize, f32)> {
     let lower = line.to_ascii_lowercase();
     let total = DIRECTOR_PHASES.len() as f32;
-    let at = |index: usize| (index, (index + 1) as f32 / total);
-    // A numbered phase is matched by its number with a boundary after it:
-    // "phase 1" sits inside "phase 12", so a plain substring scan would
-    // read every phase ten and up as phase one.
-    for index in 0..DIRECTOR_PHASES.len() {
-        let number = format!("phase {}", index + 1);
-        if let Some(found) = lower.find(&number)
-            && !lower[found + number.len()..]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
+    let at = |index: usize| (index, (index as f32 + 0.5) / total);
+    // A numbered phase is matched by its number and, where it carries
+    // one, its letter suffix: the skill prints "Phase 1b" and "Phase
+    // 5b", so a plain "phase 1" scan must not swallow them, a greedy
+    // digit read must not turn "phase 12" into "phase 1", and a number
+    // the ladder does not carry matches nothing by number at all.
+    let mut cursor = 0;
+    while let Some(found) = lower[cursor..].find("phase ") {
+        let rest = &lower[cursor + found + "phase ".len()..];
+        let digits: usize = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .map(|c| c.len_utf8())
+            .sum();
+        let after_digits = &rest[digits..];
+        let letters: usize = after_digits
+            .chars()
+            .take_while(|c| c.is_ascii_lowercase())
+            .map(|c| c.len_utf8())
+            .sum();
+        let after = &after_digits[letters..];
+        if digits > 0
+            && !after.chars().next().is_some_and(|c| c.is_alphanumeric())
+            && let Ok(number) = rest[..digits].parse::<u32>()
+            && let Some((_, _, index)) = DIRECTOR_PHASE_LADDER
+                .iter()
+                .find(|(known, suffix, _)| *known == number && *suffix == &after_digits[..letters])
         {
             return Some(at(index));
         }
+        cursor += found + "phase ".len();
     }
-    // A phase the harness names by a tool instead of a number.
+    // A phase the harness names by a tool or a word instead of a number.
     DIRECTOR_PHASES
         .iter()
         .enumerate()
@@ -3148,35 +3241,67 @@ mod tests {
 
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about
-    /// nothing in particular moves no bar, and the fraction a named phase
-    /// earns is its own position in the skill's twelve - so the pane can
-    /// never show a phase the Director has not reached.
+    /// nothing in particular moves no bar, the ladder is the one the
+    /// skill really prints (0, 1, 1b, 1c, 2 ... 5b, 6, 7, 8 - tested
+    /// against the skill's own heading strings, not a paraphrase of
+    /// them), and no phase - not the last - ever shows a finished bar,
+    /// which only the accepted end of a run may do.
     #[test]
     fn the_director_stage_is_read_from_the_harness_words() {
         assert_eq!(director_phase("just thinking"), None);
         assert_eq!(director_phase(""), None);
 
-        let (first, at_first) = director_phase("## Phase 1 - Creative Brief").expect("phase one");
+        let (first, at_first) =
+            director_phase("Phase 0 — Creative direction (do this FIRST)").expect("phase zero");
         assert_eq!(first, 0);
         assert!(at_first > 0.0 && at_first < 0.2);
 
-        // "phase 1" is inside "phase 12": the numbered match must not
-        // read the last phase as the first, which froze the bar at the
-        // end of every run.
-        let (last, at_last) =
-            director_phase("Phase 12: export_start then export_wait").expect("phase twelve");
-        assert_eq!(last, 11);
-        assert!((at_last - 1.0).abs() < 1e-6);
+        let (understand, _) =
+            director_phase("Phase 1 — Understand the material.").expect("phase one");
+        assert_eq!(understand, 1);
 
-        // The review phase is where the Director watches its own cut: the
+        // The lettered sub-phases are their own rungs: 1b is the emotion
+        // read and 1c the acoustic one, not phase 1 again.
+        let (feels, _) =
+            director_phase("Phase 1b — Read what the voiceover feels").expect("phase one b");
+        assert_eq!(feels, 2);
+        let (acoustic, _) =
+            director_phase("Phase 1c — Read what the voiceover IS").expect("phase one c");
+        assert_eq!(acoustic, 3);
+
+        // "phase 1" is inside "phase 10": a greedy digit read must not
+        // turn the older prompt's numbers into phase one, and a number
+        // the ladder does not carry matches nothing by number.
+        let (last, at_last) =
+            director_phase("Phase 12: export_start then export_wait").expect("the export words");
+        assert_eq!(last, 11);
+        assert!(at_last < 1.0, "no phase may show a finished bar");
+
+        // The watch phase is where the Director reviews its own cut: the
         // tool name alone is enough to place it.
         let (review, _) = director_phase("craft_critique the sheet").expect("review");
         assert_eq!(review, 10);
 
         // A named phase advances; the one before it is behind it.
-        let (plan, early) = director_phase("phase 5 plan_validate").expect("plan");
-        assert_eq!(plan, 4);
+        let (plan, early) =
+            director_phase("Phase 5 — Place (sequential, batched)").expect("phase five");
+        assert_eq!(plan, 7);
         assert!(early > at_first);
+
+        // 5b is motion design, its own rung after Place.
+        let (motion, _) = director_phase("Phase 5b — Motion design").expect("phase five b");
+        assert_eq!(motion, 8);
+
+        // The grade phase the skill requires is visible to the bar too.
+        let (grade, _) = director_phase("Phase 6 — Grade (required)").expect("phase six");
+        assert_eq!(grade, 9);
+
+        // The final phase never completes the bar: 1.0 is the accepted
+        // end's alone.
+        let (export, at_export) =
+            director_phase("Phase 8 — Export, then watch the actual file.").expect("phase eight");
+        assert_eq!(export, 11);
+        assert!(at_export < 1.0 && at_export > 0.9);
     }
 
     /// One run at a time on the shared project: the Start is refused while
@@ -3197,12 +3322,12 @@ mod tests {
         let auto_refused = other_run_refusal(true, false).expect("auto edit is refused");
         assert_eq!(
             start_refused,
-            crate::i18n::t("forge.startBusy"),
+            crate::i18n::t("forge.autoEditBusy"),
             "Start while the auto edit runs names the auto edit"
         );
         assert_eq!(
             auto_refused,
-            crate::i18n::t("forge.autoEditBusy"),
+            crate::i18n::t("forge.startBusy"),
             "auto edit while the Start runs names the agent run"
         );
         assert_ne!(

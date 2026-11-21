@@ -123,7 +123,7 @@ on each side: the tool always promised "never above 4K for safety", and a
 
 ---
 
-## The library (`presets::ALL`, eighteen comps)
+## The library (`presets::ALL`, thirty-two comps)
 
 | Id | Category | What it is |
 | --- | --- | --- |
@@ -147,8 +147,8 @@ on each side: the tool always promised "never above 4K for safety", and a
 | `funcut.backdrop.mesh` | Backdrops | mesh gradient + grid light + vignette (opaque) |
 
 Each is an ordinary `Comp` with slots, so it is a template rather than a picture. `presets::build(id)`
-returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all eighteen out as JSON -
-`examples/comps/` holds that output for all eighteen, plus the two hand-authored `cypher` comps and the
+returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all thirty-two out as JSON -
+`examples/comps/` holds that output for all thirty-two, plus the two hand-authored `cypher` comps and the
 `showreel-v3` storyboard.
 
 ---
@@ -558,7 +558,7 @@ let report = critic::apply(&mut comp, &fixes);
 let after = critic::score(&comp);           // 10.0 - nothing left to name
 ```
 
-`examples/reel.rs` is a complete one: **nineteen scenes, all eighteen presets, 66.1 s**, with plates, a
+`examples/reel.rs` is a complete one: **nineteen scenes, all thirty-two presets, 66.1 s**, with plates, a
 curtain and a synthesised score.
 
 ```sh

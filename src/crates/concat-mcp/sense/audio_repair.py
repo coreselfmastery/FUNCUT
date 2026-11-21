@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -60,6 +61,47 @@ SCHEMA = "funcut.audio-repair/1"
 RATE = _vq.RATE
 
 _CONTAINERS = (".mp4", ".mkv", ".mov", ".webm", ".m4v")
+
+
+def _encode_args(out_path, chain):
+    """The output arguments for the file the caller named.
+
+    A video container keeps its video stream and takes AAC. A lossy
+    audio format takes a codec its own muxer accepts - a pcm_s16le stream
+    into an .mp3 is a refusal ("could not find tag for codec"), which
+    used to cost the whole repair on any non-wav take. Everything else -
+    .wav, .flac, a name with no extension - is PCM.
+    """
+    suffix = Path(str(out_path)).suffix.lower()
+    if suffix in _CONTAINERS:
+        return ["-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", chain,
+                "-c:a", "aac", "-b:a", "192k"]
+    if suffix == ".mp3":
+        return ["-af", chain, "-c:a", "libmp3lame", "-b:a", "192k"]
+    if suffix in (".m4a", ".aac"):
+        return ["-af", chain, "-c:a", "aac", "-b:a", "192k"]
+    if suffix in (".ogg", ".oga", ".opus"):
+        return ["-af", chain, "-c:a", "libopus", "-b:a", "128k"]
+    return ["-af", chain, "-c:a", "pcm_s16le"]
+
+
+def _write_atomic(ff, args, out_path):
+    """Run one ffmpeg write so the target is never a half-file: the encode
+    lands on a .part sibling - named `<stem>.part<suffix>` so the decoder
+    still reads the format off the extension - and replaces the target
+    only when it finished. A crash, a full disk or a killed timeout used
+    to leave a truncated take that the run then went on transcribing."""
+    target = Path(str(out_path))
+    part = target.with_name(target.stem + ".part" + target.suffix)
+    good, why = _run_ffmpeg(ff, args + [str(part)])
+    if not good:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        return False, why
+    os.replace(part, target)
+    return True, None
 
 
 def _ok(tool, **fields):
@@ -99,28 +141,6 @@ def _needs_ffmpeg(spec):
     return None
 
 
-# The codec each audio container actually accepts: ffmpeg picks the
-# muxer from the output's extension, and pcm_s16le is a WAV-only
-# payload - handing an mp3/m4a/ogg suffix a PCM stream failed the
-# whole chain at the muxer ("Could not find tag for codec"), so the
-# writing tools only ever worked on .wav and video inputs.
-_CODEC_BY_SUFFIX = {
-    ".wav": ["pcm_s16le"],
-    ".mp3": ["libmp3lame", "-q:a", "2"],
-    ".m4a": ["aac", "-b:a", "192k"],
-    ".aac": ["aac", "-b:a", "192k"],
-    ".ogg": ["libvorbis", "-q:a", "4"],
-    ".opus": ["libopus", "-b:a", "96k"],
-    ".flac": ["flac"],
-    ".wv": ["flac"],
-}
-
-
-def _audio_codec_args(out_path):
-    """The encoder arguments the output's own container accepts, or
-    `None` when the suffix is not one the table names - the caller then
-    writes a .wav beside the input instead of failing at the muxer."""
-    return _CODEC_BY_SUFFIX.get(Path(str(out_path)).suffix.lower())
 
 
 def _output_path(spec, source, suffix):
@@ -215,22 +235,8 @@ def _enhance_speech(spec):
     out_path, overwrite = _output_path(spec, audio, "_enhanced")
     if Path(out_path).exists() and not overwrite:
         return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
-    is_video = Path(out_path).suffix.lower() in _CONTAINERS
-    args = ["-i", str(audio)]
-    if is_video:
-        args += ["-map", "0:v", "-map", "0:a", "-c:v", "copy",
-                 "-af", chain, "-c:a", "aac", "-b:a", "192k"]
-    else:
-        # The codec the output's own container accepts; an extension the
-        # table does not name lands as a .wav beside the input rather
-        # than failing at the muxer.
-        codec = _audio_codec_args(out_path)
-        if codec is None:
-            out_path = str(Path(out_path).with_suffix(".wav"))
-            codec = ["pcm_s16le"]
-        args += ["-af", chain, "-c:a"] + codec
-    args += [str(out_path)]
-    good, why = _run_ffmpeg(ff, args)
+    args = ["-i", str(audio)] + _encode_args(out_path, chain)
+    good, why = _write_atomic(ff, args, out_path)
     if not good:
         return {"ok": False, "error": f"the enhance chain failed: {why}"}
 
@@ -384,22 +390,8 @@ def _enhance_with(ff, spec, audio, filters, findings):
     out_path, overwrite = _output_path(spec, audio, "_clean")
     if Path(out_path).exists() and not overwrite:
         return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
-    is_video = Path(out_path).suffix.lower() in _CONTAINERS
-    args = ["-i", str(audio)]
-    if is_video:
-        args += ["-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", chain,
-                 "-c:a", "aac", "-b:a", "192k"]
-    else:
-        # The codec the output's own container accepts; an extension the
-        # table does not name lands as a .wav beside the input rather
-        # than failing at the muxer.
-        codec = _audio_codec_args(out_path)
-        if codec is None:
-            out_path = str(Path(out_path).with_suffix(".wav"))
-            codec = ["pcm_s16le"]
-        args += ["-af", chain, "-c:a"] + codec
-    args += [str(out_path)]
-    good, why = _run_ffmpeg(ff, args)
+    args = ["-i", str(audio)] + _encode_args(out_path, chain)
+    good, why = _write_atomic(ff, args, out_path)
     if not good:
         return {"ok": False, "error": f"the cleanup chain failed: {why}"}
     snr_before = _measure_snr(spec, audio)

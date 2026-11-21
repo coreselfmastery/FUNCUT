@@ -20,8 +20,10 @@ use crate::stage::Stage;
 /// doors the server now serves those same readings through
 /// (`sense_audio_repair {action: "enhance_speech", ...}` and its
 /// siblings): a door and the member it opens are the same work, and a
-/// retry means the same thing through either.
-const RETRYABLE_TOOLS: [&str; 35] = [
+/// retry means the same thing through either. The licensed stock search
+/// sits here beside its openvid twin: a transient network hiccup during
+/// the gather must not cost the run its B-roll.
+const RETRYABLE_TOOLS: [&str; 36] = [
     "transcribe",
     "analysis_wait",
     "project_get",
@@ -32,6 +34,7 @@ const RETRYABLE_TOOLS: [&str; 35] = [
     "local_vlm",
     "footage_plan_suggest",
     "stock_contact_sheet",
+    "stock_search",
     "detect_music_segments",
     "identify_music",
     "measure_loudness",
@@ -143,9 +146,22 @@ pub struct AutoEditError {
 pub fn is_retryable(tool: &str, message: &str) -> bool {
     RETRYABLE_TOOLS.contains(&tool) && {
         let lowered = message.to_lowercase();
-        RETRYABLE_MARKERS
-            .iter()
-            .any(|marker| lowered.contains(marker))
+        RETRYABLE_MARKERS.iter().any(|marker| {
+            // The numeric markers keep a word boundary: a "connection
+            // reset" is the network's, but "clip 815024 not found" is a
+            // clip's - a substring scan would retry three times over a
+            // refusal that can never land.
+            if marker.chars().all(|c| c.is_ascii_digit()) {
+                lowered.match_indices(marker).any(|(at, _)| {
+                    let before = lowered[..at].chars().next_back();
+                    let after = lowered[at + marker.len()..].chars().next();
+                    before.is_none_or(|c| !c.is_ascii_digit())
+                        && after.is_none_or(|c| !c.is_ascii_digit())
+                })
+            } else {
+                lowered.contains(marker)
+            }
+        })
     }
 }
 

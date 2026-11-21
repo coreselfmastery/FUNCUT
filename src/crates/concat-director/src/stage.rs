@@ -52,8 +52,7 @@ pub enum Stage {
     Motion,
     /// The edit itself: stock imported and trimmed at the segment
     /// starts, transitions and entrances keyed, the collision and
-    /// timeline checks run (the thirteenth, fourteenth and sixteenth
-    /// steps).
+    /// timeline checks run (the tenth through sixteenth steps).
     Timeline,
     /// The plan's captions are placed (the fifteenth step's captions).
     Captions,
@@ -70,10 +69,10 @@ pub enum Stage {
     /// revise answers exist before the encode is spent.
     Preview,
     /// The cut is rendered and waited on to a terminal job state (the
-    /// fifteenth stage).
+    /// seventeenth step).
     Export,
     /// The actual output is inspected and scored: `watch_render`'s
-    /// contact sheet, `craft_critique`'s score (the seventeenth stage).
+    /// contact sheet, `craft_critique`'s score (the twentieth step).
     Watch,
     /// The critic's measured faults are answered with targeted edits: a
     /// fill for letterbox bars, a bounded head trim for a black opening,
@@ -85,7 +84,7 @@ pub enum Stage {
     Revise,
     /// The export is certified: the words re-read from the render, the
     /// loudness measured and asserted, the timeline checked for overlaps,
-    /// gaps and duplicates (the sixteenth stage).
+    /// gaps and duplicates (the eighteenth and nineteenth steps).
     Verify,
 }
 

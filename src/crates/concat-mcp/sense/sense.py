@@ -436,6 +436,26 @@ def probe_duration(ffprobe, path):
         return 0.0
 
 
+def probe_dimensions(ffprobe, path):
+    """The file's own pixel shape, (width, height), or None.
+
+    A contact sheet that does not know its source's shape pads every
+    frame into a fixed 16:9 tile - and a vertical cut then reads as
+    pillarboxed by the very metrics the sheet exists to feed.
+    """
+    rc, out, _ = _run(
+        [ffprobe, "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", path], 20)
+    try:
+        parts = out.decode().strip().split(",")
+        w, h = int(parts[0]), int(parts[1])
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return None
+
+
 def extract_frame(ff, path, at, w, h):
     """Decode one RGB frame, letterboxed into exactly w*h*3 bytes."""
     vf = (
@@ -524,9 +544,20 @@ def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
     if lra is not None and lra > 12.0:
         notes.append(f"Loudness range {lra:.1f} LU is very wide; quiet lines will be hard to hear on a phone.")
     out["notes"] = notes
-    out["platformTargetMet"] = abs(out["lufsError"]) <= 3.0 and (
-        true_peak is None or true_peak <= target_peak
+    # The target is met only where both halves were measured: an
+    # unmeasured true peak (a parse failure, a stream the reader could
+    # not open) is not a pass - a mix that never showed its peak could
+    # be clipping, and the gate that reads this boolean would wave it
+    # through. The loudness band is 3 LU around the platform target.
+    out["platformTargetMet"] = (
+        abs(out["lufsError"]) <= 3.0
+        and true_peak is not None
+        and true_peak <= target_peak
     )
+    if true_peak is None:
+        out["notes"].append(
+            "True peak could not be measured; the platform target is not proven met."
+        )
     return out
 
 
@@ -806,8 +837,6 @@ def _fmt_time(t):
 
 
 def build_sheet(spec):
-    tw = max(64, min(480, int(spec.get("tileWidth", 320))))
-    th = max(48, min(360, int(spec.get("tileHeight", 180))))
     cols = max(1, min(6, int(spec.get("cols", 4))))
     sources = list(spec.get("sources") or [])
     errors = []
@@ -849,6 +878,46 @@ def build_sheet(spec):
     sources = sources[:24]
     if not sources:
         return {"ok": False, "error": "sheet requires sources[], paths[] or path+samples"}
+
+    # The tile's shape: the caller's when they named both sides, and the
+    # source's own when they did not. A fixed 16:9 tile letterboxes every
+    # other aspect in black, and the sheet's own metrics then read the
+    # padding as baked-in bars - a clean vertical cut scored as
+    # pillarboxed, hook and shot axes both, on the format the feature
+    # exists to edit. The first media file speaks for the sheet; a
+    # timeline preview's own PNG speaks the same way.
+    tw = max(64, min(480, int(spec.get("tileWidth", 320))))
+    if spec.get("tileHeight") is not None:
+        th = max(48, min(360, int(spec["tileHeight"])))
+    else:
+        dims = None
+        for s in sources:
+            if s.get("path") and os.path.isfile(s["path"]):
+                dims = probe_dimensions(fp, s["path"])
+                if dims:
+                    break
+        if not dims:
+            for s in sources:
+                if s.get("pngB64"):
+                    try:
+                        _, sw, sh = png_decode(base64.b64decode(s["pngB64"]))
+                        if sw > 0 and sh > 0:
+                            dims = (sw, sh)
+                            break
+                    except Exception:
+                        pass
+        if dims:
+            w, h = dims
+            if w >= h:
+                th = max(48, min(360, round(tw * h / w)))
+            else:
+                # Portrait: the tile's long side is its height, anchored
+                # where the landscape tile's width sits.
+                long_side = max(48, min(360, tw))
+                tw = max(64, min(480, round(long_side * w / h)))
+                th = long_side
+        else:
+            th = 180
 
     frames, metas = [], []
     for i, s in enumerate(sources):
@@ -2277,6 +2346,20 @@ def main():
         elif args.cmd == "voice":
             out = voice_command(spec)
         elif args.cmd in ("discourse", "voiceq", "prosody", "audiorepair", "captions"):
+            # The family doors shell out to ffmpeg themselves (the repair
+            # writers filter through it), and they resolve the binary from
+            # FUNCUT_FFMPEG or PATH alone - neither of which carries the
+            # pinned static build this process bootstraps for its own
+            # loudness and rhythm work. A stock install has no ffmpeg CLI
+            # at all, and its one-click repair used to warn out on every
+            # take while the other stages worked. The bootstrapped binary
+            # is exported before the family's own lookup runs.
+            try:
+                ff, _ = _tools(spec)
+                if ff:
+                    os.environ["FUNCUT_FFMPEG"] = ff
+            except Exception:
+                pass
             out = family_command(args.cmd, spec)
         else:
             # No external dependencies: generate a synthetic gradient sheet and

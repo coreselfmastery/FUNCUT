@@ -48,6 +48,11 @@ pub struct LineForensic {
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct WholeForensic {
+    /// The take's own sample rate: the consumer that reads formants
+    /// needs it to know the band it measured - 8 kHz phone audio cannot
+    /// carry formants above 4 kHz, and the reading's confidence should
+    /// say so.
+    pub sample_rate_hz: u32,
     /// The signal-to-noise ratio in dB.
     pub snr_db: f32,
     /// The noise floor as dBFS (20 log10 of the profiler's floor).
@@ -288,6 +293,7 @@ fn whole_forensic(take: &Take) -> Result<WholeForensic, Error> {
     let music_likelihood = music_likelihood(&flux.onsets, duration, profile.spectral_flatness);
     let reverb_tail = reverb_tail_sec(samples, rate, &flux.onsets);
     Ok(WholeForensic {
+        sample_rate_hz: take.sample_rate,
         snr_db: round3(snr),
         noise_floor_dbfs: round3(20.0 * (profile.noise_floor + 1.0e-12).log10()),
         // A Debug dump of the profiler's enum is not a label an API can
@@ -617,19 +623,20 @@ fn reverb_tail_sec(samples: &[f32], rate: f32, onsets: &[f32]) -> Option<f32> {
         return None;
     }
     let frame_secs = HOP as f64 / f64::from(rate);
-    // Overlapping frames, not disjoint chunks: a 1024-sample window
-    // hopped by 512 - `chunks(512)` yields slices of at most 512
-    // samples, so the old `filter(len == 1024)` kept nothing and the
-    // tail was always `None`.
+    // Overlapping windows, HOP apart: non-overlapping `chunks(HOP)` can
+    // never yield a WINDOW-sized slice, so this loop used to measure
+    // nothing at all and every `reverbTailSec` was null - the room
+    // reading the mix's duck and the auto edit's bed level lean on never
+    // existed.
     let frame_db: Vec<f64> = samples
         .windows(WINDOW)
         .step_by(HOP)
-        .map(|frame| {
-            let mean_square = frame
+        .map(|chunk| {
+            let mean_square = chunk
                 .iter()
                 .map(|s| f64::from(*s) * f64::from(*s))
                 .sum::<f64>()
-                / frame.len() as f64;
+                / chunk.len() as f64;
             10.0 * (mean_square + 1.0e-12).log10()
         })
         .collect();

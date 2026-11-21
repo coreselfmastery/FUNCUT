@@ -395,14 +395,21 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
         let id = ids.first().cloned();
         let record = match call.tool.as_str() {
             // The live shelves' import: the licence travels in the reply.
-            "stock_import" => Some(AssetRecord {
-                provider: provider.clone().unwrap_or_else(|| "stock".to_owned()),
-                id: id.clone().unwrap_or_default(),
-                license: text(reply, "license"),
-                author: None,
-                url: url.clone(),
-                commercial_ok: Some(true),
-            }),
+            // A reply that spelled no licence is not a monetizable asset:
+            // the receipt recorded `commercial_ok: true` with a null
+            // licence - "safe to sell, licence unknown" - and the
+            // unlicensed count never listed it.
+            "stock_import" => {
+                let license = text(reply, "license");
+                Some(AssetRecord {
+                    provider: provider.clone().unwrap_or_else(|| "stock".to_owned()),
+                    id: id.clone().unwrap_or_default(),
+                    author: None,
+                    url: url.clone(),
+                    commercial_ok: Some(license.is_some()),
+                    license,
+                })
+            }
             // The research index: no per-clip record, and the import tool
             // refuses a monetized edit, so commercial use is unknown.
             // The research index takes many ids at once; each is its own
@@ -803,8 +810,19 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
-    // The picture: the critic's own score against the bar.
-    match last("craft_critique").and_then(|reply| reply.get("overall")) {
+    // The picture: the critic's own score against the bar. Only a
+    // critique of the RENDERED file counts - the last craft_critique
+    // after the last export_start. When the watch's own critique never
+    // answered, the preview's pre-export score must not stand in for it
+    // and pass a cut that was never judged as shipped.
+    let export_at = observed
+        .iter()
+        .rposition(|(call, _)| call.tool == "export_start");
+    let last_critique = observed
+        .iter()
+        .rposition(|(call, _)| call.tool == "craft_critique")
+        .filter(|at| Some(*at) > export_at);
+    match last_critique.and_then(|at| observed[at].1.get("overall")) {
         Some(score) => {
             let overall = score.as_f64();
             gates.push(GateRecord::new(
@@ -825,7 +843,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         None => gates.push(GateRecord::new(
             "visual",
             GateStatus::Skipped,
-            "no craft score was taken",
+            "no craft score was taken of the rendered file",
             false,
         )),
     }

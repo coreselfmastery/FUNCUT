@@ -2910,10 +2910,23 @@ and the same `cancelled` branch, twice. The first copy returns, so the
 second was dead code that read as two different endings - and a reader
 editing one of them would have left the other behind.
 
+The Python director had the same hole on the other side of the same
+gate. `auto_director.py`'s `continuity_manifest` wrote
+`"shotScale": visual.get("shotScale", "medium")`, and no plan segment has
+ever carried a `shotScale` - the key appears nowhere else in the file - so
+every manifest the director sent the gate was a row of `medium`s. Every
+adjacent pair came back flagged, `attempt_replace` re-shopped each one,
+and the second pass read the same fabricated row. The manifest omits the
+key when the segment names no scale, exactly as it already omitted colour
+and motion, and the self-test now fails if a clip arrives with a scale the
+plan never named.
+
 Tests: `an_unmeasured_scale_is_not_flagged_as_a_repeat` (both sides
-unmeasured, and one side unmeasured) and
+unmeasured, and one side unmeasured),
 `a_seam_never_repeats_the_last_shot_s_move` (a chapter seam whose move is
-also the mood's alternate).
+also the mood's alternate), and `auto_director.py --self-test`'s
+"continuity manifest ok: a scale the plan never named is omitted" (which
+fails against the old default with the fabricated `medium` named).
 
 ## 69. The dependency fetch that stopped on a truncated body
 

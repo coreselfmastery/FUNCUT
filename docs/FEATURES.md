@@ -445,7 +445,7 @@ always win; maestro refines how a floor is met, never lowers it. See
   bounded head trim for a black opening, a push-in on every *other* shot
   for static cuts - issuing no edit at all on a cut that measured clean.
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
-  --mcp auto`), a 900-second call timeout for patient work, servers
+  --mcp auto`), a 1200-second call timeout for patient work, servers
   allow-listed to `funcut`, and the per-tool allowlist active in the
   server's `env` - every tool served but `project_close` and
   `export_cancel`, which an agent must never call by surprise.

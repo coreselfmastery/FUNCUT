@@ -419,10 +419,16 @@ export component ForgePage inherits VerticalLayout {
                 alignment: center;
 
                 Text {
+                    // The stage sentence runs long ("The Director is
+                    // editing: it reads the voice, plans, cuts and
+                    // reviews its own work"); it elides into the space
+                    // the row has, and the bar and the clock keep theirs.
                     text: Forge.auto-edit-stage;
                     color: Theme.fg-muted;
                     font-size: Theme.fs-xs;
                     vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
                 }
 
                 Rectangle {

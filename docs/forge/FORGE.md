@@ -164,9 +164,10 @@ reads are the Director's own to run, in the skill's order, and that a
 decision which never read the voice is a guess.
 
 Progress is read from the harness's own output. Each line that names one
-of the skill's twelve phases moves the pane's stage and bar to that
-phase; a line that names no phase moves nothing, so the bar cannot show
-work the Director has not reached. The stop button kills the harness at
+of the skill's twelve phase headings (0, 1, 1b, 1c, 2, 3, 4, 5, 5b, 6, 7,
+8) moves the pane's stage and bar to that phase - and only forward; a
+line that names no phase moves nothing, so the bar cannot show work the
+Director has not reached. The stop button kills the harness at
 once.
 
 #### When the Director is not available
@@ -178,18 +179,30 @@ once.
 | `forge` on `PATH` | install the harness |
 | The harness wired to this editor | **Connect** on the Forge page |
 | The `funcut-director` skill installed | **Install** on the Forge page |
-| A model key saved | any provider key on the Forge page |
+| A model key saved | one of the eight LLM provider keys on the Forge page |
+| The editor's MCP surface serves the run's tools | `CONCAT_MCP_ALLOW` (the default 105-tool director surface already does) |
 
-If one is missing the button **says which**, and the run falls back to
-the deterministic spine - repair, transcribe, voice signals, the music
-gate, export, re-transcribe, loudness, watch and score - so a lesser edit
-is never presented as the Director's:
+If one is missing the button **says which**, and the run falls back to the
+deterministic spine - the same seventeen-stage program a handed-over run's
+measurements stand on, run unattended: repair, transcribe, voice signals,
+the understand reads (music, discourse, emotion), the plan and its
+validation, the tighten and the grade, licensed live-stock B-roll
+(searched, seen on a contact sheet, continuity-checked, imported and
+trimmed), segment-timed captions with an accent pass, motion comps baked
+from the emotion's own register, the music bed shopped, trimmed to the cut
+and ducked under the voice, SFX accents on the measured emphasis peaks,
+preview, revise, export, verify (the render re-transcribed, its loudness
+measured, its words compared, its timeline checked for collisions) and the
+watch that scores the shipped file - so a lesser edit is never presented
+as the Director's:
 
 ```
 open the sibling -> repair the take (enhance + clean, landing on the
-  file the timeline plays) -> transcribe -> voice signals -> the music gate
-  -> collision + timeline reads -> export -> re-transcribe the render +
-  measure its loudness -> watch the cut as a contact sheet and score it
+  file the timeline plays) -> transcribe -> voice signals ->
+  understand (music gate, discourse, emotion) -> plan + plan_validate
+  -> tighten + grade -> gather B-roll (live stock: search, contact
+  sheet, continuity, import) -> captions -> motion -> music bed ->
+  SFX accents -> preview -> revise -> export -> verify -> watch + score
 ```
 
 The fallback's own progress is the runner's: the stage, the clock, the

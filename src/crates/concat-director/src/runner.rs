@@ -5,10 +5,10 @@
 //! walk owes the caller around it - progress events, cancellation with
 //! rollback, retries, and the terminal state.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -42,13 +42,19 @@ type DriveResult = (Option<(AutoEditError, u32)>, Vec<(ToolCall, Value)>);
 const FIRST_PAUSE: Duration = Duration::from_secs(2);
 
 /// The idempotency key an [`EDIT_APPLY`] call carries (IDEM): derived
-/// from the stage and the call's own arguments - the same edit, in a
-/// re-run of the same program, asks under the same key, and the server
-/// answers with the batch it already applied instead of a second copy.
+/// from the key epoch, the stage and the call's own arguments - the same
+/// edit, in a re-run of the same program under the same epoch, asks
+/// under the same key, and the server answers with the batch it already
+/// applied instead of a second copy. The epoch moves only when a
+/// rollback took the run's edits back off the timeline: the ledger's
+/// answer to an undone key is a no-op replay, so a retry after a
+/// rollback must ask under a key it has never used, or it would ship
+/// the un-edited timeline while reporting the run complete.
 /// A caller that named its own key is left alone: its name is the
 /// contract, not the runner's.
-fn idempotency_key(stage: Stage, call: &ToolCall) -> String {
+fn idempotency_key(epoch: u64, stage: Stage, call: &ToolCall) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    epoch.hash(&mut hasher);
     stage.label().hash(&mut hasher);
     call.tool.hash(&mut hasher);
     call.arguments.to_string().hash(&mut hasher);
@@ -57,11 +63,11 @@ fn idempotency_key(stage: Stage, call: &ToolCall) -> String {
 
 /// The one-call form of the IDEM stamping the fan and the reactive queue
 /// share with the static path: an `edit_apply` without its own key gets
-/// the key the stage and the call derive.
-fn stamp(stage: Stage) -> impl FnMut(ToolCall) -> ToolCall {
+/// the key the epoch, the stage and the call derive.
+fn stamp(epoch: u64, stage: Stage) -> impl FnMut(ToolCall) -> ToolCall {
     move |mut call| {
         if call.tool == EDIT_APPLY && call.arguments.get("idempotencyKey").is_none() {
-            let key = idempotency_key(stage, &call);
+            let key = idempotency_key(epoch, stage, &call);
             if let Some(fields) = call.arguments.as_object_mut() {
                 fields.insert("idempotencyKey".to_owned(), json!(key));
             }
@@ -114,7 +120,8 @@ pub struct Runner {
 /// What the clones share: the project, the cancel flag, the state, the
 /// event channel, the last event (the one source of truth
 /// [`progress`](Runner::progress) reads), the one-run latch, the stages
-/// a prior run on this runner completed (IDEM's resume record), and the
+/// a prior run on this runner completed with the replies that proved
+/// them (IDEM's resume record), the idempotency key epoch, and the
 /// pause before a retry.
 struct Shared {
     project: PathBuf,
@@ -123,7 +130,15 @@ struct Shared {
     events: Mutex<mpsc::Sender<AutoEditEvent>>,
     last: Mutex<Option<AutoEditEvent>>,
     running: AtomicBool,
-    completed: Mutex<BTreeSet<Stage>>,
+    /// The resume record: a completed stage and the calls and replies
+    /// that completed it. The replies ride along because a resumed
+    /// run's derived stages derive from the log - a skip that replays
+    /// nothing starves them, and the tighten would silently no-op on a
+    /// timeline the prior run had already measured.
+    completed: Mutex<BTreeMap<Stage, Vec<(ToolCall, Value)>>>,
+    /// Moves only when a rollback took the run's edits back off the
+    /// timeline; see [`idempotency_key`].
+    key_epoch: AtomicU64,
     pause: Mutex<Duration>,
 }
 
@@ -157,7 +172,8 @@ impl Runner {
                     events: Mutex::new(sender),
                     last: Mutex::new(None),
                     running: AtomicBool::new(false),
-                    completed: Mutex::new(BTreeSet::new()),
+                    completed: Mutex::new(BTreeMap::new()),
+                    key_epoch: AtomicU64::new(1),
                     pause: Mutex::new(FIRST_PAUSE),
                 }),
             },
@@ -186,7 +202,7 @@ impl Runner {
         self.shared
             .last
             .lock()
-            .expect("the runner's events are not poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
             .map(|event| event.progress.clone())
     }
@@ -221,7 +237,7 @@ impl Runner {
     /// The stages a run on this runner completed, in the register's own
     /// order (IDEM): what a caller can hand back to [`Runner::resume`]
     /// after a restart, and what a re-run on the same runner will skip.
-    /// The set lives with the runner, so a failed run's finished stages
+    /// The record lives with the runner, so a failed run's finished stages
     /// are exactly where the next run picks up.
     pub fn completed(&self) -> Vec<Stage> {
         let completed = self
@@ -232,14 +248,17 @@ impl Runner {
         Stage::ALL
             .iter()
             .copied()
-            .filter(|stage| completed.contains(stage))
+            .filter(|stage| completed.contains_key(stage))
             .collect()
     }
 
     /// Seeds the resume record: the stages a prior run already
     /// completed are skipped by the next [`run`](Runner::run) on this
     /// runner. A caller that read a run's own record - the watcher's
-    /// state file, a report - resumes where that run stopped.
+    /// state file, a report - resumes where that run stopped. The
+    /// stages carry no replies of their own here (the caller read the
+    /// names alone), so a skip of one replays nothing - the same
+    /// contract a restart always had.
     pub fn resume(&self, completed: impl IntoIterator<Item = Stage>) {
         let mut set = self
             .shared
@@ -247,7 +266,7 @@ impl Runner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for stage in completed {
-            set.insert(stage);
+            set.entry(stage).or_default();
         }
     }
 
@@ -319,6 +338,21 @@ impl Runner {
         let run_started = Instant::now();
         let started = timestamp();
         let total = program.steps.len();
+        // The key epoch this run's edit stamps derive from, read once:
+        // a rollback moves it between runs, never inside one.
+        let epoch = self.shared.key_epoch.load(Ordering::SeqCst);
+        // The resume record as this run found it: the stages a prior run
+        // completed. The skip check reads this snapshot, not the live
+        // record - a program with two steps of one stage would otherwise
+        // skip its own second step the moment the first completed.
+        let resumed: BTreeSet<Stage> = self
+            .shared
+            .completed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .keys()
+            .copied()
+            .collect();
         if total == 0 {
             let error = AutoEditError::new(
                 Stage::Plan,
@@ -352,6 +386,12 @@ impl Runner {
         // landed. Cancel rolls their back one `edit_undo` each; an
         // `edit_undo` a stage made itself comes off the list too.
         let mut applied: Vec<Stage> = Vec::new();
+        // Whether this run's export_start drew a reply: the stop owes that
+        // render a cancellation, and nothing else.
+        let mut exported = false;
+        // When the last stage began: the terminal event's own stage clock
+        // reads from here, not from the whole run's start.
+        let mut last_stage_started = run_started;
         let mut warnings: Vec<String> = Vec::new();
         let mut verification = Value::Null;
         // Every successful reply the run has drawn, in call order: what
@@ -390,6 +430,7 @@ impl Runner {
                 return self.cancel_run(
                     caller,
                     &applied,
+                    exported,
                     AutoEditProgress::new(
                         stage,
                         index,
@@ -402,15 +443,20 @@ impl Runner {
             }
             // IDEM: a stage a prior run on this runner completed is
             // skipped whole - its work is already on the timeline, and
-            // re-running it would duplicate every placement. The set is
-            // the resume record: a failed run leaves exactly the stages
-            // it finished, and the next run picks up after them.
-            if self
-                .shared
-                .completed
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .contains(&stage)
+            // re-running it would duplicate every placement. The skip
+            // replays the replies that completed the stage into this
+            // run's own log and evidence: the derived stages that come
+            // after derive from the log, and a skip that starved them
+            // would tighten nothing, caption nothing and verify against
+            // placements the run never read.
+            if resumed.contains(&stage)
+                && let Some(prior) = self
+                    .shared
+                    .completed
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .get(&stage)
+                    .cloned()
             {
                 self.emit(
                     AutoEditState::Running {
@@ -427,9 +473,17 @@ impl Runner {
                     ),
                 );
                 records[index].outcome = StageOutcome::Skipped;
+                for (call, reply) in &prior {
+                    log.push(reply.clone());
+                    observed.push((call.clone(), reply.clone()));
+                    if !records[index].calls.contains(&call.tool) {
+                        records[index].calls.push(call.tool.clone());
+                    }
+                }
                 continue;
             }
             let stage_started = Instant::now();
+            last_stage_started = stage_started;
             let running = AutoEditState::Running {
                 stage,
                 started: started.clone(),
@@ -488,7 +542,7 @@ impl Runner {
                     let groups: Vec<Vec<ToolCall>> = fan
                         .groups
                         .iter()
-                        .map(|group| group.iter().cloned().map(stamp(stage)).collect())
+                        .map(|group| group.iter().cloned().map(stamp(epoch, stage)).collect())
                         .collect();
                     let lane_results: Vec<DriveResult> = match lanes {
                         Some(lanes) => std::thread::scope(|scope| {
@@ -616,8 +670,12 @@ impl Runner {
                 // a second copy.
                 match &mut program.steps[index] {
                     ProgramStep::Static(step) => {
-                        let calls: Vec<ToolCall> =
-                            step.calls.clone().into_iter().map(stamp(stage)).collect();
+                        let calls: Vec<ToolCall> = step
+                            .calls
+                            .clone()
+                            .into_iter()
+                            .map(stamp(epoch, stage))
+                            .collect();
                         last_call = calls.last().cloned();
                         let (walk_failure, walk_replies) = self.drive_calls(
                             stage,
@@ -645,7 +703,7 @@ impl Runner {
                         let Some(next) = next else {
                             break;
                         };
-                        let call = stamp(stage)(next);
+                        let call = stamp(epoch, stage)(next);
                         last_call = Some(call.clone());
                         let (walk_failure, walk_replies) = self.drive_calls(
                             stage,
@@ -671,6 +729,9 @@ impl Runner {
             for (call, reply) in &replies {
                 if stage == Stage::Verify {
                     verification = reply.clone();
+                }
+                if call.tool == "export_start" {
+                    exported = true;
                 }
                 observed.push((call.clone(), reply.clone()));
                 if !records[index].calls.contains(&call.tool) {
@@ -724,14 +785,15 @@ impl Runner {
             match failure {
                 None => {
                     // The stage's calls all landed: it joins the resume
-                    // record, so a later run on this runner skips it
-                    // (IDEM).
+                    // record with the replies that proved it, so a later
+                    // run on this runner skips it (IDEM) and replays its
+                    // evidence into its own log.
                     records[index].outcome = StageOutcome::Completed;
                     self.shared
                         .completed
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .insert(stage);
+                        .insert(stage, replies.clone());
                 }
                 // A stop asked for while the failing call was in flight:
                 // the run lands cancelled, with its rollback, whatever
@@ -741,6 +803,7 @@ impl Runner {
                     return self.cancel_run(
                         caller,
                         &applied,
+                        exported,
                         AutoEditProgress::new(
                             stage,
                             index,
@@ -780,6 +843,7 @@ impl Runner {
         }
 
         let duration = run_started.elapsed();
+        let stage_duration = last_stage_started.elapsed();
         let last = program.steps.last().expect("the program has stages");
         // The acceptance receipt: the run's own evidence, read from the
         // replies its calls drew. A stage that never got its turn stays
@@ -798,7 +862,7 @@ impl Runner {
         // whenever any required quality gate is rejected or unmeasured.
         // The receipt keeps the stage warnings alone; this sentence is
         // the receipt's verdict, not a warning it recorded.
-        if program.enforce_acceptance && receipt.verdict.label() != "accepted" {
+        if program.enforce_acceptance && receipt.verdict != crate::receipt::Verdict::Accepted {
             warnings.push(format!(
                 "quality acceptance {}: {}",
                 receipt.verdict.label(),
@@ -810,8 +874,14 @@ impl Runner {
         } else {
             "the export is complete, with warnings"
         };
-        let progress =
-            AutoEditProgress::new(last.stage(), total - 1, total, duration, duration, detail);
+        let progress = AutoEditProgress::new(
+            last.stage(),
+            total - 1,
+            total,
+            duration,
+            stage_duration,
+            detail,
+        );
         if warnings.is_empty() {
             self.emit(
                 AutoEditState::Completed {
@@ -915,10 +985,10 @@ impl Runner {
                     Err(error) => {
                         let mut error = AutoEditError::new(stage, Some(call.clone()), error);
                         // A stop asked for while the call was being
-                        // made or waited on is the stop arriving: no
-                        // more retries, and the run lands cancelled
-                        // below rather than failed - the refusal is the
-                        // stop's own work, not the tool's.
+                        // made, waited on or retried is the stop
+                        // arriving: no more retries - not even the one
+                        // the pause was being waited out for - and the
+                        // run lands cancelled below rather than failed.
                         if self.cancelled() {
                             failed_attempt = attempt;
                             failure = Some(error);
@@ -963,7 +1033,22 @@ impl Runner {
         let mut failed_attempt = 1;
         let mut replies: Vec<(ToolCall, Value)> = Vec::new();
         'calls: for call in &calls {
+            // A stop asked for between a lane's calls is the stop
+            // arriving AS a failure, not a silent break: a lane that
+            // merely stopped would let its stage join the resume record
+            // half-measured, and the next run would skip the reads it
+            // never made.
             if self.cancelled() {
+                failure = Some(AutoEditError::new(
+                    stage,
+                    Some(call.clone()),
+                    ToolError {
+                        message: "the lane stopped: a cancel was asked for".to_owned(),
+                        retryable: Some(false),
+                        retry_after: None,
+                        code: None,
+                    },
+                ));
                 break 'calls;
             }
             self.emit(
@@ -1042,15 +1127,32 @@ impl Runner {
     /// that cannot be made stops the rollback and says so - a rollback
     /// that lied about reaching the end would be worse than one that
     /// stopped halfway and admitted it.
+    ///
+    /// When the run had started its render, the render is cancelled
+    /// first, best-effort: an export left burning past the stop wastes
+    /// the machine for the rest of the render and holds the export slot
+    /// the retry's own `export_start` needs. A render that was never
+    /// started is not asked.
     fn cancel_run(
         &self,
         caller: &mut dyn ToolCaller,
         applied: &[Stage],
+        exported: bool,
         boundary: AutoEditProgress,
     ) -> RunOutcome {
         let running = self.state();
         let mut rolled_back = true;
         let mut undone_to = None;
+        if exported {
+            // Best-effort: a refusal here (the render already ended, the
+            // tool unserved) is not the stop's failure to report - the
+            // render ends on its own and the retry's own export_start
+            // names a slot it cannot have.
+            let _ = caller.call(&ToolCall {
+                tool: "export_cancel".to_owned(),
+                arguments: json!({ "path": self.project().display().to_string() }),
+            });
+        }
         for stage in applied.iter().rev() {
             let undo = ToolCall {
                 tool: EDIT_UNDO.to_owned(),
@@ -1077,6 +1179,15 @@ impl Runner {
         // applied an edit and had it undone comes off the record, whole.
         // A partial rollback (the record says so) takes the same stages
         // off: a half-undone stage re-run whole is IDEM's own answer.
+        //
+        // The key epoch moves with the same truth: the ledger's answer
+        // to an undone key is a no-op replay, so the retry must mint its
+        // keys from an epoch the ledger has never seen - or it would
+        // "resume" a stage whose edits the rollback just removed, and
+        // the export would ship the un-edited timeline as complete.
+        if !applied.is_empty() {
+            self.shared.key_epoch.fetch_add(1, Ordering::SeqCst);
+        }
         let mut completed = self
             .shared
             .completed
@@ -1112,7 +1223,7 @@ impl Runner {
             .shared
             .last
             .lock()
-            .expect("the runner's events are not poisoned") = Some(event.clone());
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(event.clone());
         *self
             .shared
             .state
@@ -2265,6 +2376,7 @@ mod tests {
             "the key names its stage: {stamped}"
         );
         let again = idempotency_key(
+            1,
             Stage::Timeline,
             &ToolCall {
                 tool: EDIT_APPLY.to_owned(),

@@ -2739,8 +2739,8 @@ fn decision_for(family: &str) -> Option<&'static str> {
         "pause" | "emphasisWords" | "speechRate" | "rhythmLayers" | "motifs" => "cut",
         "words" | "language" | "sentence" => "caption",
         "entities" | "speechActs" | "claims" => "graphic",
-        "noiseFloor" | "musicSegments" | "speechRatio" => "bgm",
-        "speakerChanges" | "topics" | "discourseMarkers" => "transition",
+        "noiseFloor" | "musicSegments" | "speechRatio" | "forensic" => "bgm",
+        "speakerChanges" | "speaker" | "topics" | "discourseMarkers" => "transition",
         "loudness" | "prosody" | "emotion" | "arc" => "pacing",
         _ => return None,
     })
@@ -2975,6 +2975,32 @@ fn measured_values(log: &[Value]) -> Value {
                 .get("fluxOnsetsSec")
                 .and_then(Value::as_array)
                 .map(|onsets| json!(onsets.len())),
+        );
+        // The structure the profile measured, as counts: how many speaker
+        // turns and how many questions the take holds. A critic told
+        // "3 speaker turns" can ask whether the cut changed the angle on
+        // them; a bare family name cannot be checked against the sheet.
+        insert(
+            "speakerTurns",
+            reply
+                .pointer("/speaker/turns")
+                .and_then(Value::as_array)
+                .map(|turns| json!(turns.len())),
+        );
+        insert(
+            "questions",
+            reply
+                .pointer("/directorHints/questions")
+                .and_then(Value::as_array)
+                .map(|questions| json!(questions.len())),
+        );
+        insert(
+            "bgmVerdict",
+            reply
+                .pointer("/directorHints/bgm/recommendation")
+                .and_then(Value::as_str)
+                .filter(|verdict| !verdict.is_empty())
+                .map(|verdict| json!(verdict)),
         );
         insert(
             "integratedLufs",
@@ -6428,6 +6454,7 @@ mod tests {
                 { "signal": "sentenceType", "confidence": 0.8, "basis": "punctuation" },
                 { "signal": "wordConfidence", "confidence": 0.6, "basis": "gate" },
                 { "signal": "formants", "confidence": 0.55, "basis": "narrow band" },
+                { "signal": "forensic", "confidence": 0.8, "basis": "spectral flux" },
                 { "signal": "speaker", "confidence": 0.0, "basis": "not built" },
             ]},
         })];
@@ -6469,6 +6496,78 @@ mod tests {
         );
         assert_eq!(evidence["decides"]["pause"], json!("cut"));
         assert_eq!(evidence["decides"]["words"], json!("caption"));
+        assert_eq!(
+            evidence["decides"]["forensic"],
+            json!("bgm"),
+            "a family the plan now spends names the decision it informs"
+        );
+    }
+
+    /// The brief carries the profile's own numbers, and it reads them from
+    /// the paths the profile writes. A shape that drifts - a key renamed
+    /// on the producer side, a count read off the wrong node - must show
+    /// up here rather than as a critic that quietly had nothing to say.
+    #[test]
+    fn the_brief_carries_the_numbers_at_the_paths_the_profile_writes() {
+        let log = vec![json!({
+            "wholeTake": {
+                "loudness": { "integratedLufs": -16.5 },
+                "forensic": {
+                    "noiseFloorDbfs": -38.0, "snrDb": 9.5, "noiseType": "hiss",
+                    "spectralFlatness": 0.42, "spectralCentroidHz": 2100.0,
+                    "crest": 12.0, "dynamicRangeDb": 18.0, "voicingRate": 0.61,
+                    "fluxOnsetsSec": [1.0, 3.25, 7.5],
+                },
+                "speechRatio": 0.71,
+                "dominantPeriodSec": 0.6,
+                "prosody": [ { "periodSec": 0.6, "strength": 0.7 } ],
+            },
+            "directorHints": {
+                "bgm": { "recommendation": "skip", "reason": "already musical" },
+                "questions": [2, 5],
+            },
+            "speaker": {
+                "turns": [
+                    { "start": 0.0, "end": 4.5, "speaker": 0 },
+                    { "start": 4.5, "end": 9.0, "speaker": 1 },
+                    { "start": 9.0, "end": 12.0, "speaker": 0 },
+                ],
+            },
+            "lines": [
+                { "speechRate": { "wordsPerMinute": 140.0, "syllablesPerSec": 3.9 },
+                  "loudness": { "relativeLu": 1.5 },
+                  "prosody": { "pitchSlopeSemitonesPerSec": 2.0,
+                               "pitchRangeSemitones": 5.0 } },
+            ],
+        })];
+        let take = &signal_brief(&log)["measured"]["take"];
+        assert_eq!(take["noiseFloorDbfs"], json!(-38.0));
+        assert_eq!(take["snrDb"], json!(9.5));
+        assert_eq!(take["noiseType"], json!("hiss"));
+        assert_eq!(take["spectralFlatness"], json!(0.42));
+        assert_eq!(
+            take["fluxOnsets"],
+            json!(3),
+            "the count is the array's length, not a guessed rate"
+        );
+        assert_eq!(
+            take["speakerTurns"],
+            json!(3),
+            "turns are counted off `/speaker/turns`"
+        );
+        assert_eq!(
+            take["questions"],
+            json!(2),
+            "questions are counted off `/directorHints/questions`"
+        );
+        assert_eq!(
+            take["bgmVerdict"],
+            json!("skip"),
+            "the verdict is `recommendation`, not `decision`"
+        );
+        let lines = &signal_brief(&log)["measured"]["lines"];
+        assert_eq!(lines["wordsPerMinute"]["low"], json!(140.0));
+        assert_eq!(lines["pitchSlopeSemitonesPerSec"]["high"], json!(2.0));
     }
 
     /// A plan built on a take whose delivery was measured names that

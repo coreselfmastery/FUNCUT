@@ -2624,3 +2624,13 @@ The suite went from 137 to 140 passing: `a_performed_line_is_set_heavier_than_a_
 pins wide, narrow and never-measured; `the_brief_says_what_the_profile_could_not_measure`
 pins the deduplicated gap list; and the guard above fails when a new
 field is added to the reader and spent by nothing.
+
+**`fillers` named no decision.** The vocabulary and the decision map were
+two lists kept in step by hand, and they had drifted: `fillers` is
+stripped from every caption the plan sets, yet `decision_for` had no
+entry for it, so `decides` never told the critic what it drove. It maps
+to `caption` now, and
+`every_vocabulary_family_names_the_decision_it_informs` holds the two
+lists together: every family the vocabulary carries must name a decision
+the log's own gate accepts, or be listed as deliberately unspent with a
+reason. The suite is 141.

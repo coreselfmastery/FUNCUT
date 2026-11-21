@@ -2762,7 +2762,9 @@ fn signal_evidence(log: &[Value]) -> Value {
 fn decision_for(family: &str) -> Option<&'static str> {
     Some(match family {
         "pause" | "emphasisWords" | "speechRate" | "rhythmLayers" | "motifs" => "cut",
-        "words" | "language" | "sentence" => "caption",
+        // A filler is stripped from the caption it sits in, so the
+        // decision it informs is the caption's.
+        "words" | "language" | "sentence" | "fillers" => "caption",
         "entities" | "speechActs" | "claims" => "graphic",
         "noiseFloor" | "musicSegments" | "speechRatio" | "forensic" => "bgm",
         "speakerChanges" | "speaker" | "topics" | "discourseMarkers" => "transition",
@@ -6588,6 +6590,48 @@ mod tests {
             ],
             "each gap once, in the order the profile gave it"
         );
+    }
+
+    /// The vocabulary is the contract and the decision map is what the
+    /// critic is told each family is for. A family the program spends but
+    /// the map omits is invisible in `decides`: the critic reads the
+    /// signal's name and never learns which choice it drove. `fillers`
+    /// was exactly that - stripped from every caption, mapped to no
+    /// decision. Every family in the vocabulary must name its decision
+    /// here, except the ones the program deliberately does not spend,
+    /// which are held to a reason instead.
+    #[test]
+    fn every_vocabulary_family_names_the_decision_it_informs() {
+        const NOT_SPENT: &[&str] = &["formants"];
+        let unmapped: Vec<&str> = crate::tools::signal_vocabulary()
+            .iter()
+            .copied()
+            .filter(|family| !NOT_SPENT.contains(family))
+            .filter(|family| decision_for(family).is_none())
+            .collect();
+        assert!(
+            unmapped.is_empty(),
+            "these families are spent by the edit but name no decision, so \
+             the critic is never told what they drove: {unmapped:?}"
+        );
+        // And the mapping is not free-form: a family may only claim one of
+        // the decisions the log's own gate accepts, or the critic would be
+        // pointed at a choice the validator rejects.
+        for family in crate::tools::signal_vocabulary() {
+            let Some(decision) = decision_for(family) else {
+                continue;
+            };
+            assert!(
+                matches!(
+                    decision,
+                    "cut" | "caption" | "graphic" | "bgm" | "transition" | "pacing"
+                ),
+                "{family} claims {decision:?}, which is not a logged decision"
+            );
+        }
+        assert_eq!(decision_for("fillers"), Some("caption"));
+        assert_eq!(decision_for("pause"), Some("cut"));
+        assert_eq!(decision_for("topics"), Some("transition"));
     }
 
     /// The family-level guard above is not enough, and this is the test

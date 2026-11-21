@@ -1707,8 +1707,7 @@ fn voiceover_file(studio: &Studio) -> Option<String> {
 /// program would have it. Ok is the reading's title and body; Err is
 /// the sentence that says why there is none.
 fn read_one_signal(audio: &str, name: &str) -> Result<(String, String), String> {
-    let mut backend =
-        concat_mcp::backend::open(concat_mcp::backend::Mode::Window).map_err(|why| why)?;
+    let mut backend = concat_mcp::backend::open(concat_mcp::backend::Mode::Window)?;
     let toolbox = match std::panic::catch_unwind(concat_mcp::tools::Toolbox::new) {
         Ok(toolbox) => std::sync::Arc::new(toolbox),
         Err(_) => return Err("the tool box could not be built".to_owned()),

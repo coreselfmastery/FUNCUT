@@ -11290,9 +11290,7 @@ mod tests {
         );
     }
 
-    /// The plan the run writes is the one it measured, and it says which
-    /// of the brief's questions the measurement could not answer instead
-    /// of inventing an answer. Ever    /// The SFX stage reads the exact same typed emphasis values as the
+    /// The SFX stage reads the exact same typed emphasis values as the
     /// caption and pacing consumers; a producer key rename cannot leave
     /// the accents silently reading an obsolete raw JSON path.
     #[test]
@@ -11315,7 +11313,9 @@ mod tests {
         );
     }
 
-y decision in it names a signal.
+    /// The plan the run writes is the one it measured, and it says which
+    /// of the brief's questions the measurement could not answer instead
+    /// of inventing an answer. Every decision in it names a signal.
     #[test]
     fn the_plan_names_the_signal_behind_every_decision() {
         use concat_director::ProgramStep;

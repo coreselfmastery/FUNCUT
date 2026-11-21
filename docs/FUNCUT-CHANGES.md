@@ -2829,3 +2829,46 @@ The acceptance sentence is now folded into the warnings before the
 terminal progress detail is chosen, so a warned completion no longer
 announces "the export is complete" in the event stream. The regression
 test reads both the final state and the last event.
+
+## 67. The fifty ears, spent whole - and one button each
+
+The voice-signal reader measured fifty readings (the thirty-six the
+profile already answered and the fourteen the fifty-ear pass added:
+the safety and identity forensics, the band and pulse readings, the
+speaker's utterance rhythm, the take's own pitch contour) while the
+AUTO EDIT spent fewer of them than it parsed. The consumer guard that
+should have caught this passed only because its helper-block scan ran
+the last `pub fn` to the end of the file, counting every field the
+private parse functions write as spent through a helper whose body
+never names them.
+
+The guard now ends each block at the method's own closing brace, and
+the readings it immediately caught are wired to decisions, each with a
+test: the strongest rhythm layer's own period sizes a seam's blend when
+the derived dominant key never landed; the cut-style fallback chain
+runs onsets' rate, then the VAD's utterance rhythm, then the flux mean
+against the envelope it moved from; the speakers' own shares gate the
+speaker-change seam, so a change point in a take one voice holds is a
+clustering wobble rather than a turn; a tight take (its longest silence
+under 0.9 s) is left whole by the dead-air tighten; the shimmer joins
+the voice-quality gate; and the repair shopping list names the DC
+blocker and the presence lift a muffled take asks for.
+
+Every reading also has its button. `voice_signals` answers a catalogue
+(action `catalog`): the fifty named signals, their families, what each
+measures and why the edit wants it - and a `signals` filter over those
+names extracts exactly the asked-for readings, running only the passes
+they need (a filler read costs no ffmpeg pass and no Rust ear) and
+answering a `requested` block with the reading, the ear that took it,
+the family's confidence and its basis. The Forge page's signal lab is
+built from that catalogue: thirteen families on a select, one button
+per reading, and a card that answers a press with the value, the why,
+the ear and the confidence - taken through the window's own server and
+the same toolbox an agent's call means, on the timeline's own
+voiceover, with the take transcribed first when it never was.
+
+The dev build's Rust ear is found where the workspace actually puts it
+(`src/target/<profile>/`, the script's grandparents) as well as the
+repository root a root-workspace checkout uses, so a checkout that
+builds `voice-signals` exercises the real ears in the selftest instead
+of reporting them absent.

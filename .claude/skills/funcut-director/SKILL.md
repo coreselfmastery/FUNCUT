@@ -39,7 +39,7 @@ reaches it.
   multi-clip work. `edit_undo` / `edit_redo` are your safety net.
 - Long work (analyses, transcription, TTS, model downloads, export) runs as
   a **job**: the start tool returns `{"job": "jN"}` immediately; wait with
-  `analysis_wait`/`export_wait` (`timeoutSeconds`, default 60, max 600 — call
+  `analysis_wait`/`export_wait` (`timeoutSeconds`, default 60, max 590 — call
   again if it is still running). Status of any job: `export_status`.
 - A model that is not downloaded is one `models_list` + `models_download`
   away — headless, no window needed. Never retry a "not downloaded" error in
@@ -65,9 +65,11 @@ reaches it.
 
 **Phase 0 — Creative direction (do this FIRST, before any tool that cuts).**
 An edit with no thesis is an assembly, not a video. Call `creative_brief`
-with `action: "set"` and fill audience, platform, goal, thesis,
-curiosityGap, payoff, emotionalArc (at least three DIFFERENT beats), and
-referenceStyle. Read `directorPrompt` from the reply and keep it in your
+with `{action: "set", path: <the project folder>, brief: {audience, platform,
+goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle}}` - `path`
+is required, the fields live NESTED in the `brief` object (a top-level
+`audience` is an unknown-field refusal), and emotionalArc needs at least
+three DIFFERENT beats. Read `directorPrompt` from the reply and keep it in your
 working context — it is the intent every later decision is judged against.
 If the user gave a topic but no angle, invent a sharp one and state it.
 Read `prompts/creative_visual_direction.md` before planning visuals. It is
@@ -298,7 +300,7 @@ confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
 
 **Cross-check the plan's coverage before you shop (the runner does the
-same).** `footage_plan_suggest {project, transcript}` reads the dialogue
+same).** `footage_plan_suggest {transcript, beats?}` reads the dialogue
 gaps and monotony runs the take actually contains and answers the
 footage each gap asks for; hold the plan's B-roll slots against it — a
 planned slot the gaps never asked for and a gap no slot answers are

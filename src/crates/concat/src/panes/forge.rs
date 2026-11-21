@@ -568,6 +568,33 @@ impl ForgePane {
             studio.notify(&refusal, true);
             return;
         }
+        // A Director run has no deterministic Runner to resume. Its retry
+        // must instead reopen the exact sibling it already edited; building
+        // another sibling here would discard the previous creative work.
+        if self.auto.runner.is_none()
+            && let Some(source) = self.auto.source.clone()
+            && director_retry_available(&source)
+        {
+            if let Err(why) = director_ready(studio) {
+                studio.notify(&why, true);
+                return;
+            }
+            let kill = Arc::new(AtomicBool::new(false));
+            self.auto.running = true;
+            self.auto.checking = false;
+            self.auto.stage = t("forge.autoEditDirectorStage");
+            self.auto.elapsed = elapsed_text(Duration::ZERO);
+            self.auto.fraction = 0.0;
+            self.auto.visible = true;
+            self.auto.outcome = 0;
+            self.auto.started = Some(Instant::now());
+            self.auto.project = Some(source.project.clone());
+            self.auto.source = Some(source.clone());
+            self.auto.kill = Some(Arc::clone(&kill));
+            self.set_status(t("forge.autoEditDirectorStage"));
+            launch_auto_director(studio, &source, kill);
+            return;
+        }
         // A retryable end kept its sibling, its source and its runner:
         // the resume picks up after the stages the failed run completed
         // (IDEM), instead of building a fresh sibling and paying for the
@@ -2215,6 +2242,26 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
         .map(|(index, _)| at(index))
 }
 
+/// Whether a failed or unaccepted AI Director run still has the exact
+/// sibling required for a safe retry. Never rebuild over a missing mapping
+/// or missing source take: acceptance would otherwise be unverifiable.
+fn director_retry_available(source: &AutoEditSource) -> bool {
+    !source.takes.is_empty()
+        && source
+            .takes
+            .iter()
+            .all(|take| std::path::Path::new(&take.take).is_file())
+        && std::path::Path::new(&source.project)
+            .join("concat.json")
+            .is_file()
+        && std::path::Path::new(&source.project)
+            .join("voiceover-mapping.json")
+            .is_file()
+        && std::path::Path::new(&source.export)
+            .parent()
+            .is_some_and(|parent| parent.is_dir())
+}
+
 /// Whether either editing entry point must stay locked while AUTO EDIT
 /// is running or its Director export is being checked.
 fn auto_edit_busy(running: bool, checking: bool) -> bool {
@@ -2483,12 +2530,50 @@ fn elapsed_text(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::auto_edit_busy;
+    use super::director_retry_available;
+    use super::{AutoEditSource, TakePaths};
     use super::director_phase;
     use super::director_skill_listed;
     use super::other_run_refusal;
     use super::voiceover_copy_name;
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn director_retry_reuses_only_a_complete_sibling_handoff() {
+        let root = std::env::temp_dir().join(format!(
+            "funcut-director-retry-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let voiceover = root.join("voiceover");
+        let export = root.join("export");
+        std::fs::create_dir_all(&voiceover).unwrap();
+        std::fs::create_dir_all(&export).unwrap();
+        std::fs::write(root.join("concat.json"), b"{}").unwrap();
+        std::fs::write(root.join("voiceover-mapping.json"), b"{}").unwrap();
+        let take = voiceover.join("take.wav");
+        std::fs::write(&take, b"voice").unwrap();
+        let source = AutoEditSource {
+            project: root.to_string_lossy().into_owned(),
+            takes: vec![TakePaths {
+                take: take.to_string_lossy().into_owned(),
+                enhanced: voiceover.join("enhanced.wav").to_string_lossy().into_owned(),
+            }],
+            placements: Vec::new(),
+            export: export.join("auto-edit.mp4").to_string_lossy().into_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+        };
+        assert!(director_retry_available(&source));
+
+        std::fs::remove_file(root.join("voiceover-mapping.json")).unwrap();
+        assert!(!director_retry_available(&source), "mapping is required for word acceptance");
+        std::fs::write(root.join("voiceover-mapping.json"), b"{}").unwrap();
+        std::fs::remove_file(&take).unwrap();
+        assert!(!director_retry_available(&source), "all source takes must still exist");
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn acceptance_check_keeps_both_edit_entry_points_locked() {

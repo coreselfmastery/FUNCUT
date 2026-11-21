@@ -678,9 +678,9 @@ questions a green "Completed" cannot:
 - **`gates`** — one entry per craft dimension, each with the measured fact
   it was read from. `story` (the plan validated and was creatively ready),
   `words` (the export's narration re-read and matched), `audio` (the mix
-  against the platform loudness target) and `export-integrity` (the file
-  opened by the media reader) are **required**; `visual` (the craft score),
-  `captions` and `motion` are recorded when the run made them. A required
+  against the platform loudness target), `export-integrity` (the file
+  opened by the media reader), and `visual` (the post-export craft score)
+  are **required**; `captions` and `motion` are recorded when the run made them. A required
   gate that was never measured is `skipped`, which makes the verdict
   `incomplete` — never a silent pass. A 9/10 craft score cannot hide a
   missing narration track or an unreadable file.

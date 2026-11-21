@@ -22,6 +22,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde_json::Value;
+use url::Url;
 
 use crate::dirs::AppDirs;
 
@@ -34,6 +35,7 @@ const READ: Duration = Duration::from_secs(30);
 /// The largest clip this module will fetch: the same bound OpenVid keeps,
 /// a lie about Content-Length must not fill the disk.
 const MAX_CLIP_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_REDIRECTS: usize = 5;
 
 /// A live provider. The name is the one the API's own URLs and the
 /// settings file spell.
@@ -90,6 +92,36 @@ impl Provider {
         }
     }
 
+    /// Validate a clip URL before contacting it. Every redirect is checked
+    /// by the same rule, so a provider-host redirect cannot turn this fetch
+    /// into a request to an unrelated or local service.
+    pub fn validate_download_url(self, raw: &str) -> Result<Url, String> {
+        let parsed = Url::parse(raw)
+            .map_err(|error| format!("the clip URL does not parse: {error}"))?;
+        if parsed.scheme() != "https" {
+            return Err("the clip URL must be https - the shelves serve no plain http".to_owned());
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err("the clip URL must not contain username or password credentials".to_owned());
+        }
+        if parsed.port().is_some_and(|port| port != 443) {
+            return Err("the clip URL must use the standard https port".to_owned());
+        }
+        let host = parsed.host_str().unwrap_or_default();
+        let allowed: &[&str] = match self {
+            Provider::Pexels => &["videos.pexels.com", "www.pexels.com", "player.vimeo.com"],
+            Provider::Pixabay => &["cdn.pixabay.com", "i.pixabay.com"],
+        };
+        if !allowed.contains(&host) {
+            return Err(format!(
+                "the clip URL's host {host} is not one of {}'s own ({}) - a fetch from anywhere else would stamp bytes this shelf never licensed",
+                self.name(),
+                allowed.join(", ")
+            ));
+        }
+        Ok(parsed)
+    }
+
     /// The search URL for words and filters, without the key - Pexels
     /// takes its key as a header, Pixabay as a query parameter, so the
     /// URL alone stays shareable for one of them.
@@ -125,6 +157,21 @@ impl Provider {
             }
         }
     }
+}
+
+fn is_redirect(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
+fn redirected_url(provider: Provider, current: &Url, location: &str) -> Result<Url, String> {
+    let location = location.trim();
+    if location.is_empty() {
+        return Err(format!("{} redirected the clip without a Location value", provider.name()));
+    }
+    let next = current
+        .join(location)
+        .map_err(|error| format!("{} returned an invalid redirect URL: {error}", provider.name()))?;
+    provider.validate_download_url(next.as_str())
 }
 
 /// Percent-encode the words of a query the way a URL's query string wants
@@ -209,7 +256,7 @@ impl Library {
         static LIBRARY: OnceLock<Library> = OnceLock::new();
         LIBRARY.get_or_init(|| Library {
             dirs: dirs.clone(),
-            shelf: crate::net::Shelf::new("https://api.pexels.com/", CONNECT, READ),
+            shelf: crate::net::Shelf::new_without_redirects("https://api.pexels.com/", CONNECT, READ),
         })
     }
 
@@ -339,6 +386,59 @@ impl Library {
         Ok(found)
     }
 
+    fn fetch_response(&self, provider: Provider, mut url: Url) -> Result<ureq::Response, String> {
+        let send = |request: ureq::Request| request;
+        for followed in 0..=MAX_REDIRECTS {
+            let response = match self.shelf.get(url.as_str(), &send) {
+                Ok(response) => response,
+                Err(failure) => {
+                    let redirect = matches!(
+                        &failure.error,
+                        ureq::Error::Status(code, _) if is_redirect(*code)
+                    );
+                    if redirect {
+                        match failure.error {
+                            ureq::Error::Status(_, response) => response,
+                            _ => unreachable!("the status was checked above"),
+                        }
+                    } else {
+                        let status = match failure.cause {
+                            crate::net::Cause::Status(code) => Some(code),
+                            _ => None,
+                        };
+                        let hint = match status {
+                            Some(401) | Some(403) => " - the key was refused",
+                            Some(404) => " - the clip moved",
+                            Some(429) => " - the rate limit for this key is spent; a minute's wait",
+                            Some(500..=599) => " - the provider is having a moment; retry",
+                            _ => "",
+                        };
+                        return Err(match status {
+                            Some(code) => format!(
+                                "{} fetch failed: the server answered HTTP {code}{hint}",
+                                provider.name()
+                            ),
+                            None => format!("{} fetch failed: {failure}", provider.name()),
+                        });
+                    }
+                }
+            };
+            if !is_redirect(response.status()) {
+                return Ok(response);
+            }
+            if followed == MAX_REDIRECTS {
+                return Err(format!("{} sent more than {MAX_REDIRECTS} redirects", provider.name()));
+            }
+            let location = response
+                .header("Location")
+                .map(str::to_owned)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| format!("{} redirected the clip without a Location header", provider.name()))?;
+            url = redirected_url(provider, &url, &location)?;
+        }
+        Err(format!("{} sent too many redirects", provider.name()))
+    }
+
     /// Fetches one clip from its own URL - the search page's hit carries
     /// the exact file it described, and this is the one door every caller
     /// (the page, the API, the MCP tool) uses.
@@ -349,6 +449,7 @@ impl Library {
         url: &str,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<std::path::PathBuf, String> {
+        let url = provider.validate_download_url(url)?;
         if let Some(path) = self.fetched(provider, id) {
             return Ok(path);
         }
@@ -360,27 +461,7 @@ impl Library {
         // The API hosts answer a redirect to their CDN; the shelf's agent
         // follows it, the key rides the first hop only, and the CDN's
         // own answer is the file.
-        let send = |request: ureq::Request| request;
-        let response = self.shelf.get(url, &send).map_err(|failure| {
-            let status = match &failure.cause {
-                crate::net::Cause::Status(code) => Some(*code),
-                _ => None,
-            };
-            let hint = match status {
-                Some(401) | Some(403) => " - the key was refused",
-                Some(404) => " - the clip moved",
-                Some(429) => " - the rate limit for this key is spent; a minute's wait",
-                Some(500..=599) => " - the provider is having a moment; retry",
-                _ => "",
-            };
-            match status {
-                Some(code) => format!(
-                    "{} fetch failed: the server answered HTTP {code}{hint}",
-                    provider.name()
-                ),
-                None => format!("{} fetch failed: {failure}", provider.name()),
-            }
-        })?;
+        let response = self.fetch_response(provider, url)?;
         if response.status() != 200 {
             let status = response.status();
             let body = response.into_string().unwrap_or_default();
@@ -693,6 +774,50 @@ mod tests {
         assert_eq!(Provider::of("openvid"), None);
         assert!(license_of(Provider::Pexels).contains("no attribution"));
         assert!(license_of(Provider::Pixabay).contains("do not redistribute"));
+    }
+
+
+    #[test]
+    fn live_download_urls_are_exact_https_provider_hosts() {
+        let pexels = Provider::Pexels
+            .validate_download_url("https://videos.pexels.com/video-files/1.mp4")
+            .expect("the Pexels CDN");
+        assert_eq!(pexels.host_str(), Some("videos.pexels.com"));
+        assert!(Provider::Pexels
+            .validate_download_url("http://videos.pexels.com/video-files/1.mp4")
+            .is_err());
+        assert!(Provider::Pexels
+            .validate_download_url("https://videos.pexels.com.evil.test/file.mp4")
+            .is_err());
+        assert!(Provider::Pexels
+            .validate_download_url("https://user@videos.pexels.com/file.mp4")
+            .is_err());
+        assert!(Provider::Pexels
+            .validate_download_url("https://videos.pexels.com:8443/file.mp4")
+            .is_err());
+        assert!(Provider::Pixabay
+            .validate_download_url("https://videos.pexels.com/file.mp4")
+            .is_err());
+        assert!(Provider::Pixabay
+            .validate_download_url("https://cdn.pixabay.com/video/1.mp4")
+            .is_ok());
+    }
+
+    #[test]
+    fn every_redirect_target_is_checked_before_the_next_request() {
+        let start = Provider::Pexels
+            .validate_download_url("https://www.pexels.com/video/1")
+            .expect("the provider host");
+        let cdn = redirected_url(
+            Provider::Pexels,
+            &start,
+            "https://videos.pexels.com/video-files/1.mp4",
+        )
+        .expect("the provider CDN");
+        assert_eq!(cdn.host_str(), Some("videos.pexels.com"));
+        assert!(redirected_url(Provider::Pexels, &start, "https://127.0.0.1/latest/meta-data").is_err());
+        assert!(redirected_url(Provider::Pexels, &start, "http://videos.pexels.com/file.mp4").is_err());
+        assert!(redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4").is_err());
     }
 
     #[test]

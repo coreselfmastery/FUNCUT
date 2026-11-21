@@ -2503,3 +2503,69 @@ off would make the button refuse every run it starts.
 the file and line for every claim and the two items the list got wrong
 (`motion_inspect`/`motion_frame` were never excluded; the model-key
 preflight already existed).
+
+## 56. The signals that were read and never spent, and the two that were never read at all
+
+The audit before this one counted families, not decisions: every family
+had a reader somewhere, so the shelf looked finished. Reading the
+readers against the producer found the other half of the problem. Two
+paths asked for keys `voice_signals.py` does not write, so their signals
+were empty on **every** real take while their code looked exercised:
+
+- `bgm_decision` read `/bgm/decision`; the profile writes
+  `bgm.recommendation`. The `skip` and `duck_only` rules could therefore
+  never fire, and a take that already carried music still got a bed
+  stacked on it - the one thing the forensic reading exists to prevent.
+- `speaker_changes` read the `speaker.changes` array as bare numbers. It
+  holds `{t, from, to}` objects, so the reading was always empty and the
+  seam the profile calls a scene change never opened.
+
+Both were masked by tests, and one of those tests is the reason to trust
+the shape check more than the count: the bed test's fixture wrote
+`bgm.decision`, so it passed against the bug. The fixture now uses the
+producer's own key, and `the_profile_s_own_shape_is_what_is_read` builds
+a reply from the real shape (`wholeTake`, `directorHints.bgm`,
+`speaker.changes` as objects) so a rename on the producer side fails in
+the suite instead of in a critic that quietly had nothing to say.
+
+The families that were measured and spent by nothing now drive
+decisions:
+
+| Signal | What it decides now |
+| --- | --- |
+| `speechRate.wordsPerMinute` / `syllablesPerSec` | the caption hold, taking the longer of the two estimates: long words read slower than the word count says |
+| `prosody.pitchSlopeSemitonesPerSec` | the delivery's direction: a line whose pitch rose hands its build to the cut after it |
+| `forensic.fluxOnsetsSec` | a seam lands on a transient the take actually has |
+| `speaker.turns` | the seam that falls on a turn edge |
+| `forensic.noiseType` / `spectralFlatness` | what a denoise targets, and whether one fits at all |
+| `sentence.type` + `prosody.finalRise` | an ask is separated from a rhetorical line, and its answer becomes the next visual |
+
+**The brief carries numbers, not family names.** `craft_critique` used to
+receive the arc and the emphasis words; a critic told "noiseFloor 0.80"
+can say the bed was chosen well, but only a critic told "-38 dBFS, hiss"
+can say it should have been quieter. The brief now has a `measured`
+block: the take-wide forensic values, the loudness, the rhythm layers,
+the speech ratio, the speaker-turn and question counts, the bed's own
+verdict, and per-line spans (`wpm 120-190`, `pitch slope -2.1..+1.8
+st/s`) rather than forty rows. Every value is one the profile returned;
+an unmeasured family stays absent rather than being filled with a
+default, so the critic can tell "measured quiet" from "never measured".
+The strong-VLM prompt cap is raised from 1200 to 4000 characters so that
+block survives, and the prompt says to cite the numbers and to leave an
+unmeasured family alone.
+
+**The Forge hand-off says how to spend it.** The AUTO EDIT director runs
+its own reads, so it never received a pre-built brief; what it lacked was
+the instruction. Its prompt now names the four blocks worth reading
+(`decisionPolicy`, `signalConfidence.perSignal`, `directorHints`,
+`wholeTake`) and pairs each family with the decision the policy gives it,
+so a signal lands on a choice instead of a note. A family at confidence 0
+is named as unmeasured and never cited.
+
+Three tests pin the shape: `the_brief_carries_the_numbers_at_the_paths_the_profile_writes`
+(reads the counts off `/speaker/turns`, `/directorHints/questions` and
+`bgm.recommendation`), `the_profile_s_own_shape_is_what_is_read` in
+`voice_read.rs`, and the extended
+`the_critics_brief_cites_only_names_the_validator_accepts`, which now
+also asserts that `decides` names `bgm` for `forensic`. The suite went
+from 130 to 137 passing.

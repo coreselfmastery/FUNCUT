@@ -151,6 +151,10 @@ pub struct Entity {
     /// fallback. An approximate entity still earns a lower-third; it does
     /// not earn a stat or a timeline, which claim exactness.
     pub approximate: bool,
+    /// The producer's own confidence in the reading, 0..1: the NER ear's
+    /// per-entity score, the complement's flat 0.75. `None` when the
+    /// producer wrote none - a foreign reply's card spends as it did.
+    pub confidence: Option<f64>,
 }
 
 /// A phrase the narration repeats: the visual or sound that should return
@@ -986,6 +990,7 @@ fn entities_of(reply: &Value, take: &str) -> Vec<Entity> {
                         card: entity["card"].as_str().unwrap_or_default().to_owned(),
                         at: entity["start"].as_f64(),
                         approximate,
+                        confidence: entity["confidence"].as_f64(),
                     })
                 })
                 .collect()
@@ -1138,7 +1143,14 @@ fn take_wide_of(reply: &Value) -> TakeRead {
         true_peak_dbfs: whole
             .pointer("/loudness/truePeakDbfs")
             .and_then(Value::as_f64),
-        utterances: reply.pointer("/speaker/utterances").and_then(Value::as_u64),
+        // An absent speaker ear answers `utterances: 0` (the field is not
+        // Option on the producer's side), and a bare zero would read as a
+        // measured "not punchy" below - the ear's own `available` flag
+        // gates the count, so an ear that never ran stays unmeasured.
+        utterances: reply
+            .pointer("/speaker/utterances")
+            .and_then(Value::as_u64)
+            .filter(|_| reply.pointer("/speaker/available").and_then(Value::as_bool) == Some(true)),
         mean_utterance_sec: reply
             .pointer("/speaker/meanUtteranceSec")
             .and_then(Value::as_f64),
@@ -1308,6 +1320,11 @@ mod tests {
                 "bgm": { "recommendation": "skip", "reason": "already musical" },
             },
             "speaker": {
+                // The ear's own availability flag, exactly as the Rust
+                // ear writes it: an absent ear answers utterances 0, and
+                // only `available` tells a measured count from none.
+                "available": true,
+                "method": "silero-vad + spectral clustering",
                 "utterances": 7, "meanUtteranceSec": 1.6, "longestSilenceSec": 1.9,
                 "speakers": [ { "id": 0, "speechSeconds": 8.4, "lineIndices": [0] },
                               { "id": 1, "speechSeconds": 2.1, "lineIndices": [1] } ],
@@ -1682,5 +1699,38 @@ mod tests {
         assert_eq!(with(Some(12)).punchy_delivery(), Some(true));
         assert_eq!(with(Some(6)).punchy_delivery(), Some(false));
         assert_eq!(with(None).punchy_delivery(), None);
+    }
+
+    /// An absent speaker ear answers `utterances: 0` - the field is not
+    /// Option on the producer's side - and only its own `available` flag
+    /// tells a measured count from none. The parse gates on the flag, so
+    /// a take the ear never read keeps its rhythm unmeasured rather
+    /// than reading as a measured "not punchy".
+    #[test]
+    fn an_absent_speaker_ear_keeps_its_rhythm_unmeasured() {
+        let reply = json!({
+            "audio": { "path": "/t/a.wav", "durationSec": 9.0 },
+            "speaker": {
+                "available": false, "method": "", "reason": "no WAV in the spec",
+                "utterances": 0, "meanUtteranceSec": null, "longestSilenceSec": null,
+                "speech": [], "turns": [], "speakers": [], "changes": [],
+                "lineSpeakers": [],
+            },
+        });
+        let read = VoiceRead::of(&reply).expect("the reply is a reading");
+        assert_eq!(read.take_wide.utterances, None);
+        assert_eq!(read.punchy_delivery(), None);
+        // The ear that answered keeps its count.
+        let present = json!({
+            "audio": { "path": "/t/a.wav", "durationSec": 9.0 },
+            "speaker": {
+                "available": true, "method": "silero-vad + spectral clustering",
+                "utterances": 7, "meanUtteranceSec": 1.6, "longestSilenceSec": 1.9,
+                "speech": [], "turns": [], "speakers": [], "changes": [],
+                "lineSpeakers": [],
+            },
+        });
+        let read = VoiceRead::of(&present).expect("the reply is a reading");
+        assert_eq!(read.take_wide.utterances, Some(7));
     }
 }

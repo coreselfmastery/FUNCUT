@@ -1603,8 +1603,20 @@ fn entity_graphics(log: &[Value], takes: &[TakePaths]) -> Vec<Entity> {
             // not the NER's own - does not earn the cards that claim
             // exactness. A stat asserts the number is right and a timeline
             // asserts the date is; a lower-third only says the words were
-            // said, which a pattern can stand behind.
+            // said, which a pattern can stand behind. The producer's own
+            // confidence holds the same bar from the other side: a 0.3
+            // MONEY read still earns the stat that claims exactness, so
+            // a measured confidence under 0.6 steps down with the
+            // approximate ones.
             if entity.approximate
+                && matches!(
+                    entity.card.to_ascii_lowercase().as_str(),
+                    "stat" | "timeline"
+                )
+            {
+                continue;
+            }
+            if entity.confidence.is_some_and(|confidence| confidence < 0.6)
                 && matches!(
                     entity.card.to_ascii_lowercase().as_str(),
                     "stat" | "timeline"

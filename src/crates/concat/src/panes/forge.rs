@@ -501,6 +501,7 @@ impl ForgePane {
                 command.env(name, value.trim());
             }
         }
+        configure_forge_process_group(&mut command);
         let spawned = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1139,6 +1140,40 @@ impl ForgePane {
     }
 }
 
+/// Put Forge in its own process group so cancellation can stop the
+/// harness and any subprocesses it launched. Descendants inherit this
+/// group by default, which also guarantees they cannot keep the reader
+/// pipes open after the parent exits.
+#[cfg(unix)]
+fn configure_forge_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_forge_process_group(_command: &mut Command) {}
+
+/// Terminate the whole Forge process tree on Unix. Killing only the parent
+/// can leave a model/helper subprocess holding stdout or stderr open, so
+/// the reader-thread joins never finish and the UI never receives Ended.
+fn terminate_forge_process(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let group = -(child.id() as libc::pid_t);
+        // SAFETY: a negative pid targets the process group created for this
+        // child immediately before spawn; SIGKILL is used only on Cancel or
+        // when the child supervisor cannot poll the process.
+        let result = unsafe { libc::kill(group, libc::SIGKILL) };
+        if result != 0 {
+            let _ = child.kill();
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 /// Reads the run on its own thread: each line of the harness's output is
 /// posted as it comes, and the run's exit code is posted after the last.
 /// A separate supervisor polls the child, so Cancel is honoured even
@@ -1176,13 +1211,13 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
                 Ok(Some(status)) => break Some(status),
                 Ok(None) => {
                     if kill.load(Ordering::Relaxed) {
-                        let _ = child.kill();
+                        terminate_forge_process(&mut child);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 Err(error) => {
                     log::warn!("could not poll Forge child: {error}");
-                    let _ = child.kill();
+                    terminate_forge_process(&mut child);
                     break child.wait().ok();
                 }
             }
@@ -2156,12 +2191,12 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
                 Ok(Some(status)) => break Some(status),
                 Ok(None) => {
                     if kill.load(Ordering::Relaxed) {
-                        let _ = child.kill();
+                        terminate_forge_process(&mut child);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 Err(_) => {
-                    let _ = child.kill();
+                    terminate_forge_process(&mut child);
                     break child.wait().ok();
                 }
             }

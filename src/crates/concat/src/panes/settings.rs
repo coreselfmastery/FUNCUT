@@ -790,6 +790,15 @@ impl SettingsPane {
                     let mut api = concat_api::Api::new(events)?;
                     api.share_exporter(exporter);
                     api.share_open_projects(open_projects);
+                    // The window's own open project, so a caller over the
+                    // socket edits the timeline on screen (live mode,
+                    // #337): every operation hops to the event loop, runs
+                    // on the studio's session, and the publish rides
+                    // inside it - the edit arrives as a thing being made,
+                    // not a file that appears at the end.
+                    api.share_live_project(concat_api::LiveProjectControl::new(
+                        LiveSessionBridge,
+                    ));
                     // The window's playhead, so a caller over the socket
                     // can scrub the timeline on screen: `window.seek`
                     // (the timeline_seek MCP tool) hops to the event
@@ -1341,6 +1350,79 @@ fn split_once_port(listen: &str) -> Option<(&str, Option<u16>)> {
         return None;
     }
     Some((host, port.trim().parse().ok()))
+}
+
+/// The window's side of live mode (#337): one operation from the API
+/// the Automation page serves, hopped to the event loop and answered
+/// from the studio's own session - so the project on screen opens,
+/// edits, undoes and renders for a caller over the socket, and every
+/// edit lands on the timeline the user is watching while it happens.
+///
+/// The patience is generous but bounded: an apply can carry a whole
+/// import, and a frame can be the first read of a cold file, but a
+/// window that cannot answer says so in its own words instead of
+/// hanging the caller's connection.
+struct LiveSessionBridge;
+
+impl concat_api::LiveBridge for LiveSessionBridge {
+    fn path(&self) -> Option<String> {
+        let (done, back) = std::sync::mpsc::channel::<Option<String>>();
+        let queued = slint::invoke_from_event_loop(move || {
+            let mut answered = false;
+            crate::host::Shell::with(|shell, _app| {
+                answered = true;
+                let held = shell
+                    .studio
+                    .borrow()
+                    .session
+                    .as_ref()
+                    .map(|session| session.path().to_owned());
+                let _ = done.send(held);
+            });
+            if !answered {
+                // The window is gone; no project is held.
+                let _ = done.send(None);
+            }
+        });
+        if queued.is_err() {
+            return None;
+        }
+        back.recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap_or(None)
+    }
+
+    fn run(&self, op: concat_api::LiveOp) -> Result<concat_api::LiveReply, String> {
+        // A frame may open files the pool has never read; the rest are
+        // session answers, quick by construction.
+        let patience = match op {
+            concat_api::LiveOp::Frame { .. } => std::time::Duration::from_secs(90),
+            _ => std::time::Duration::from_secs(15),
+        };
+        let (done, back) = std::sync::mpsc::channel::<Result<concat_api::LiveReply, String>>();
+        let queued = slint::invoke_from_event_loop(move || {
+            let mut answered = false;
+            crate::host::Shell::with(|shell, app| {
+                answered = true;
+                let answer = shell
+                    .studio
+                    .borrow_mut()
+                    .live(op, &app, &shell.models);
+                let _ = done.send(answer);
+            });
+            if !answered {
+                let _ = done.send(Err("the window is gone".to_owned()));
+            }
+        });
+        if queued.is_err() {
+            return Err("the window's event loop is gone".to_owned());
+        }
+        back.recv_timeout(patience).unwrap_or_else(|_| {
+            Err(format!(
+                "the window did not answer within {} s",
+                patience.as_secs()
+            ))
+        })
+    }
 }
 
 /// The inverse of [`split_listen`]: the one string the server binds.

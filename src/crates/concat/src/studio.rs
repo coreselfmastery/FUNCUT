@@ -34,8 +34,8 @@ use concat_effects::manifest::Kind as PackageKind;
 use concat_effects::manifest::ParamType;
 use concat_host::playback::ClipSpec;
 use concat_host::{
-    AnalyseRequest, Cutouts, EnhanceRequest, ProjectInfo, RegionRequest, Session, media, projects,
-    templates,
+    AnalyseRequest, Cutouts, EnhanceRequest, ProjectInfo, RegionRequest, Session,
+    session::EditorView, media, projects, templates,
 };
 use concat_media::{Pyramid, jpeg};
 use concat_project::commands::{ClipMove, ClipPatch, TrackFlag, TrimEdge};
@@ -1018,6 +1018,17 @@ pub struct Studio {
     /// with the monitor by pointer, so it can keep its plan for as long as
     /// the list is the same one.
     flat: Option<(
+        u64,
+        u32,
+        u32,
+        std::sync::Arc<Vec<concat_export::ExportClip>>,
+    )>,
+    /// The last flattening made for a live-mode frame ask - the API the
+    /// Automation page serves, paging through the held project - and
+    /// the revision and size it was made at. Kept apart from `flat`,
+    /// which belongs to the monitor's own size; a contact sheet's dozen
+    /// samples share one flattening and one plan.
+    live_flat: Option<(
         u64,
         u32,
         u32,
@@ -2519,6 +2530,7 @@ impl Studio {
             audition: None,
             revision: 0,
             flat: None,
+            live_flat: None,
             commit_pending: false,
             commit_targets: Vec::new(),
             words: None,
@@ -3067,6 +3079,186 @@ impl Studio {
             session.redo();
             self.after_change();
         }
+    }
+
+    // ── live mode: the window's answers for the API it serves ────────────
+
+    /// One live-mode operation, from the API the Automation page serves:
+    /// answered on this studio's own session and published before it
+    /// replies, so a caller over the socket watches each edit land on
+    /// the timeline on screen - the window's side of the closed protocol
+    /// in `concat_api::live` (#337). Every operation here is one the
+    /// window's own hands could have done: the same history, the same
+    /// autosave, the same monitor, the same publish.
+    pub fn live(
+        &mut self,
+        op: concat_api::LiveOp,
+        app: &App,
+        models: &Models,
+    ) -> Result<concat_api::LiveReply, String> {
+        let reply = self.live_answer(op)?;
+        self.publish(app, models);
+        reply
+    }
+
+    /// The answer inside one live operation; [`Studio::live`] publishes
+    /// around it. Kept apart so a caller that already publishes - the
+    /// bridge, on a run of operations - need not publish twice.
+    fn live_answer(&mut self, op: concat_api::LiveOp) -> Result<concat_api::LiveReply, String> {
+        let no_project = || "the window has no project open".to_owned();
+        match op {
+            concat_api::LiveOp::View => Ok(concat_api::LiveReply::View(Box::new(
+                self.session.as_ref().ok_or_else(no_project)?.view(),
+            ))),
+            concat_api::LiveOp::Document => Ok(concat_api::LiveReply::Document(
+                self.session.as_ref().ok_or_else(no_project)?.document()?,
+            )),
+            concat_api::LiveOp::Apply { command } => Ok(concat_api::LiveReply::View(Box::new(
+                self.apply_live(*command)?,
+            ))),
+            concat_api::LiveOp::Undo => Ok(concat_api::LiveReply::View(Box::new(
+                self.undo_live()?,
+            ))),
+            concat_api::LiveOp::Redo => Ok(concat_api::LiveReply::View(Box::new(
+                self.redo_live()?,
+            ))),
+            concat_api::LiveOp::Save { name } => {
+                self.autosave.stop();
+                self.session
+                    .as_mut()
+                    .ok_or_else(no_project)?
+                    .save(name.as_deref())?;
+                self.dirty = false;
+                Ok(concat_api::LiveReply::Done)
+            }
+            concat_api::LiveOp::SetVideo { video } => {
+                self.flush_commit();
+                let session = self.session.as_mut().ok_or_else(no_project)?;
+                let view = session.set_video(video)?;
+                self.after_change();
+                Ok(concat_api::LiveReply::View(Box::new(view)))
+            }
+            concat_api::LiveOp::Frame {
+                time,
+                width,
+                height,
+                proxy,
+            } => self.frame_live(time, width, height, proxy),
+        }
+    }
+
+    /// [`Studio::apply`], as live mode asks it: the same bookkeeping -
+    /// the burst ends, the commit flushes, the caches follow, the
+    /// autosave is scheduled, the media is seen to - but the answer is
+    /// the view and the error, not a toast: the caller is a socket, and
+    /// the sentence goes back down it.
+    fn apply_live(&mut self, command: Command) -> Result<EditorView, String> {
+        self.end_burst();
+        log::info!("live edit: {}", command_name(&command));
+        self.flush_commit();
+        self.echo = None;
+        self.last_commit = None;
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| "the window has no project open".to_owned())?;
+        let before = session.video().color_space;
+        let view = session.apply(command)?;
+        let after = session.video().color_space;
+        self.after_change();
+        self.tell_of_hdr(before, after);
+        Ok(view)
+    }
+
+    /// [`Studio::undo`], as live mode asks it: the same steps back, the
+    /// answer the view.
+    fn undo_live(&mut self) -> Result<EditorView, String> {
+        self.flush_commit();
+        self.echo = None;
+        self.words = None;
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| "the window has no project open".to_owned())?;
+        let view = session.undo();
+        self.after_change();
+        Ok(view)
+    }
+
+    /// [`Studio::redo`], as live mode asks it.
+    fn redo_live(&mut self) -> Result<EditorView, String> {
+        self.flush_commit();
+        self.echo = None;
+        self.words = None;
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| "the window has no project open".to_owned())?;
+        let view = session.redo();
+        self.after_change();
+        Ok(view)
+    }
+
+    /// The composited frame at one instant, for a caller over the socket
+    /// (live mode): the same flattening the monitor shows - motion bakes
+    /// resolved from the project's own cache, titles painted in at the
+    /// asked size - kept between frames of an unchanged document so a
+    /// contact sheet's dozen samples neither flatten nor plan a dozen
+    /// times. Read through the proxies when the size is small enough
+    /// that a copy serves it whole, exactly as `preview.frame` reads
+    /// its own pool.
+    fn frame_live(
+        &mut self,
+        time: f64,
+        width: u32,
+        height: u32,
+        proxy: bool,
+    ) -> Result<concat_api::LiveReply, String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| "the window has no project open".to_owned())?;
+        let settings = session.settings();
+        let project_dir = std::path::PathBuf::from(session.path());
+        let colour = session.video().color_space;
+        let kept = self
+            .live_flat
+            .as_ref()
+            .is_some_and(|(at, w, h, _)| *at == self.revision && *w == width && *h == height);
+        let clips = if kept {
+            std::sync::Arc::clone(&self.live_flat.as_ref().expect("checked").3)
+        } else {
+            let mut clips = concat_export::flatten::flatten_timeline_in(
+                self.project(),
+                None,
+                Some(&project_dir),
+            );
+            for title in self.host.titles.clips(self.project(), width, height) {
+                self.title_blocks
+                    .insert(title.clip_id, (title.block, title.offset));
+                clips.push(title.clip);
+            }
+            let clips = std::sync::Arc::new(clips);
+            self.live_flat = Some((self.revision, width, height, std::sync::Arc::clone(&clips)));
+            clips
+        };
+        let pixels = self.host.monitor.frame(
+            clips,
+            &settings,
+            concat_host::preview::FrameSpec {
+                time,
+                width,
+                height,
+                moving: false,
+                proxy,
+                color_space: colour,
+            },
+        )?;
+        Ok(concat_api::LiveReply::Frame {
+            width,
+            height,
+            pixels,
+        })
     }
 
     /// Starts a gesture's preview: the echo is a clone of the project the
@@ -9109,6 +9301,7 @@ impl Studio {
                 self.audition = None;
                 self.revision += 1;
                 self.flat = None;
+                self.live_flat = None;
                 self.sync_audio();
                 self.request_media_art();
                 self.request_preview();
@@ -9355,6 +9548,7 @@ impl Studio {
         self.audition = None;
         self.revision += 1;
         self.flat = None;
+        self.live_flat = None;
         self.host
             .playback
             .set_clips(std::path::PathBuf::new(), Vec::new());

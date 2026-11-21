@@ -283,9 +283,9 @@ struct CheckCaller<'a> {
 }
 
 impl CheckCaller<'_> {
-    /// One question and its answer, or an empty object when the tool
-    /// refused or is not served - which the gate reads as no evidence,
-    /// never as a pass.
+    /// One question and its answer, or None when cancelled or when the
+    /// tool refused/is not served. Missing evidence is omitted so the
+    /// corresponding required gate is recorded as skipped, not failed.
     fn ask(&mut self, tool: &str, arguments: Value) -> Option<Value> {
         // Cancellation is checked before every independent acceptance call.
         // The active tool also receives the same flag through Context, so
@@ -299,7 +299,9 @@ impl CheckCaller<'_> {
             progress: None,
         };
         match self.toolbox.call(tool, arguments, context) {
-            Some(outcome) if !outcome.is_error => Some(outcome.structured.unwrap_or_else(|| json!({}))),
+            Some(outcome) if !outcome.is_error => {
+                Some(outcome.structured.unwrap_or_else(|| json!({})))
+            }
             _ => None,
         }
     }
@@ -307,7 +309,9 @@ impl CheckCaller<'_> {
 
 impl ToolCaller for CheckCaller<'_> {
     fn call(&mut self, call: &ToolCall) -> Result<Value, ToolError> {
-        Ok(self.ask(&call.tool, call.arguments.clone()).unwrap_or_else(|| json!({})))
+        Ok(self
+            .ask(&call.tool, call.arguments.clone())
+            .unwrap_or_else(|| json!({})))
     }
 }
 

@@ -1,16 +1,16 @@
 name: Dependency security audit
 
-# No advisories are ignored: the sherpa-onnx 2.x migration cleared the last
-# of them. zip 2.4.2 (four advisories) and the zstd/zstd-safe pair riding its
-# optional feature sat in the sherpa-onnx-sys 1.13.7 build-dependency subtree,
-# which the supported build never executes - its build.rs opens an archive
-# only on the iOS .xcframework path, a Linux-only product never takes it,
-# SHERPA_ONNX_LIB_DIR (always set by the supported env, scripts/funcut-env.sh)
-# returns before the download path is reached, and the prebuilt archives are
-# sha256-verified against scripts/ci/deps.lock first. sherpa-onnx-sys 2.0.2
-# builds against zip 9 instead, so the subtree no longer carries a vulnerable
-# zip and the seven per-ID ignores that stood in for the migration are gone.
-# Any new advisory fails the audit.
+# No advisories are ignored: the sherpa-onnx 2.x migration (PR #173, merged)
+# cleared the last of them. zip 2.4.2 (four advisories) and the zstd/zstd-safe
+# pair riding its optional feature sat in the sherpa-onnx-sys 1.13.7
+# build-dependency subtree, which the supported build never executes - its
+# build.rs opens an archive only on the iOS .xcframework path, a Linux-only
+# product never takes it, SHERPA_ONNX_LIB_DIR (always set by the supported
+# env, scripts/funcut-env.sh) returns before the download path is reached,
+# and the prebuilt archives are sha256-verified against scripts/ci/deps.lock
+# first. sherpa-onnx-sys 2.0.2 builds against zip 9 instead, so the subtree
+# no longer carries a vulnerable zip and the seven per-ID ignores that stood
+# in for the migration are gone. Any new advisory fails the audit.
 
 on:
   push:

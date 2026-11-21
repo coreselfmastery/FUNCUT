@@ -825,6 +825,7 @@ impl ForgePane {
                 self.auto.project.clone(),
                 self.auto.source.as_ref().map(|s| s.export.clone()),
             ) else {
+                self.auto.checking = false;
                 self.auto.outcome = 2;
                 self.auto.stage = t("forge.autoEditDirectorFailedStage");
                 self.set_status(t("forge.autoEditDirectorFailedStage"));
@@ -851,7 +852,6 @@ impl ForgePane {
                     Err(error) => {
                         let message = format!("the edit cannot be checked: {error}");
                         crate::host::on_ui(move |studio, _, _| {
-                            studio.notify(&message, true);
                             studio.handle(Msg::Forge(ForgeMsg::DirectorCheckFailed(message)));
                         });
                         return;
@@ -934,7 +934,7 @@ impl ForgePane {
         self.auto.running = false;
         self.auto.outcome = 2;
         self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
-        self.set_status(tf("forge.autoEditUnproven", &[&error]));
+        self.set_status(tf("forge.autoEditDirectorUnproven", &[&error]));
         studio.notify(&format!("the edit could not be independently checked: {error}"), true);
     }
 

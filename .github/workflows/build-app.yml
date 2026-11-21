@@ -53,6 +53,7 @@ on:
       - "src/rust-toolchain.toml"
       - "src/Cargo.toml"
       - "src/Cargo.lock"
+      - "src/crates/concat/src/**"
   workflow_call:
     inputs:
       ref:

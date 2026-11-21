@@ -733,9 +733,7 @@ impl Runner {
                     // stage happened to make (the motion probe), which
                     // used to overwrite the verdict, matchRate and drift
                     // the report is read for.
-                    if call.tool == "emotion" {
-                        verification = reply.clone();
-                    } else if verification.is_null() {
+                    if call.tool == "emotion" || verification.is_null() {
                         verification = reply.clone();
                     }
                 }
@@ -1396,6 +1394,29 @@ mod tests {
         let AutoEditState::Completed { .. } = runner.state() else {
             panic!("the run completed");
         };
+    }
+
+    #[test]
+    fn the_emotion_reply_remains_the_terminal_verification() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "timeline": "read" })),
+            Ok(json!({ "wordCheck": "matched" })),
+            Ok(json!({ "motionProbe": "last" })),
+        ]);
+        let mut program = program(vec![StageStep::run(
+            Stage::Verify,
+            vec![call("timeline_read"), call("emotion"), call("motion_probe")],
+        )]);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Completed);
+        let AutoEditState::Completed { verification, .. } = runner.state() else {
+            panic!("the run completed");
+        };
+        assert_eq!(
+            verification,
+            json!({ "wordCheck": "matched" }),
+            "a later motion probe must not overwrite the words verification"
+        );
     }
 
     #[test]

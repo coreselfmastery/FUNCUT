@@ -2026,6 +2026,9 @@ fn motion_specs(
     kept
 }
 
+/// The preset library's id, first text slot, all slot labels, and duration.
+type MotionPresetShape = (String, String, Vec<String>, f64);
+
 /// One designed beat, as the plan records it and the motion stage bakes
 /// it: the line it sits on, the preset, the span it covers, and the words
 /// the card sets - the line's own, so a card is never a sample's text.
@@ -5830,7 +5833,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // (the bake fills or blanks each one), and the comp's own
                 // duration (a hold longer than the comp freezes its last
                 // frame).
-                let mut labels: Option<Vec<(String, String, Vec<String>, f64)>> = None;
+                let mut labels: Option<Vec<MotionPresetShape>> = None;
                 // Where the stage is: which card, and which of its calls
                 // (the library, the bake, then the placement) is next.
                 let mut at = 0usize;

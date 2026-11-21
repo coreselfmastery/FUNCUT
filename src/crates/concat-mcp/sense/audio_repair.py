@@ -128,6 +128,27 @@ def _run_ffmpeg(ff, args, timeout=480):
     return True, None
 
 
+def _source_rate_args(ffprobe, audio):
+    """Pin the output sample rate to the source's own, as `-ar`.
+
+    Without it every PCM/lossy write lands at ffmpeg's default 48 kHz -
+    and after a loudnorm pass the filter graph renegotiates to 192 kHz,
+    so a 10-minute 48 kHz take comes back as a ~460 MB 192 kHz file the
+    timeline then has to carry. A probe that fails changes nothing: the
+    default is the old behaviour, not a refusal."""
+    try:
+        rc, out, _ = _vs._run(
+            [ffprobe, "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=sample_rate", "-of", "csv=p=0", str(audio)], 20)
+        if rc == 0:
+            rate = int(out.decode("utf-8", "replace").strip().splitlines()[0])
+            if 8000 <= rate <= 384000:
+                return ["-ar", str(rate)]
+    except (OSError, ValueError, IndexError):
+        pass
+    return []
+
+
 def _needs_ffmpeg(spec):
     """The writing tools filter through ffmpeg; without a decoder they
     refuse cleanly, naming the way to one, instead of dying on a missing
@@ -235,7 +256,9 @@ def _enhance_speech(spec):
     out_path, overwrite = _output_path(spec, audio, "_enhanced")
     if Path(out_path).exists() and not overwrite:
         return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
-    args = ["-i", str(audio)] + _encode_args(out_path, chain)
+    _, probe = _vs._ffmpeg(spec)
+    args = (["-i", str(audio)] + _encode_args(out_path, chain)
+            + _source_rate_args(probe, audio))
     good, why = _write_atomic(ff, args, out_path)
     if not good:
         return {"ok": False, "error": f"the enhance chain failed: {why}"}
@@ -321,15 +344,20 @@ def _remove_hiss_hum_rumble(spec):
             break
 
     # The hiss: high-band energy in the quiet windows vs the speech band.
+    # A quiet window can be EXACT digital silence (a gated TTS take, a
+    # paused recording): a zero spectrum is a truthy list of zeros, so
+    # `if not mags` never skips it, and sum(mids) == 0 turned the ratio
+    # into a ZeroDivisionError that killed the repair stage. Silence
+    # carries no hiss evidence - skip it, and never divide by zero.
     hiss_db = None
     highs, mids = [], []
     for i in quietest_idx[:4]:
         mags = _vq._spectrum(samples, i * _vq.HOP)
-        if not mags:
+        if not mags or sum(mags) < 1e-9:
             continue
         highs.append(_vq._band_energy(mags, 6000, 7500))
         mids.append(_vq._band_energy(mags, 300, 3000))
-    if highs and mids:
+    if highs and mids and sum(mids) > 0:
         hiss_db = _vq._db(sum(highs) / sum(mids))
 
     # The rumble: sub-60 Hz energy in the loudest windows.
@@ -337,11 +365,11 @@ def _remove_hiss_hum_rumble(spec):
     low, all_e = [], []
     for i in sorted(range(len(env)), key=lambda j: -env[j])[:4]:
         mags = _vq._spectrum(samples, i * _vq.HOP)
-        if not mags:
+        if not mags or sum(mags) < 1e-9:
             continue
         low.append(_vq._band_energy(mags, 20, 60))
         all_e.append(_vq._band_energy(mags, 20, 7500))
-    if low and all_e:
+    if low and all_e and sum(all_e) > 0:
         rumble_db = _vq._db(sum(low) / sum(all_e))
 
     filters = []
@@ -390,7 +418,9 @@ def _enhance_with(ff, spec, audio, filters, findings):
     out_path, overwrite = _output_path(spec, audio, "_clean")
     if Path(out_path).exists() and not overwrite:
         return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
-    args = ["-i", str(audio)] + _encode_args(out_path, chain)
+    _, probe = _vs._ffmpeg(spec)
+    args = (["-i", str(audio)] + _encode_args(out_path, chain)
+            + _source_rate_args(probe, audio))
     good, why = _write_atomic(ff, args, out_path)
     if not good:
         return {"ok": False, "error": f"the cleanup chain failed: {why}"}
@@ -427,14 +457,18 @@ def _normalize_loudness(spec):
         return {"ok": False, "error": f"no such audio file: {audio}"}
     if (refusal := _needs_ffmpeg(spec)):
         return refusal
-    ff, _ = _vs._ffmpeg(spec)
+    ff, probe = _vs._ffmpeg(spec)
 
     platform = str(spec.get("platform") or "").lower()
     if platform and platform in _PLATFORMS:
         target_i, target_tp = _PLATFORMS[platform]
     else:
-        target_i = float(spec.get("targetLufs") or -14.0)
-        target_tp = float(spec.get("targetTruePeakDbtp") or -1.0)
+        # targetLufs 0 is a legitimate (if loud) request - `or` would
+        # silently swap it for the default.
+        target_i = (float(spec["targetLufs"]) if spec.get("targetLufs") is not None
+                    else -14.0)
+        target_tp = (float(spec["targetTruePeakDbtp"])
+                     if spec.get("targetTruePeakDbtp") is not None else -1.0)
 
     # Pass one: what the take is now.
     integrated, lra, tp = _vs._integrated(ff, audio)
@@ -445,28 +479,27 @@ def _normalize_loudness(spec):
     # (loudnorm's own rule: linear only when within range, and LRA 1-50).
     linear = abs(target_i - integrated) <= 12 and (lra is None or lra <= 20)
     lra_for_filter = max(1.0, min(lra or 7, 20)) if linear else 7
-    chain = (f"loudnorm=I={target_i}:TP={target_tp}:LRA={lra_for_filter}:"
-             f"linear={'true' if linear else 'false'}")
+    # linear=true with NO measured_* values is a lie loudnorm silently
+    # ignores: it falls back to dynamic mode while the reply claims "one
+    # gain, no dynamics touched". Hand it the take's own measurements so
+    # the claim is the behaviour.
+    measured = (f":measured_I={integrated:.2f}:measured_LRA={lra_for_filter:.2f}"
+                f":measured_TP={tp if tp is not None else -1.0:.2f}"
+                f":measured_thresh={integrated - lra_for_filter:.2f}") if linear else ""
+    chain = (f"loudnorm=I={target_i}:TP={target_tp}:LRA={lra_for_filter}"
+             f":linear={'true' if linear else 'false'}{measured}")
 
     out_path, overwrite = _output_path(spec, audio, f"_{int(target_i)}lufs")
     if Path(out_path).exists() and not overwrite:
         return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
-    is_video = Path(out_path).suffix.lower() in _CONTAINERS
-    args = ["-i", str(audio)]
-    if is_video:
-        args += ["-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", chain,
-                 "-c:a", "aac", "-b:a", "192k"]
-    else:
-        # The codec the output's own container accepts; an extension the
-        # table does not name lands as a .wav beside the input rather
-        # than failing at the muxer.
-        codec = _audio_codec_args(out_path)
-        if codec is None:
-            out_path = str(Path(out_path).with_suffix(".wav"))
-            codec = ["pcm_s16le"]
-        args += ["-af", chain, "-c:a"] + codec
-    args += [str(out_path)]
-    good, why = _run_ffmpeg(ff, args)
+    # The codec the output's own container accepts (_encode_args), the
+    # source's own sample rate pinned (-ar, so a loudnorm pass cannot
+    # renegotiate to 192 kHz), written so the target is never a half
+    # file (_write_atomic) - the same triple every writing path here
+    # shares.
+    args = (["-i", str(audio)] + _encode_args(out_path, chain)
+            + _source_rate_args(probe, audio))
+    good, why = _write_atomic(ff, args, out_path)
     if not good:
         return {"ok": False, "error": f"the loudness pass failed: {why}"}
 
@@ -1093,6 +1126,38 @@ def selftest(only=None):
             "extra": f"evidence={music_gate.get('evidence')} "
                      f"tempoStrength={music_gate.get('tempoStrength')}",
         })
+        # The AUTO EDIT's own chain, end to end, on a take with EXACT-zero
+        # gaps (the gated-TTS pattern the fixture above carries): enhance
+        # to a copy, then clean ONTO the take in place. A quiet window of
+        # digital silence used to divide by zero in the hiss scan and the
+        # whole chain died before any write - this check is the proof it
+        # lands, stays the same duration, and keeps the source rate
+        # (no silent 192 kHz renegotiation).
+        if not no_ffmpeg:
+            import wave as _wave_check
+            take = str(Path(tmp) / "take.wav")
+            before_seconds = _synth_speech(take)
+            enhanced = str(Path(tmp) / "take-enhanced.wav")
+            step1 = TOOLS["enhance_speech"]({"audio": take, "out": enhanced,
+                                             "overwrite": True})
+            step2 = TOOLS["remove_hiss_hum_rumble"](
+                {"audio": enhanced, "out": take, "overwrite": True, "force": True})
+            landed = (bool(step1.get("ok")) and bool(step2.get("ok"))
+                      and Path(take).is_file())
+            duration_ok = rate_ok = False
+            if landed:
+                with _wave_check.open(take, "rb") as h:
+                    frames, rate = h.getnframes(), h.getframerate()
+                    duration_ok = abs(frames / rate - before_seconds) < 0.05
+                    # the fixture is 16 kHz; 192 kHz is the renegotiation bug
+                    rate_ok = rate == RATE
+            checks.append({
+                "tool": "the AUTO EDIT chain (enhance -> clean in place)",
+                "ok": landed and duration_ok and rate_ok,
+                "error": (step1.get("error") or step2.get("error"))
+                         if not landed else None,
+                "extra": (f"duration kept: {duration_ok}, rate {RATE} Hz kept: {rate_ok}"),
+            })
     failed = [c for c in checks if not c.get("ok")]
     return {
         "ok": not failed,

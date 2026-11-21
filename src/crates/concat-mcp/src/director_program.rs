@@ -6166,9 +6166,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .map(|(_, path)| path.contains("/bgm/"))
                                     .unwrap_or(false)
                             });
-                        let Some(bed) = bed else {
-                            return None;
-                        };
+                        let bed = bed?;
                         // A bed longer than the cut is trimmed to it: the
                         // export's length is the longest clip's end, so a
                         // three-minute bed under a thirty-second cut would

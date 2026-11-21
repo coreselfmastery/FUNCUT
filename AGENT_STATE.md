@@ -64,6 +64,65 @@ and an honest feature ledger. No fake green, no doc-only features.
    tokens of headroom; the edit-without-bake convenience is not worth
    burning a deliberately guarded budget.
 
+## Session 8 log (2026-11-21) - the AUTO EDIT full-power pass
+
+Branch `auto-edit/full-power-2026-11-21`, one unit per commit, every
+non-GUI crate's tests green locally (concat-director 60/60,
+concat-mcp 145/145, fmt + clippy clean; the watcher's mock self-test
+passes; the GUI crate is CI's as always):
+
+1. `fix(build-env)`: the SourceForge mirror's `/download` suffix broke
+   `version_from_url` - the local reproduction path works again.
+2. `fix(director)` - the P0 of this pass: fan stages' lane replies
+   never reached the log every later derived step reads, so on the
+   button's real path (run_with_lanes) the transcribe/voice-signal
+   replies were invisible to the caption, B-roll, tighten, motion and
+   SFX stages - the button shipped a nearly-unedited video while the
+   same program without lanes edited fully. The merge now extends the
+   log in group order; regression test included.
+3. `fix(watcher)`: the five audio-repair readings now ride the
+   `sense_audio_repair` door instead of bare tool names, and a
+   monetized brief shops the licensed live shelves when OpenVid
+   refuses. KNOWN_ISSUES item 11's watcher half closed.
+4. `feat(auto-edit)` Gather: stock is looked at before it is chosen
+   (stock_fetch + stock_contact_sheet, scored on chroma/contrast/
+   detail, black/blown/letterbox/duplicates against), gated with
+   footage_continuity before import (colour jumps swap to a measured
+   alternate, category runs hold), reframed by the sheet's own crop
+   hint, and the shelf search carries the project's orientation. The
+   sheet gained a measured `warmth` tile field (sense.py).
+5. `feat(auto-edit)` Captions: word groups of two to four on the
+   recogniser's own word times (punctuation, breath gaps, four words
+   are the seams; safe-remove fillers never show), a second pass
+   accents the stressed words per word through styleTextRange, the
+   caption band is aspect-aware (0.22 portrait / 0.35 landscape) and
+   the hook's first three seconds are bigger.
+6. `feat(auto-edit)` Transitions/SFX/hook: the mood map draws on the
+   viral pack (zoom-blur-punch, hyper-zoom, glitch-warp...), the seam
+   map too (whip-pan, slice-social, glitch-social, snap-zoom), every
+   id is held to a package the catalogue ships (new test), accents
+   land on their peak via the manifest's syncAt, hook peaks shop
+   entrance energy, the hook's shot pushes harder, and the final
+   watch critique carries the measured brief + autoSetup it always
+   owed.
+7. `feat(auto-edit)` Music/grade: the bed is the track that fits
+   (shortest covering / longest partial), the duck is a volume shape
+   that follows the measured lines (lifts only in gaps that can hold
+   it), and the grade layer is keyed to the acts (hook full, body
+   settled, cta lifted) through the package's own parameter.
+8. `fix(forge)` (GUI crate, CI-validated): a cancelled Director run
+   reports the stop and keeps the sibling instead of "failed"; a
+   Director retry hands the SAME project over again instead of
+   building "edit 2"; the button probes the harness synchronously
+   when the pane was never shown, so it never falls back silently;
+   the run prompt now spends the whole vocabulary (continuity gate,
+   word-group captions, syncAt, per-act grade, transition breadth,
+   hook, aspect, motion ops as authoring material).
+9. `feat(mcp)`: `track_subject` joins DIRECTOR_ALLOWLIST (105 of the
+   113) - a subject path a vertical reframe can follow is a creative
+   tool. mcp.toml, FORGE.md, MCP.md, README and AGENTS.md say the
+   same count, and the allowlist test holds the eight left off.
+
 ## Next actions
 
 1. Finish review and exact-head CI/Geneva/Nix validation for PR #91's supported native Lottie/dotLottie renderer; merge only when all required checks pass, retaining explicit unsupported-feature diagnostics.

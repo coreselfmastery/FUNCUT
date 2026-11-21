@@ -579,6 +579,18 @@ impl ForgePane {
             studio.notify(&refusal, true);
             return;
         }
+        // The button is the one entry point that must not fall back
+        // silently. The pane's probe only ran if the Forge page was
+        // shown once, so a user who never opened the tab would be
+        // handed the fixed spine without the Director ever being asked
+        // for - the exact mistake the fallback toast was written to
+        // prevent. Ask now, synchronously: the probe is two quick
+        // harness commands, and the answer is remembered either way.
+        if self.connected.is_none() || self.installed.is_none() {
+            let (connected, installed) = probe_setup();
+            self.connected = connected.ok();
+            self.installed = installed.ok();
+        }
         // A Director run has no deterministic Runner to resume. Its retry
         // must instead reopen the exact sibling it already edited; building
         // another sibling here would discard the previous creative work.
@@ -843,9 +855,38 @@ impl ForgePane {
     /// and its final watch_render are what judged the file, and the pane
     /// does not invent a score of its own.
     fn auto_director_ended(&mut self, code: i32, studio: &mut Studio) {
+        // A cancelled run is not a failed one: the button killed the
+        // harness, and the honest report is the stop. The sibling and
+        // its source stay for the retry, exactly as the fixed spine's
+        // cancelled run keeps them.
+        let cancelled = self
+            .auto
+            .kill
+            .as_ref()
+            .is_some_and(|kill| kill.load(Ordering::Relaxed));
         self.auto.started = None;
         self.auto.kill = None;
         self.auto.fraction = 1.0;
+        if cancelled {
+            self.auto.running = false;
+            self.auto.checking = false;
+            self.auto.check_cancel = None;
+            self.auto.outcome = 1;
+            self.auto.stage = t("forge.autoEditCancelledStage");
+            self.set_status(t("forge.autoEditCancelledStage"));
+            studio.notify(&t("forge.autoEditCancelled"), true);
+            return;
+        }
+        self.auto.started = None;
+        self.auto.kill = None;
+        self.auto.fraction = 1.0;
+        if cancelled {
+            self.auto.outcome = 1;
+            self.auto.stage = t("forge.autoEditCancelledStage");
+            self.set_status(t("forge.autoEditCancelledStage"));
+            studio.notify(&t("forge.autoEditCancelled"), true);
+            return;
+        }
         if code == 0 {
             // Keep the UI's running state during acceptance so the same
             // Stop button can cancel the remaining independent checks.
@@ -2124,11 +2165,24 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          the profile into a note: every signal you read must land on a choice.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
          (plan_validate must return valid:true AND creativeReady:true), B-roll shopped with \
-         stock_contact_sheet rank:true and LOOKED AT before choosing, captions on the \
-         measured words, Geneva motion comps for the beats that earn them (motion_frame to \
-         check legibility before motion_bake), ONE consistent grade, music ducked under the \
-         voice, accents on the measured emphasis peaks. Use the editor's whole \
-         vocabulary; do not settle for a template.\n\n\
+         stock_contact_sheet rank:true and LOOKED AT before choosing and gated with \
+         footage_continuity before anything is imported (a flagged slot gets a different \
+         clip or holds), captions cut on the measured words in groups of two to four \
+         (punctuation, breath gaps and four words are the seams; the safe-remove fillers \
+         never show; the delivery's stressed words take the accent through \
+         title_style_words), Geneva motion comps for the beats that earn them \
+         (motion_frame to check legibility before motion_bake; the ops vocabulary \
+         author - set-markup included - is yours to compose with, not only the presets), \
+         transitions drawn from the catalogue's full breadth and never the same move \
+         twice running, ONE consistent grade whose intensity follows the acts (hook full, \
+         body settled, cta lifted - effect_key_set on the layer), music ducked under the \
+         voice with a shape that follows the lines (the bed lifts in the gaps that can \
+         hold it), accents on the measured emphasis peaks landed on their peak (the \
+         manifest's syncAt says where it is). The first three seconds are the hook: they \
+         earn the strongest push-in, the loudest word and an entrance accent whatever the \
+         mood. Fit the frame the project actually is - a vertical reel and a horizontal \
+         cut are different edits. Use the editor's whole vocabulary; do not settle for a \
+         template.\n\n\
          MANDATORY QUALITY LOOP: watch_render the OPEN timeline, craft_critique it, act on \
          at least one revision, watch_render AGAIN and compare the two craft scores, and \
          repeat until the overall score is >= 7 with no black frames, letterbox bars or long \

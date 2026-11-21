@@ -36,25 +36,29 @@ THE PIPELINE (in order; each phase logged; any failure stops the run)
 0.  `concat_version` + the session's tool list: the handshake that says the
     server this plan needs is the server that answered
 1.  `local_vlm` status: which critic tier will score the cut, said up front
-2.  `enhance_speech` + `remove_hiss_hum_rumble`: the take is repaired before
-    anything reads it, and every later phase runs on the repaired file
+2.  `sense_audio_repair` (actions `enhance_speech` then
+    `remove_hiss_hum_rumble`): the take is repaired before anything reads
+    it, and every later phase runs on the repaired file
 3.  `transcribe` words and timings from the repaired voiceover
 4.  `voice_signals` measured pauses, emphasis and delivery
 5.  `emotion` emotional read of the narration
 6.  `footage_plan_suggest` dialogue gaps and monotony runs, cross-checked
     against the plan's B-roll coverage
-7.  `detect_music_segments` the BGM gate: a take that already carries music
-    gets no bed stacked under it (`identify_music` logged for the
-    copyright record when it does)
+7.  `sense_audio_repair` (action `detect_music_segments`) the BGM gate: a
+    take that already carries music gets no bed stacked under it
+    (`identify_music` logged for the copyright record when it does)
 8.  `plan_validate` schema, creative readiness and the signal-driven gate -
     including the runner's own evidence check that the signalLog cites
     signals the take actually measured
 9.  `project_get` find or import the repaired voiceover, place it on its own
     lane, apply the plan's `speed`
 10. `openvid_rank_for_slot` each timed B-roll segment, with duration checks
+    (a monetized brief - RISK-01 - or a search nothing long enough answers
+    shops the licensed live shelves `stock_search`/`stock_import` instead)
 11. `stock_contact_sheet` the chosen candidates, seen before import
 12. `footage_continuity` check the selected clips; replace flagged shots once
-13. `openvid_import` import and place stock at the segment start; trim
+13. `openvid_import` (or `stock_import`, on the licensed path) import and
+    place stock at the segment start; trim
 14. `clip_update`/`keyframe_set` the plan's transitions and entrances
 15. the plan's grade, captions, SFX and BGM, each only where the plan asks
     - captions word-timed and kinetic when the plan asks for them
@@ -138,32 +142,33 @@ REQUIRED_TOOLS = frozenset({
 # server skips the phase with a logged line, a newer one runs it. A plan
 # that asks for one of these (captions, SFX, BGM, a grade, a speed change,
 # a transition, an entrance) makes its phase's tool required instead - the
-# export must not silently lack what the plan promised.
+# export must not silently lack what the plan promised. The audio repair
+# and music readings all ride sense_audio_repair's `action`, and the live
+# stock pair is the licensed fallback a monetized brief's B-roll shops.
 ENRICHMENT_TOOLS = frozenset({
     "concat_version", "local_vlm", "footage_plan_suggest",
-    "stock_contact_sheet", "detect_music_segments", "identify_music",
-    "enhance_speech", "remove_hiss_hum_rumble", "sounds_search",
+    "stock_contact_sheet", "sense_audio_repair", "sounds_search",
     "sounds_add", "bgm_status", "bgm_search", "bgm_import", "bgm_prepare",
     "clip_speed", "clip_update", "keyframe_set", "captions_add",
     "clip_audio_levels_db", "collision_check", "timeline_read",
-    "normalize_loudness", "effect_layer_add",
+    "stock_search", "stock_import", "effect_layer_add",
 })
 
 # Calls that may be retried when the failure sounds like the network's
 # side of the contract, not the tool's: reads, searches and analyses, and
-# the three repair writes (which target a fixed `out` path with overwrite,
-# so a retry lands on the same file). Mutating timeline calls are never
-# retried - an ambiguous clip_add must stop, not double-place.
+# the repair writes behind sense_audio_repair (which target a fixed `out`
+# path with overwrite, so a retry lands on the same file). Mutating
+# timeline calls are never retried - an ambiguous clip_add must stop, not
+# double-place.
 RETRYABLE_TOOLS = frozenset({
     "transcribe", "analysis_wait", "project_get", "plan_validate",
     "voice_signals", "emotion", "concat_version", "local_vlm",
-    "footage_plan_suggest", "stock_contact_sheet", "detect_music_segments",
-    "identify_music", "measure_loudness", "watch_render", "craft_critique",
+    "footage_plan_suggest", "stock_contact_sheet", "sense_audio_repair",
+    "measure_loudness", "watch_render", "craft_critique",
     "sounds_search", "bgm_status", "bgm_search", "bgm_fetch",
     "openvid_search", "openvid_search_batch", "openvid_rank_for_slot",
     "openvid_get", "openvid_status", "timeline_read", "collision_check",
-    "effects_list", "enhance_speech", "remove_hiss_hum_rumble",
-    "normalize_loudness",
+    "effects_list", "stock_search",
 })
 
 _RETRYABLE_MARKERS = (
@@ -589,6 +594,26 @@ def _bgm_commercial_ok(track: Any) -> bool:
     return True
 
 
+def _stock_provider() -> str:
+    """RISK-01's licensed fallback: which live shelf to shop. The shelf
+    whose key this machine names is the shelf that can answer; with
+    neither key named the default is Pexels."""
+    if os.environ.get("PEXELS_API_KEY"):
+        return "pexels"
+    if os.environ.get("PIXABAY_API_KEY"):
+        return "pixabay"
+    return "pexels"
+
+
+#: The plan's own frame, spelled the way the live shelves' orientation
+#: filter spells it; a frame with no spelling (4:5) shops unfiltered.
+_STOCK_ORIENTATION = {
+    "9:16": "vertical",
+    "16:9": "horizontal",
+    "1:1": "square",
+}
+
+
 def _measured_families(voice: Any) -> set[str]:
     """The signal families the take actually measured, from the
     voice_signals reply's own confidence map: a family the reading
@@ -763,14 +788,14 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
     phases = [
         ("concat_version", "the session's own version, and its tool list"),
         ("local_vlm", "which critic tier will score the cut"),
-        ("enhance_speech", "repair the take before anything reads it"),
-        ("remove_hiss_hum_rumble", "clean the repaired take's floor"),
+        ("sense_audio_repair", "repair the take before anything reads it (enhance_speech)"),
+        ("sense_audio_repair", "clean the repaired take's floor (remove_hiss_hum_rumble)"),
         ("transcribe", "start source transcription"),
         ("analysis_wait", "wait for source transcription"),
         ("voice_signals", "voice_signals"),
         ("emotion", "emotion (extract)"),
         ("footage_plan_suggest", "cross-check B-roll coverage against the gaps"),
-        ("detect_music_segments", "the BGM gate: does the take carry music"),
+        ("sense_audio_repair", "the BGM gate: does the take carry music (detect_music_segments)"),
         ("plan_validate", "plan_validate (before timeline edits)"),
         ("project_get", "read the project bin and active timeline"),
         ("track_add", "create a dedicated voiceover lane when needed"),
@@ -1776,7 +1801,19 @@ def run_pipeline(
 
     # ---- 0. The handshake: the server says what it is and what it serves.
     served = transport.available_tools()
-    missing = REQUIRED_TOOLS - served
+    required = set(REQUIRED_TOOLS)
+    if (
+        isinstance(plan.get("creativeBrief"), dict)
+        and plan["creativeBrief"].get("monetized")
+        and "stock_search" in served and "stock_import" in served
+    ):
+        # RISK-01's licensed path: a monetized brief never shops the
+        # OpenVid index, so on a surface that serves the live shelves the
+        # index's two tools are not this run's requirements - the shelves
+        # are.
+        required -= {"openvid_rank_for_slot", "openvid_import"}
+        required |= {"stock_search", "stock_import"}
+    missing = required - served
     if missing:
         raise PipelineError(
             "the server does not serve tools this pipeline cannot run "
@@ -1824,9 +1861,10 @@ def run_pipeline(
             f"the repaired take {_repair_prior['file']} is still on disk",
         )
     else:
-        if "enhance_speech" in served:
+        if "sense_audio_repair" in served:
             enhanced_out = os.path.join(project, "voiceover-enhanced.wav")
-            reply = advance("enhance_speech", {
+            reply = advance("sense_audio_repair", {
+                "action": "enhance_speech",
                 "audio": audio, "out": enhanced_out, "overwrite": True,
             })
             enhanced_file = _reply_file(reply)
@@ -1842,9 +1880,10 @@ def run_pipeline(
                         log(f"enhance_speech: {json.dumps(measured, ensure_ascii=False)}")
             else:
                 log("enhance_speech returned no file; analysis continues on the take as recorded")
-        if "remove_hiss_hum_rumble" in served and repaired:
+        if "sense_audio_repair" in served and repaired:
             cleaned_out = os.path.join(project, "voiceover-cleaned.wav")
-            reply = advance("remove_hiss_hum_rumble", {
+            reply = advance("sense_audio_repair", {
+                "action": "remove_hiss_hum_rumble",
                 "audio": repaired, "out": cleaned_out, "overwrite": True,
             })
             cleaned_file = _reply_file(reply)
@@ -1888,7 +1927,7 @@ def run_pipeline(
                 + ": quantisation hiss expected above the floor; "
                 "remove_hiss_hum_rumble ran on the take",
             )
-        elif "remove_hiss_hum_rumble" in served:
+        elif "sense_audio_repair" in served:
             record_fallback(
                 "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
                 "Kokoro int8 take, but remove_hiss_hum_rumble returned no "
@@ -1898,8 +1937,8 @@ def run_pipeline(
             record_fallback(
                 "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
                 "Kokoro int8 take and the server does not serve "
-                "remove_hiss_hum_rumble: the take ships with its "
-                "quantisation hiss, uncleaned",
+                "sense_audio_repair (remove_hiss_hum_rumble): the take "
+                "ships with its quantisation hiss, uncleaned",
             )
 
     # ---- 3-5. The readings, on the repaired take.
@@ -2202,14 +2241,17 @@ def run_pipeline(
     # speak, the gate says so as a recorded fallback, never as a quiet
     # negative (DEG-05).
     bgm_allowed = True
-    if "detect_music_segments" not in served:
+    if "sense_audio_repair" not in served:
         record_fallback(
             "music-gate", "bgm", "detect_music_segments",
-            "detect_music_segments is not served: the music gate stands "
-            "unmeasured, and a bed may stack under take music",
+            "sense_audio_repair is not served, so detect_music_segments "
+            "never ran: the music gate stands unmeasured, and a bed may "
+            "stack under take music",
         )
     else:
-        music = advance("detect_music_segments", {"audio": audio})
+        music = advance("sense_audio_repair", {
+            "action": "detect_music_segments", "audio": audio,
+        })
         present = music.get("musicPresent") if isinstance(music, dict) else None
         if present is None:
             # The tool answered without a verdict: a degradation with the
@@ -2224,14 +2266,16 @@ def run_pipeline(
             )
         identified: Any = None
         identified_present: bool | None = None
-        if "identify_music" in served:
+        if "sense_audio_repair" in served:
             # DEG-05 + FALL-10: the identification runs whenever it can,
             # not only when the gate already said music - its pulse
             # measurement is the authority the gate's verdict is settled
             # by, and a failure is a recorded absence, never a "no music"
             # reading and never a dead run.
             try:
-                identified = advance("identify_music", {"audio": audio})
+                identified = advance("sense_audio_repair", {
+                    "action": "identify_music", "audio": audio,
+                })
             except PipelineError as error:
                 record_fallback(
                     "music-gate", "identify", "identify_music",
@@ -2362,17 +2406,21 @@ def run_pipeline(
             raise PipelineError(f"segment-{index + 1}: visual must be an object")
         kind = visual.get("type")
         if kind == "broll":
-            if monetized:
+            if monetized and not ("stock_search" in served and "stock_import" in served):
                 # RISK-01: the OpenVid index carries no per-clip licence
                 # record (docs/STOCK_LICENSING.md), so a monetized edit
-                # cannot import its stock at all. Refused before anything
-                # is shopped or fetched.
+                # cannot import its stock at all - and without the licensed
+                # live shelves there is nowhere else to shop. Refused
+                # before anything is shopped or fetched; with the shelves
+                # served, the slot shops them instead (the ranking below
+                # records the swap as the fallback it is).
                 raise PipelineError(
                     f"segment-{index + 1}: the brief is monetized and this B-roll is "
                     "OpenVid stock, whose index carries no per-clip licence record "
-                    "(docs/STOCK_LICENSING.md) - a monetized edit cannot import it. "
-                    "Clear the clip yourself and pass it as existing media "
-                    "(visual.type existing), or plan the edit non-monetized."
+                    "(docs/STOCK_LICENSING.md) - a monetized edit cannot import it, "
+                    "and the licensed live shelves (stock_search/stock_import) are "
+                    "not served. Clear the clip yourself and pass it as existing "
+                    "media (visual.type existing), or plan the edit non-monetized."
                 )
             query = str(visual.get("query") or "").strip()
             description = str(
@@ -2605,6 +2653,11 @@ def run_pipeline(
     excluded: list[int] = []
     chosen: dict[str, dict[str, Any]] = {}
     slot_segments: dict[str, tuple[int, dict[str, Any]]] = {}
+    # RISK-01: the slots shopped on the licensed live shelves rather than
+    # the OpenVid index - a monetized brief's every slot, and any slot the
+    # index could not answer. They import through stock_import, and their
+    # shelf ids never join the index's exclude list.
+    stock_slots: set[str] = set()
     # DEG-03: a keyword-tier ranking is recorded once per run, not once
     # per slot - the first reply that says the vision rerank did not run
     # speaks for every search after it.
@@ -2617,6 +2670,47 @@ def run_pipeline(
         str(segment.get("slotId") or f"segment-{index + 1}")
         for index, segment in broll_segments(plan)
     ]
+
+    def shop_licensed_stock(slot_id: str, query: str, duration: float) -> dict[str, Any] | None:
+        """The first licensed live-stock hit a beat can use: the shelves
+        must be served first, then stock_search shops them with the plan's
+        own frame shape, then the hit must cover the beat (its seconds
+        plus 0.05) and carry the licence, id and url stock_import stands
+        on - the live shelves' licences allow commercial use, which is the
+        whole reason a monetized brief shops them. None when the shelves
+        cannot answer; the caller says what that means, loudly."""
+        if "stock_search" not in served or "stock_import" not in served:
+            return None
+        arguments: dict[str, Any] = {
+            "provider": _stock_provider(),
+            "query": query,
+            "limit": 5,
+        }
+        orientation = _STOCK_ORIENTATION.get(str(plan.get("aspect") or ""))
+        if orientation:
+            arguments["orientation"] = orientation
+        search = advance("stock_search", arguments)
+        hits = search.get("hits", []) if isinstance(search, dict) else []
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            seconds = hit.get("seconds")
+            if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+                continue
+            if float(seconds) + 0.05 < duration:
+                log(
+                    f"{slot_id}: rejecting licensed hit {hit.get('name', hit.get('id'))}; "
+                    f"{float(seconds):.2f}s is shorter than the {duration:.2f}s beat"
+                )
+                continue
+            if not all(
+                isinstance(hit.get(key), str) and hit[key].strip()
+                for key in ("license", "id", "url")
+            ):
+                continue
+            return hit
+        return None
+
     for index, segment in broll_segments(plan):
         visual = segment["visual"]
         slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
@@ -2637,62 +2731,104 @@ def run_pipeline(
             queries = [query]
         target_duration = float(segment["end"]) - float(segment["start"])
         candidate = None
-        # Do not place a stock shot that ends before its story beat. Search
-        # again with the rejected id excluded; at most three candidates per
-        # slot, then stop before any timeline mutation.
-        for attempt in range(3):
-            reply = advance(
-                "openvid_rank_for_slot",
-                {
-                    "description": description,
-                    "queries": queries,
-                    "hero": bool(visual.get("hero", False)),
-                    "motion_min": visual.get("motionMin"),
-                    "exclude_ids": list(excluded),
-                },
-            )
-            rerank = reply.get("rerank") if isinstance(reply, dict) else None
-            if (
-                not rerank_fallback_recorded
-                and isinstance(rerank, dict)
-                and rerank.get("applied") is False
-            ):
-                rerank_fallback_recorded = True
-                record_fallback(
-                    "broll", "ranking", "openvid_search.rerank",
-                    "stock ranking fell back to keyword-tier (BM25 order "
-                    "stands): "
-                    + str(rerank.get("reason") or "the vision rerank did not run")
-                    + " - stock_contact_sheet is the way to look at the page",
+        if monetized:
+            # RISK-01: a monetized brief never shops the OpenVid index -
+            # its clips carry no per-clip licence record a commercial
+            # edit can stand on - so the slot goes straight to the
+            # licensed live shelves, and the swap is recorded as the
+            # fallback it is.
+            candidate = shop_licensed_stock(slot_id, query, target_duration)
+            if candidate is None:
+                raise PipelineError(
+                    f"{slot_id}: the brief is monetized and the licensed "
+                    "live shelves answered no clip long enough for its "
+                    f"{target_duration:.2f}s story beat - OpenVid stock "
+                    "carries no licence a monetized edit can import"
                 )
-            clips_found = reply.get("clips", []) if isinstance(reply, dict) else []
-            if not clips_found:
-                break
-            candidate = clips_found[0]
-            clip_id = candidate.get("id")
-            seconds = candidate.get("seconds")
-            if isinstance(seconds, (int, float)) and seconds + 0.05 < target_duration:
-                log(f"{slot_id}: rejecting {candidate.get('name', clip_id)}; {seconds:.2f}s is shorter than the {target_duration:.2f}s beat")
-                if isinstance(clip_id, (int, str)) and not isinstance(clip_id, bool):
-                    excluded.append(_clip_int_id(clip_id, slot_id))
-                candidate = None
-                continue
-            break
-        if candidate is None:
-            raise PipelineError(
-                f"{slot_id}: no candidate is long enough for its {target_duration:.2f}s story beat"
+            stock_slots.add(slot_id)
+            record_fallback(
+                "broll", "sourcing", "stock_search",
+                f"{slot_id}: the brief is monetized, so the slot shopped the "
+                f"licensed live shelf {candidate.get('provider')} instead "
+                "of the OpenVid index, whose clips carry no per-clip "
+                "licence record (docs/STOCK_LICENSING.md)",
             )
+        else:
+            # Do not place a stock shot that ends before its story beat. Search
+            # again with the rejected id excluded; at most three candidates per
+            # slot, then stop before any timeline mutation.
+            for attempt in range(3):
+                reply = advance(
+                    "openvid_rank_for_slot",
+                    {
+                        "description": description,
+                        "queries": queries,
+                        "hero": bool(visual.get("hero", False)),
+                        "motion_min": visual.get("motionMin"),
+                        "exclude_ids": list(excluded),
+                    },
+                )
+                rerank = reply.get("rerank") if isinstance(reply, dict) else None
+                if (
+                    not rerank_fallback_recorded
+                    and isinstance(rerank, dict)
+                    and rerank.get("applied") is False
+                ):
+                    rerank_fallback_recorded = True
+                    record_fallback(
+                        "broll", "ranking", "openvid_search.rerank",
+                        "stock ranking fell back to keyword-tier (BM25 order "
+                        "stands): "
+                        + str(rerank.get("reason") or "the vision rerank did not run")
+                        + " - stock_contact_sheet is the way to look at the page",
+                    )
+                clips_found = reply.get("clips", []) if isinstance(reply, dict) else []
+                if not clips_found:
+                    break
+                candidate = clips_found[0]
+                clip_id = candidate.get("id")
+                seconds = candidate.get("seconds")
+                if isinstance(seconds, (int, float)) and seconds + 0.05 < target_duration:
+                    log(f"{slot_id}: rejecting {candidate.get('name', clip_id)}; {seconds:.2f}s is shorter than the {target_duration:.2f}s beat")
+                    if isinstance(clip_id, (int, str)) and not isinstance(clip_id, bool):
+                        excluded.append(_clip_int_id(clip_id, slot_id))
+                    candidate = None
+                    continue
+                break
+            if candidate is None:
+                # The OpenVid search answered nothing this beat can use:
+                # the licensed live shelves are the fallback, and only a
+                # failure there refuses the run.
+                candidate = shop_licensed_stock(slot_id, query, target_duration)
+                if candidate is None:
+                    raise PipelineError(
+                        f"{slot_id}: no candidate is long enough for its {target_duration:.2f}s story beat"
+                    )
+                stock_slots.add(slot_id)
+                record_fallback(
+                    "broll", "sourcing", "stock_search",
+                    f"{slot_id}: the OpenVid search answered no clip long "
+                    f"enough for its {target_duration:.2f}s story beat; the "
+                    f"licensed live shelf {candidate.get('provider')} "
+                    "answered instead",
+                )
         chosen[slot_id] = candidate
         slot_segments[slot_id] = (index, segment)
-        clip_id = candidate.get("id")
-        if isinstance(clip_id, (int, str)) and not isinstance(clip_id, bool):
-            excluded.append(_clip_int_id(clip_id, slot_id))
+        if slot_id not in stock_slots:
+            clip_id = candidate.get("id")
+            if isinstance(clip_id, (int, str)) and not isinstance(clip_id, bool):
+                excluded.append(_clip_int_id(clip_id, slot_id))
 
     # See the chosen candidates before anything is fetched: the contact
     # sheet is the approval record, and its path is logged for review.
     if chosen and "stock_contact_sheet" in served:
         ids = []
         for slot_id, clip in chosen.items():
+            if slot_id in stock_slots:
+                # The sheet reads the OpenVid index's own clips; a
+                # live-shelf hit is not in it, and its own reply carries
+                # the preview the shelf shows.
+                continue
             try:
                 ids.append(_clip_int_id(clip.get("id"), slot_id))
             except PipelineError as error:
@@ -2739,6 +2875,22 @@ def run_pipeline(
             visual = segment["visual"]
             old_id = chosen[slot_id].get("id")
             old_int = _clip_int_id(old_id, slot_id) if old_id is not None else None
+            required_duration = float(segment["end"]) - float(segment["start"])
+            if slot_id in stock_slots:
+                # A licensed-shelf slot re-shops its own shelf, the avoid
+                # hint folded into the query - the live shelves carry no
+                # exclude list to hand an id to.
+                replacement = shop_licensed_stock(
+                    slot_id,
+                    f"{str(visual.get('query') or '').strip()}; avoid {avoid}",
+                    required_duration,
+                )
+                if replacement is None:
+                    raise PipelineError(
+                        f"continuity could not find a licensed replacement long enough for {slot_id}: {avoid}"
+                    )
+                chosen[slot_id] = replacement
+                return
             retry = advance(
                 "openvid_rank_for_slot",
                 {
@@ -2750,7 +2902,6 @@ def run_pipeline(
                 },
             )
             alternatives = retry.get("clips", []) if isinstance(retry, dict) else []
-            required_duration = float(segment["end"]) - float(segment["start"])
             alternatives = [
                 candidate for candidate in alternatives
                 if candidate.get("id") != old_id
@@ -2835,14 +2986,34 @@ def run_pipeline(
         clip = chosen[slot_id]
         start_at = float(segment["start"])
         target_duration = float(segment["end"]) - start_at
-        imported = advance(
-            "openvid_import",
-            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at,
-             **({"monetized": True} if monetized else {})},
-        )
+        if slot_id in stock_slots:
+            # RISK-01's licensed path: the live shelf's own import, the
+            # hit's provider/id/url the only ids it takes - the reply
+            # carries mediaIds and a view, exactly like openvid_import's,
+            # so the placement flow below is the same one.
+            imported = advance(
+                "stock_import",
+                {
+                    "path": project,
+                    "provider": str(clip.get("provider") or _stock_provider()),
+                    "id": str(clip.get("id") or ""),
+                    "url": str(clip.get("url") or ""),
+                    "start": start_at,
+                },
+            )
+        else:
+            imported = advance(
+                "openvid_import",
+                {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at,
+                 **({"monetized": True} if monetized else {})},
+            )
         media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
         if not media_ids:
-            raise PipelineError(f"{slot_id}: OpenVid import did not return a media id")
+            raise PipelineError(
+                f"{slot_id}: stock_import did not return a media id"
+                if slot_id in stock_slots
+                else f"{slot_id}: OpenVid import did not return a media id"
+            )
         media_id = str(media_ids[0])
         view = imported.get("view") if isinstance(imported, dict) else None
         placed = _clip_for_media(view, media_id, start_at)
@@ -3998,9 +4169,10 @@ def run_pipeline(
             true_peak is None or true_peak <= -1.0
         )
 
-    if not loudness_ok() and "normalize_loudness" in served:
+    if not loudness_ok() and "sense_audio_repair" in served:
         normalized_out = output[: -len(".mp4")] + "-normalized.mp4" if output.endswith(".mp4") else output + "-normalized"
-        normalized = advance("normalize_loudness", {
+        normalized = advance("sense_audio_repair", {
+            "action": "normalize_loudness",
             "audio": rendered, "out": normalized_out,
             "overwrite": True, "targetLufs": target_lufs,
         })
@@ -4266,14 +4438,32 @@ def run_pipeline(
         start_at = float(segment["start"])
         target_duration = float(segment["end"]) - start_at
         clip = chosen[slot_id]
-        imported = advance(
-            "openvid_import",
-            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at,
-             **({"monetized": True} if monetized else {})},
-        )
+        if slot_id in stock_slots:
+            # The licensed path's replacement rides the same shelf import
+            # the first placement did.
+            imported = advance(
+                "stock_import",
+                {
+                    "path": project,
+                    "provider": str(clip.get("provider") or _stock_provider()),
+                    "id": str(clip.get("id") or ""),
+                    "url": str(clip.get("url") or ""),
+                    "start": start_at,
+                },
+            )
+        else:
+            imported = advance(
+                "openvid_import",
+                {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at,
+                 **({"monetized": True} if monetized else {})},
+            )
         media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
         if not media_ids:
-            raise PipelineError(f"{slot_id}: OpenVid import did not return a media id")
+            raise PipelineError(
+                f"{slot_id}: stock_import did not return a media id"
+                if slot_id in stock_slots
+                else f"{slot_id}: OpenVid import did not return a media id"
+            )
         media_id = str(media_ids[0])
         view = imported.get("view") if isinstance(imported, dict) else None
         placed = _clip_for_media(view, media_id, start_at)
@@ -4904,13 +5094,36 @@ SELF_TEST_PLAN = {
 }
 
 
+def _sense_replies(**actions: Any) -> Any:
+    """One `sense_audio_repair` mock: the call's own `action` picks the
+    reply, because one tool serves every repair and music reading now.
+    A world that overrides one action still answers the others, and an
+    override may itself be a callable - for the action that must fail."""
+    replies: dict[str, Any] = {
+        "enhance_speech": {
+            "ok": True, "file": "/tmp/funcut-selftest/voiceover-enhanced.wav",
+            "noiseFloorDbfs": -22.7, "snrDb": 5.9,
+        },
+        "remove_hiss_hum_rumble": {
+            "ok": True, "file": "/tmp/funcut-selftest/voiceover-cleaned.wav",
+            "noiseFloorDbfs": -34.1,
+        },
+        "detect_music_segments": {"musicPresent": False, "segments": []},
+        "identify_music": {"musicPresent": False},
+    }
+    replies.update(actions)
+
+    def reply(args: dict[str, Any]) -> Any:
+        value = replies.get(str(args.get("action") or ""))
+        return value(args) if callable(value) else value
+
+    return reply
+
+
 SELF_TEST_REPLIES = {
     "concat_version": {"version": "0.2.8-funcut.12", "tools": 110},
     "local_vlm": {"status": "heuristic", "installed": False},
-    "enhance_speech": {"ok": True, "file": "/tmp/funcut-selftest/voiceover-enhanced.wav",
-                       "noiseFloorDbfs": -22.7, "snrDb": 5.9},
-    "remove_hiss_hum_rumble": {"ok": True, "file": "/tmp/funcut-selftest/voiceover-cleaned.wav",
-                               "noiseFloorDbfs": -34.1},
+    "sense_audio_repair": _sense_replies(),
     "transcribe": {"job": "speech-job"},
     "analysis_wait": {
         "state": "done",
@@ -4947,8 +5160,6 @@ SELF_TEST_REPLIES = {
         "suggestions": [{"kind": "dialogue_gap", "needBRoll": True}],
         "cuts": [],
     },
-    "detect_music_segments": {"musicPresent": False, "segments": []},
-    "identify_music": {"musicPresent": False},
     "plan_validate": {
         "valid": True,
         "creativeReady": True,
@@ -5225,9 +5436,9 @@ def self_test() -> int:
     order = [tool for tool, _ in by_tool]
     expected = [
         "concat_version", "local_vlm",
-        "enhance_speech", "remove_hiss_hum_rumble",
+        "sense_audio_repair", "sense_audio_repair",
         "transcribe", "analysis_wait", "voice_signals", "emotion",
-        "footage_plan_suggest", "detect_music_segments", "identify_music",
+        "footage_plan_suggest", "sense_audio_repair", "sense_audio_repair",
         "plan_validate",
         "project_get", "media_import", "track_add", "clip_add", "clip_speed",
         "openvid_rank_for_slot", "stock_contact_sheet", "footage_continuity",
@@ -6102,14 +6313,19 @@ def self_test() -> int:
 
     # A music-carrying take gets no bed stacked under it.
     stacked_replies = selftest_world()
-    stacked_replies["detect_music_segments"] = {"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]}
+    stacked_replies["sense_audio_repair"] = _sense_replies(
+        detect_music_segments={"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]},
+    )
     stacked = MockMcp(stacked_replies)
     _scenario_state_clear(project)
     stacked_calls = run_pipeline(stacked, project, audio, SELF_TEST_PLAN)
     if any(tool == "bgm_import" for tool, _ in stacked_calls):
         print("FAIL: a bed was stacked under a take that already carries music")
         return 1
-    if not any(tool == "identify_music" for tool, _ in stacked_calls):
+    if not any(
+        tool == "sense_audio_repair" and args.get("action") == "identify_music"
+        for tool, args in stacked_calls
+    ):
         print("FAIL: the music-carrying take was not identified for the record")
         return 1
     print("music gate ok: a take that carries music gets no bed, and the music is identified")
@@ -6269,12 +6485,19 @@ def self_test() -> int:
     # DEG-05: a failing identification is a missing identification, not a
     # "no music" reading and not a dead run.
     deg05_world = selftest_world()
-    deg05_world["detect_music_segments"] = {
-        "musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}],
-    }
+
+    def deg05_identify_fails(_args: dict[str, Any]) -> Any:
+        raise PipelineError(
+            "sense_audio_repair: the identify_music reading failed (as arranged)"
+        )
+
+    deg05_world["sense_audio_repair"] = _sense_replies(
+        detect_music_segments={"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]},
+        identify_music=deg05_identify_fails,
+    )
     deg05 = deg_project("deg-05")
     deg05_calls = run_pipeline(
-        MockMcp(deg05_world, fail_on="identify_music"), deg05, audio, SELF_TEST_PLAN
+        MockMcp(deg05_world), deg05, audio, SELF_TEST_PLAN
     )
     entries = recorded_fallbacks(deg05)
     if not has_entry(entries, stage="music-gate", decision="identify", signalName="identify_music"):
@@ -6409,8 +6632,10 @@ def self_test() -> int:
     # FALL-10: where the two music readings disagree, identify_music decides
     # and both readings are recorded.
     fall10_world = selftest_world()
-    fall10_world["detect_music_segments"] = {"musicPresent": False, "segments": []}
-    fall10_world["identify_music"] = {"ok": True, "tempo": {"bpm": 124.0, "strength": 0.42}}
+    fall10_world["sense_audio_repair"] = _sense_replies(
+        detect_music_segments={"musicPresent": False, "segments": []},
+        identify_music={"ok": True, "tempo": {"bpm": 124.0, "strength": 0.42}},
+    )
     fall10 = deg_project("fall-10")
     fall10_calls = run_pipeline(MockMcp(fall10_world), fall10, audio, SELF_TEST_PLAN)
     if any(tool == "bgm_import" for tool, _ in fall10_calls):
@@ -6445,6 +6670,68 @@ def self_test() -> int:
             print(f"FAIL: the monetized B-roll refusal named the wrong reason: {error}")
             return 1
     print("RISK-01 ok: a monetized brief refuses OpenVid B-roll, before any fetch")
+
+    # RISK-01 (the licensed fallback): the same monetized brief on a
+    # server that serves the live shelves shops them instead of refusing
+    # - the slot never touches the OpenVid index, the first licensed hit
+    # long enough is imported through stock_import, and the swap is
+    # recorded as the fallback it is.
+    risk01b_world = selftest_world()
+    risk01b_world["stock_search"] = {
+        "hits": [
+            {"id": "2499608", "provider": "pexels", "name": "too short",
+             "caption": "a city skyline, briefly", "seconds": 2.0,
+             "url": "https://videos.pexels.com/files/2499608.mp4",
+             "license": "Pexels License", "width": 1920, "height": 1080},
+            {"id": "2499611", "provider": "pexels", "name": "city skyline",
+             "caption": "a slow drift across a city skyline at dusk",
+             "seconds": 9.0, "url": "https://videos.pexels.com/files/2499611.mp4",
+             "license": "Pexels License", "width": 1920, "height": 1080},
+        ],
+        "total": 2, "provider": "pexels", "license": "Pexels License",
+    }
+    risk01b_world["stock_import"] = {
+        "mediaIds": ["m-stock-2499611"],
+        "license": "Pexels License",
+        "view": {"timeline": {"clips": [{
+            "id": "c-stock-2499611", "mediaId": "m-stock-2499611",
+            "start": 0.0, "duration": 9.0,
+        }]}},
+    }
+    risk01b_plan = copy.deepcopy(SELF_TEST_PLAN)
+    risk01b_plan["creativeBrief"]["monetized"] = True
+    risk01b = deg_project("risk-01b")
+    risk01b_calls = run_pipeline(MockMcp(risk01b_world), risk01b, audio, risk01b_plan)
+    if any(
+        tool in {"openvid_rank_for_slot", "openvid_import", "stock_contact_sheet"}
+        for tool, _ in risk01b_calls
+    ):
+        print("FAIL: a monetized brief shopped the OpenVid index anyway")
+        return 1
+    shopped = next(args for tool, args in risk01b_calls if tool == "stock_search")
+    if (
+        shopped.get("provider") != "pexels" or shopped.get("limit") != 5
+        or shopped.get("orientation") != "horizontal"
+        or shopped.get("query") != "cinematic city skyline at dusk"
+    ):
+        print(f"FAIL: the licensed shelf was not shopped with the plan's own words and frame: {shopped}")
+        return 1
+    brought = next(args for tool, args in risk01b_calls if tool == "stock_import")
+    if (
+        brought.get("id") != "2499611"
+        or brought.get("url") != "https://videos.pexels.com/files/2499611.mp4"
+        or brought.get("provider") != "pexels" or brought.get("path") != risk01b
+        or brought.get("start") != 0.0
+    ):
+        print(f"FAIL: the licensed hit was not imported at its segment start: {brought}")
+        return 1
+    if not has_entry(
+        recorded_fallbacks(risk01b), stage="broll", decision="sourcing",
+        signalName="stock_search",
+    ):
+        print(f"FAIL: the licensed-shelf fallback was not recorded: {recorded_fallbacks(risk01b)}")
+        return 1
+    print("RISK-01 ok: a monetized brief shops the licensed live shelves, never the OpenVid index")
 
     # RISK-02: a monetized plan that names a MobyGratis bed is refused,
     # not silently swapped for another track.

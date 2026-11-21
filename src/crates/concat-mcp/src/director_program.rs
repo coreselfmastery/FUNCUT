@@ -303,6 +303,7 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
 /// One B-roll slot: a stretch of the narration with no words in it, the
 /// take it was read from, and the words that describe what the picture
 /// should show there.
+#[derive(Clone)]
 struct BrollSlot {
     /// The take file the gap's neighbours were read from.
     take: String,
@@ -318,64 +319,441 @@ struct BrollSlot {
 /// take file, then its lines as (start, end, text).
 type SpokenTakes = Vec<(String, Vec<(f64, f64, String)>)>;
 
-/// The hit from a search page that best fits the slot being filled, and
-/// the ids already shopped so a clip is never laid twice.
-///
-/// The search returns a page ranked by the shelf's own relevance; the
-/// remaining choice is fit, and it is made from metadata the reply
-/// actually carries - never from a score invented here. Orientation is
-/// the strongest preference (a vertical slot wants a vertical clip; a
-/// horizontal clip in a 9:16 frame means a heavy crop), a clip shorter
-/// than the span is refused outright because it cannot cover the hole
-/// without a visible loop, and among the clips that pass the sharpest
-/// wins. A page with no licensable clip is a slot left empty - the honest
-/// answer - rather than a clip that will not fit.
-fn best_hit(hits: &[Value], span: f64, aspect: &str, used: &[String]) -> Option<Value> {
+/// One B-roll candidate the run has actually looked at: the shelf's own
+/// hit, the file the fetch cached, and the frame the contact sheet
+/// measured from that file. The tile is the sheet's own reading - luma,
+/// contrast, saturation, warmth, the dHash and the crop hint - kept
+/// whole so the continuity manifest and the reframe spend the same
+/// measurements the choice was made on.
+#[derive(Clone)]
+struct StockCandidate {
+    provider: String,
+    id: String,
+    url: String,
+    local_path: String,
+    width: f64,
+    height: f64,
+    tile: Value,
+}
+
+impl StockCandidate {
+    /// The visual score the sheet measured for this candidate, or `None`
+    /// when the frame disqualifies itself. The rejects are the sheet's
+    /// own flags - a mostly-black frame, a blown one, a letterboxed one -
+    /// and the score is what the pixels carry: chroma first (grey mush
+    /// reads as mush however sharp it is), then contrast and detail, with
+    /// exposure balance and visual duplicates counted against. A frame
+    /// the run already placed (same dHash, different shelf id) is not a
+    /// candidate again, so two visually identical clips never cut back
+    /// to back.
+    fn visual_score(&self, used_hashes: &[String]) -> Option<f64> {
+        let tile = &self.tile;
+        let black = tile["blackFraction"].as_f64().unwrap_or(0.0);
+        let blown = tile["blownFraction"].as_f64().unwrap_or(0.0);
+        let bars = tile["barRatio"].as_f64().unwrap_or(0.0);
+        if black > 0.55 || blown > 0.35 || bars > 0.6 {
+            return None;
+        }
+        let saturation = tile["saturation"].as_f64().unwrap_or(0.0);
+        let contrast = tile["contrast"].as_f64().unwrap_or(0.0);
+        let detail = tile["detail"].as_f64().unwrap_or(0.0);
+        let luma = tile["luma"].as_f64().unwrap_or(128.0);
+        let mut score =
+            saturation * 2.0 + contrast / 64.0 + detail / 8.0 - (luma - 128.0).abs() / 128.0;
+        let hash = tile["hash"].as_str().unwrap_or_default();
+        if !hash.is_empty() && used_hashes.iter().any(|seen| seen == hash) {
+            score -= 3.0;
+        }
+        Some(score)
+    }
+
+    /// The warmth the sheet measured, on the -1 cool through +1 warm
+    /// scale the continuity gate's colour-jump rule is written on. An
+    /// unmeasured warmth is not a neutral zero: `None` keeps the gate's
+    /// own honest standing-down for unmeasured colour.
+    fn warmth(&self) -> Option<f64> {
+        self.tile["warmth"]
+            .as_f64()
+            .filter(|warmth| warmth.is_finite() && (-1.0..=1.0).contains(warmth))
+    }
+}
+
+/// The bed that fits the cut, from the page the shelf answered with:
+/// among the tracks long enough to cover the runtime, the shortest one
+/// (least waste); when none covers, the longest (most coverage). A track
+/// whose duration the census could not measure is never guessed at -
+/// `None`, and the caller keeps the shelf's own first answer.
+fn best_bed(tracks: &[Value], runtime: f64) -> Option<Value> {
+    let measured: Vec<(f64, &Value)> = tracks
+        .iter()
+        .filter_map(|track| {
+            let seconds = track["seconds"].as_f64()?;
+            (seconds.is_finite() && seconds > 0.0).then_some((seconds, track))
+        })
+        .collect();
+    if measured.is_empty() {
+        return None;
+    }
+    let covers: Vec<&(f64, &Value)> = measured
+        .iter()
+        .filter(|(seconds, _)| *seconds >= runtime)
+        .collect();
+    let chosen: &(f64, &Value) = if covers.is_empty() {
+        // Nothing covers: the longest covers the most.
+        measured
+            .iter()
+            .max_by(|left, right| left.0.total_cmp(&right.0))?
+    } else {
+        // Something covers: the shortest of those wastes the least.
+        covers
+            .iter()
+            .min_by(|left, right| left.0.total_cmp(&right.0))?
+    };
+    Some((*chosen.1).clone())
+}
+
+/// The shelf hits a slot will actually be looked at through: the ones
+/// with an explicit provider licence, long enough to cover the span,
+/// facing the way the project's frame faces, and not already chosen -
+/// in the shelf's own relevance order, at most `look_at` of them. The
+/// sheet - not this function - reorders them by what the pixels
+/// measured.
+fn fitting_hits(
+    hits: &[Value],
+    span: f64,
+    aspect: &str,
+    used: &[String],
+    look_at: usize,
+) -> Vec<Value> {
     let wants_vertical = matches!(aspect, "9:16" | "4:5");
     let wants_horizontal = aspect == "16:9";
-
-    let fits = |hit: &Value| {
-        let id = hit["id"].as_str().unwrap_or_default();
-        let url = hit["url"].as_str().unwrap_or_default();
-        let license = hit["license"].as_str().unwrap_or_default();
-        if id.trim().is_empty() || url.trim().is_empty() || license.trim().is_empty() {
-            return None;
-        }
-        if used.iter().any(|seen| seen == id) {
-            return None;
-        }
-        let width = hit["width"].as_f64().unwrap_or(0.0);
-        let height = hit["height"].as_f64().unwrap_or(0.0);
-        // Orientation is measured, not guessed: a clip whose frame is
-        // taller than it is wide is vertical, and the opposite.
-        let orientation_ok = if height <= 0.0 || width <= 0.0 {
-            true
-        } else if wants_vertical {
-            height >= width
-        } else if wants_horizontal {
-            width >= height
-        } else {
-            true
-        };
-        // A clip shorter than the hole cannot cover it, and looping it is
-        // a visible seam, so it is not a candidate at all - not a lower
-        // ranked one. An absent/invalid duration is not proof of coverage:
-        // refusing that hit is safer than silently leaving the slot short.
-        let seconds = hit["seconds"]
-            .as_f64()
-            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)?;
-        if seconds + 0.05 < span {
-            return None;
-        }
-        Some((orientation_ok, (width * height) as i64))
-    };
-
     hits.iter()
-        .filter_map(|hit| fits(hit).map(|score| (score, hit)))
-        // Orientation first, then the sharpest frame - a deterministic
-        // order over measured facts.
-        .max_by(|left, right| left.0.0.cmp(&right.0.0).then(left.0.1.cmp(&right.0.1)))
-        .map(|(_, hit)| hit.clone())
+        .filter(|hit| {
+            let id = hit["id"].as_str().unwrap_or_default();
+            let url = hit["url"].as_str().unwrap_or_default();
+            let license = hit["license"].as_str().unwrap_or_default();
+            if id.trim().is_empty() || url.trim().is_empty() || license.trim().is_empty() {
+                return false;
+            }
+            if used.iter().any(|seen| seen == id) {
+                return false;
+            }
+            let width = hit["width"].as_f64().unwrap_or(0.0);
+            let height = hit["height"].as_f64().unwrap_or(0.0);
+            if height > 0.0 && width > 0.0 {
+                if wants_vertical && height < width {
+                    return false;
+                }
+                if wants_horizontal && width < height {
+                    return false;
+                }
+            }
+            let seconds = hit["seconds"].as_f64().unwrap_or(0.0);
+            seconds.is_finite() && seconds > 0.0 && seconds + 0.05 >= span
+        })
+        .take(look_at)
+        .cloned()
+        .collect()
+}
+
+/// The crop hint's offsets, as a `setClipTransform` the fill can spend -
+/// only on the axis that actually crops, and only when the source is at
+/// least as wide (or tall) as the square the hint's arithmetic assumes:
+/// a wider source overhangs more than the hint spends, so following it
+/// moves the subject toward centre without leaving the frame, while a
+/// narrower one overhangs less and the hint could push past it.
+fn reframe_offsets(tile: &Value, aspect: &str, width: f64, height: f64) -> Option<(f64, f64)> {
+    let transform = tile.pointer("/reframeHint/clipTransform")?;
+    let offset_x = transform["offsetX"].as_f64().unwrap_or(0.0);
+    let offset_y = transform["offsetY"].as_f64().unwrap_or(0.0);
+    let portrait = matches!(aspect, "9:16" | "4:5" | "1:1");
+    let (x, y) = if portrait {
+        if width < height {
+            return None;
+        }
+        (offset_x, 0.0)
+    } else {
+        if height < width {
+            return None;
+        }
+        (0.0, offset_y)
+    };
+    (x.abs() >= 0.05 || y.abs() >= 0.05).then_some((x, y))
+}
+
+/// One word of a caption group: the word as the recogniser heard it, the
+/// times it measured for it, and the character offset the word holds in
+/// the group's own shown text - the number the title's range styling
+/// counts.
+struct CaptionWord {
+    text: String,
+    start: f64,
+    end: f64,
+    at: usize,
+}
+
+/// One caption group: two to four words cut on the delivery's own seams,
+/// the span they occupy in the take's file seconds, and every word's
+/// place in the text - so the accent pass can style the word that
+/// carried the line without re-deriving anything.
+struct CaptionGroup {
+    /// The take file the group was read from.
+    take: String,
+    start: f64,
+    end: f64,
+    text: String,
+    words: Vec<CaptionWord>,
+}
+
+/// The caption groups one transcript segment carries: the recogniser's
+/// own word times, chunked where a viewer reads a seam - the sentence's
+/// own punctuation, a breath gap the recogniser measured, four words,
+/// or three and a half seconds, whichever comes first. The safe-remove
+/// fillers the profile timed are dropped here, so the viewer never sees
+/// the `um` they already heard.
+fn caption_groups(segment: &Value, fillers: &[String]) -> Vec<CaptionGroup> {
+    fn close(groups: &mut Vec<CaptionGroup>, current: &mut Vec<CaptionWord>, text: &mut String) {
+        if current.is_empty() {
+            text.clear();
+            return;
+        }
+        let start = current.first().map(|word| word.start).unwrap_or(0.0);
+        let end = current.last().map(|word| word.end).unwrap_or(start);
+        groups.push(CaptionGroup {
+            take: String::new(),
+            start,
+            end,
+            text: std::mem::take(text),
+            words: std::mem::take(current),
+        });
+    }
+
+    let mut groups: Vec<CaptionGroup> = Vec::new();
+    let mut current: Vec<CaptionWord> = Vec::new();
+    let mut text = String::new();
+    for word in segment["words"].as_array().into_iter().flatten() {
+        let Some(word_text) = word["text"].as_str().map(str::trim) else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (word["start"].as_f64(), word["end"].as_f64()) else {
+            continue;
+        };
+        if word_text.is_empty() || end <= start {
+            continue;
+        }
+        let bare = word_text
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        if !bare.is_empty() && fillers.iter().any(|filler| filler == &bare) {
+            continue;
+        }
+        // A breath gap the recogniser measured is a seam the reader
+        // reads: the group closes before the gap, not across it.
+        if current.last().is_some_and(|last| start - last.end > 0.6) {
+            close(&mut groups, &mut current, &mut text);
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        let at = text.chars().count();
+        text.push_str(word_text);
+        let ends_sentence =
+            word_text.ends_with('.') || word_text.ends_with('!') || word_text.ends_with('?');
+        current.push(CaptionWord {
+            text: word_text.to_owned(),
+            start,
+            end,
+            at,
+        });
+        let span = end - current.first().map(|first| first.start).unwrap_or(end);
+        if ends_sentence || current.len() >= 4 || span >= 3.5 {
+            close(&mut groups, &mut current, &mut text);
+        }
+    }
+    close(&mut groups, &mut current, &mut text);
+    groups
+}
+
+/// Where the shopping of one B-roll slot stands. The stage shops every
+/// slot first - search, fetch, look, choose - so the continuity gate
+/// can judge the whole picture run before anything is imported, and a
+/// flagged slot swaps to an alternate the sheet already measured rather
+/// than re-shopping the shelf.
+enum GatherPhase {
+    /// About to search the shelf for the slot being shopped.
+    Search,
+    /// The search reply is in: the eligible hits to look at are next.
+    ReadSearch,
+    /// About to fetch the next candidate into the cache.
+    Fetch,
+    /// The fetch reply is in: the next fetch, or the sheet.
+    ReadFetch,
+    /// About to look at the fetched candidates through a contact sheet.
+    Sheet,
+    /// The sheet reply is in: rank, choose and record the slot.
+    ReadSheet,
+    /// About to run the continuity gate over the chosen run.
+    Continuity,
+    /// The continuity reply is in: repair what the measurements flagged.
+    ReadContinuity,
+    /// About to import the next chosen candidate.
+    Import,
+    /// The import reply is in: place the clip at its gap.
+    ReadImport,
+    /// The placement reply is in: style the clip and move on.
+    Place,
+}
+
+/// One slot's shopped choice: the candidates the sheet ranked, best
+/// first, and which of them currently holds the slot. The continuity
+/// pass advances `chosen` (a colour jump) or holds the slot (a category
+/// run); the import pass spends whichever candidate holds it.
+struct SlotChoice {
+    /// The slot's stable id, the one the continuity gate's flags name.
+    id: String,
+    /// The gap itself, as the planner read it.
+    slot: BrollSlot,
+    /// The looked-at candidates, the sheet's ranking first.
+    candidates: Vec<StockCandidate>,
+    /// Which candidate holds the slot.
+    chosen: usize,
+    /// A slot the continuity pass downgraded: the A-roll holds its span
+    /// and nothing is imported for it.
+    held: bool,
+}
+
+impl SlotChoice {
+    /// Advance to the next alternate the sheet measured as a different
+    /// picture: a new clip id, a new frame hash, and not a clip another
+    /// slot already chose. No such alternate leaves the flag standing,
+    /// recorded by the check's own second pass.
+    fn swap_past(&mut self, used_ids: &[String], used_hashes: &[String]) {
+        let current = &self.candidates[self.chosen];
+        let current_hash = current.tile["hash"].as_str().unwrap_or_default().to_owned();
+        let current_id = current.id.clone();
+        for step in 1..self.candidates.len() {
+            let at = (self.chosen + step) % self.candidates.len();
+            let candidate = &self.candidates[at];
+            let hash = candidate.tile["hash"].as_str().unwrap_or_default();
+            if candidate.id == current_id || hash == current_hash {
+                continue;
+            }
+            if used_ids.iter().any(|seen| seen == &candidate.id) {
+                continue;
+            }
+            if used_hashes.iter().any(|seen| seen == hash) {
+                continue;
+            }
+            self.chosen = at;
+            return;
+        }
+    }
+}
+
+/// The continuity gate's manifest, from the measurements the sheet made
+/// of the choices: the warmth each chosen frame read, and the slot's own
+/// query words as its category - the plan's vocabulary, the same thing
+/// the watcher's manifest carries. Nothing the pixels did not say is
+/// written: an unmeasured warmth is omitted, never a neutral zero.
+fn continuity_manifest(shopped: &[SlotChoice]) -> Vec<Value> {
+    shopped
+        .iter()
+        .filter(|shop| !shop.held)
+        .map(|shop| {
+            let candidate = &shop.candidates[shop.chosen];
+            let mut entry = json!({
+                "slotId": shop.id,
+                "clipId": candidate.id,
+                "category": category_of(&shop.slot.query),
+            });
+            if let Some(warmth) = candidate.warmth() {
+                entry["colorTemperature"] = json!(warmth);
+            }
+            entry
+        })
+        .collect()
+}
+
+/// A query's coarse category: the longest word the plan shopped the slot
+/// with, which for a planner slot is its topic tag and for a plain gap
+/// is the most content-bearing word before it. Longest rather than
+/// first, because a plain gap's query begins with the article the
+/// sentence ended on.
+fn category_of(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|word| word.chars().any(|c| c.is_alphanumeric()))
+        .max_by_key(|word| word.chars().count())
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+/// The cut-in a gap earns, read from the same measurements the old
+/// inline choice read: the mood the line before the gap carried, the
+/// seam's own reading (a speaker change, a question, a held beat, a
+/// chapter, a pivot), and the no-repeat rule against the last move.
+fn seam_transition(
+    voice: &[VoiceRead],
+    chapters: &[TopicBoundary],
+    pivots: &[(String, f64)],
+    emotion: &[EmotionLine],
+    slot: &BrollSlot,
+    last: Option<&'static str>,
+) -> &'static str {
+    let mood = emotion_at(emotion, &slot.take, slot.from)
+        .map(|line| line.emotion.clone())
+        .unwrap_or_else(|| "neutral".to_owned());
+    let seam = {
+        let read = voice_read_of(voice, &slot.take);
+        let crosses_speaker = read.is_some_and(|read| {
+            read.take_wide
+                .speaker_changes
+                .iter()
+                .any(|change| *change > slot.from - 0.35 && *change < slot.to + 0.35)
+        });
+        let asks = read.is_some_and(|read| {
+            read.line_at(slot.from).is_some_and(|line| {
+                line.sentence_type == "question" || line.rise_confirms == Some(true)
+            })
+        });
+        let holds = read.is_some_and(|read| read.keeps_pause_at(slot.from));
+        // A chapter opens in this gap: the strongest seam the script
+        // has, and the one the chapter card is already naming.
+        let chapter = chapters.iter().any(|boundary| {
+            boundary.take == slot.take
+                && boundary.at > slot.from - 0.5
+                && boundary.at < slot.to + 0.5
+        });
+        // A connective pivot inside the gap: the argument turned here,
+        // so the picture turns with it.
+        let pivot = pivots
+            .iter()
+            .any(|(take, at)| take == &slot.take && *at > slot.from - 0.5 && *at < slot.to + 0.5);
+        (crosses_speaker, asks, holds, chapter, pivot)
+    };
+    let first = match seam {
+        // A chapter opening is the clearest seam there is: the story
+        // moved on, and the whip is the move that says so.
+        (_, _, _, true, _) => "concat.whip-pan",
+        // A connective pivot is the argument turning: the slice is the
+        // move that makes the turn read.
+        (_, _, _, _, true) => "concat.slice-social",
+        // A speaker change is the clearest voice seam: the frame
+        // changes because the voice did.
+        (true, _, _, _, _) => "concat.glitch-social",
+        // A question opens a gap the answer fills: the snap is the
+        // ask, not the mood.
+        (_, true, _, _, _) => "concat.snap-zoom",
+        // A held beat keeps the softest move the catalogue has, so the
+        // cut never fights the silence the read said to hold.
+        (_, _, true, _, _) => "concat.dissolve",
+        _ => transition_for_emotion(&mood),
+    };
+    if last == Some(first) {
+        alternate_transition(&mood)
+    } else {
+        first
+    }
 }
 
 /// The take whose own audio already carries music, if any. The music read
@@ -1440,27 +1818,6 @@ impl MotionSpec {
     }
 }
 
-/// A caption's words with one filler removed, matched whole and
-/// case-insensitively, and never left with a double space or a dangling
-/// comma where the word stood.
-fn strip_word(text: &str, word: &str) -> String {
-    let word = word.trim().to_lowercase();
-    if word.is_empty() {
-        return text.to_owned();
-    }
-    let mut kept: Vec<&str> = Vec::new();
-    for piece in text.split_whitespace() {
-        let bare = piece
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .to_lowercase();
-        if bare == word {
-            continue;
-        }
-        kept.push(piece);
-    }
-    kept.join(" ")
-}
-
 /// The words a card can hold: the line's own, cut at a word boundary so a
 /// card never ends mid-word, and never longer than a card reads in the
 /// seconds it is on screen.
@@ -1482,8 +1839,8 @@ fn card_words(text: &str) -> String {
 /// soft one. The ids are the catalogue's own transition packages.
 fn transition_for_emotion(emotion: &str) -> &'static str {
     match emotion {
-        "joy" => "concat.cross-pop",
-        "surprise" => "concat.flash-social",
+        "joy" => "concat.zoom-blur-punch",
+        "surprise" => "concat.hyper-zoom",
         "anger" => "concat.crash-zoom",
         "fear" => "concat.blur-dissolve",
         "sadness" => "concat.dissolve",
@@ -1494,16 +1851,18 @@ fn transition_for_emotion(emotion: &str) -> &'static str {
 
 /// The second transition for a mood, so two shots cut from the same
 /// emotion never wear the same move twice running: the no-repeat rule
-/// the director enforces, not merely asks for.
+/// the director enforces, not merely asks for. Every id is the
+/// catalogue's own - the viral pack's neighbours of the first move,
+/// not the first move again.
 fn alternate_transition(emotion: &str) -> &'static str {
     match emotion {
-        "joy" => "concat.dissolve",
-        "surprise" => "concat.cross-pop",
-        "anger" => "concat.flash-social",
+        "joy" => "concat.cross-pop",
+        "surprise" => "concat.flash-social",
+        "anger" => "concat.glitch-warp",
         "fear" => "concat.dissolve",
-        "sadness" => "concat.blur-dissolve",
+        "sadness" => "concat.zoom-blur",
         "disgust" => "concat.dissolve",
-        _ => "concat.dissolve",
+        _ => "concat.whip-pan",
     }
 }
 
@@ -1760,6 +2119,19 @@ fn platform_target(log: &[Value]) -> Option<f64> {
         "9:16" => -14.0,
         _ => -14.0,
     })
+}
+
+/// The orientation word the live shelves' own search parameter takes,
+/// for the frame the project actually is. `None` when the aspect is not
+/// one the shelves name, so the search is left unfiltered rather than
+/// shopped with a guess.
+fn shelf_orientation(aspect: &str) -> Option<&'static str> {
+    match aspect {
+        "9:16" | "4:5" => Some("vertical"),
+        "16:9" => Some("horizontal"),
+        "1:1" => Some("square"),
+        _ => None,
+    }
 }
 
 /// The aspect the project's own frame is nearest: a 9:16 project is a
@@ -3681,6 +4053,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Box::new({
                 let mut queue: Option<Vec<ToolCall>> = None;
                 let mut graded = false;
+                let mut keyed = false;
                 let mut mixed = false;
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
@@ -3694,6 +4067,78 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return Some(next);
                     }
                     if graded {
+                        // The grade's own arc, on the layer it just landed
+                        // on: the hook carries the look at full strength,
+                        // the body settles under it, and the call to act
+                        // lifts back - the plan's own per-act intensity
+                        // variation, keyed on the package's own parameter.
+                        // Values only ever move DOWN from the base the
+                        // package ships, so no key can leave the range.
+                        if !keyed {
+                            keyed = true;
+                            let layer = log
+                                .last()
+                                .and_then(|reply| reply.get("createdId").and_then(Value::as_str));
+                            let runtime = latest_view(log).and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            });
+                            if let (Some(layer), Some(runtime)) = (layer, runtime)
+                                && runtime > 1.0
+                            {
+                                let look = dominant(&emotion_lines(log, &grade_source))
+                                    .map(|line| look_for_temperature(&line.temperature))
+                                    .unwrap_or("concat.teal-orange");
+                                let (key, base) = grade_param(look);
+                                let body = base * 0.85;
+                                let mut commands = vec![json!({
+                                    "op": "setEffectKey",
+                                    "clipId": layer,
+                                    "entry": 0,
+                                    "key": key,
+                                    "at": 0.0,
+                                    "value": base,
+                                })];
+                                let hook_share = (3.0 / runtime).clamp(0.05, 0.4);
+                                commands.push(json!({
+                                    "op": "setEffectKey",
+                                    "clipId": layer,
+                                    "entry": 0,
+                                    "key": key,
+                                    "at": round3(hook_share),
+                                    "value": round3(body),
+                                }));
+                                if runtime > 12.0 {
+                                    commands.push(json!({
+                                        "op": "setEffectKey",
+                                        "clipId": layer,
+                                        "entry": 0,
+                                        "key": key,
+                                        "at": round3(
+                                            ((runtime - 2.0) / runtime).max(0.0)
+                                        ),
+                                        "value": base,
+                                    }));
+                                }
+                                return Some(call(
+                                    "edit_apply",
+                                    json!({
+                                        "path": grade_project,
+                                        "command": {
+                                            "op": "batch",
+                                            "commands": commands,
+                                        },
+                                    }),
+                                ));
+                            }
+                        }
                         // The mix: the profile measured the take's own
                         // integrated loudness, and the plan already names
                         // the platform the cut ships to. The one number the
@@ -3797,9 +4242,37 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         DerivedStep::react(
             Stage::Gather,
             Box::new({
+                // How many of one slot's hits the run actually looks at:
+                // enough alternates for the continuity pass to swap to,
+                // without fetching a whole page.
+                const LOOK_AT: usize = 3;
                 let mut slots: Option<Vec<BrollSlot>> = None;
-                let mut placed = 0usize;
-                let mut phase = 0u8;
+                // Where the shopping stands: which slot, and which of its
+                // phases - search, fetch, sheet - is next.
+                let mut shopping = 0usize;
+                let mut phase = GatherPhase::Search;
+                let mut fetch_queue: Vec<Value> = Vec::new();
+                let mut fetched: Vec<StockCandidate> = Vec::new();
+                // The slots whose choice the sheet made, in play order:
+                // the continuity pass reads them, the import pass spends
+                // them. A slot the continuity pass downgraded holds
+                // instead - the A-roll covers its span, which is the
+                // remedy the gate itself names.
+                let mut shopped: Vec<SlotChoice> = Vec::new();
+                // The clip ids and frame hashes already chosen: a shelf
+                // can return the same clip for two neighbouring gaps, and
+                // two visually identical clips with different ids cut
+                // back to back read as a mistake to anyone watching.
+                let mut used_ids: Vec<String> = Vec::new();
+                let mut used_hashes: Vec<String> = Vec::new();
+                // The continuity check's pass: the first asks, the second
+                // records the state the repairs left.
+                let mut continuity_pass = 0u8;
+                // The slot being imported and placed, by index into
+                // `shopped`.
+                let mut placing = 0usize;
+                // The placement's own facts, drawn from the import's
+                // reply and spent by the styling batch.
                 let mut pending_media: Option<String> = None;
                 let mut pending_len = 0.0f64;
                 let mut pending_pace = String::new();
@@ -3816,10 +4289,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The transition the last placed shot cut in with: the
                 // next shot never wears the same move twice running.
                 let mut last_transition: Option<&'static str> = None;
-                // The clip ids already shopped: a shelf can return the same
-                // clip for two neighbouring gaps, and laying it twice reads
-                // as a mistake to anyone watching.
-                let mut used_ids: Vec<String> = Vec::new();
                 // The takes' readings, read once: the seam of every gap is
                 // judged against the same measurement.
                 let mut voice: Option<Vec<VoiceRead>> = None;
@@ -3835,104 +4304,37 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let pivots =
                         pivots.get_or_insert_with(|| discourse_pivots(log, &gather_emotion));
                     let slots = slots.get_or_insert_with(|| broll_slots(log, &gather_source));
-                    if placed >= slots.len() {
-                        return None;
-                    }
-                    let slot = &slots[placed];
-                    // The mood the gap opens on: the line whose speech
-                    // the gap follows, so the picture cuts in the way the
-                    // voice just sounded.
-                    let mood =
-                        emotion_at(&emotion_lines(log, &gather_emotion), &slot.take, slot.from)
-                            .map(|line| line.emotion.clone())
-                            .unwrap_or_else(|| "neutral".to_owned());
-                    // The seam's own reading decides the move as well as
-                    // the mood does. A gap that crosses a speaker change
-                    // or opens on a question is a seam a viewer must
-                    // register, so it takes a visible move whatever the
-                    // mood; a gap the profile says is a held beat keeps
-                    // the softest one, because a hard cut into a shot over
-                    // a dramatic pause is the edit arguing with the voice.
-                    let seam = {
-                        let read = voice_read_of(voice, &slot.take);
-                        let crosses_speaker = read.is_some_and(|read| {
-                            read.take_wide.speaker_changes.iter().any(|change| {
-                                *change > slot.from - 0.35 && *change < slot.to + 0.35
-                            })
-                        });
-                        let asks = read.is_some_and(|read| {
-                            read.line_at(slot.from).is_some_and(|line| {
-                                line.sentence_type == "question" || line.rise_confirms == Some(true)
-                            })
-                        });
-                        let holds = read.is_some_and(|read| read.keeps_pause_at(slot.from));
-                        // A chapter opens in this gap: the strongest seam
-                        // the script has, and the one the chapter card is
-                        // already naming.
-                        let chapter = chapters.iter().any(|boundary| {
-                            boundary.take == slot.take
-                                && boundary.at > slot.from - 0.5
-                                && boundary.at < slot.to + 0.5
-                        });
-                        // A connective pivot inside the gap: the argument
-                        // turned here, so the picture turns with it.
-                        let pivot = pivots.iter().any(|(take, at)| {
-                            take == &slot.take && *at > slot.from - 0.5 && *at < slot.to + 0.5
-                        });
-                        (crosses_speaker, asks, holds, chapter, pivot)
-                    };
-                    let transition = {
-                        let first = match seam {
-                            // A chapter opening is the clearest seam there
-                            // is: the story moved on.
-                            (_, _, _, true, _) => "concat.flash-social",
-                            // A connective pivot is the argument turning:
-                            // the visible move is what makes the turn read.
-                            (_, _, _, _, true) => "concat.cross-pop",
-                            // A speaker change is the clearest voice seam:
-                            // the frame changes because the voice did.
-                            (true, _, _, _, _) => "concat.flash-social",
-                            // A question opens a gap the answer fills: the
-                            // move is the ask, not the mood.
-                            (_, true, _, _, _) => "concat.cross-pop",
-                            // A held beat keeps the softest move the
-                            // catalogue has, so the cut never fights the
-                            // silence the read said to hold.
-                            (_, _, true, _, _) => "concat.dissolve",
-                            _ => transition_for_emotion(&mood),
-                        };
-                        if last_transition == Some(first) {
-                            alternate_transition(&mood)
-                        } else {
-                            first
-                        }
-                    };
                     match phase {
-                        0 => {
-                            phase = 1;
-                            return Some(call(
-                                "stock_search",
-                                json!({
-                                    "provider": gather_provider.clone(),
-                                    "query": slot.query.clone(),
-                                    "limit": 5,
-                                }),
-                            ));
+                        GatherPhase::Search => {
+                            if shopping >= slots.len() {
+                                phase = GatherPhase::Continuity;
+                                continue;
+                            }
+                            phase = GatherPhase::ReadSearch;
+                            // The shelf is shopped for the frame the
+                            // project actually is: a vertical reel asks
+                            // the shelf for vertical clips, so the page
+                            // the sheet looks at is not full of clips
+                            // the fill would have to crop against their
+                            // grain.
+                            let mut arguments = json!({
+                                "provider": gather_provider.clone(),
+                                "query": slots[shopping].query.clone(),
+                                "limit": 6,
+                            });
+                            if let Some(orientation) =
+                                latest_view(log).map(|view| shelf_orientation(aspect_of(view)))
+                            {
+                                arguments["orientation"] = json!(orientation);
+                            }
+                            return Some(call("stock_search", arguments));
                         }
-                        1 => {
-                            // Only a live-shelf hit with an explicit provider
-                            // licence is eligible. OpenVid has no per-clip
-                            // licence record and is never imported here.
-                            //
-                            // The page is read for the clip that *fits* this
-                            // slot rather than the first one returned: the
-                            // shelf ranks by its own relevance, and the frame
-                            // the project is (vertical or not), the span to
-                            // cover and the clips already used are all known
-                            // here. Taking `hits/0` put whatever the shelf
-                            // ranked highest into the cut even when it was a
-                            // landscape clip in a vertical reel.
-                            let span = slot.to - slot.from;
+                        GatherPhase::ReadSearch => {
+                            // Only live-shelf hits with an explicit
+                            // provider licence are eligible to be looked
+                            // at. OpenVid has no per-clip licence record
+                            // and is never imported here.
+                            let span = slots[shopping].to - slots[shopping].from;
                             let aspect = latest_view(log)
                                 .map(|view| aspect_of(view).to_owned())
                                 .unwrap_or_else(|| "16:9".to_owned());
@@ -3941,45 +4343,240 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .and_then(|reply| reply["hits"].as_array())
                                 .cloned()
                                 .unwrap_or_default();
-                            let hit = best_hit(&hits, span, &aspect, &used_ids);
-                            let provider = hit.as_ref().and_then(|hit| hit["provider"].as_str());
-                            let id = hit.as_ref().and_then(|hit| hit["id"].as_str());
-                            let url = hit.as_ref().and_then(|hit| hit["url"].as_str());
-                            let license = hit.as_ref().and_then(|hit| hit["license"].as_str());
-                            match (provider, id, url, license) {
-                                (Some(provider), Some(id), Some(url), Some(license))
-                                    if provider == gather_provider.as_str()
-                                        && !id.trim().is_empty()
-                                        && !url.trim().is_empty()
-                                        && !license.trim().is_empty() =>
-                                {
-                                    used_ids.push(id.to_owned());
-                                    phase = 2;
-                                    return Some(call(
-                                        "stock_import",
-                                        json!({
-                                            "path": gather_project,
-                                            "provider": provider,
-                                            "id": id,
-                                            "url": url,
-                                        }),
-                                    ));
+                            let fits = fitting_hits(&hits, span, &aspect, &used_ids, LOOK_AT);
+                            if fits.is_empty() {
+                                // A page with no eligible hit is a slot
+                                // left empty - the honest answer - not a
+                                // clip that will not fit.
+                                shopping += 1;
+                                phase = GatherPhase::Search;
+                                continue;
+                            }
+                            fetch_queue = fits;
+                            fetched = Vec::new();
+                            phase = GatherPhase::Fetch;
+                            continue;
+                        }
+                        GatherPhase::Fetch => {
+                            let Some(hit) = fetch_queue.first().cloned() else {
+                                if fetched.is_empty() {
+                                    // Every fetch refused: the slot is
+                                    // left empty, like an empty page.
+                                    shopping += 1;
+                                    phase = GatherPhase::Search;
+                                    continue;
                                 }
-                                _ => {
-                                    placed += 1;
-                                    phase = 0;
+                                phase = GatherPhase::Sheet;
+                                continue;
+                            };
+                            phase = GatherPhase::ReadFetch;
+                            return Some(call(
+                                "stock_fetch",
+                                json!({
+                                    "provider": hit["provider"].clone(),
+                                    "id": hit["id"].clone(),
+                                    "url": hit["url"].clone(),
+                                }),
+                            ));
+                        }
+                        GatherPhase::ReadFetch => {
+                            let hit = fetch_queue.remove(0);
+                            let path = log
+                                .last()
+                                .and_then(|reply| reply["path"].as_str())
+                                .map(str::to_owned)
+                                .filter(|path| !path.trim().is_empty());
+                            if let Some(path) = path {
+                                fetched.push(StockCandidate {
+                                    provider: hit["provider"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    id: hit["id"].as_str().unwrap_or_default().to_owned(),
+                                    url: hit["url"].as_str().unwrap_or_default().to_owned(),
+                                    local_path: path,
+                                    width: hit["width"].as_f64().unwrap_or(0.0),
+                                    height: hit["height"].as_f64().unwrap_or(0.0),
+                                    tile: Value::Null,
+                                });
+                            }
+                            phase = GatherPhase::Fetch;
+                            continue;
+                        }
+                        GatherPhase::Sheet => {
+                            // Look at the candidates before choosing one:
+                            // one real frame each, measured - the sheet is
+                            // the approval record the choice stands on.
+                            let paths: Vec<Value> = fetched
+                                .iter()
+                                .map(|candidate| json!(candidate.local_path))
+                                .collect();
+                            let aspect = latest_view(log)
+                                .map(|view| aspect_of(view).to_owned())
+                                .unwrap_or_else(|| "16:9".to_owned());
+                            phase = GatherPhase::ReadSheet;
+                            return Some(call(
+                                "stock_contact_sheet",
+                                json!({
+                                    "paths": paths,
+                                    "cols": LOOK_AT,
+                                    "aspect": aspect,
+                                    "autoSetup": false,
+                                }),
+                            ));
+                        }
+                        GatherPhase::ReadSheet => {
+                            let tiles = log
+                                .last()
+                                .and_then(|reply| reply["tiles"].as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            for tile in &tiles {
+                                let Some(path) = tile["localPath"].as_str() else {
+                                    continue;
+                                };
+                                if let Some(candidate) = fetched
+                                    .iter_mut()
+                                    .find(|candidate| candidate.local_path == path)
+                                {
+                                    candidate.tile = tile.clone();
                                 }
                             }
+                            // The sheet's own measurements reorder the
+                            // page: chroma, contrast and detail for, and
+                            // black frames, blown ones, letterboxing and
+                            // visual duplicates against. A candidate the
+                            // sheet could not measure keeps its shelf
+                            // order behind every measured one - the old
+                            // unexamined choice, not a refused slot, when
+                            // nothing at all was measured.
+                            let mut candidates = std::mem::take(&mut fetched);
+                            candidates.sort_by(|left, right| {
+                                let left = left.visual_score(&used_hashes);
+                                let right = right.visual_score(&used_hashes);
+                                match (left, right) {
+                                    (Some(left), Some(right)) => right.total_cmp(&left),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => std::cmp::Ordering::Equal,
+                                }
+                            });
+                            if candidates.is_empty() {
+                                shopping += 1;
+                                phase = GatherPhase::Search;
+                                continue;
+                            }
+                            let best = &candidates[0];
+                            used_ids.push(best.id.clone());
+                            if let Some(hash) =
+                                best.tile["hash"].as_str().filter(|hash| !hash.is_empty())
+                            {
+                                used_hashes.push(hash.to_owned());
+                            }
+                            shopped.push(SlotChoice {
+                                id: format!("slot-{:02}", shopped.len()),
+                                slot: slots[shopping].clone(),
+                                candidates,
+                                chosen: 0,
+                                held: false,
+                            });
+                            shopping += 1;
+                            phase = GatherPhase::Search;
+                            continue;
                         }
-                        2 => {
-                            // The import's own reply: the clip is in the bin
-                            // and the view it carries maps the gap onto the
-                            // timeline. Lay the clip there.
+                        GatherPhase::Continuity => {
+                            // The gate needs adjacencies to judge: one
+                            // shot has no neighbour to jump against.
+                            if shopped.iter().filter(|shop| !shop.held).count() < 2 {
+                                phase = GatherPhase::Import;
+                                continue;
+                            }
+                            phase = GatherPhase::ReadContinuity;
+                            continuity_pass += 1;
+                            return Some(call(
+                                "footage_continuity",
+                                json!({ "clips": continuity_manifest(&shopped) }),
+                            ));
+                        }
+                        GatherPhase::ReadContinuity => {
+                            let flags = log
+                                .last()
+                                .and_then(|reply| reply["flags"].as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            for flag in &flags {
+                                let Some(slot_id) = flag["slotId"].as_str() else {
+                                    continue;
+                                };
+                                let rule = flag["rule"].as_str().unwrap_or_default();
+                                let Some(shop) = shopped.iter_mut().find(|shop| shop.id == slot_id)
+                                else {
+                                    continue;
+                                };
+                                match rule {
+                                    // A colour jump the sheet measured:
+                                    // the swap the alternates exist for.
+                                    "colour" => shop.swap_past(&used_ids, &used_hashes),
+                                    // A category run: the gate's own
+                                    // remedy is the treatment's, and the
+                                    // treatment the program has is the
+                                    // hold - the A-roll covers the span.
+                                    "monotony" => shop.held = true,
+                                    // Scale, motion and stillness flags
+                                    // ride readings this manifest did not
+                                    // carry (one frame measures no motion
+                                    // and no scale), so acting on them
+                                    // would be acting on the defaults the
+                                    // gate filled in. They stand
+                                    // recorded, not spent.
+                                    _ => {}
+                                }
+                            }
+                            if !flags.is_empty() && continuity_pass == 1 {
+                                // One repair pass, then the state the
+                                // repairs left is what the record shows.
+                                phase = GatherPhase::ReadContinuity;
+                                continuity_pass += 1;
+                                return Some(call(
+                                    "footage_continuity",
+                                    json!({ "clips": continuity_manifest(&shopped) }),
+                                ));
+                            }
+                            phase = GatherPhase::Import;
+                            continue;
+                        }
+                        GatherPhase::Import => {
+                            while placing < shopped.len() && shopped[placing].held {
+                                placing += 1;
+                            }
+                            let Some(shop) = shopped.get(placing) else {
+                                // Every slot imported, held or empty: the
+                                // picture stage is done.
+                                return None;
+                            };
+                            let candidate = &shop.candidates[shop.chosen];
+                            phase = GatherPhase::ReadImport;
+                            return Some(call(
+                                "stock_import",
+                                json!({
+                                    "path": gather_project,
+                                    "provider": candidate.provider.clone(),
+                                    "id": candidate.id.clone(),
+                                    "url": candidate.url.clone(),
+                                }),
+                            ));
+                        }
+                        GatherPhase::ReadImport => {
+                            // The import's own reply (`{mediaIds, view}`):
+                            // the clip is in the bin, and the view maps
+                            // the gap onto the timeline. Lay the clip
+                            // there.
                             let media_id = log
                                 .last()
                                 .and_then(|reply| reply.pointer("/mediaIds/0"))
                                 .and_then(|id| id.as_str())
                                 .map(str::to_owned);
+                            let slot = shopped[placing].slot.clone();
                             let at = latest_view(log).and_then(|view| {
                                 let media = media_paths(view);
                                 timeline_at(view, &media, &slot.take, slot.from)
@@ -3993,33 +4590,41 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     pending_media = Some(media_id.clone());
                                     pending_len = round3(to - at);
                                     // The delivery over the gap sets how
-                                    // much the shot moves: a punchy stretch
-                                    // takes a livelier drift, a slow one a
-                                    // quieter, longer push.
+                                    // much the shot moves: a punchy
+                                    // stretch takes a livelier drift, a
+                                    // slow one a quieter, longer push.
                                     pending_pace =
                                         delivery_pace(log, &slot.take, slot.from, slot.to);
                                     // The take's derived cut style stands
                                     // behind a gap whose own delivery was
-                                    // too short to measure: a profile that
-                                    // read the whole take knows its rhythm
-                                    // even where one span did not.
+                                    // too short to measure: a profile
+                                    // that read the whole take knows its
+                                    // rhythm even where one span did not.
                                     let take_wide = voice_read_of(voice, &slot.take)
                                         .map(|read| read.take_wide.clone())
                                         .unwrap_or_default();
                                     pending_style = take_wide.cut_style.clone();
                                     pending_period = take_wide
                                         .dominant_period_sec
-                                        // A period the rhythm read found but
-                                        // could not put strength behind is
-                                        // an autocorrelation artefact, not a
-                                        // pulse: it must not size a seam.
+                                        // A period the rhythm read found
+                                        // but could not put strength
+                                        // behind is an autocorrelation
+                                        // artefact, not a pulse: it must
+                                        // not size a seam.
                                         .filter(|_| {
                                             voice_read_of(voice, &slot.take)
                                                 .and_then(|read| read.pulse_strength())
                                                 .is_some_and(|strength| strength >= 0.25)
                                         });
-                                    pending_transition = Some(transition);
-                                    phase = 3;
+                                    pending_transition = Some(seam_transition(
+                                        voice,
+                                        chapters,
+                                        pivots,
+                                        &emotion_lines(log, &gather_emotion),
+                                        &slot,
+                                        last_transition,
+                                    ));
+                                    phase = GatherPhase::Place;
                                     return Some(call(
                                         "edit_apply",
                                         json!({
@@ -4033,17 +4638,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     ));
                                 }
                                 _ => {
-                                    placed += 1;
-                                    phase = 0;
+                                    placing += 1;
+                                    phase = GatherPhase::Import;
+                                    continue;
                                 }
                             }
                         }
-                        3 => {
-                            // The placement's own reply: the clip the import
-                            // just added, by the media it plays. Trim it to
-                            // the gap, fill the frame, drift it and dissolve
-                            // it in - one undoable batch.
+                        GatherPhase::Place => {
+                            // The placement's own reply: the clip the
+                            // import just added, by the media it plays.
+                            // Trim it to the gap, fill the frame, drift
+                            // it, dissolve it in and follow the subject
+                            // the sheet found - one undoable batch.
                             let media_id = pending_media.clone();
+                            let shop = &shopped[placing];
+                            let candidate = &shop.candidates[shop.chosen];
+                            let aspect = latest_view(log)
+                                .map(|view| aspect_of(view).to_owned())
+                                .unwrap_or_else(|| "16:9".to_owned());
                             let found = latest_view(log).and_then(|view| {
                                 view["timeline"]["clips"]
                                     .as_array()?
@@ -4056,8 +4668,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         )
                                     })
                             });
-                            placed += 1;
-                            phase = 0;
+                            placing += 1;
+                            phase = GatherPhase::Import;
                             let Some((clip_id, current)) = found else {
                                 continue;
                             };
@@ -4098,6 +4710,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     _ => 1.06,
                                 },
                             };
+                            // The hook's shot pushes harder: a clip that
+                            // opens the cut is the one a viewer decides
+                            // to stay on, and a stronger push-in is the
+                            // cheapest retention the catalogue has.
+                            let hook_shot = latest_view(log)
+                                .and_then(|view| {
+                                    view["timeline"]["clips"].as_array().map(|clips| {
+                                        clips.iter().any(|clip| {
+                                            clip["media"].as_str() == media_id.as_deref()
+                                                && clip["start"].as_f64().is_some_and(|at| at < 3.0)
+                                        })
+                                    })
+                                })
+                                .unwrap_or(false);
+                            let drift = if hook_shot { drift + 0.04 } else { drift };
                             commands.push(json!({
                                 "op": "setClipKey",
                                 "clipId": clip_id,
@@ -4106,6 +4733,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "value": drift,
                                 "ease": [0.0, 0.0, 0.58, 1.0],
                             }));
+                            // The crop hint the sheet measured, spent on
+                            // the axis the fill actually crops: the
+                            // subject stands where the frame found it,
+                            // not where a centre crop guessed it.
+                            if let Some((offset_x, offset_y)) = reframe_offsets(
+                                &candidate.tile,
+                                &aspect,
+                                candidate.width,
+                                candidate.height,
+                            ) {
+                                commands.push(json!({
+                                    "op": "setClipTransform",
+                                    "clipId": clip_id,
+                                    "offsetX": round3(offset_x),
+                                    "offsetY": round3(offset_y),
+                                }));
+                            }
                             let chosen = pending_transition.unwrap_or("concat.dissolve");
                             last_transition = Some(chosen);
                             // The blend is a share of the tempo: a third of
@@ -4130,7 +4774,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 }),
                             ));
                         }
-                        _ => return None,
                     }
                 }
             }),
@@ -4141,12 +4784,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 7. The captions: the transcript's own measured words, placed where
     //    the timeline now plays them - through the pieces the tighten
     //    left, so a cut that moved a word moves its caption too - as one
-    //    undoable batch of titles in the reading's house style. The style
-    //    follows the read at each line: a line that reads loud is set
-    //    heavier, a hot or split line takes the accent colour, and a calm
-    //    informational line stays plain - the same words do not all earn
-    //    the same look, which is the difference between captions and a
-    //    transcript.
+    //    undoable batch of titles in the reading's house style, then a
+    //    second pass that gives the words that carried the delivery a
+    //    look of their own.
+    //
+    //    A caption is not a transcript: the groups are two to four words
+    //    long, cut on the delivery's own seams (the recogniser's word
+    //    times, the sentence's own punctuation, the breath gaps the
+    //    profile measured), so a viewer reads a phrase, not a paragraph.
+    //    The style follows the read at each group: a line that reads loud
+    //    is set heavier, a hot or split line takes the accent colour on
+    //    the word that carried it, and a calm informational line stays
+    //    plain - the same words do not all earn the same look.
+    //
+    //    The frame the project is shapes the band the captions sit in: a
+    //    vertical reel keeps its words clear of the platform UI at the
+    //    bottom, and a horizontal cut keeps the classic lower third.
     let caption_source = takes.clone();
     let caption_project = project.clone();
     let caption_emotion = takes.clone();
@@ -4158,80 +4811,107 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // reply is a timeline view carrying the titles just
                 // placed, and re-deriving from it would place every
                 // caption a second time.
-                let mut issued = false;
+                let mut phase = 0u8;
+                // The groups the batch placed, kept for the accent pass:
+                // each carries the timeline span it landed at and the
+                // character ranges of its own words.
+                let mut placed_groups: Vec<(f64, CaptionGroup)> = Vec::new();
                 move |log| {
-                    if issued {
+                    if phase == 2 {
                         return None;
                     }
                     let view = latest_view(log)?;
+                    let aspect = aspect_of(view).to_owned();
+                    let portrait = matches!(aspect.as_str(), "9:16" | "4:5" | "1:1");
                     let media = media_paths(view);
-                    let read = emotion_lines(log, &caption_emotion);
-                    let emphasis = stressed_words(log, &caption_source);
-                    let voice = voice_reads(log, &caption_source);
-                    let mut captions: Vec<Value> = Vec::new();
-                    for (take, segments) in transcripts_of(log, &caption_source) {
-                        for segment in segments {
-                            let words = segment["words"].as_array();
-                            let start = words
-                                .and_then(|words| words.first())
-                                .and_then(|word| word["start"].as_f64())
-                                .or_else(|| segment["start"].as_f64());
-                            let end = words
-                                .and_then(|words| words.last())
-                                .and_then(|word| word["end"].as_f64())
-                                .or_else(|| segment["end"].as_f64());
-                            let text = segment["text"].as_str().unwrap_or_default().trim();
-                            let (Some(start), Some(end)) = (start, end) else {
-                                continue;
-                            };
-                            if text.is_empty() || end - start < 0.3 {
-                                continue;
-                            }
-                            let (Some(at), Some(to)) = (
-                                timeline_at(view, &media, &take, start),
-                                timeline_at(view, &media, &take, end),
-                            ) else {
-                                continue;
-                            };
-                            if to - at < 0.3 {
-                                continue;
-                            }
-                            let line = emotion_at(&read, &take, start);
-                            let intensity = line.map(|line| line.intensity).unwrap_or(0.5);
-                            let hot = line.is_some_and(|line| {
-                                matches!(line.temperature.as_str(), "hot" | "split")
-                            });
-                            // The fillers the profile timed: `um`, `uh` and
-                            // their kin are safe removals, and a caption is
-                            // the one place they are pure noise - the
-                            // viewer hears the pause, not the syllable. The
-                            // discourse markers (`like`, `you know`) are
-                            // context calls the profile does not decide,
-                            // so they stay: cutting them would be editing
-                            // the speaker's meaning, not their noise.
+                    if phase == 0 {
+                        let voice = voice_reads(log, &caption_source);
+                        let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                        for (take, segments) in transcripts_of(log, &caption_source) {
                             let take_read = voice_read_of(&voice, &take);
-                            let mut shown = text.to_owned();
-                            if let Some(take_read) = take_read {
-                                for filler in take_read.fillers_between(start, end) {
-                                    shown = strip_word(&shown, &filler.word);
+                            for segment in segments {
+                                // The safe-remove fillers the profile timed
+                                // for this segment: `um`, `uh` and their kin
+                                // are pure noise in a caption - the viewer
+                                // hears the pause, not the syllable. The
+                                // discourse markers (`like`, `you know`) are
+                                // context calls the profile does not
+                                // decide, so they stay.
+                                let fillers: Vec<String> = take_read
+                                    .map(|take_read| {
+                                        let start = segment["start"].as_f64().unwrap_or(0.0);
+                                        let end = segment["end"].as_f64().unwrap_or(0.0);
+                                        take_read
+                                            .fillers_between(start, end)
+                                            .into_iter()
+                                            .map(|filler| filler.word.to_lowercase())
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                for mut group in caption_groups(&segment, &fillers) {
+                                    group.take = take.clone();
+                                    let (Some(at), Some(to)) = (
+                                        timeline_at(view, &media, &take, group.start),
+                                        timeline_at(view, &media, &take, group.end),
+                                    ) else {
+                                        continue;
+                                    };
+                                    if to - at < 0.25 {
+                                        continue;
+                                    }
+                                    groups.push((at, to, group));
                                 }
                             }
-                            let shown = shown.trim();
-                            if shown.is_empty() {
+                        }
+                        if groups.is_empty() {
+                            phase = 2;
+                            return None;
+                        }
+                        // Overlaps cannot happen on a clean transcript, but a
+                        // merged one can carry them: the later group waits
+                        // for the one before it to leave.
+                        let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                        let mut until = 0.0;
+                        for (at, to, group) in groups {
+                            if at < until - 0.05 {
                                 continue;
                             }
-                            // The word-confidence gate: a line most of
-                            // whose words the gate could not hear is not
-                            // a line to set heavy or accent - it is a
-                            // line to show plainly, so a misheard word
-                            // does not become the caption's loudest claim.
+                            until = to;
+                            kept.push((at, to, group));
+                        }
+                        kept.truncate(240);
+                        // The script's own font: the profile's language read
+                        // names the family a non-Latin script needs, and the
+                        // house face is only the fallback when the read did
+                        // not name one. A caption set in Hanken Grotesk over
+                        // a Devanagari or Cyrillic take renders as boxes.
+                        let font = voice
+                            .iter()
+                            .map(|read| read.take_wide.font.as_str())
+                            .find(|font| !font.is_empty())
+                            .map(bundled_font)
+                            .unwrap_or("Hanken Grotesk");
+                        let read = emotion_lines(log, &caption_emotion);
+                        let mut commands: Vec<Value> = Vec::new();
+                        placed_groups.clear();
+                        for (at, to, group) in kept {
+                            let take_of = group.take.clone();
+                            // The line the group sits in: its read decides
+                            // the group's look, exactly as it decided the
+                            // old whole-segment caption's.
+                            let line = emotion_at(&read, &take_of, group.start);
+                            let intensity = line.map(|line| line.intensity).unwrap_or(0.5);
+                            // The word-confidence gate: a group most of
+                            // whose words the gate could not hear is not a
+                            // group to set heavy or accent - it is a group
+                            // to show plainly, so a misheard word does not
+                            // become the caption's loudest claim.
+                            let take_read = voice_read_of(&voice, &take_of);
                             let unsure_share = take_read
                                 .map(|take_read| {
-                                    let flagged = take_read.unsure_between(start, end).len();
-                                    let total = take_read
-                                        .line_at(start)
-                                        .map(|line| line.text.split_whitespace().count())
-                                        .unwrap_or(0);
+                                    let flagged =
+                                        take_read.unsure_between(group.start, group.end).len();
+                                    let total = group.words.len();
                                     if total == 0 {
                                         0.0
                                     } else {
@@ -4245,123 +4925,173 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // lifted, so the caption carries weight even
                             // when the mood is mild. This is the one place
                             // the profile's per-line `relativeLufs` reaches
-                            // the picture; without it the reading was named
-                            // in the pacing entry and spent by nothing.
+                            // the picture.
                             let lifted = take_read
-                                .and_then(|take_read| take_read.line_at(start))
+                                .and_then(|take_read| take_read.line_at(group.start))
                                 .and_then(|line| line.relative_lu)
                                 .is_some_and(|lu| lu >= 3.0);
-                            // A caption that carries one of the take's own
-                            // stressed words takes the accent even on a
-                            // neutral line: the emphasis signal is the
-                            // delivery's, not the mood's, and the log
-                            // promises the caption stage spends it.
-                            let stressed = !gated
-                                && !emphasis.is_empty()
-                                && shown
-                                    .split_whitespace()
-                                    .map(|word| {
-                                        word.trim_matches(|c: char| !c.is_alphanumeric())
-                                            .to_lowercase()
-                                    })
-                                    .any(|word| emphasis.contains(&word));
+                            let performed = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(group.start)
+                                    .and_then(|line| take_read.performs(line))
+                            });
                             // A fast line is read at a glance, so its
                             // caption is set a touch smaller; a slow line
-                            // can carry a larger one. The measured delivery
-                            // is what decides, and an unmeasured line keeps
-                            // the house size rather than guessing.
-                            let size = match line.map(|line| line.pace.as_str()) {
+                            // can carry a larger one.
+                            let mut size = match line.map(|line| line.pace.as_str()) {
                                 Some("punchy") => 0.036,
                                 Some("slow") => 0.046,
                                 _ => 0.04,
                             };
-                            // The profile's own 6-semitone bar separates a
-                            // line *performed* from one *reported*. A
-                            // performed line has room for a heavier, larger
-                            // setting; a reported one is set plainly even
-                            // where its emotion is intense, because the
-                            // delivery is not carrying the feeling - the
-                            // words are. `None` (never measured) leaves the
-                            // house setting alone rather than guessing.
-                            let performed = take_read.and_then(|take_read| {
-                                take_read
-                                    .line_at(start)
-                                    .and_then(|line| take_read.performs(line))
-                            });
-                            let size = match performed {
-                                Some(true) if !gated => size + 0.003,
-                                _ => size,
-                            };
-                            captions.push(json!({
-                                "start": round3(at),
-                                "end": round3(to),
-                                "text": shown,
-                                "weight": if (intensity >= 0.65 || lifted) && !gated {
-                                    800
-                                } else if performed == Some(true) && !gated {
-                                    700
-                                } else {
-                                    600
-                                },
-                                "accent": (hot || stressed) && !gated,
-                                "size": size,
-                            }));
-                        }
-                    }
-                    if captions.is_empty() {
-                        return None;
-                    }
-                    // Overlaps cannot happen on a clean transcript, but a
-                    // merged one can carry them: the later caption waits
-                    // for the one before it to leave.
-                    let mut kept: Vec<Value> = Vec::new();
-                    let mut until = 0.0;
-                    for caption in captions {
-                        if caption["start"].as_f64().unwrap_or(0.0) < until - 0.05 {
-                            continue;
-                        }
-                        until = caption["end"].as_f64().unwrap_or(0.0);
-                        kept.push(caption);
-                    }
-                    kept.truncate(240);
-                    // The script's own font: the profile's language read
-                    // names the family a non-Latin script needs, and the
-                    // house face is only the fallback when the read did
-                    // not name one. A caption set in Hanken Grotesk over a
-                    // Devanagari or Cyrillic take renders as boxes.
-                    let font = voice
-                        .iter()
-                        .map(|read| read.take_wide.font.as_str())
-                        .find(|font| !font.is_empty())
-                        .map(bundled_font)
-                        .unwrap_or("Hanken Grotesk");
-                    let commands: Vec<Value> = kept
-                        .iter()
-                        .map(|caption| {
-                            let mut style = json!({
-                                "fontFamily": font,
-                                "fontSize": caption["size"],
-                                "fontWeight": caption["weight"],
-                                "content": caption["text"],
-                            });
-                            if caption["accent"] == json!(true) {
-                                style["color"] = json!("#ffd400");
+                            if performed == Some(true) && !gated {
+                                size += 0.003;
                             }
-                            json!({
+                            // The vertical band is narrower and sits higher
+                            // than the horizontal one: the words stay clear
+                            // of the platform UI a reel carries at the
+                            // bottom, and a touch larger because the frame
+                            // they sit in is narrower.
+                            let offset_y = if portrait { 0.22 } else { 0.35 };
+                            if portrait {
+                                size *= 1.12;
+                            }
+                            // The hook is the only part of a short cut a
+                            // viewer is guaranteed to see: its words are a
+                            // notch bigger, whatever the mood.
+                            if at < 3.0 {
+                                size += 0.006;
+                            }
+                            commands.push(json!({
                                 "op": "addTextClip",
                                 "trackId": null,
                                 "above": true,
-                                "start": caption["start"],
-                                "duration": round3(
-                                    caption["end"].as_f64().unwrap_or(0.0)
-                                        - caption["start"].as_f64().unwrap_or(0.0)
-                                ),
-                                "style": style,
-                                "offsetY": 0.35,
-                            })
+                                "start": round3(at),
+                                "duration": round3(to - at),
+                                "style": {
+                                    "fontFamily": font,
+                                    "fontSize": round3(size),
+                                    "fontWeight": if (intensity >= 0.65 || lifted)
+                                        && !gated
+                                    {
+                                        800
+                                    } else if performed == Some(true) && !gated {
+                                        700
+                                    } else {
+                                        600
+                                    },
+                                    "content": group.text,
+                                },
+                                "offsetY": offset_y,
+                            }));
+                            placed_groups.push((at, group));
+                        }
+                        if commands.is_empty() {
+                            phase = 2;
+                            return None;
+                        }
+                        phase = 1;
+                        return Some(ToolCall {
+                            tool: "edit_apply".to_owned(),
+                            arguments: json!({
+                                "path": caption_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        });
+                    }
+                    // The accent pass: the batch's own reply is a view
+                    // carrying the titles just placed, in order. The words
+                    // the delivery actually stressed - or, on a hot line
+                    // with no stressed word, the group's own longest word -
+                    // take the accent colour and a touch of scale, one
+                    // patch per word, through the title's own range
+                    // styling.
+                    let view = latest_view(log)?;
+                    let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|clip| clip["kind"] == json!("text"))
+                        .filter_map(|clip| {
+                            Some((clip["start"].as_f64()?, clip["id"].as_str()?.to_owned()))
                         })
                         .collect();
-                    issued = true;
+                    titles.sort_by(|left, right| left.0.total_cmp(&right.0));
+                    let emphasis = stressed_words(log, &caption_source);
+                    let read = emotion_lines(log, &caption_emotion);
+                    let voice = voice_reads(log, &caption_source);
+                    let mut commands: Vec<Value> = Vec::new();
+                    for (at, group) in &placed_groups {
+                        let Some((_, clip_id)) =
+                            titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
+                        else {
+                            continue;
+                        };
+                        let line = emotion_at(&read, &group.take, group.start);
+                        let take_read = voice_read_of(&voice, &group.take);
+                        let unsure_share = take_read
+                            .map(|take_read| {
+                                let flagged =
+                                    take_read.unsure_between(group.start, group.end).len();
+                                let total = group.words.len();
+                                if total == 0 {
+                                    0.0
+                                } else {
+                                    flagged as f64 / total as f64
+                                }
+                            })
+                            .unwrap_or(0.0);
+                        if unsure_share > 0.5 {
+                            continue;
+                        }
+                        let hot = line.is_some_and(|line| {
+                            matches!(line.temperature.as_str(), "hot" | "split")
+                        });
+                        // The words the profile's own emphasis read named:
+                        // the delivery's, not the mood's.
+                        let mut accents: Vec<&CaptionWord> = group
+                            .words
+                            .iter()
+                            .filter(|word| {
+                                let bare = word
+                                    .text
+                                    .trim_matches(|c: char| !c.is_alphanumeric())
+                                    .to_lowercase();
+                                !bare.is_empty() && emphasis.contains(&bare)
+                            })
+                            .collect();
+                        // A hot line with no stressed word still earns its
+                        // accent: the group's own longest word is the one
+                        // carrying the claim.
+                        if accents.is_empty() && hot {
+                            let longest = group
+                                .words
+                                .iter()
+                                .max_by_key(|word| word.text.chars().count());
+                            if let Some(longest) = longest {
+                                accents.push(longest);
+                            }
+                        }
+                        for word in accents {
+                            let chars = word.text.chars().count();
+                            if chars == 0 || word.at + chars > group.text.chars().count() {
+                                continue;
+                            }
+                            commands.push(json!({
+                                "op": "styleTextRange",
+                                "clipId": clip_id,
+                                "start": word.at,
+                                "end": word.at + chars,
+                                "patch": {
+                                    "color": "#ffd400",
+                                    "fontScale": 1.18,
+                                },
+                            }));
+                        }
+                    }
+                    phase = 2;
+                    if commands.is_empty() {
+                        return None;
+                    }
                     Some(ToolCall {
                         tool: "edit_apply".to_owned(),
                         arguments: json!({
@@ -4623,6 +5353,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The bed is ducked once; the duck's own reply is another
                 // timeline view, and the stage must not duck it again.
                 let mut ducked = false;
+                // The duck's own shape: after the base level lands, one
+                // batch of volume keys follows the voice's own envelope -
+                // down under every line, back up in the gaps that can
+                // hold it - and the stage ends when it has.
+                let mut shaped = false;
+                // The bed the duck landed on: its clip id, start and
+                // duration, kept for the shape's key positions.
+                let mut bed_span: Option<(String, f64, f64)> = None;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever. The reading's own forensic
@@ -4669,7 +5407,93 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return None;
                     }
                     if ducked {
-                        return None;
+                        // The duck's own shape, once: the voice's own
+                        // lines, mapped onto the timeline the bed sits
+                        // in, become volume keys - the bed drops under
+                        // the words and lifts back in the gaps that can
+                        // hold it, which is what a mix engineer rides by
+                        // hand and what one static level never was.
+                        if shaped {
+                            return None;
+                        }
+                        shaped = true;
+                        let (bed_id, bed_start, bed_len) = bed_span.clone()?;
+                        let view = latest_view(log)?;
+                        let media = media_paths(view);
+                        // The lines the voice measured, as timeline
+                        // spans, merged where they run together: a duck
+                        // that lifts between two words of one breath is
+                        // a stutter, not a shape.
+                        let mut spans: Vec<(f64, f64)> = Vec::new();
+                        for read in voice_reads(log, &music_source) {
+                            for line in &read.lines {
+                                if let (Some(at), Some(to)) = (
+                                    timeline_at(view, &media, &read.take, line.start),
+                                    timeline_at(view, &media, &read.take, line.end),
+                                ) && to > at
+                                {
+                                    spans.push((at, to));
+                                }
+                            }
+                        }
+                        spans.sort_by(|left, right| {
+                            left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
+                        });
+                        let mut merged: Vec<(f64, f64)> = Vec::new();
+                        for (at, to) in spans {
+                            match merged.last_mut() {
+                                Some((_, end)) if at <= *end + 0.35 => {
+                                    *end = (*end).max(to);
+                                }
+                                _ => merged.push((at, to)),
+                            }
+                        }
+                        const DUCK: f64 = 0.45;
+                        const MOST_KEYS: usize = 28;
+                        let mut commands: Vec<Value> = vec![json!({
+                            "op": "setClipKey", "clipId": bed_id,
+                            "property": "volume", "at": 0.0, "value": 1.0,
+                        })];
+                        let at_fraction =
+                            |moment: f64| ((moment - bed_start) / bed_len.max(0.1)).clamp(0.0, 1.0);
+                        for (at, to) in &merged {
+                            if commands.len() >= MOST_KEYS {
+                                break;
+                            }
+                            let duck_at = at_fraction(*at);
+                            let lift_at = at_fraction(to + 0.2);
+                            if duck_at > 0.0 && duck_at < 1.0 {
+                                commands.push(json!({
+                                    "op": "setClipKey", "clipId": bed_id,
+                                    "property": "volume",
+                                    "at": round3(duck_at), "value": DUCK,
+                                }));
+                            }
+                            // Lift only where the gap can hold it: the
+                            // next line more than half a second away, or
+                            // the bed's own end.
+                            let next = merged
+                                .iter()
+                                .find(|(next_at, _)| *next_at > to + 0.05)
+                                .map(|(next_at, _)| *next_at);
+                            if lift_at < 1.0 && next.is_none_or(|next| next > to + 0.6) {
+                                commands.push(json!({
+                                    "op": "setClipKey", "clipId": bed_id,
+                                    "property": "volume",
+                                    "at": round3(lift_at), "value": 1.0,
+                                }));
+                            }
+                        }
+                        if commands.len() < 2 {
+                            return None;
+                        }
+                        return Some(call(
+                            "edit_apply",
+                            json!({
+                                "path": music_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        ));
                     }
                     let base = *base.get_or_insert(log.len());
                     if log.len() == base {
@@ -4739,11 +5563,35 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         };
                     }
                     if last.get("tracks").is_some() {
-                        // A bgm_search reply: the first track is the bed.
-                        let id = last
-                            .pointer("/tracks/0/id")
-                            .and_then(|id| id.as_str())
-                            .map(str::to_owned);
+                        // A bgm_search reply: the bed is the track that
+                        // actually fits the cut, not the shelf's first
+                        // answer. A track shorter than the runtime leaves
+                        // the ending silent; among the ones that cover,
+                        // the shortest wastes the least; when none
+                        // covers, the longest covers the most. A track
+                        // whose duration the census could not measure is
+                        // not guessed at.
+                        let runtime = latest_view(log)
+                            .and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            })
+                            .unwrap_or(0.0);
+                        let tracks = last["tracks"].as_array().cloned().unwrap_or_default();
+                        let id = best_bed(&tracks, runtime)
+                            .and_then(|track| track["id"].as_str().map(str::to_owned))
+                            .or_else(|| {
+                                last.pointer("/tracks/0/id")
+                                    .and_then(|id| id.as_str())
+                                    .map(str::to_owned)
+                            });
                         return id.map(|id| {
                             call(
                                 "bgm_import",
@@ -4778,6 +5626,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             });
                         return bed.map(|bed| {
                             ducked = true;
+                            bed_span = Some((
+                                bed["id"].as_str().unwrap_or_default().to_owned(),
+                                bed["start"].as_f64().unwrap_or(0.0),
+                                bed["duration"].as_f64().unwrap_or(0.0),
+                            ));
                             // The bed sits at the level the piece's own
                             // act profile sets: a payoff may carry a
                             // louder bed than a quiet setup, and the
@@ -4908,9 +5761,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .map(str::to_owned);
                         if let Some(id) = id {
                             placed += 1;
+                            // The manifest's own `syncAt` says how far
+                            // into the file the sound lands its peak:
+                            // the add is offset by exactly that, so the
+                            // peak meets the moment the emphasis
+                            // measured - not the file's first byte.
+                            let sync = log
+                                .last()
+                                .and_then(|reply| reply.pointer("/sounds/0/syncAt"))
+                                .and_then(|sync| sync.as_f64())
+                                .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                                .unwrap_or(0.0);
                             return Some(call(
                                 "sounds_add",
-                                json!({ "path": sfx_project, "id": id, "start": round3(at) }),
+                                json!({
+                                    "path": sfx_project,
+                                    "id": id,
+                                    "start": round3((at - sync).max(0.0)),
+                                }),
                             ));
                         }
                         // The shelf answered with nothing for this peak:
@@ -4944,7 +5812,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let emotion = line
                         .map(|line| line.emotion.clone())
                         .unwrap_or_else(|| "neutral".to_owned());
-                    let queries = sfx_queries_for_line(line, &emotion);
+                    // The hook's own accent is not the mood's business:
+                    // the first three seconds are the only part of a
+                    // short cut a viewer is guaranteed to see, so a peak
+                    // that lands there is shopped for entrance energy -
+                    // an impact, a riser, a whoosh - whatever the line's
+                    // mood would otherwise have asked for.
+                    let hook = at < 3.0;
+                    let queries = if hook {
+                        vec!["impact", "riser", "whoosh"]
+                    } else {
+                        sfx_queries_for_line(line, &emotion)
+                    };
                     Some(call(
                         "sounds_search",
                         json!({
@@ -5299,30 +6178,72 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     the bar is a flaw the edit ships with - recorded, yellow - not a
     //     run thrown away after the render already landed. The gate is
     //     the craft bar the headless runner ships on (7.0).
+    //
+    //     The final critique carries the same measured brief and the same
+    //     autoSetup the preview's did: the shipped file is judged against
+    //     the story its own voice measured, not the pictures alone, and a
+    //     machine with no vision model yet says so instead of answering
+    //     from pixels and calling it a critique.
+    let watch_export = source.export.clone();
+    let watch_project = source.project.clone();
+    let watch_sheet = source.sheet.clone();
     steps.push(
-        StageStep::run(
+        DerivedStep::react(
             Stage::Watch,
-            vec![
-                call(
-                    "watch_render",
-                    json!({
-                        "path": source.export,
-                        "project": source.project,
-                        "out": source.sheet,
-                        "audio": true,
-                    }),
-                ),
-                call(
-                    "craft_critique",
-                    json!({
-                        "pngPath": std::path::Path::new(&source.project)
-                            .join(&source.sheet)
-                            .display()
-                            .to_string(),
-                        "project": source.project,
-                    }),
-                ),
-            ],
+            Box::new({
+                let watch_project = watch_project.clone();
+                let watch_sheet = watch_sheet.clone();
+                let mut phase = 0u8;
+                move |log| {
+                    if phase == 0 {
+                        phase = 1;
+                        return Some(call(
+                            "watch_render",
+                            json!({
+                                "path": watch_export,
+                                "project": watch_project,
+                                "out": watch_sheet,
+                                "audio": true,
+                            }),
+                        ));
+                    }
+                    if phase == 1 {
+                        phase = 2;
+                        // The sheet names where it kept its own pixels;
+                        // that is the path the critic reads. The joined
+                        // name is the fallback when the reply carried
+                        // none.
+                        let png = log
+                            .iter()
+                            .rev()
+                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
+                            .filter(|png| !png.trim().is_empty())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| {
+                                std::path::Path::new(&watch_project)
+                                    .join(&watch_sheet)
+                                    .display()
+                                    .to_string()
+                            });
+                        let measured = signal_brief(log);
+                        let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
+                            measured
+                        } else {
+                            json!({})
+                        };
+                        return Some(call(
+                            "craft_critique",
+                            json!({
+                                "pngPath": png,
+                                "project": watch_project,
+                                "brief": brief,
+                                "autoSetup": true,
+                            }),
+                        ));
+                    }
+                    None
+                }
+            }),
         )
         .warn()
         .gate(ReplyGate::AtLeast {
@@ -5521,18 +6442,14 @@ mod tests {
         // The export is waited on by its project folder - the job's name
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
-        // write paths.
+        // write paths. The watch itself is derived now: the final
+        // critique carries the measured brief the preview's did.
         let export = program.steps[14].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
         assert_eq!(export.calls[1].tool, "export_wait");
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        let watch = program.steps[16].as_static();
-        assert_eq!(watch.calls[0].arguments["out"], "auto-edit-sheet.png");
-        assert_eq!(
-            watch.calls[1].arguments["pngPath"],
-            "/edits/Reel edit/auto-edit-sheet.png"
-        );
+        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
 
         // The verify's gates: the loudness target, and the words (F-04) -
         // on the derived step that reads the timeline as it ended up.
@@ -6921,7 +7838,10 @@ mod tests {
             let transcript = json!({
                 "segments": [{
                     "start": 0.5, "end": 1.5, "text": "hello there",
-                    "words": [{ "start": 0.5, "end": 1.5 }],
+                    "words": [
+                        { "text": "hello", "start": 0.5, "end": 0.9 },
+                        { "text": "there", "start": 0.95, "end": 1.5 },
+                    ],
                 }],
             });
             let mut prosody = json!({});
@@ -7725,7 +8645,10 @@ mod tests {
         let transcript = json!({
             "segments": [{
                 "start": 0.5, "end": 1.5, "text": "hello there",
-                "words": [{ "start": 0.5, "end": 1.5 }],
+                "words": [
+                        { "text": "hello", "start": 0.5, "end": 0.9 },
+                        { "text": "there", "start": 0.95, "end": 1.5 },
+                    ],
             }],
         });
         let mut log = vec![
@@ -7741,6 +8664,135 @@ mod tests {
             None,
             "the captions are issued once"
         );
+    }
+
+    /// The caption groups are cut on the delivery's own seams: the
+    /// sentence's punctuation closes a group, a measured breath gap
+    /// closes it, four words is the cap - and the safe-remove fillers
+    /// never reach the screen at all. The character offsets the accent
+    /// pass patches are the group's own text's, counted in characters.
+    #[test]
+    fn the_caption_groups_are_cut_on_the_delivery_s_own_seams() {
+        let word =
+            |text: &str, start: f64, end: f64| json!({ "text": text, "start": start, "end": end });
+        let segment = json!({
+            "start": 0.0, "end": 10.0, "text": "one two. three um four five six seven",
+            "words": [
+                word("one", 0.0, 0.3), word("two.", 0.35, 0.6),
+                // The breath gap: 1.4 s of silence the recogniser measured.
+                word("three", 2.0, 2.3), word("um", 2.35, 2.5),
+                word("four", 2.55, 2.8), word("five", 2.85, 3.1),
+                word("six", 3.15, 3.4), word("seven", 3.45, 3.7),
+            ],
+        });
+        let groups = caption_groups(&segment, &["um".to_owned()]);
+        let texts: Vec<&str> = groups.iter().map(|group| group.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["one two.", "three four five six", "seven"],
+            "punctuation closes, four words is the cap, the filler is dropped"
+        );
+        // The breath gap closed the first group before `three`.
+        assert_eq!(groups[0].start, 0.0);
+        assert_eq!(groups[0].end, 0.6);
+        assert_eq!(groups[1].start, 2.0);
+        // The character offsets are the group's own: `three` holds 0..5,
+        // `four` 6..10, in the group's text.
+        assert_eq!(groups[1].words[0].text, "three");
+        assert_eq!(groups[1].words[0].at, 0);
+        assert_eq!(groups[1].words[1].text, "four");
+        assert_eq!(groups[1].words[1].at, 6);
+    }
+
+    /// The accent pass styles the words the delivery actually stressed -
+    /// one `styleTextRange` per word, on the title the batch just placed -
+    /// and a hot line with no stressed word accents its own longest
+    /// word instead. A third ask is the stage's end.
+    #[test]
+    fn the_accent_pass_styles_the_stressed_words() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(captions) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "captions")
+            .expect("the program has a captions stage")
+        else {
+            panic!("the captions stage is derived");
+        };
+        let view = json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [{
+                "start": 0.5, "end": 1.5, "text": "hello there",
+                "words": [
+                    { "text": "hello", "start": 0.5, "end": 0.9 },
+                    { "text": "there", "start": 0.95, "end": 1.5 },
+                ],
+            }],
+        });
+        let signals = json!({
+            "audio": { "path": take },
+            "lines": [{
+                "start": 0.5, "end": 1.5,
+                "prosody": { "emphasisWords": [
+                    { "t": 0.6, "strength": 0.8, "wordIndex": 0, "wordText": "hello" },
+                ]},
+            }],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+            signals,
+        ];
+        let first = (captions.next)(log.as_slice()).expect("the groups are placed");
+        assert_eq!(first.tool, "edit_apply");
+        assert_eq!(
+            first.arguments["command"]["commands"][0]["style"]["content"], "hello there",
+            "the group's own words are the caption"
+        );
+        // The batch's reply: a view carrying the title the run placed.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "title-1", "kind": "text", "start": 0.5, "duration": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        }));
+        let accents = (captions.next)(log.as_slice()).expect("the accent pass runs");
+        assert_eq!(accents.tool, "edit_apply");
+        let commands = accents.arguments["command"]["commands"]
+            .as_array()
+            .expect("one undoable accent batch");
+        assert_eq!(commands.len(), 1, "one patch per stressed word");
+        assert_eq!(commands[0]["op"], "styleTextRange");
+        assert_eq!(commands[0]["clipId"], "title-1");
+        assert_eq!(commands[0]["start"], 0, "`hello` begins the group's text");
+        assert_eq!(commands[0]["end"], 5, "`hello` is five characters");
+        assert_eq!(commands[0]["patch"]["color"], "#ffd400");
+        // A third ask is the stage's end, whatever the log grew by.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [] },
+            "media": [],
+        }));
+        assert_eq!((captions.next)(log.as_slice()), None);
     }
 
     /// A line the speaker lifted above the take's own level is set
@@ -7781,7 +8833,10 @@ mod tests {
             let transcript = json!({
                 "segments": [{
                     "start": 0.5, "end": 1.5, "text": "hello there",
-                    "words": [{ "start": 0.5, "end": 1.5 }],
+                    "words": [
+                        { "text": "hello", "start": 0.5, "end": 0.9 },
+                        { "text": "there", "start": 0.95, "end": 1.5 },
+                    ],
                 }],
             });
             let log = vec![
@@ -8037,12 +9092,12 @@ mod tests {
         assert_eq!(slots[0].query, "harbour");
     }
 
-    /// The stock page is read for the clip that fits the slot, not the
-    /// clip the shelf happened to rank first: a vertical project gets a
-    /// vertical clip, a clip too short to cover the hole is not a
+    /// The stock page is read for the clips that fit the slot, not the
+    /// clips the shelf happened to rank first: a vertical project gets
+    /// vertical clips, a clip too short to cover the hole is not a
     /// candidate, and a clip already shopped is never shopped again.
     #[test]
-    fn the_best_hit_fits_the_slot_rather_than_the_first_result() {
+    fn the_fitting_hits_fit_the_slot_rather_than_the_first_results() {
         let hit = |id: &str, w: f64, h: f64, seconds: f64| {
             json!({
                 "id": id, "provider": "pexels", "url": format!("https://x/{id}"),
@@ -8058,51 +9113,181 @@ mod tests {
             // Vertical but only 1.5 s: cannot cover the hole.
             hit("c", 1080.0, 1920.0, 1.5),
         ];
-        let picked = best_hit(&page, 4.0, "9:16", &[]).expect("a vertical clip fits");
-        assert_eq!(picked["id"], "b");
+        let picked = fitting_hits(&page, 4.0, "9:16", &[], 3);
+        assert_eq!(
+            picked
+                .iter()
+                .map(|hit| hit["id"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("b")],
+            "only the vertical clip that covers the hole is looked at"
+        );
 
         // In a horizontal project the landscape clip is the right one.
-        let picked = best_hit(&page, 4.0, "16:9", &[]).expect("a landscape clip fits");
-        assert_eq!(picked["id"], "a");
+        let picked = fitting_hits(&page, 4.0, "16:9", &[], 3);
+        assert_eq!(
+            picked
+                .iter()
+                .map(|hit| hit["id"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("a")],
+            "the landscape clip is the one a horizontal frame looks at"
+        );
 
         // Missing duration is not evidence that a hit can cover the hole.
         let unmeasured = hit("unknown-duration", 1080.0, 1920.0, 0.0);
         assert!(
-            best_hit(&[unmeasured], 4.0, "9:16", &[]).is_none(),
+            fitting_hits(&[unmeasured], 4.0, "9:16", &[], 3).is_empty(),
             "a hit with no measured duration cannot be promised as full coverage"
         );
 
         // A clip already shopped is not a candidate: the next gap takes
-        // the next best fit rather than repeating the shot.
-        let picked = best_hit(&page, 4.0, "9:16", &["b".to_owned()])
-            .expect("a clip that has not been used fits");
-        assert_ne!(picked["id"], "b");
-        assert_ne!(
-            picked["id"], "c",
-            "the short clip still cannot cover the hole"
+        // the next fit rather than repeating the shot. Unlike the old
+        // single-pick, an orientation-mismatched clip is not a last
+        // resort here - the sheet only looks at clips the frame will not
+        // have to crop against their grain.
+        let picked = fitting_hits(&page, 4.0, "9:16", &["b".to_owned()], 3);
+        assert!(
+            picked.is_empty(),
+            "a landscape clip is not looked at for a vertical frame"
         );
 
-        // Nothing left that fits the frame: the best remaining candidate is
-        // a landscape clip that will be cropped to fill. Orientation is a
-        // preference, not a veto - a cropped shot still beats a hole in the
-        // narration - so it is returned last rather than refused.
-        let picked = best_hit(&page, 4.0, "9:16", &["b".to_owned(), "c".to_owned()])
-            .expect("the landscape clip is the last resort");
-        assert_eq!(picked["id"], "a");
-
         // Only a page with no licensable clip at all fills nothing.
-        assert!(best_hit(&[], 4.0, "9:16", &[]).is_none());
+        assert!(fitting_hits(&[], 4.0, "9:16", &[], 3).is_empty());
     }
 
     /// A hit without the licence metadata the import gate needs is never
     /// a candidate, whatever its shape.
     #[test]
-    fn a_hit_without_a_licence_is_never_the_best_hit() {
+    fn a_hit_without_a_licence_is_never_looked_at() {
         let page = vec![json!({
             "id": "x", "provider": "pexels", "url": "https://x/x",
             "width": 1080.0, "height": 1920.0, "seconds": 10.0,
         })];
-        assert!(best_hit(&page, 3.0, "9:16", &[]).is_none());
+        assert!(fitting_hits(&page, 3.0, "9:16", &[], 3).is_empty());
+    }
+
+    /// The sheet's own measurements reorder the page: chroma, contrast
+    /// and detail for, black frames, blown ones, letterboxing and visual
+    /// duplicates against - and a candidate the sheet never measured
+    /// keeps its shelf order behind every measured one.
+    #[test]
+    fn the_visual_score_ranks_what_the_sheet_measured() {
+        let candidate = |id: &str, tile: Value| StockCandidate {
+            provider: "pexels".to_owned(),
+            id: id.to_owned(),
+            url: format!("https://x/{id}"),
+            local_path: format!("/cache/{id}.mp4"),
+            width: 1080.0,
+            height: 1920.0,
+            tile,
+        };
+        let vivid = json!({
+            "luma": 130.0, "contrast": 55.0, "detail": 6.0,
+            "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+            "saturation": 0.5, "warmth": 0.3,
+            "hash": "aaaa1111aaaa1111",
+        });
+        let grey = json!({
+            "luma": 128.0, "contrast": 20.0, "detail": 1.0,
+            "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+            "saturation": 0.05, "warmth": 0.0,
+            "hash": "bbbb2222bbbb2222",
+        });
+        let black = json!({
+            "luma": 5.0, "contrast": 3.0, "detail": 0.0,
+            "blackFraction": 0.8, "blownFraction": 0.0, "barRatio": 0.0,
+            "saturation": 0.1, "warmth": -0.2,
+            "hash": "cccc3333cccc3333",
+        });
+        let unmeasured = candidate("unmeasured", Value::Null);
+        let mut ranked = [
+            candidate("grey", grey.clone()),
+            candidate("black", black),
+            candidate("vivid", vivid.clone()),
+            unmeasured,
+        ];
+        ranked.sort_by(|left, right| {
+            let left = left.visual_score(&[]);
+            let right = right.visual_score(&[]);
+            match (left, right) {
+                (Some(left), Some(right)) => right.total_cmp(&left),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+        let ids: Vec<&str> = ranked.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["vivid", "grey", "unmeasured", "black"],
+            "the vivid frame wins, the black one is refused, and the unmeasured keeps shelf order behind the measured"
+        );
+
+        // The warmth the sheet measured is the continuity gate's own
+        // scale, and an unmeasured warmth is not a neutral zero.
+        assert_eq!(ranked[0].warmth(), Some(0.3));
+        assert_eq!(ranked[2].warmth(), None);
+
+        // A frame the run already placed - same hash, different id - is
+        // scored against, not refused: it stays a last resort.
+        let duplicate = candidate("duplicate", {
+            let mut tile = vivid.clone();
+            tile["hash"] = json!("aaaa1111aaaa1111");
+            tile
+        });
+        let fresh = candidate("fresh", {
+            let mut tile = vivid.clone();
+            tile["hash"] = json!("dddd4444dddd4444");
+            tile
+        });
+        let used = vec!["aaaa1111aaaa1111".to_owned()];
+        let duplicate_score = duplicate
+            .visual_score(&used)
+            .expect("a duplicate is still scored");
+        let fresh_score = fresh.visual_score(&used).expect("a fresh frame is scored");
+        assert!(
+            fresh_score > duplicate_score,
+            "the visually duplicate frame ranks below the fresh one"
+        );
+    }
+
+    /// The crop hint's offsets are spent only on the axis the fill
+    /// actually crops, and only when the source is at least as wide (or
+    /// tall) as the square the hint's arithmetic assumes.
+    #[test]
+    fn the_reframe_follows_the_subject_only_where_the_fill_crops() {
+        let tile = |x: f64, y: f64| {
+            json!({
+                "cropHint": { "x": x, "y": y },
+                "reframeHint": { "clipTransform": { "offsetX": x, "offsetY": y } },
+            })
+        };
+        // A landscape source into a portrait frame: the horizontal hint
+        // is spent.
+        assert_eq!(
+            reframe_offsets(&tile(0.2, -0.1), "9:16", 1920.0, 1080.0),
+            Some((0.2, 0.0))
+        );
+        // A portrait source into a portrait frame: nothing crops
+        // horizontally, and the vertical hint is not the fill's to spend.
+        assert_eq!(
+            reframe_offsets(&tile(0.2, -0.1), "9:16", 1080.0, 1920.0),
+            None
+        );
+        // A portrait source into a landscape frame: the vertical hint is
+        // spent.
+        assert_eq!(
+            reframe_offsets(&tile(0.2, -0.15), "16:9", 1080.0, 1920.0),
+            Some((0.0, -0.15))
+        );
+        // Dust-small offsets are not moves.
+        assert_eq!(
+            reframe_offsets(&tile(0.01, 0.0), "9:16", 1920.0, 1080.0),
+            None
+        );
+        // No hint at all: nothing to spend.
+        assert_eq!(reframe_offsets(&Value::Null, "9:16", 1920.0, 1080.0), None);
     }
 
     /// The gather stage uses a licensed live shelf and never weakens the
@@ -8135,6 +9320,7 @@ mod tests {
         };
 
         let view = json!({
+            "settings": { "width": 1080, "height": 1920 },
             "timeline": { "clips": [
                 {
                     "id": "voice",
@@ -8162,6 +9348,10 @@ mod tests {
         assert_eq!(search.tool, "stock_search");
         assert_eq!(search.arguments["provider"], "pexels");
         assert_eq!(search.arguments["query"], "city skyline at dusk tonight");
+        assert_eq!(
+            search.arguments["orientation"], "vertical",
+            "the shelf is shopped for the frame the project actually is"
+        );
         assert!(search.arguments.get("monetized").is_none());
 
         log.push(json!({
@@ -8177,7 +9367,38 @@ mod tests {
                 "seconds": 10.0
             }]
         }));
-        let import = (gather.next)(&log).expect("the licensed hit is imported");
+        // The licensed hit is looked at before it is chosen: fetched,
+        // then measured by a contact sheet.
+        let fetch = (gather.next)(&log).expect("the licensed hit is fetched");
+        assert_eq!(fetch.tool, "stock_fetch");
+        assert_eq!(fetch.arguments["provider"], "pexels");
+        assert_eq!(fetch.arguments["id"], "2499611");
+        log.push(json!({
+            "id": "2499611", "provider": "pexels",
+            "path": "/cache/stock/pexels/2499611.mp4", "bytes": 8_000_000,
+        }));
+        let sheet = (gather.next)(&log).expect("the fetched clip is looked at");
+        assert_eq!(sheet.tool, "stock_contact_sheet");
+        assert_eq!(
+            sheet.arguments["paths"],
+            json!(["/cache/stock/pexels/2499611.mp4"]),
+            "the sheet sees the cached file"
+        );
+        assert_eq!(sheet.arguments["autoSetup"], false);
+        log.push(json!({
+            "pngPath": "/cache/sense/sheet-1.png",
+            "tiles": [{
+                "index": 0,
+                "localPath": "/cache/stock/pexels/2499611.mp4",
+                "luma": 128.0, "contrast": 40.0, "detail": 4.0,
+                "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+                "saturation": 0.4, "warmth": 0.2,
+                "hash": "ab12cd34ef56ab12",
+                "cropHint": { "x": 0.0, "y": 0.0 },
+                "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
+            }],
+        }));
+        let import = (gather.next)(&log).expect("the looked-at hit is imported");
         assert_eq!(import.tool, "stock_import");
         assert_eq!(import.arguments["provider"], "pexels");
         assert_eq!(import.arguments["id"], "2499611");
@@ -8540,8 +9761,41 @@ mod tests {
             let second = alternate_transition(mood);
             assert_ne!(first, second, "{mood} has a distinct alternate");
         }
-        assert_eq!(transition_for_emotion("joy"), "concat.cross-pop");
-        assert_eq!(alternate_transition("joy"), "concat.dissolve");
+        assert_eq!(transition_for_emotion("joy"), "concat.zoom-blur-punch");
+        assert_eq!(alternate_transition("joy"), "concat.cross-pop");
+        // Every transition the program can name is a package the effects
+        // catalogue actually ships: a look-up id is a transition that
+        // silently never applies.
+        let catalogue =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../concat-effects/packages");
+        for id in [
+            transition_for_emotion("joy"),
+            transition_for_emotion("surprise"),
+            transition_for_emotion("anger"),
+            transition_for_emotion("fear"),
+            transition_for_emotion("sadness"),
+            transition_for_emotion("disgust"),
+            transition_for_emotion("neutral"),
+            alternate_transition("joy"),
+            alternate_transition("surprise"),
+            alternate_transition("anger"),
+            alternate_transition("fear"),
+            alternate_transition("sadness"),
+            alternate_transition("disgust"),
+            alternate_transition("neutral"),
+            "concat.whip-pan",
+            "concat.slice-social",
+            "concat.glitch-social",
+            "concat.snap-zoom",
+            "concat.flash-social",
+            "concat.cross-pop",
+            "concat.dissolve",
+        ] {
+            assert!(
+                catalogue.join(id).is_dir(),
+                "the transition `{id}` is not a package the catalogue ships"
+            );
+        }
     }
 
     /// The accents are shopped by the read's own register: a line the

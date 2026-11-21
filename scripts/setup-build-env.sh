@@ -73,9 +73,13 @@ esac
 
 # The version a deps.lock URL carries, so no second copy of it lives
 # here: the row's own filename names the extract. deps.lock is the one
-# source of truth - bump it there and this script follows.
+# source of truth - bump it there and this script follows. A SourceForge
+# mirror URL (the ONNX rows since the 1.30.1 re-pin) ends in /download -
+# the archive name is the segment before that suffix, so it is stripped
+# before basename runs.
 version_from_url() {
-  basename "$1" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
+  local path=${1%/download}
+  basename "$path" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
 }
 
 ort_url=$("$fetch" --url "$ort_row")

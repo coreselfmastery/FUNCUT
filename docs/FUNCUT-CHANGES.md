@@ -2571,6 +2571,71 @@ also asserts that `decides` names `bgm` for `forensic`. The suite went
 from 130 to 137 passing.
 
 
+## 57. The family-level guard was not enough: a field can still go unspent
+
+Section 56 fixed the families the program named but never spent. It did
+not fix the layer below them, and the next audit found the gap: a family
+can be listed as read, be named in the source, and still have its most
+useful field dropped on the floor. `prosody` was in the read list, and
+`prosody.pitchSlopeSemitonesPerSec` was being spent - but the profile's
+other prosody reading, `pitchRangeSemitones`, was parsed into
+`LineRead.pitch_range` and spent by nothing at all. `VoiceRead::performs`
+was written to answer it, documented the profile's own 6-semitone bar,
+and had no caller. So a whispered confession and a read-out of a phone
+number were set with identical type.
+
+**The pitch range now sets the caption.** A line whose range clears the
+profile's 6-semitone bar is *performed*; below it, the line is
+*reported*. A performed line takes weight 700 and a slightly larger size,
+on the read's own theory - the delivery is carrying the feeling, so the
+type may too. A reported line keeps the house setting even where its
+emotion is intense, because there the words are doing the work. A line
+whose range was never measured is `None`, which leaves the setting alone
+rather than guessing, and a gated line (most of its words below the
+confidence floor) stays plain so a misheard word never becomes the
+loudest claim on screen. The caption entry logs `prosody.range`, so the
+log and the type agree about why the line is set the way it is.
+
+**The profile's own account of its gaps now reaches the brief.**
+`degradations` - the producer's list of what it could not measure, in its
+words: `ffmpeg absent: loudness unmeasured`, `silencedetect absent:
+pauses unclassified` - was parsed into `VoiceRead.degradations` and read
+by nothing. A family missing from `measured` could be missing because the
+take had none or because the tool was absent, and no consumer could tell
+the two apart. The digest now carries `notMeasured`, deduplicated across
+takes and in the profile's own order, so the gap is stated rather than
+silently absent.
+
+**A field-level guard, because the family-level one cannot see this.**
+`every_reading_inside_a_family_has_a_consumer` scans every `pub field:`
+the reader declares and requires each to be named by the program, read
+through a `voice_read` helper the program calls, or listed with the
+reason the edit is better without it. It found five more on its first
+run (`noise_floor_dbfs`, `noise_type`, `rhythm_layers`, `period_sec`,
+`unsure_words`), all genuinely spent through helpers - `wants_bed`,
+`noise_character`, `pulse_strength`, `unsure_between` - so the guard now
+follows the helper to its caller. The four readings that remain unspent
+are named with a reason: `spectral_centroid_hz`, `voicing_rate`,
+`dynamic_range_db` and `cut_rule`, each restating something another
+reading already decides. The scan asserts it found more than thirty
+fields, so a drift in the parse fails the test instead of passing it
+vacuously.
+
+The suite went from 137 to 140 passing: `a_performed_line_is_set_heavier_than_a_reported_one`
+pins wide, narrow and never-measured; `the_brief_says_what_the_profile_could_not_measure`
+pins the deduplicated gap list; and the guard above fails when a new
+field is added to the reader and spent by nothing.
+
+**`fillers` named no decision.** The vocabulary and the decision map were
+two lists kept in step by hand, and they had drifted: `fillers` is
+stripped from every caption the plan sets, yet `decision_for` had no
+entry for it, so `decides` never told the critic what it drove. It maps
+to `caption` now, and
+`every_vocabulary_family_names_the_decision_it_informs` holds the two
+lists together: every family the vocabulary carries must name a decision
+the log's own gate accepts, or be listed as deliberately unspent with a
+reason. The suite is 141.
+
 ## 58. Keep the AI Director handoff locked through post-export acceptance
 
 The AI Director process and its independent export acceptance are two
@@ -2742,3 +2807,25 @@ creation is unchanged.
 
 Committed to PR #182; filesystem failure injection and application tests
 were not run in this session.
+
+
+## 66. A partial program is not held to the whole edit's acceptance
+
+The runner had begun forcing `CompletedWithWarnings` whenever the
+derived receipt was not accepted, for every program. That is right for
+the AUTO EDIT spine, whose program is the whole edit and whose receipt
+is the one the pane reads - but it also rewrote the outcome of the
+runner's own partial programs: a resumed run, a two-stage probe, a
+cancelled run. Thirteen mechanics tests failed because a program that
+never claimed the whole edit was judged against it.
+
+`EditProgram` now carries `enforce_acceptance`, false by default and set
+by `enforcing_acceptance()` only in the AUTO EDIT program builder. The
+spine still cannot report a clean completion while a required gate is
+rejected or unmeasured; a partial program records the same receipt
+without changing its outcome.
+
+The acceptance sentence is now folded into the warnings before the
+terminal progress detail is chosen, so a warned completion no longer
+announces "the export is complete" in the event stream. The regression
+test reads both the final state and the last event.

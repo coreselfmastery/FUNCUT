@@ -2485,7 +2485,7 @@ inspectable rather than a toast that faded.
 could not have answered that check: `motion_probe` was left off the
 director's allowlist, and it is the one tool that proves an export is a
 readable file. It is now on the default surface - 104 of the 113 tools -
-and `DIRECTOR_REQUIRED` names the thirteen calls a run cannot finish
+and `DIRECTOR_REQUIRED` names the twenty calls a run cannot finish
 without. `director_ready` refuses the handover before anything is cut when
 the server's surface does not serve one of them, because a run told to
 verify its export meets a refusal mid-edit otherwise, and the edits it has
@@ -2570,6 +2570,7 @@ Three tests pin the shape: `the_brief_carries_the_numbers_at_the_paths_the_profi
 also asserts that `decides` names `bgm` for `forensic`. The suite went
 from 130 to 137 passing.
 
+
 ## 57. The family-level guard was not enough: a field can still go unspent
 
 Section 56 fixed the families the program named but never spent. It did
@@ -2634,3 +2635,197 @@ to `caption` now, and
 lists together: every family the vocabulary carries must name a decision
 the log's own gate accepts, or be listed as deliberately unspent with a
 reason. The suite is 141.
+
+## 58. Keep the AI Director handoff locked through post-export acceptance
+
+The AI Director process and its independent export acceptance are two
+parts of one AUTO EDIT run. The process can exit successfully while the
+acceptance worker is still probing the export, measuring loudness,
+rendering the contact sheet, critiquing the frames and verifying the
+narration against the sibling's voiceover mapping.
+
+Previously the pane marked the run idle as soon as Forge exited. During
+the acceptance worker's window, a second AUTO EDIT or Start Forge run
+could replace the pane's active project/source. The first run's delayed
+acceptance callback then read the pane's *new* project path and could
+write its receipt beside, or open, the wrong sibling.
+
+The pane now has a distinct `checking` state. Both editing entry points
+treat running **or checking** as busy. The lock is released only when the
+acceptance receipt arrives or the acceptance backend fails. Missing
+project/export metadata and backend-open failures both release the lock
+and surface an unaccepted result, rather than leaving the pane stuck.
+
+A regression test pins all four states of the busy predicate. The test
+was added in this change; it was not executed in this session.
+
+
+## 59. Retry the AI Director on the sibling it already edited
+
+The deterministic runner already resumes a failed run from its completed
+stages. The AI Director has no deterministic Runner, so the old retry
+guard did not match it: after a Director failure or an unaccepted export,
+the next button press fell through to `build_voiceover_sibling` and made
+a new project. That contradicted the UI's promise that the existing
+sibling was retained for retry, and could discard the prior Director's
+work.
+
+The AI path now has its own retry branch. When the previous Director
+attempt left a valid sibling, the next press re-launches Forge against
+that same project and keeps its source mapping and export destination.
+The retry is allowed only when the project document, voiceover mapping,
+all copied source takes and export directory still exist. If any of
+those prerequisites is missing, the code does not pretend it can safely
+resume that sibling.
+
+The regression test creates a real temporary sibling layout and verifies
+that a complete handoff is retryable, while a missing mapping or source
+take is not. The test was added in this change; it was not executed in
+this session.
+
+
+## 60. Do not show 100% before the AI export is accepted
+
+The Director's twelfth phase is export, but AUTO EDIT still has an
+independent acceptance pass after Forge exits: revalidate the saved plan,
+probe the export, measure the mix, inspect the exported contact sheet,
+critique it, and verify the narration mapping. The progress bar used to
+jump to 100% as soon as Forge exited, before any of those gates answered.
+
+The AI path now holds at 98% while acceptance is pending and reaches
+100% only when the required gates return an accepted receipt. A rejected
+or incomplete export remains visibly short of completion. A small
+regression test pins both values. It was added but not executed in this
+session.
+
+
+## 61. Acceptance must not pass on partial or unavailable narration evidence
+
+The first acceptance reader treated a malformed voiceover mapping as an
+empty list of takes, and filtered malformed individual segments out of an
+otherwise valid list. That made a partial comparison possible: the
+acceptance pass could compare only the segments it happened to parse and
+still report a passing words gate. Missing numeric fields were also
+silently replaced with start/source-in zero and playback speed one.
+
+The mapping reader now validates the complete segment list before it
+builds any expected-take rows. Every segment must have a non-empty take
+path, finite non-negative timeline and source-in positions, and a finite
+positive playback speed. A supplied source-out must be finite and after
+source-in. One malformed segment invalidates the whole mapping; no
+partial verification is sent to the emotion verifier. The missing words
+gate stays skipped and the receipt records the reason.
+
+Acceptance tool failures are now different from measured failures. A
+tool refusal, unavailable tool, or cancelled call is omitted from the
+observed evidence, so its required gate is **skipped/incomplete** rather
+than marked as a measured failure. A real reply that reports a bad result
+still fails its gate. The acceptance worker checks its cancellation flag
+before each independent call, and every active call receives the same
+flag through its tool context.
+
+Regression coverage was added for a malformed later segment invalidating
+the whole mapping. These changes were committed to PR #182; tests and
+formatting were not run in this session.
+
+
+## 62. Stop the complete Forge process group, not only its parent
+
+Both Forge launch paths previously supervised and killed only the direct
+`forge` child. Forge can launch model/provider helpers and other
+subprocesses. If one of those descendants inherited stdout or stderr and
+outlived the parent, the output-reader threads could remain blocked at
+EOF; their joins then prevented the pane from receiving its terminal
+`Ended` event. A Cancel could appear to stop the run while the UI stayed
+stuck.
+
+Forge commands now start in a dedicated process group on Unix. The
+supervisor sends SIGKILL to that group on cancellation or when polling
+the child fails, with a direct-child kill fallback if group termination
+fails. The regular Forge run and the AUTO EDIT Director launch both use
+the same setup and termination helper. Non-Unix builds retain the
+platform's direct-child kill behavior.
+
+This closes the Unix descendant/pipe hang path. Windows process-tree
+termination still needs a dedicated Job Object implementation; this
+change does not claim that equivalent guarantee on Windows. The change
+was committed to PR #182; compilation and platform tests were not run in
+this session.
+
+## 63. Keep the Stop control available during independent acceptance
+
+Forge used to set AUTO EDIT to idle as soon as the Director child exited.
+The independent acceptance pass could then continue probing, measuring
+and rendering a contact sheet with no way for the user to stop it. The
+button also changed away from its Stop state even though the run was not
+finished.
+
+The AI path now keeps its running/UI state active while acceptance is
+pending and gives the acceptance worker its own shared cancellation
+flag. The existing Stop action raises that flag; the acceptance caller
+checks it before every independent tool call, and active tools receive
+the same flag through their context. The UI returns to idle only when
+the acceptance result or backend failure arrives. The process-exit
+failure path explicitly releases the running state so Retry remains
+available.
+
+This is cooperative cancellation for the acceptance phase: a tool
+already executing must honor the shared context flag to stop promptly.
+The regression and UI behavior still require a full application build
+and manual run; they were not executed in this session.
+
+## 64. Reap inherited-pipe descendants after a normal Forge exit too
+
+Process-group cancellation fixed the explicit Stop path, but the same
+pipe-ownership failure could happen if Forge's parent exited normally
+while a detached helper still held stdout or stderr open. The supervisor
+would see the parent exit and then block forever joining the readers.
+
+Both Forge supervisors now terminate any remaining members of their
+private process group after the parent has been reaped and before they
+join the output readers. This cleanup runs on normal exit as well as
+cancellation, so the terminal UI event no longer depends on every helper
+remembering to close inherited pipes.
+
+Unix is covered by the process-group implementation. Non-Unix still
+uses direct-child termination and does not yet have equivalent process
+tree cleanup. Compilation and subprocess integration tests were not run.
+
+## 65. Refuse an AUTO EDIT handoff when its export folder cannot be made
+
+The sibling builder used to log a warning if it could not create the
+sibling's export directory, but still returned a valid-looking
+AutoEditSource. Forge would then be launched with an export path whose
+parent did not exist; the run could spend time editing before discovering
+that its required delivery destination was unavailable.
+
+The AUTO EDIT sibling builder now treats export-directory creation as a
+required handoff step. If it fails, the incomplete sibling is removed
+(and cleanup failure is logged) and the run returns a clear error before
+Forge or the deterministic pipeline starts. Non-AUTO EDIT Forge sibling
+creation is unchanged.
+
+Committed to PR #182; filesystem failure injection and application tests
+were not run in this session.
+
+
+## 66. A partial program is not held to the whole edit's acceptance
+
+The runner had begun forcing `CompletedWithWarnings` whenever the
+derived receipt was not accepted, for every program. That is right for
+the AUTO EDIT spine, whose program is the whole edit and whose receipt
+is the one the pane reads - but it also rewrote the outcome of the
+runner's own partial programs: a resumed run, a two-stage probe, a
+cancelled run. Thirteen mechanics tests failed because a program that
+never claimed the whole edit was judged against it.
+
+`EditProgram` now carries `enforce_acceptance`, false by default and set
+by `enforcing_acceptance()` only in the AUTO EDIT program builder. The
+spine still cannot report a clean completion while a required gate is
+rejected or unmeasured; a partial program records the same receipt
+without changing its outcome.
+
+The acceptance sentence is now folded into the warnings before the
+terminal progress detail is chosen, so a warned completion no longer
+announces "the export is complete" in the event stream. The regression
+test reads both the final state and the last event.

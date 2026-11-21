@@ -31,11 +31,14 @@
 //!
 //! What the adapters deliberately are not:
 //!
-//! - **Not a player.** The Lottie engine row in the engine table is
-//!   reserved: no player ships in this tree yet, and a `lottie` node in a
-//!   comp renders nothing today. The adapter is the path that exists -
-//!   when the motion should become *document*: editable, lintable,
-//!   fillable by a slot, baked by whichever engine the project prefers.
+//! - **Not a player.** The Lottie *engine* row in the engine table is
+//!   reserved: no engine bakes a `.lottie` file on its own yet. A
+//!   `lottie` *node inside a comp* is another story - the native
+//!   compositor draws it (`native/scene.rs`, rasterlottie under the
+//!   hood). The adapter is the path that exists for the document as a
+//!   whole - when the motion should become *document*: editable,
+//!   lintable, fillable by a slot, baked by whichever engine the project
+//!   prefers.
 //! - **Not lossless.** The report is the contract: if a note says
 //!   something was skipped, the comp is smaller than its source, and the
 //!   caller decides whether that is acceptable. A conversion with no notes

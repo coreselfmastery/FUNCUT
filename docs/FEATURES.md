@@ -41,7 +41,7 @@ with one click.
 | Core edit commands (`edit.apply` ops) | **55** plus `batch`, the atomic wrapper | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
-| Motion presets | 18 | `src/crates/concat-motion/src/presets.rs` |
+| Motion presets | 32 | `src/crates/concat-motion/src/presets.rs` |
 | Motion authoring ops | **24** | `src/crates/concat-motion/src/authoring.rs` |
 | Bundled CC0 sounds | 530 (16 MB, 12 categories; 110 of them designed in-repo — the 100-sound Hollywood pack and ten risers and sweeps) | `audio/` |
 | BGM library | 1,025 CC0 tracks (FreePD) + 166 MobyGratis (**non-commercial only**) | fetched on demand |

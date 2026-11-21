@@ -739,7 +739,7 @@ document.
 
 ## Authoring by hand: what the presets cannot say
 
-Eighteen presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
+Thirty-two presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
 document literal, and so is anything a designer or an agent writes: the JSON *is* the authoring
 surface, masks, effects, blends, gradients, dash and all five curve families included.
 

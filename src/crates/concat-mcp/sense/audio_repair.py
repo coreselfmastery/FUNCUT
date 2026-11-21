@@ -166,10 +166,26 @@ def _needs_ffmpeg(spec):
 
 def _output_path(spec, source, suffix):
     """Where a writing tool lands its file: the caller's `out`, else beside
-    the input. The input itself is never the target."""
+    the input. The input itself is never the target - enforced here, not
+    just promised: a relative `out` naming the source, or one climbing
+    with `..`, used to reach _write_atomic unchecked (the Rust door's
+    confinement only inspects absolute paths), and `overwrite: true`
+    then replaced the very take the caller asked to repair."""
     out = spec.get("out")
     if out:
-        return str(out), bool(spec.get("overwrite"))
+        out = str(out)
+        parts = Path(out).parts
+        if ".." in parts:
+            raise ValueError(
+                f"the write path may not climb with '..': {out}")
+        try:
+            if os.path.realpath(out) == os.path.realpath(str(source)):
+                raise ValueError(
+                    "the input itself is never the write target: pass a "
+                    "new `out` (or drop it to land beside the input)")
+        except OSError:
+            pass
+        return out, bool(spec.get("overwrite"))
     p = Path(str(source))
     return str(p.with_name(p.stem + suffix + p.suffix)), False
 

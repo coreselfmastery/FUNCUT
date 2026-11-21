@@ -1219,6 +1219,26 @@ def _rust_ears(spec, lines, audio, ff):
         "maxSpeakers": int(spec.get("maxSpeakers") or 4),
         "speakerThreshold": float(spec.get("speakerThreshold") or 0.6),
     }
+    # The VAD block, but only when the caller tuned the ffmpeg silence
+    # pass: the two silence ears used to measure under different rules -
+    # a 120 ms minSilenceMs caught a breath for pauses.classes while the
+    # Rust ear's fixed 0.20 s merged it inside an utterance. The tuning
+    # crosses now (thresholdDb as the negative dB silencedetect means,
+    # minSilenceMs as seconds), so both ears answer with one rule; a
+    # caller who tuned nothing leaves each ear its own defaults.
+    _vad = {}
+    if spec.get("thresholdDb") is not None:
+        try:
+            _vad["thresholdDb"] = -abs(float(spec["thresholdDb"]))
+        except (TypeError, ValueError):
+            pass
+    if spec.get("minSilenceMs") is not None:
+        try:
+            _vad["minSilenceSecs"] = max(0.05, float(spec["minSilenceMs"]) / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    if _vad:
+        rust_spec["vad"] = _vad
     workdir = None
     if audio:
         workdir = tempfile.mkdtemp(prefix="voice-signals-")

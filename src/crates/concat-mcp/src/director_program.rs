@@ -12841,9 +12841,9 @@ mod tests {
                 "audio": { "path": take },
                 "lines": [
                     { "start": 0.0, "end": 4.0,
-                      "prosody": { "emphasisWords": [{ "t": 1.0, "strength": 0.9 }] } },
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
                     { "start": 5.0, "end": 9.0,
-                      "prosody": { "emphasisWords": [{ "t": 6.0, "strength": 0.8 }] } },
+                      "prosody": { "emphasisWords": [{ "word": "desk", "t": 6.0, "strength": 0.8 }] } },
                 ],
             }),
             json!({

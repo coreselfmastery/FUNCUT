@@ -73,9 +73,16 @@ esac
 
 # The version a deps.lock URL carries, so no second copy of it lives
 # here: the row's own filename names the extract. deps.lock is the one
-# source of truth - bump it there and this script follows.
+# source of truth - bump it there and this script follows. A
+# SourceForge mirror URL ends in "/download" after the filename (see
+# check-ort-pins.py's expected_suffix); strip that before taking the
+# basename, or the stem comes back empty and the script refuses to run.
 version_from_url() {
-  basename "$1" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
+  local path="$1"
+  case "$path" in
+    */download) path="${path%/download}" ;;
+  esac
+  basename "$path" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
 }
 
 ort_url=$("$fetch" --url "$ort_row")

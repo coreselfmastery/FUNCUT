@@ -44,8 +44,18 @@ case "$(uname -m)" in
     ;;
 esac
 
-_funcut_ort_stem=$(basename "$("$_fetch" --url "$_funcut_ort_row")" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p')
-_funcut_sherpa_stem=$(basename "$("$_fetch" --url "$_funcut_sherpa_row")" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p')
+# A SourceForge mirror URL carries "/download" after the filename (the
+# same shape check-ort-pins.py pins); strip it before the basename, or
+# the stem comes back empty and the guard below refuses to source.
+_funcut_stem_from_url() {
+  _funcut_path=$1
+  case "$_funcut_path" in
+    */download) _funcut_path="${_funcut_path%/download}" ;;
+  esac
+  basename "$_funcut_path" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
+}
+_funcut_ort_stem=$(_funcut_stem_from_url "$("$_fetch" --url "$_funcut_ort_row")")
+_funcut_sherpa_stem=$(_funcut_stem_from_url "$("$_fetch" --url "$_funcut_sherpa_row")")
 test -n "$_funcut_ort_stem" || { echo "funcut-env.sh: no ONNX Runtime version in deps.lock" >&2; return 1; }
 test -n "$_funcut_sherpa_stem" || { echo "funcut-env.sh: no sherpa-onnx version in deps.lock" >&2; return 1; }
 

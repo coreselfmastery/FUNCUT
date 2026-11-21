@@ -2569,3 +2569,27 @@ Three tests pin the shape: `the_brief_carries_the_numbers_at_the_paths_the_profi
 `the_critics_brief_cites_only_names_the_validator_accepts`, which now
 also asserts that `decides` names `bgm` for `forensic`. The suite went
 from 130 to 137 passing.
+
+
+## 58. Keep the AI Director handoff locked through post-export acceptance
+
+The AI Director process and its independent export acceptance are two
+parts of one AUTO EDIT run. The process can exit successfully while the
+acceptance worker is still probing the export, measuring loudness,
+rendering the contact sheet, critiquing the frames and verifying the
+narration against the sibling's voiceover mapping.
+
+Previously the pane marked the run idle as soon as Forge exited. During
+the acceptance worker's window, a second AUTO EDIT or Start Forge run
+could replace the pane's active project/source. The first run's delayed
+acceptance callback then read the pane's *new* project path and could
+write its receipt beside, or open, the wrong sibling.
+
+The pane now has a distinct `checking` state. Both editing entry points
+treat running **or checking** as busy. The lock is released only when the
+acceptance receipt arrives or the acceptance backend fails. Missing
+project/export metadata and backend-open failures both release the lock
+and surface an unaccepted result, rather than leaving the pane stuck.
+
+A regression test pins all four states of the busy predicate. The test
+was added in this change; it was not executed in this session.

@@ -272,24 +272,25 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
 
 /// The tools an AUTO EDIT cannot finish without, and therefore the ones a
 /// run must be refused before it starts when the surface does not carry
-/// them. Deliberately short: these are the calls whose absence turns a
-/// finished-looking edit into an unmeasured one - the reads that decide
-/// the cut, the edits that make it, and the three calls that prove the
-/// result (the loudness reading, the words check and the probe of the
-/// exported file). A surface missing one of these would let the run walk
-/// to the end and report a success nobody measured.
+/// them. These include the creative brief and inspected stock selection,
+/// plus every post-export proof the Director promises. A surface missing
+/// one must refuse the handover before the agent has changed the project.
 pub const DIRECTOR_REQUIRED: &[&str] = &[
     "project_open",
     "timeline_read",
     "transcribe",
     "voice_signals",
     "emotion",
+    "creative_brief",
     "plan_validate",
     "edit_apply",
     "stock_search",
+    "stock_contact_sheet",
     "stock_import",
     "measure_loudness",
     "motion_probe",
+    "watch_render",
+    "craft_critique",
     "export_start",
     "export_wait",
 ];
@@ -1027,6 +1028,27 @@ mod tests {
                 .pointer("/result/content/0/text")
                 .and_then(Value::as_str)
                 .is_some_and(|text| text.starts_with("refused:"))
+    }
+
+    #[test]
+    fn director_required_tools_include_the_creative_and_acceptance_contract() {
+        for tool in DIRECTOR_REQUIRED {
+            assert!(
+                DIRECTOR_ALLOWLIST.contains(tool),
+                "required tool {tool} is not on the Director surface"
+            );
+        }
+        for tool in [
+            "creative_brief",
+            "stock_contact_sheet",
+            "watch_render",
+            "craft_critique",
+        ] {
+            assert!(
+                DIRECTOR_REQUIRED.contains(&tool),
+                "{tool} must be checked before the Director edits"
+            );
+        }
     }
 
     #[test]

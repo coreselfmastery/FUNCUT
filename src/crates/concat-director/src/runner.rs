@@ -582,11 +582,28 @@ impl Runner {
                             })
                             .collect(),
                     };
+                    // The results arrive one per group, in group order -
+                    // the order the no-lanes path below draws them in -
+                    // so the log the merge keeps is the same log both
+                    // paths leave behind.
                     for (lane_failure, lane_replies) in lane_results {
                         if let Some((error, attempt)) = lane_failure {
                             failure.get_or_insert(error);
                             failed_attempt = failed_attempt.max(attempt);
                         }
+                        // The log is the memory every later derived
+                        // step reads: `drive_calls` pushes each reply
+                        // into it as it is drawn, and a lane's replies
+                        // must land there too, in group order, or the
+                        // stages after a fan step see nothing the fan
+                        // measured. This was the difference between
+                        // lanes and no lanes: a run whose per-take
+                        // transcribes and voice signals rode lanes
+                        // produced an edit with no captions, no B-roll
+                        // and no accents, because the readers those
+                        // stages spend looked at a log the lanes never
+                        // wrote.
+                        log.extend(lane_replies.iter().map(|(_, reply)| reply.clone()));
                         replies.extend(lane_replies);
                     }
                 }
@@ -1341,6 +1358,69 @@ mod tests {
     }
 
     #[test]
+    fn a_fan_step_on_lanes_leaves_its_replies_in_the_log() {
+        // The regression this test holds: a fan stage's lane replies must
+        // reach the log, in group order, the way the one-caller path's
+        // replies do - because every later derived step reads the log,
+        // not the gate evidence. A run whose per-take transcribes rode
+        // lanes used to hand the caption stage an empty log, and the
+        // button shipped a video with no captions, no B-roll and no
+        // accents while the same program without lanes edited fully.
+        //
+        // The lane answers from the call it was handed - not from a
+        // pre-seeded script - because which lane serves which group is
+        // the scheduler's choice, and the log's order must be provable
+        // whatever it chooses.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(Vec::new());
+        let lanes = EchoLanes;
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                FanStep::fan(
+                    Stage::Transcribe,
+                    vec![
+                        vec![call_with("transcribe", json!({ "path": "one" }))],
+                        vec![call_with("transcribe", json!({ "path": "two" }))],
+                    ],
+                )
+                .into(),
+                // A reader of the fan's own output: one call per take the
+                // lanes transcribed, in group order, each carrying its
+                // take's own marker so the order is provable.
+                DerivedStep::react(
+                    Stage::Timeline,
+                    Box::new({
+                        let mut issued = 0;
+                        move |log| {
+                            let takes: Vec<&str> = log
+                                .iter()
+                                .filter_map(|reply| reply.get("take").and_then(Value::as_str))
+                                .collect();
+                            let next = issued < takes.len();
+                            issued += 1;
+                            next.then(|| {
+                                call_with("clip_cut_spans", json!({ "take": takes[issued - 1] }))
+                            })
+                        }
+                    }),
+                )
+                .into(),
+            ],
+        );
+        let outcome = runner.run_with_lanes(&mut program, &mut caller, &lanes);
+        assert_eq!(outcome, RunOutcome::Completed);
+        // The derived stage read BOTH lane replies - not only the first,
+        // and none of them is invisible either.
+        assert_eq!(caller.calls.len(), 2, "both takes reached the reader");
+        assert_eq!(
+            caller.calls[0].arguments["take"], "one",
+            "group order is the log order"
+        );
+        assert_eq!(caller.calls[1].arguments["take"], "two");
+    }
+
+    #[test]
     fn edits_do_not_ride_a_fan() {
         // The rollback order of concurrent edits is not a promise the
         // runner can keep: the program that tries is refused.
@@ -1389,6 +1469,33 @@ mod tests {
     struct FanLanes {
         scripts: Mutex<std::collections::VecDeque<Vec<Result<Value, ToolError>>>>,
         minted: std::sync::atomic::AtomicUsize,
+    }
+
+    /// A lane factory whose caller answers from the call it was handed,
+    /// echoing the call's own `path` back as `take`. Which lane serves
+    /// which group is the scheduler's choice, so a test that needs each
+    /// group's own answer in the log cannot pre-seed scripts: the answer
+    /// must derive from the call, as the real server's replies do.
+    struct EchoLanes;
+
+    impl LaneFactory for EchoLanes {
+        fn lane(&self) -> Result<Box<dyn ToolCaller>, String> {
+            Ok(Box::new(Echoing))
+        }
+    }
+
+    /// The caller `EchoLanes` mints: every call is answered with its own
+    /// `path`, so a group's reply is identifiable no matter which lane
+    /// drew it.
+    struct Echoing;
+
+    impl ToolCaller for Echoing {
+        fn call(&mut self, call: &ToolCall) -> Result<Value, ToolError> {
+            Ok(json!({
+                "take": call.arguments.get("path").cloned().unwrap_or(Value::Null),
+                "segments": [{}],
+            }))
+        }
     }
 
     impl FanLanes {

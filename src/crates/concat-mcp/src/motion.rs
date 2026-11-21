@@ -2832,8 +2832,7 @@ mod tests {
             "the preset really is a markup comp"
         );
         if Geneva::discover(EnginePreference::default().geneva.as_deref()).is_none() {
-            let refused =
-                bake(arguments, &Windowless).expect_err("no sidecar, no markup render");
+            let refused = bake(arguments, &Windowless).expect_err("no sidecar, no markup render");
             assert!(
                 refused.to_string().contains("CONCAT_GENEVA_BIN"),
                 "the refusal names the installer: {refused}"

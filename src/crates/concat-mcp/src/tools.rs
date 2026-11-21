@@ -3839,7 +3839,7 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
     // Visual variety: repeated references are the slideshow signature.
     let visual_key = |segment: &Value| -> String {
         let v = &segment["visual"];
-        for key in ["query", "path", "asset", "name", "src"] {
+        for key in ["query", "path", "asset", "name", "src", "mediaId", "clipId"] {
             if let Some(s) = v.get(key).and_then(Value::as_str) {
                 return s.trim().to_ascii_lowercase();
             }

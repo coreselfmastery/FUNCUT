@@ -287,6 +287,9 @@ pub const DIRECTOR_REQUIRED: &[&str] = &[
     "stock_search",
     "stock_contact_sheet",
     "stock_import",
+    "captions_add",
+    "motion_frame",
+    "motion_bake",
     "measure_loudness",
     "motion_probe",
     "watch_render",
@@ -1041,6 +1044,9 @@ mod tests {
         for tool in [
             "creative_brief",
             "stock_contact_sheet",
+            "captions_add",
+            "motion_frame",
+            "motion_bake",
             "watch_render",
             "craft_critique",
         ] {

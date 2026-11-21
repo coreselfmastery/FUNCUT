@@ -556,7 +556,7 @@ mod tests {
             let _ = first.read(&mut request).expect("read the first request");
             write!(
                 first,
-                "HTTP/1.1 302 Found\\r\\nLocation: http://{address}/second\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                "HTTP/1.1 302 Found\r\nLocation: http://{address}/second\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             )
             .expect("write the redirect");
             first.flush().expect("flush the redirect");
@@ -571,7 +571,7 @@ mod tests {
                         let _ = second.read(&mut request);
                         write!(
                             second,
-                            "HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                         )
                         .expect("write the followed response");
                         let _ = second.flush();

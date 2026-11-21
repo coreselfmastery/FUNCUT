@@ -27,6 +27,11 @@ pub struct TakePaths {
     /// The enhanced intermediate: the repair's first pass writes it, its
     /// second reads it. A repair that fails leaves the take as recorded.
     pub enhanced: String,
+    /// The sibling path of the carried video whose audio the take was
+    /// extracted from, when the narration came out of a talking-head
+    /// video: the tighten cuts the picture and the words in lockstep, so
+    /// they stay in sync. `None` when the take is a plain audio file.
+    pub aroll: Option<String>,
 }
 
 /// One placement of a take on the sibling timeline: the file the clip
@@ -338,7 +343,20 @@ fn dead_air_cuts(
             .collect();
         pauses.push((path.to_owned(), spans));
     }
+    // The cuts, in one pass over the clips: each take clip is cut where
+    // its own pauses measured, the A-ROLL a talking-head take was
+    // extracted from is cut in lockstep (the same file clock, mapped
+    // through the video clip's own span, so the picture and the words
+    // never drift), and every other visual clip is MOVED by the timeline
+    // time the cuts take before it - the lane ripple the take's own lane
+    // gets for free, given to the carried picture the same way.
     let mut cuts = Vec::new();
+    // The removed spans in TIMELINE seconds, gathered as take clips are
+    // cut, in the order the cuts land.
+    let mut removed: Vec<(f64, f64)> = Vec::new();
+    // The a-roll clips to cut in lockstep: (clip id, spans in the clip's
+    // own seconds).
+    let mut lockstep: Vec<(String, Vec<Value>)> = Vec::new();
     for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
         let Some(media_id) = clip["media"].as_str() else {
             continue;
@@ -350,11 +368,42 @@ fn dead_air_cuts(
         else {
             continue;
         };
+        // A talking-head's carried video: cut by the take it was
+        // extracted from, in the video's own span. The extraction is the
+        // whole file, so the take's file clock is the video's.
+        if let Some(aroll) = takes
+            .iter()
+            .find(|take| take.aroll.as_deref() == Some(path))
+            .map(|take| take.take.clone())
+        {
+            let clip_id = clip["id"].as_str().unwrap_or_default().to_owned();
+            let (source_in, source_out, speed) = clip_file_span(clip);
+            let start_at = clip["start"].as_f64().unwrap_or(0.0);
+            let mut spans: Vec<Value> = Vec::new();
+            for (take, rows) in &pauses {
+                if *take != aroll {
+                    continue;
+                }
+                for (start, end) in rows {
+                    let from = ((start - source_in) / speed).max(0.0);
+                    let to = ((end - source_in) / speed).min((source_out - source_in) / speed);
+                    if to > from + 0.05 {
+                        removed.push((start_at + from, start_at + to));
+                        spans.push(json!([round3(from), round3(to)]));
+                    }
+                }
+            }
+            if !spans.is_empty() {
+                lockstep.push((clip_id, spans));
+            }
+            continue;
+        }
         if !takes.iter().any(|take| take.take == path) {
             continue;
         }
         let (source_in, source_out, speed) = clip_file_span(clip);
         let clip_id = clip["id"].as_str().unwrap_or_default().to_owned();
+        let start_at = clip["start"].as_f64().unwrap_or(0.0);
         let mut spans: Vec<Value> = Vec::new();
         for (take, rows) in &pauses {
             if take != path {
@@ -366,6 +415,7 @@ fn dead_air_cuts(
                 let from = ((start - source_in) / speed).max(0.0);
                 let to = ((end - source_in) / speed).min((source_out - source_in) / speed);
                 if to > from + 0.05 {
+                    removed.push((start_at + from, start_at + to));
                     spans.push(json!([round3(from), round3(to)]));
                 }
             }
@@ -386,7 +436,97 @@ fn dead_air_cuts(
             }),
         });
     }
+    // The lockstep cuts ride behind the take's own: the same spans, on
+    // the video clip, so picture and words move together.
+    for (clip_id, spans) in lockstep {
+        cuts.push(ToolCall {
+            tool: "edit_apply".to_owned(),
+            arguments: json!({
+                "path": project,
+                "command": {
+                    "op": "removeSpans",
+                    "clipId": clip_id,
+                    "spans": spans,
+                    "ripple": true,
+                },
+            }),
+        });
+    }
+    // The carried picture that is not the a-roll - a cutaway, a still, a
+    // card - moves with the lanes: every removed timeline second before
+    // its start is a second it slides left, exactly the arithmetic the
+    // lane's own close_gaps applies.
+    if !removed.is_empty() {
+        let moves: Vec<Value> = view["timeline"]["clips"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|clip| {
+                matches!(
+                    clip["kind"].as_str(),
+                    Some("video" | "image" | "motion" | "text" | "shape")
+                ) && clip["media"]
+                    .as_str()
+                    .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                    .is_none_or(|(_, path)| {
+                        // Not a take, and not a take's a-roll: those are
+                        // cut, not moved.
+                        !takes.iter().any(|take| take.take == *path)
+                            && !takes
+                                .iter()
+                                .any(|take| take.aroll.as_deref() == Some(path.as_str()))
+                    })
+            })
+            .filter_map(|clip| {
+                let start = clip["start"].as_f64()?;
+                let shift = removed_before_span(&removed, start);
+                if shift < 0.05 {
+                    return None;
+                }
+                Some(json!({
+                    "clipId": clip["id"].as_str().unwrap_or_default(),
+                    "start": round3((start - shift).max(0.0)),
+                    "trackId": clip["track"].as_str().unwrap_or_default(),
+                }))
+            })
+            .collect();
+        if !moves.is_empty() {
+            cuts.push(ToolCall {
+                tool: "edit_apply".to_owned(),
+                arguments: json!({
+                    "path": project,
+                    "command": { "op": "moveClips", "moves": moves },
+                }),
+            });
+        }
+    }
     cuts
+}
+
+/// How much of the removed spans lies before `at`, counting what they
+/// share once - the lane-closing arithmetic, answered for one clip.
+fn removed_before_span(removed: &[(f64, f64)], at: f64) -> f64 {
+    let mut before: Vec<(f64, f64)> = removed
+        .iter()
+        .filter(|(start, _)| *start < at)
+        .map(|&(start, end)| (start, end.min(at)))
+        .collect();
+    if before.is_empty() {
+        return 0.0;
+    }
+    before.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut gap = 0.0;
+    let (mut from, mut to) = before[0];
+    for (start, end) in before.into_iter().skip(1) {
+        if start <= to {
+            to = to.max(end);
+        } else {
+            gap += to - from;
+            from = start;
+            to = end;
+        }
+    }
+    gap + (to - from)
 }
 
 /// Three decimals, the way the timeline's own numbers read.
@@ -1675,6 +1815,7 @@ fn segments_of(log: &[Value], take: &str) -> Vec<Value> {
     let takes = [TakePaths {
         take: take.to_owned(),
         enhanced: String::new(),
+        aroll: None,
     }];
     transcripts_of(log, &takes)
         .into_iter()
@@ -7887,10 +8028,12 @@ mod tests {
                 TakePaths {
                     take: "/edits/Reel edit/voiceover/take-000-a.wav".to_owned(),
                     enhanced: "/edits/Reel edit/voiceover/enhanced-000-a.wav".to_owned(),
+                    aroll: None,
                 },
                 TakePaths {
                     take: "/edits/Reel edit/voiceover/take-001-b.wav".to_owned(),
                     enhanced: "/edits/Reel edit/voiceover/enhanced-001-b.wav".to_owned(),
+                    aroll: None,
                 },
             ],
             placements: vec![
@@ -8132,6 +8275,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let log = vec![json!({ "audio": { "path": "/takes/a.wav" },
             "lines": [{
@@ -8168,6 +8312,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8215,6 +8360,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8264,6 +8410,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8322,6 +8469,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8428,6 +8576,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8502,6 +8651,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8818,6 +8968,7 @@ mod tests {
         let take = TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         };
         let view = json!({
             "timeline": { "clips": [
@@ -9001,6 +9152,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let log = vec![
             json!({ "lines": [
@@ -9381,6 +9533,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [{ "start": 0.0, "end": 3.0, "text": "we found the wreck" }],
@@ -9455,6 +9608,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9542,6 +9696,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let view = json!({
             "settings": { "width": 1920.0, "height": 1080.0 },
@@ -9933,6 +10088,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9999,6 +10155,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10057,6 +10214,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10101,6 +10259,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10157,6 +10316,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10224,6 +10384,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10329,6 +10490,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10426,6 +10588,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10516,6 +10679,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10587,6 +10751,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: "/takes/a-enhanced.wav".to_owned(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10648,6 +10813,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: take.to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         // The tighten already ran: the dead-air gap 2.0-4.0 is gone, and
         // the two speech pieces sit 0.0-2.0 and 2.0-4.0 on the timeline.
@@ -10739,6 +10905,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: take.to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         // A talking-head video beside the narration: the whole span but
         // the last second already has a picture.
@@ -10777,6 +10944,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: take.to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let mut suggestions: Vec<Value> = Vec::new();
         for index in 0..12 {
@@ -10831,6 +10999,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: "/takes/a-enhanced.wav".to_owned(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10878,10 +11047,12 @@ mod tests {
             TakePaths {
                 take: take_a.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             },
             TakePaths {
                 take: take_b.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             },
         ];
         let log = vec![
@@ -10929,6 +11100,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: take.to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10968,6 +11140,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: "/takes/a-enhanced.wav".to_owned(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -11217,6 +11390,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -11393,6 +11567,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -11543,10 +11718,12 @@ mod tests {
                 TakePaths {
                     take: "/edits/Reel/voiceover/a.wav".to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
                 TakePaths {
                     take: "/edits/Reel/voiceover/b.wav".to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
             ],
             placements: Vec::new(),
@@ -11872,6 +12049,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let hard = log(0.9, "tension");
         let read = emotion_lines(&hard, &takes);
@@ -11888,6 +12066,72 @@ mod tests {
         );
     }
 
+    /// A talking-head's carried A-roll is cut in lockstep with the take
+    /// its audio was extracted from, and the carried cutaways move with
+    /// the lanes: the tighten ripples only the lane it cuts, so without
+    /// this the picture would drift right of the words by every removed
+    /// pause.
+    #[test]
+    fn the_tighten_cuts_the_a_roll_in_lockstep_and_moves_the_cutaways() {
+        let take = "/edits/Reel edit/voiceover/take-000-head.wav";
+        let aroll = "/edits/Reel edit/footage/footage-000-head.mp4";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+            aroll: Some(aroll.to_owned()),
+        }];
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "words", "kind": "audio", "media": "m-take", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "face", "kind": "video", "media": "m-roll", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "cutaway", "kind": "image", "media": "m-still", "start": 8.0,
+                  "duration": 2.0 },
+            ]},
+            "media": [
+                { "id": "m-take", "path": take },
+                { "id": "m-roll", "path": aroll },
+                { "id": "m-still", "path": "/edits/Reel edit/footage/footage-001-still.png" },
+            ],
+        });
+        let log = vec![
+            view,
+            json!({
+                "audio": { "path": take },
+                "pauses": [{ "start": 4.0, "end": 5.5, "class": "dead_air" }],
+                "lines": [],
+            }),
+            json!({
+                "lines": [emotion_row(0.0, 3.5, "neutral", 0.2, "setup", "balanced", "")],
+            }),
+        ];
+        let cuts = dead_air_cuts(&log, &takes, "/edits/Reel edit", &[]);
+        // Three edits: the words cut, the face cut in lockstep, the
+        // cutaway moved.
+        assert_eq!(cuts.len(), 3, "{cuts:#?}");
+        assert_eq!(cuts[0].arguments["command"]["op"], json!("removeSpans"));
+        assert_eq!(cuts[0].arguments["command"]["clipId"], json!("words"));
+        assert_eq!(
+            cuts[0].arguments["command"]["spans"],
+            json!([[4.08, 5.42]]),
+            "the pause, padded the breath rule's 80 ms a side"
+        );
+        // The A-roll takes the SAME spans: the same file clock, mapped
+        // through its own span.
+        assert_eq!(cuts[1].arguments["command"]["op"], json!("removeSpans"));
+        assert_eq!(cuts[1].arguments["command"]["clipId"], json!("face"));
+        assert_eq!(cuts[1].arguments["command"]["spans"], json!([[4.08, 5.42]]));
+        // The cutaway slides left by the removed 1.34 s.
+        assert_eq!(cuts[2].arguments["command"]["op"], json!("moveClips"));
+        let moves = cuts[2].arguments["command"]["moves"]
+            .as_array()
+            .expect("the move list");
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0]["clipId"], json!("cutaway"));
+        assert!((moves[0]["start"].as_f64().unwrap() - (8.0 - 1.34)).abs() < 0.011);
+    }
+
     /// The bed is shopped by the read's own words and ducked to the level
     /// its act profile sets - not to a fixed -20 dB.
     #[test]
@@ -11895,6 +12139,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let log = vec![
             json!({
@@ -11927,6 +12172,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -12016,6 +12262,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -12155,6 +12402,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: vec![TakePlacement {
                 take: take.to_owned(),
@@ -12279,6 +12527,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -12328,6 +12577,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -12416,10 +12666,12 @@ mod tests {
                 TakePaths {
                     take: take_a.to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
                 TakePaths {
                     take: take_b.to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
             ],
             placements: Vec::new(),
@@ -12500,6 +12752,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: vec![TakePlacement {
                 take: "/edits/Reel/voiceover/take.wav".to_owned(),

@@ -1955,6 +1955,26 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     let measured_speech_ratio = reads
         .iter()
         .any(|read| read.take_wide.speech_ratio.is_some());
+    // The reading rate, the delivery's shape and the forensic character
+    // are each measured by a different ear, and each is only cited by a
+    // decision that actually turned on it.
+    let measured_rate = reads.iter().any(|read| {
+        read.lines
+            .iter()
+            .any(|line| line.words_per_minute.is_some() || line.syllables_per_sec.is_some())
+    });
+    let measured_pitch = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| line.pitch_slope.is_some()));
+    let measured_onsets = reads
+        .iter()
+        .any(|read| !read.take_wide.flux_onsets.is_empty());
+    let measured_forensic = reads
+        .iter()
+        .any(|read| read.take_wide.spectral_flatness.is_some());
+    let measured_turns = reads
+        .iter()
+        .any(|read| !read.take_wide.speaker_turns.is_empty());
     let mut signal_log: Vec<Value> = Vec::new();
     // A cut names the signal that put it there. Every boundary is a gap
     // between two clips of the voiceover, so the word boundary always
@@ -2138,6 +2158,13 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         {
             signals.push("musicSegments");
         }
+        // The noise character earns its place only where the profile named
+        // one: it is what a denoise would target, and the bed is what a
+        // take with a floor this loud gets instead of one.
+        let noise = reads.iter().find_map(|read| read.noise_character());
+        if noise.is_some() && measured_forensic {
+            signals.push("forensic");
+        }
         if verdict == Some("duck_only") {
             signals.push("noiseFloor");
         }
@@ -2151,11 +2178,19 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             signals.push("arc");
         }
         if !signals.is_empty() {
+            // The floor's character, in the entry itself: a note that only
+            // says "the bed follows the verdict" leaves the reader unable
+            // to tell a hiss from a hum, which is the one thing a denoise
+            // needs to know.
+            let note = match &noise {
+                Some(noise) => format!("{bed_note}; the floor measured {noise}"),
+                None => bed_note.clone(),
+            };
             signal_log.push(json!({
                 "at": 0.0,
                 "decision": "bgm",
                 "signals": signals,
-                "note": bed_note,
+                "note": note,
             }));
         }
     }
@@ -2210,12 +2245,86 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         if measured_tempo {
             signals.push("rhythmLayers");
         }
+        // The seam's own transient: a flux onset inside the window is a
+        // place the cut can land where the take itself has an event,
+        // rather than on an arbitrary frame. The forensic ear is the only
+        // one that measured it, so the entry cites it only when one was
+        // found near the seam.
+        let onset = reads
+            .iter()
+            .find_map(|read| read.onset_near(slot.from, 0.25));
+        if onset.is_some() && measured_onsets {
+            signals.push("forensic");
+        }
+        // The turn the seam falls inside, when diarization measured turns:
+        // a seam inside a turn is one speaker continuing, and a seam at a
+        // turn's edge is the exchange the cut should show.
+        let turn_edge = reads.iter().any(|read| {
+            read.take_wide.speaker_turns.iter().any(|turn| {
+                (turn.start - slot.from).abs() < 0.25 || (turn.end - slot.from).abs() < 0.25
+            })
+        });
+        if turn_edge && measured_turns {
+            signals.push("speaker");
+        }
+        let seam = match (onset, turn_edge) {
+            (Some(onset), true) => format!(
+                "the cut into the shot takes the mood the gap opens on, lands on the \
+                 transient at {onset:.2}s and falls on a speaker turn"
+            ),
+            (Some(onset), false) => format!(
+                "the cut into the shot takes the mood the gap opens on and lands on \
+                 the transient at {onset:.2}s"
+            ),
+            (None, true) => "the cut into the shot takes the mood the gap opens on and \
+                             falls on a speaker turn"
+                .to_owned(),
+            (None, false) => "the cut into the shot takes the mood the gap opens on".to_owned(),
+        };
         signal_log.push(json!({
             "at": round3(slot.from),
             "decision": "transition",
             "signals": signals,
-            "note": "the cut into the shot takes the mood the gap opens on",
+            "note": seam,
         }));
+    }
+    // A question the narration asks wants its answer as the next visual:
+    // the one decision that only exists because the sentence's type was
+    // read against the pitch's terminal rise. A line whose punctuation
+    // says question and whose pitch rose to confirm it is an ask; one the
+    // pitch contradicted is a rhetorical line, and the log says which.
+    for read in &reads {
+        for question in &read.take_wide.questions {
+            let Some(line) = read.lines.get(*question) else {
+                continue;
+            };
+            let mut signals = vec!["sentence"];
+            let note = match line.rise_confirms {
+                Some(true) => {
+                    signals.push("prosody");
+                    format!(
+                        "the line asks a question and its pitch rose to confirm it, so \
+                         the answer arrives as the next visual: {}",
+                        line.text
+                    )
+                }
+                Some(false) => format!(
+                    "the line is punctuated as a question but its pitch fell, so it \
+                     reads as rhetorical and the next visual is not an answer: {}",
+                    line.text
+                ),
+                None => format!(
+                    "the line asks a question, so the answer arrives as the next visual: {}",
+                    line.text
+                ),
+            };
+            signal_log.push(json!({
+                "at": round3(line.start),
+                "decision": "graphic",
+                "signals": signals,
+                "note": note,
+            }));
+        }
     }
     // A chapter card at every topic boundary the tiling found: the one
     // decision that only exists because the script was read as language
@@ -2248,15 +2357,60 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             if measured_loudness {
                 signals.push("loudness");
             }
+            // The line's own reading rate, when the profile measured one:
+            // it sizes the caption's hold, which words-per-minute alone
+            // gets wrong on a line of long words.
+            let hold = reads
+                .iter()
+                .find_map(|read| read.line_at(line.start).and_then(|l| read.caption_hold(l)));
+            if hold.is_some() && measured_rate {
+                signals.push("speechRate");
+            }
+            // The delivery's shape: a line whose pitch rose across it
+            // builds into what follows, so the cut into the next shot is
+            // the one that carries the build rather than a hold that
+            // settles the take early.
+            let rises = reads.iter().find_map(|read| {
+                read.line_at(line.start)
+                    .and_then(|l| read.delivery_rises(l))
+            });
+            if rises.is_some() && measured_pitch {
+                signals.push("prosody");
+            }
+            let shape = match (hold, rises) {
+                (Some(hold), Some(true)) => format!(
+                    "the line needs {hold:.1}s to read and its pitch rose, so the shot \
+                     holds {hold:.1}s and hands the build to the cut after it"
+                ),
+                (Some(hold), Some(false)) => format!(
+                    "the line needs {hold:.1}s to read and its pitch fell, so the shot \
+                     holds {hold:.1}s and settles before the cut"
+                ),
+                (Some(hold), None) => {
+                    format!("the line needs {hold:.1}s to read, so the shot holds that long")
+                }
+                (None, Some(true)) => {
+                    "the line's pitch rose, so the cut after it carries the build".to_owned()
+                }
+                (None, Some(false)) => {
+                    "the line's pitch fell, so the cut after it settles the take".to_owned()
+                }
+                (None, None) => String::new(),
+            };
+            let note = if shape.is_empty() {
+                format!(
+                    "the delivery here measured {}, so the shot's hold and the \
+                     caption's size follow it",
+                    line.pace
+                )
+            } else {
+                format!("the delivery here measured {}: {shape}", line.pace)
+            };
             signal_log.push(json!({
                 "at": round3(line.start),
                 "decision": "pacing",
                 "signals": signals,
-                "note": format!(
-                    "the delivery here measured {}, so the shot's hold and the \
-                     caption's size follow it",
-                    line.pace
-                ),
+                "note": note,
             }));
         }
     }
@@ -2726,7 +2880,189 @@ fn signal_brief(log: &[Value]) -> Value {
     if evidence.as_object().is_some_and(|map| !map.is_empty()) {
         brief.insert("signalEvidence".to_owned(), evidence);
     }
+    // The measured values themselves, so the critic judges against numbers
+    // rather than family names. A critic told "noiseFloor 0.80" can say
+    // the bed was chosen well; a critic told "-38 dBFS, hiss" can say the
+    // bed should have been quieter. Only the readings the profile actually
+    // returned are carried, and a reading it never took stays absent.
+    let measured = measured_values(log);
+    if measured.as_object().is_some_and(|map| !map.is_empty()) {
+        brief.insert("measured".to_owned(), measured);
+    }
     Value::Object(brief)
+}
+
+/// The profile's own numbers, as the brief carries them: the take-wide
+/// readings and the per-line shape, keyed the way the profile keys them.
+/// Every value here is one the profile returned; a family it could not
+/// measure is left out rather than filled with a default, so the critic
+/// can tell "measured quiet" from "never measured".
+fn measured_values(log: &[Value]) -> Value {
+    let mut out = serde_json::Map::new();
+    let mut take = serde_json::Map::new();
+    for reply in log {
+        let Some(whole) = reply.get("wholeTake") else {
+            continue;
+        };
+        let forensic = &whole["forensic"];
+        let mut insert = |key: &str, value: Option<Value>| {
+            if let Some(value) = value
+                && !take.contains_key(key)
+            {
+                take.insert(key.to_owned(), value);
+            }
+        };
+        insert(
+            "noiseFloorDbfs",
+            forensic
+                .get("noiseFloorDbfs")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "snrDb",
+            forensic
+                .get("snrDb")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "noiseType",
+            forensic
+                .get("noiseType")
+                .and_then(Value::as_str)
+                .filter(|kind| !kind.is_empty())
+                .map(|kind| json!(kind)),
+        );
+        insert(
+            "spectralFlatness",
+            forensic
+                .get("spectralFlatness")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "spectralCentroidHz",
+            forensic
+                .get("spectralCentroidHz")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "crest",
+            forensic
+                .get("crest")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "dynamicRangeDb",
+            forensic
+                .get("dynamicRangeDb")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "voicingRate",
+            forensic
+                .get("voicingRate")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "fluxOnsets",
+            forensic
+                .get("fluxOnsetsSec")
+                .and_then(Value::as_array)
+                .map(|onsets| json!(onsets.len())),
+        );
+        insert(
+            "integratedLufs",
+            whole
+                .pointer("/loudness/integratedLufs")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "speechRatio",
+            whole
+                .get("speechRatio")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "dominantPeriodSec",
+            whole
+                .get("dominantPeriodSec")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "rhythmLayers",
+            whole
+                .get("prosody")
+                .and_then(Value::as_array)
+                .map(|layers| {
+                    json!(
+                        layers
+                            .iter()
+                            .filter_map(|layer| Some(json!({
+                                "periodSec": layer["periodSec"].as_f64()?,
+                                "strength": layer["strength"].as_f64()?,
+                            })))
+                            .collect::<Vec<Value>>()
+                    )
+                }),
+        );
+    }
+    if !take.is_empty() {
+        out.insert("take".to_owned(), Value::Object(take));
+    }
+    // The per-line shape, as ranges rather than a row per line: a critic
+    // reads "wpm 120-190, pitch slope -2.1..+1.8 st/s" and knows the take
+    // moved, where a list of forty rows is not a brief.
+    let lines: Vec<&Value> = log
+        .iter()
+        .flat_map(|reply| reply["lines"].as_array().into_iter().flatten())
+        .collect();
+    let span = |pointer: &str| -> Option<Value> {
+        let values: Vec<f64> = lines
+            .iter()
+            .filter_map(|line| line.pointer(pointer).and_then(Value::as_f64))
+            .collect();
+        let low = values
+            .iter()
+            .copied()
+            .fold(None::<f64>, |low: Option<f64>, v| {
+                Some(low.map_or(v, |low| low.min(v)))
+            })?;
+        let high = values
+            .iter()
+            .copied()
+            .fold(None::<f64>, |high: Option<f64>, v| {
+                Some(high.map_or(v, |high| high.max(v)))
+            })?;
+        Some(json!({ "low": round3(low), "high": round3(high), "lines": values.len() }))
+    };
+    let mut shape = serde_json::Map::new();
+    for (name, pointer) in [
+        ("wordsPerMinute", "/speechRate/wordsPerMinute"),
+        ("syllablesPerSec", "/speechRate/syllablesPerSec"),
+        ("relativeLu", "/loudness/relativeLu"),
+        (
+            "pitchSlopeSemitonesPerSec",
+            "/prosody/pitchSlopeSemitonesPerSec",
+        ),
+        ("pitchRangeSemitones", "/prosody/pitchRangeSemitones"),
+    ] {
+        if let Some(span) = span(pointer) {
+            shape.insert(name.to_owned(), span);
+        }
+    }
+    if !shape.is_empty() {
+        out.insert("lines".to_owned(), Value::Object(shape));
+    }
+    Value::Object(out)
 }
 
 /// The craft facts of the last sheet the run read, as the critic measured
@@ -5650,27 +5986,19 @@ mod tests {
             "emotion",
             "noiseFloor",
             "wordConfidence",
+            // Spent since the audit: the turn a seam falls on, and the
+            // transient it lands on.
+            "speaker",
+            "forensic",
         ];
         // Families the vocabulary names but this program deliberately does
         // not spend, and why. Each is a real reading the profile makes; the
         // entry is the reason the edit is better without it.
-        const NOT_SPENT: &[(&str, &str)] = &[
-            (
-                "formants",
-                "a vocal-tract reading describes the speaker, not the cut: no \
+        const NOT_SPENT: &[(&str, &str)] = &[(
+            "formants",
+            "a vocal-tract reading describes the speaker, not the cut: no \
                  timeline decision follows from it",
-            ),
-            (
-                "speaker",
-                "the voice-print identifies who spoke; the change itself is \
-                 `speakerChanges`, which the transition stage reads",
-            ),
-            (
-                "forensic",
-                "the take-wide noise floor, SNR and flatness are read through \
-                 `noiseFloor` and `musicSegments`, the decisions they serve",
-            ),
-        ];
+        )];
         let mut unaccounted: Vec<&str> = Vec::new();
         for family in crate::tools::signal_vocabulary() {
             if READ.contains(family) || NOT_SPENT.iter().any(|(name, _)| name == family) {
@@ -5776,6 +6104,175 @@ mod tests {
             unrated.is_empty(),
             "these logged families would be rated 0 - no engine rates them: {unrated:?}"
         );
+    }
+
+    /// A caption's hold is sized on the rate the profile measured, and the
+    /// two rates are not interchangeable: a line of long words is slow to
+    /// read at the same words-per-minute, so the syllables-per-second
+    /// reading wins where the two disagree. A line with neither rate gets
+    /// `None`, which is the honest answer and keeps the hold on the timing.
+    #[test]
+    fn the_caption_hold_reads_the_rate_the_profile_measured() {
+        let read = VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            lines: vec![
+                // A 2 s line at 5 syllables/s: 10 syllables, 30 chars,
+                // which needs 2.0 s at 15 chars/s. The 300 wpm reading
+                // implies 50 chars and 3.3 s, so words win here.
+                crate::voice_read::LineRead {
+                    start: 0.0,
+                    end: 2.0,
+                    syllables_per_sec: Some(5.0),
+                    words_per_minute: Some(300.0),
+                    ..Default::default()
+                },
+                // A 2 s line at 180 wpm: 6 words, 30 chars, 2.0 s.
+                crate::voice_read::LineRead {
+                    start: 2.0,
+                    end: 4.0,
+                    words_per_minute: Some(180.0),
+                    ..Default::default()
+                },
+                crate::voice_read::LineRead {
+                    start: 4.0,
+                    end: 6.0,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let hold = read.caption_hold(&read.lines[0]).expect("a hold");
+        assert!(
+            (hold - (50.0 / 15.0)).abs() < 1e-9,
+            "the words reading is the longer estimate and should win: {hold}"
+        );
+        let only_words = read.caption_hold(&read.lines[1]).expect("a hold");
+        assert!(
+            (only_words - 2.0).abs() < 1e-9,
+            "180 wpm over 2 s is 30 chars, two reading seconds: {only_words}"
+        );
+        assert_eq!(
+            read.caption_hold(&read.lines[2]),
+            None,
+            "a line with no rate must not invent a hold"
+        );
+    }
+
+    /// The delivery's direction is only called when the slope is steep
+    /// enough to mean one: a near-flat slope is a line that reports, and
+    /// reading it as a rise would put a build where the voice did not.
+    #[test]
+    fn the_delivery_direction_needs_a_slope_behind_it() {
+        let read = VoiceRead::default();
+        let line = |slope: Option<f64>| crate::voice_read::LineRead {
+            pitch_slope: slope,
+            ..Default::default()
+        };
+        assert_eq!(read.delivery_rises(&line(Some(2.0))), Some(true));
+        assert_eq!(read.delivery_rises(&line(Some(-2.0))), Some(false));
+        assert_eq!(
+            read.delivery_rises(&line(Some(0.2))),
+            None,
+            "a flat slope is not a direction"
+        );
+        assert_eq!(read.delivery_rises(&line(None)), None);
+    }
+
+    /// The seam lands on the take's own transient when the forensic ear
+    /// measured one nearby, and the entry says so. A run with no onsets
+    /// leaves the note as it was rather than claiming a transient it
+    /// never found.
+    #[test]
+    fn the_seam_lands_on_a_measured_onset() {
+        let take = TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        };
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let profile = |onsets: Value| {
+            json!({
+                "audio": { "path": "/t/a.wav" },
+                "wholeTake": { "forensic": { "fluxOnsetsSec": onsets } },
+                "lines": [{ "start": 0.0, "end": 4.0, "text": "we found the wreck" }],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "forensic", "confidence": 0.8 },
+                ]},
+            })
+        };
+        let with = vec![view.clone(), profile(json!([2.0, 6.5]))];
+        let read = voice_reads(&with, std::slice::from_ref(&take));
+        assert_eq!(read[0].onset_near(6.6, 0.25), Some(6.5));
+        assert_eq!(
+            read[0].onset_near(4.0, 0.25),
+            None,
+            "no onset within the window is not an onset at the seam"
+        );
+        let without = vec![view, profile(json!([]))];
+        let read = voice_reads(&without, &[take]);
+        assert_eq!(read[0].onset_near(2.0, 0.25), None);
+    }
+
+    /// The noise character names what a denoise would target, and the
+    /// flatness decides whether a denoise fits at all: a broadband floor
+    /// is hiss a spectral denoise can lift, a tonal one is a hum a notch
+    /// serves better. A profile that named no noise type answers nothing.
+    #[test]
+    fn the_noise_character_says_what_a_denoise_targets() {
+        let read = |kind: &str, flatness: Option<f64>| VoiceRead {
+            take_wide: crate::voice_read::TakeRead {
+                noise_type: kind.to_owned(),
+                spectral_flatness: flatness,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let hiss = read("hiss", Some(0.6)).noise_character().expect("a read");
+        assert!(hiss.contains("broadband"), "{hiss}");
+        let hum = read("hum", Some(0.1)).noise_character().expect("a read");
+        assert!(hum.contains("tonal"), "{hum}");
+        let bare = read("rumble", None).noise_character().expect("a read");
+        assert_eq!(bare, "rumble");
+        assert_eq!(read("", Some(0.6)).noise_character(), None);
+    }
+
+    /// The brief the critic reads carries the profile's numbers, not only
+    /// its family names: a critic told `noiseFloor 0.80` cannot say the bed
+    /// was too loud, and a critic told `-38 dBFS` can. A family the profile
+    /// never measured stays absent, so "measured quiet" and "never
+    /// measured" are different briefs.
+    #[test]
+    fn the_brief_carries_the_measured_values() {
+        let log = vec![json!({
+            "wholeTake": {
+                "forensic": { "noiseFloorDbfs": -38.0, "snrDb": 9.5,
+                              "noiseType": "hiss", "spectralFlatness": 0.42 },
+                "loudness": { "integratedLufs": -16.5 },
+                "speechRatio": 0.71,
+            },
+            "lines": [
+                { "start": 0.0, "end": 2.0, "speechRate": { "wordsPerMinute": 120.0 } },
+                { "start": 2.0, "end": 4.0, "speechRate": { "wordsPerMinute": 190.0 } },
+            ],
+        })];
+        let brief = signal_brief(&log);
+        let measured = &brief["measured"];
+        assert_eq!(measured["take"]["noiseFloorDbfs"], json!(-38.0));
+        assert_eq!(measured["take"]["noiseType"], json!("hiss"));
+        assert_eq!(measured["take"]["snrDb"], json!(9.5));
+        assert_eq!(measured["take"]["integratedLufs"], json!(-16.5));
+        // The per-line shape is a span, not forty rows.
+        assert_eq!(measured["lines"]["wordsPerMinute"]["low"], json!(120.0));
+        assert_eq!(measured["lines"]["wordsPerMinute"]["high"], json!(190.0));
+        assert_eq!(measured["lines"]["wordsPerMinute"]["lines"], json!(2));
+        // A reading the profile never returned stays out of the brief.
+        assert!(measured["take"].get("spectralCentroidHz").is_none());
+        assert!(measured["lines"].get("pitchSlopeSemitonesPerSec").is_none());
     }
 
     /// The critic's structured fixes are spent, not ignored: a fix that
@@ -6578,12 +7075,15 @@ mod tests {
                 panic!("the music stage is derived");
             };
             // A floor dry enough to want a bed on its own, so only the
-            // verdict can stop one.
+            // verdict can stop one. The verdict is `recommendation` in
+            // the profile's own JSON: a fixture written against
+            // `decision` passed while the reader looked for a key the
+            // producer never writes.
             let log = vec![json!({
                 "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
                 "wholeTake": { "forensic": { "noiseFloorDbfs": -60.0 } },
                 "directorHints": {
-                    "bgm": { "decision": decision, "reason": "measured" },
+                    "bgm": { "recommendation": decision, "reason": "measured" },
                 },
             })];
             (music.next)(log.as_slice()).map(|call| call.tool)

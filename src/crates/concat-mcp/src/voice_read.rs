@@ -41,6 +41,15 @@ pub struct LineRead {
     pub pace: String,
     /// Words per minute, when the timings supported one.
     pub words_per_minute: Option<f64>,
+    /// Syllables per second: the rate a caption's hold is sized on, which
+    /// words-per-minute cannot answer for a line of long words.
+    pub syllables_per_sec: Option<f64>,
+    /// The pitch's slope across the line, in semitones per second: rising
+    /// delivery builds, falling delivery settles.
+    pub pitch_slope: Option<f64>,
+    /// The line's pitch range, in semitones: a wide range is a line that
+    /// performs, a narrow one is a line that reports.
+    pub pitch_range: Option<f64>,
     /// The line's level against the take's integrated level, in LU.
     pub relative_lu: Option<f64>,
     /// question, exclamation, statement or fragment.
@@ -145,6 +154,24 @@ pub struct TakeRead {
     pub noise_floor_dbfs: Option<f64>,
     /// Signal-to-noise ratio, in dB.
     pub snr_db: Option<f64>,
+    /// The kind of noise the floor is made of: hiss, hum, rumble, ...
+    /// The one forensic reading that says what a denoise should target.
+    pub noise_type: String,
+    /// Spectral flatness, 0..1: near 1 is hiss-like, near 0 is tonal.
+    pub spectral_flatness: Option<f64>,
+    /// The spectral centroid, in Hz: where the take's energy sits. A
+    /// low centroid is a dull take, a high one a bright or hissy one.
+    pub spectral_centroid_hz: Option<f64>,
+    /// The times the spectral flux peaked, in file seconds: the
+    /// transients a cut can land on, and the onsets the profile's own
+    /// music rule counts.
+    pub flux_onsets: Vec<f64>,
+    /// Crest factor: peak over RMS. A high crest is a dynamic take.
+    pub crest: Option<f64>,
+    /// The take's dynamic range, in dB.
+    pub dynamic_range_db: Option<f64>,
+    /// The share of the take that is voiced, 0..1.
+    pub voicing_rate: Option<f64>,
     /// The share of the take that is speech, 0..1.
     pub speech_ratio: Option<f64>,
     /// Whether the take already carries music, as the music gate measured.
@@ -163,6 +190,9 @@ pub struct TakeRead {
     pub bgm_reason: String,
     /// The speaker-change times diarization measured, in file seconds.
     pub speaker_changes: Vec<f64>,
+    /// The turns diarization measured: who spoke over which span. A turn
+    /// is the whole exchange, where a change is only its seam.
+    pub speaker_turns: Vec<SpeakerTurn>,
     /// The lines whose punctuation asks a question, by index.
     pub questions: Vec<usize>,
     /// The take's tempo: the strongest rhythm layer's period, in seconds.
@@ -171,6 +201,17 @@ pub struct TakeRead {
     /// The rhythm layers the prosody read found, strongest first: the
     /// macro period the phrases sit on and the micro period inside them.
     pub rhythm_layers: Vec<RhythmLayer>,
+}
+
+/// One speaker turn: who held the take over which span.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpeakerTurn {
+    /// Where the turn begins, in file seconds.
+    pub start: f64,
+    /// Where it ends, in file seconds.
+    pub end: f64,
+    /// The speaker id diarization gave it.
+    pub speaker: u64,
 }
 
 /// One rhythm layer: the period the take's energy repeats on, and how
@@ -301,6 +342,100 @@ impl VoiceRead {
                 Some(best.map_or(strength, |best| best.max(strength)))
             })
     }
+
+    /// How long a caption for this line needs on screen, in seconds: the
+    /// reading time the profile's rates imply, which is the longer of two
+    /// estimates of the same thing. Syllables and words are both proxies
+    /// for characters - a syllable is about 3, a word about 5 - and
+    /// captions are set at 15 characters a second, so a line of long words
+    /// reads slower than its words-per-minute alone suggests. Taking the
+    /// longer estimate is the safe direction: a caption under-held is a
+    /// caption the viewer cannot finish.
+    ///
+    /// `None` when neither rate was measured, or the line has no duration
+    /// to scale by - a caption's hold then stays whatever the timing alone
+    /// asks for, rather than a guess at reading speed.
+    pub fn caption_hold(&self, line: &LineRead) -> Option<f64> {
+        const CHARS_PER_SECOND: f64 = 15.0;
+        let duration = line.end - line.start;
+        if duration <= 0.0 {
+            return None;
+        }
+        let by_syllables = line
+            .syllables_per_sec
+            .map(|rate| rate * duration * 3.0 / CHARS_PER_SECOND);
+        let by_words = line
+            .words_per_minute
+            .map(|wpm| wpm / 60.0 * duration * 5.0 / CHARS_PER_SECOND);
+        match (by_syllables, by_words) {
+            (Some(syllables), Some(words)) => Some(syllables.max(words)),
+            (Some(only), None) | (None, Some(only)) => Some(only),
+            (None, None) => None,
+        }
+    }
+
+    /// The direction the line's delivery travelled: `Some(true)` when the
+    /// pitch rose across it, `Some(false)` when it fell, `None` when no
+    /// slope was measured or the slope is too flat to call a direction.
+    /// A rise builds into what follows; a fall settles.
+    pub fn delivery_rises(&self, line: &LineRead) -> Option<bool> {
+        const FLAT: f64 = 0.5;
+        line.pitch_slope
+            .filter(|slope| slope.abs() >= FLAT)
+            .map(|slope| slope > 0.0)
+    }
+
+    /// Whether the line's pitch range is wide enough to read as performed
+    /// rather than reported, on the profile's own 6-semitone bar. `None`
+    /// when no range was measured.
+    pub fn performs(&self, line: &LineRead) -> Option<bool> {
+        line.pitch_range.map(|range| range >= 6.0)
+    }
+
+    /// The speaker holding a file second, from the turns when diarization
+    /// measured them and from the line's own label otherwise. `None` when
+    /// neither names one, which is not the same answer as speaker 0.
+    pub fn speaker_at(&self, moment: f64) -> Option<u64> {
+        self.take_wide
+            .speaker_turns
+            .iter()
+            .find(|turn| turn.start <= moment && turn.end > moment)
+            .map(|turn| turn.speaker)
+            .or_else(|| self.line_at(moment).and_then(|line| line.speaker))
+    }
+
+    /// The flux onset nearest a file second, when one lands inside the
+    /// window: a transient a cut can land on instead of an arbitrary
+    /// frame. `None` when the forensic ear measured no onsets there.
+    pub fn onset_near(&self, moment: f64, window: f64) -> Option<f64> {
+        self.take_wide
+            .flux_onsets
+            .iter()
+            .copied()
+            .filter(|onset| (onset - moment).abs() <= window)
+            .min_by(|left, right| (left - moment).abs().total_cmp(&(right - moment).abs()))
+    }
+
+    /// What a denoise should target, in the profile's own words: the
+    /// noise type, and the flatness that says whether the floor is hiss.
+    /// `None` when the forensic ear named no noise type.
+    pub fn noise_character(&self) -> Option<String> {
+        let kind = self.take_wide.noise_type.trim();
+        if kind.is_empty() {
+            return None;
+        }
+        Some(match self.take_wide.spectral_flatness {
+            Some(flatness) if flatness > 0.25 => {
+                format!("{kind} (flatness {flatness:.2}: broadband, so a spectral denoise fits)")
+            }
+            Some(flatness) => {
+                format!(
+                    "{kind} (flatness {flatness:.2}: tonal, so a notch fits better than a denoise)"
+                )
+            }
+            None => kind.to_owned(),
+        })
+    }
 }
 
 /// One line, from the profile's own row.
@@ -375,6 +510,15 @@ fn line_of(row: &Value) -> LineRead {
             .to_owned(),
         words_per_minute: row
             .pointer("/speechRate/wordsPerMinute")
+            .and_then(Value::as_f64),
+        syllables_per_sec: row
+            .pointer("/speechRate/syllablesPerSec")
+            .and_then(Value::as_f64),
+        pitch_slope: row
+            .pointer("/prosody/pitchSlopeSemitonesPerSec")
+            .and_then(Value::as_f64),
+        pitch_range: row
+            .pointer("/prosody/pitchRangeSemitones")
             .and_then(Value::as_f64),
         relative_lu: row.pointer("/loudness/relativeLu").and_then(Value::as_f64),
         sentence_type: row
@@ -476,6 +620,29 @@ fn take_wide_of(reply: &Value) -> TakeRead {
             .pointer("/forensic/noiseFloorDbfs")
             .and_then(Value::as_f64),
         snr_db: whole.pointer("/forensic/snrDb").and_then(Value::as_f64),
+        noise_type: whole
+            .pointer("/forensic/noiseType")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        spectral_flatness: whole
+            .pointer("/forensic/spectralFlatness")
+            .and_then(Value::as_f64),
+        spectral_centroid_hz: whole
+            .pointer("/forensic/spectralCentroidHz")
+            .and_then(Value::as_f64),
+        flux_onsets: whole
+            .pointer("/forensic/fluxOnsetsSec")
+            .and_then(Value::as_array)
+            .map(|onsets| onsets.iter().filter_map(Value::as_f64).collect())
+            .unwrap_or_default(),
+        crest: whole.pointer("/forensic/crest").and_then(Value::as_f64),
+        dynamic_range_db: whole
+            .pointer("/forensic/dynamicRangeDb")
+            .and_then(Value::as_f64),
+        voicing_rate: whole
+            .pointer("/forensic/voicingRate")
+            .and_then(Value::as_f64),
         speech_ratio: whole["speechRatio"].as_f64(),
         music_present: reply["musicPresent"].as_bool(),
         cut_style: hints["cutStyle"].as_str().unwrap_or_default().to_owned(),
@@ -490,8 +657,11 @@ fn take_wide_of(reply: &Value) -> TakeRead {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        // The profile writes the bed's verdict as `bgm.recommendation`
+        // (`add` / `skip` / `duck_only`); reading `decision` left it None
+        // on every take, so the skip and duck_only rules never fired.
         bgm_decision: hints
-            .pointer("/bgm/decision")
+            .pointer("/bgm/recommendation")
             .and_then(Value::as_str)
             .map(str::to_owned),
         bgm_reason: hints
@@ -514,10 +684,40 @@ fn take_wide_of(reply: &Value) -> TakeRead {
                     .collect()
             })
             .unwrap_or_default(),
+        // The profile writes a change as `{t, from, to}`; reading the
+        // array as bare numbers left this empty on every take that had
+        // diarization, so the seam that `speakerChanges` is meant to
+        // drive never fired.
         speaker_changes: reply
             .pointer("/speaker/changes")
             .and_then(Value::as_array)
-            .map(|changes| changes.iter().filter_map(Value::as_f64).collect())
+            .map(|changes| {
+                changes
+                    .iter()
+                    .filter_map(|change| {
+                        change
+                            .get("t")
+                            .and_then(Value::as_f64)
+                            .or_else(|| change.as_f64())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        speaker_turns: reply
+            .pointer("/speaker/turns")
+            .and_then(Value::as_array)
+            .map(|turns| {
+                turns
+                    .iter()
+                    .filter_map(|turn| {
+                        Some(SpeakerTurn {
+                            start: turn["start"].as_f64()?,
+                            end: turn["end"].as_f64()?,
+                            speaker: turn["speaker"].as_u64().unwrap_or_default(),
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default(),
         questions: hints["questions"]
             .as_array()
@@ -552,6 +752,7 @@ fn confidence_of(reply: &Value) -> BTreeMap<String, f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn read_with_layers(layers: Vec<(f64, f64)>) -> VoiceRead {
         let mut read = VoiceRead::default();
@@ -581,5 +782,58 @@ mod tests {
     #[test]
     fn an_unmeasured_pulse_is_none_not_zero() {
         assert_eq!(read_with_layers(Vec::new()).pulse_strength(), None);
+    }
+
+    /// The profile's own JSON, read as the profile writes it. Two paths
+    /// were wrong for months and nothing failed: `bgm.decision` is really
+    /// `bgm.recommendation`, and `speaker.changes` holds `{t, from, to}`
+    /// objects rather than bare numbers. Both readings came back empty on
+    /// every real take, so the skip rule and the speaker seam were dead
+    /// while their code looked exercised. This test builds the reply from
+    /// the producer's actual shape, so a path that drifts fails here.
+    #[test]
+    fn the_profile_s_own_shape_is_what_is_read() {
+        let reply = json!({
+            "audio": { "path": "/t/a.wav", "durationSec": 12.0 },
+            "wholeTake": {
+                "loudness": { "integratedLufs": -16.5 },
+                "prosody": [ { "periodSec": 0.6, "strength": 0.7 } ],
+                "dominantPeriodSec": 0.6,
+                "forensic": {
+                    "noiseFloorDbfs": -38.0, "snrDb": 9.5, "noiseType": "hiss",
+                    "spectralFlatness": 0.42, "fluxOnsetsSec": [1.0, 3.25],
+                },
+                "speechRatio": 0.71,
+            },
+            "directorHints": {
+                "bgm": { "recommendation": "skip", "reason": "already musical" },
+            },
+            "speaker": {
+                "changes": [
+                    { "t": 4.5, "from": 0, "to": 1 },
+                    { "t": 9.0, "from": 1, "to": 0 },
+                ],
+                "turns": [
+                    { "start": 0.0, "end": 4.5, "speaker": 0 },
+                    { "start": 4.5, "end": 9.0, "speaker": 1 },
+                ],
+            },
+            "lines": [],
+        });
+        let read = VoiceRead::of(&reply).expect("a read");
+        assert_eq!(read.take_wide.bgm_decision.as_deref(), Some("skip"));
+        assert_eq!(
+            read.take_wide.speaker_changes,
+            vec![4.5, 9.0],
+            "the change times live under `t`"
+        );
+        assert_eq!(read.take_wide.speaker_turns.len(), 2);
+        assert_eq!(read.take_wide.speaker_turns[1].speaker, 1);
+        assert_eq!(read.take_wide.noise_type, "hiss");
+        assert_eq!(read.take_wide.snr_db, Some(9.5));
+        assert_eq!(read.take_wide.flux_onsets, vec![1.0, 3.25]);
+        assert_eq!(read.onset_near(3.3, 0.1), Some(3.25));
+        assert_eq!(read.take_wide.integrated_lufs, Some(-16.5));
+        assert_eq!(read.pulse_strength(), Some(0.7));
     }
 }

@@ -2877,22 +2877,21 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         return None;
     }
     let read = emotion_lines(log, takes);
-    // The segments are the spine as the handoff left it: one per picture
-    // clip, in order, each naming the media it plays.
+    // The segments are the spine as the handoff left it: one per placed
+    // clip, in order. An audio clip is not a picture - claiming its span
+    // as `existing` footage was the plan's own black-span defect, the
+    // validator refusing exactly that claim - so a narration clip's span
+    // is planned as the B-roll the gather will place, shopped with the
+    // words the span plays, and only a clip that really puts pixels on
+    // screen is `existing` (with its kind stated, so the claim can be
+    // checked).
     let segments: Vec<Value> = clips
         .iter()
         .map(|clip| {
             let start = clip["start"].as_f64().unwrap_or(0.0);
             let end = start + clip["duration"].as_f64().unwrap_or(0.0);
-            let mut segment = json!({
-                "start": round3(start),
-                "end": round3(end),
-                "visual": {
-                    "type": "existing",
-                    "mediaId": clip["media"].as_str().unwrap_or_default(),
-                    "category": "voiceover",
-                },
-            });
+            let kind = clip["kind"].as_str().unwrap_or("audio");
+            let is_visual = matches!(kind, "video" | "image" | "motion" | "text" | "shape");
             // The read's own act and temperature for the moment the
             // segment opens, where the read reached it: the clip's first
             // file second is the moment its line begins.
@@ -2903,6 +2902,80 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                     let (source_in, _, _) = clip_file_span(clip);
                     emotion_at(&read, path, source_in).cloned()
                 });
+            let mut segment = if is_visual {
+                json!({
+                    "start": round3(start),
+                    "end": round3(end),
+                    "visual": {
+                        "type": "existing",
+                        "mediaId": clip["media"].as_str().unwrap_or_default(),
+                        "kind": kind,
+                    },
+                })
+            } else {
+                // The span's own words, both as the shopping query and as
+                // the semantic description the shelf ranks against: what
+                // the narration says while the shot plays is what the
+                // shot should show. A span too short to carry the
+                // description floor states the measured arc it sits in
+                // instead - never a padded fake.
+                let (source_in, source_out, _) = clip_file_span(clip);
+                let clip_path = clip["media"].as_str().and_then(|id| {
+                    media
+                        .iter()
+                        .find(|(mid, _)| mid == id)
+                        .map(|(_, path)| path.clone())
+                });
+                let spoken: String = transcripts_of(log, takes)
+                    .into_iter()
+                    .find(|(take_path, _)| clip_path.as_deref() == Some(take_path.as_str()))
+                    .map(|(_, segments)| {
+                        segments
+                            .iter()
+                            .filter_map(|row| {
+                                let from = row["start"].as_f64()?;
+                                let to = row["end"].as_f64()?;
+                                (to > source_in && from < source_out)
+                                    .then(|| row["text"].as_str().unwrap_or_default().trim())
+                            })
+                            .collect::<Vec<&str>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                let query = if spoken.is_empty() {
+                    mood.as_ref()
+                        .and_then(|line| line.queries.first().cloned())
+                        .unwrap_or_else(|| "cinematic establishing shot".to_owned())
+                } else {
+                    spoken.clone()
+                };
+                let description = if spoken.chars().count() >= 40 {
+                    spoken.clone()
+                } else {
+                    // The measured facts the run can stand behind: the
+                    // act, the register and the span's own subject, stated
+                    // as the description - padded with facts, never with
+                    // filler.
+                    let line = mood.as_ref();
+                    format!(
+                        "the narration's {} {} over {}, a {:.0} second piece",
+                        line.map(|line| line.act.as_str()).unwrap_or("body"),
+                        line.map(|line| line.emotion.as_str()).unwrap_or("neutral"),
+                        query,
+                        (end - start).max(1.0)
+                    )
+                };
+                json!({
+                    "start": round3(start),
+                    "end": round3(end),
+                    "visual": {
+                        "type": "broll",
+                        "provider": source.stock_provider,
+                        "query": query,
+                        "description": description,
+                    },
+                })
+            };
             if let Some(line) = mood {
                 segment["emotion"] = json!(line.emotion);
                 segment["colourTemp"] = json!(line.temperature);
@@ -2926,9 +2999,40 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     };
     // The brief, only where the narration answers it: the opening line is
     // the claim, the closing line its payoff, the ordered emotions the
-    // arc. Audience and goal are not in a transcript, so they stay absent
-    // and the gate names them.
+    // arc. The GOAL is the button's own - a one-click edit is a retention
+    // edit, and saying so is honest. The AUDIENCE is stated only when the
+    // run's own measurements name a subject; a transcript that never says
+    // what it is about leaves the field absent and the gate names it,
+    // which is worth more than an audience invented to pass.
     let mut brief = serde_json::Map::new();
+    brief.insert("goal".to_owned(), json!("watch to the end"));
+    // The audience, only when the run's own reading names a subject: the
+    // strongest entities the NER timed are what the piece is about, and a
+    // transcript about nothing in particular leaves the field absent for
+    // the gate to name - an honest blocker, not an invented viewer.
+    let subjects: Vec<String> = {
+        let mut named: Vec<String> = voice_reads(log, takes)
+            .iter()
+            .flat_map(|voice| voice.entities.iter())
+            .filter(|entity| {
+                matches!(
+                    entity.kind.as_str(),
+                    "ORG" | "PERSON" | "GPE" | "LOC" | "FAC" | "WORK_OF_ART" | "PRODUCT"
+                )
+            })
+            .map(|entity| entity.text.clone())
+            .collect();
+        named.sort_by_key(|text| std::cmp::Reverse(text.len()));
+        named.dedup();
+        named.truncate(2);
+        named
+    };
+    if !subjects.is_empty() {
+        brief.insert(
+            "audience".to_owned(),
+            json!(format!("viewers interested in {}", subjects.join(" and "))),
+        );
+    }
     let spoken: Vec<String> = takes
         .iter()
         .flat_map(|take| spoken_lines(log, &take.take))
@@ -4732,6 +4836,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             }),
         )
         .warn()
+        // The plan's STRUCTURE is a hard gate, not a warning: a plan the
+        // validator refuses is an edit that cannot run - sections that do
+        // not cover the runtime, segments claiming footage over audio, a
+        // signalLog that names nothing. The creative gate stays a
+        // warning: an audience the transcript never named is a real
+        // limitation the run reports, not one it hides or invents
+        // around. plan_validate runs in-process, so the gate cannot
+        // fail on an environment.
+        .gate(concat_director::ReplyGate::True {
+            field: "valid",
+            what: "the plan the run wrote did not validate",
+        })
         .into(),
     );
     // 6. The timeline, in one stage and one step: the tighten, then the
@@ -7697,9 +7813,18 @@ mod tests {
                 what: "the cut scored under the craft bar",
             }]
         );
+        // The plan's own gate: its structure is refused before a single
+        // edit lands, not warned about after the fact.
+        assert_eq!(
+            program.steps[5].gates(),
+            vec![ReplyGate::True {
+                field: "valid",
+                what: "the plan the run wrote did not validate",
+            }]
+        );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 14 && at != 15 && at != 16 {
+            if at != 5 && at != 14 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -11664,15 +11789,33 @@ mod tests {
         // The frame the project is: a 1080x1920 project is a vertical reel.
         assert_eq!(plan["aspect"], "9:16");
         assert_eq!(plan["mode"], "reel");
-        // The narration answered the thesis and the payoff; audience and
-        // goal are not in a transcript, so they stay absent and the gate
-        // is what names them.
+        // The narration answered the thesis and the payoff. The goal is
+        // the button's own - a one-click edit is a retention edit - and
+        // the audience stays absent here because this transcript named no
+        // entity: the gate names it, which is the honest answer.
         assert_eq!(plan["creativeBrief"]["thesis"], "we found the wreck");
         assert_eq!(plan["creativeBrief"]["payoff"], "and then it moved");
+        assert_eq!(plan["creativeBrief"]["goal"], "watch to the end");
         assert!(
             plan["creativeBrief"].get("audience").is_none(),
-            "an audience is not measured from a transcript"
+            "an audience is not measured from a transcript that names nothing"
         );
+        // The narration's own spans are planned as the B-roll the gather
+        // places - never as existing footage over audio media - and the
+        // plan carries the live shelf it will be shopped from.
+        for segment in plan["segments"].as_array().expect("segments") {
+            assert_eq!(
+                segment["visual"]["type"], "broll",
+                "an audio clip's span is never claimed as existing footage"
+            );
+            assert_eq!(segment["visual"]["provider"], "pexels");
+            assert!(
+                segment["visual"]["description"]
+                    .as_str()
+                    .is_some_and(|description| description.chars().count() >= 40),
+                "the semantic description clears the shelf's ranking floor"
+            );
+        }
         // The grade is the read's temperature, with the package's own
         // intensity parameter - the pair the plan validates.
         assert_eq!(plan["grade"]["filter"], "concat.cool-blue");
@@ -11699,6 +11842,95 @@ mod tests {
             }
         }
     }
+    /// The plan the run writes VALIDATES: the stage's hard gate on
+    /// `valid` is only honest if the fixed program's own plan clears it.
+    /// The audience blocker may stand (a transcript that names nothing),
+    /// but the structure - sections, segments, the signalLog, the
+    /// B-roll claims with their licensed provider - must pass.
+    #[test]
+    fn the_plan_the_run_writes_validates() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(plan) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "plan")
+            .expect("the program has a plan stage")
+        else {
+            panic!("the plan stage is derived");
+        };
+        let log = vec![
+            json!({
+                "settings": { "width": 1920, "height": 1080 },
+                "timeline": { "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 18.0,
+                      "sourceStart": 0.0, "speed": 1.0 },
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found the wreck below the old harbour wall" },
+                        { "start": 5.0, "end": 9.0, "text": "it was not empty, the hold still carried crates" },
+                        { "start": 12.0, "end": 16.0, "text": "and then the crane lifted it all away" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "surprise", 0.6, "hook", "cold", ""),
+                    emotion_row(5.0, 9.0, "fear", 0.8, "tension", "cold", "impact-heavy"),
+                    emotion_row(12.0, 16.0, "reveal", 0.9, "cold", "", "stinger"),
+                ],
+            }),
+        ];
+        // Walk to the plan_validate call and run it through the real
+        // validator: the same function the tool serves.
+        let mut ask = (plan.next)(&log).expect("the planner is asked");
+        while ask.tool != "plan_validate" {
+            ask = (plan.next)(&log).expect("the stage keeps going");
+        }
+        assert_eq!(ask.tool, "plan_validate");
+        let checked =
+            crate::tools::validate_plan_tool(ask.arguments.clone()).expect("the plan validates");
+        assert_eq!(
+            checked["valid"],
+            json!(true),
+            "the fixed program's own plan passes its own hard gate: {checked}"
+        );
+        // The audience blocker is the honest remainder: this transcript
+        // names no entity, so no audience is invented to pass the
+        // creative gate.
+        assert_eq!(checked["creativeReady"], json!(false));
+        assert!(
+            checked["creativeBlockers"]
+                .as_array()
+                .is_some_and(|blockers| {
+                    blockers.iter().any(|blocker| {
+                        blocker
+                            .as_str()
+                            .is_some_and(|text| text.contains("audience"))
+                    })
+                }),
+            "the audience is named as the blocker it honestly is"
+        );
+    }
+
     /// The measured beat grid is returned before the planner requests are
     /// constructed, and every take gets its own transcript clock.
     #[test]

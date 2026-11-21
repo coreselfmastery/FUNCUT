@@ -1265,6 +1265,22 @@ fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<String
         .collect()
 }
 
+/// The emphasis peaks the sound stage may spend, read from the same typed
+/// profile as captions and pacing. A raw walk through lines[].prosody can
+/// drift independently of the parser the other consumers use.
+fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64)> {
+    reads
+        .iter()
+        .flat_map(|read| {
+            read.lines.iter().flat_map(move |line| {
+                line.emphasis
+                    .iter()
+                    .map(move |word| (read.take.clone(), word.at, word.strength))
+            })
+        })
+        .collect()
+}
+
 /// Every take's `voice_signals` reading, in the order the replies landed.
 /// A reply that is not a reading (a transcript, an emotion extract, a
 /// timeline view) is skipped, and a reading of a file the run does not
@@ -3183,8 +3199,8 @@ fn signal_evidence(log: &[Value]) -> Value {
     // the two apart without this. Deduplicated and in profile order.
     let mut degraded: Vec<String> = Vec::new();
     for reply in log {
-        if let Some(rows) = reply["degradations"].as_array() {
-            for row in rows.iter().filter_map(Value::as_str) {
+        if let Some(read) = VoiceRead::of(reply) {
+            for row in &read.degradations {
                 let row = row.trim();
                 if !row.is_empty() && !degraded.iter().any(|kept| kept == row) {
                     degraded.push(row.to_owned());
@@ -3491,9 +3507,8 @@ fn measured_values(log: &[Value]) -> Value {
         );
         insert(
             "crest",
-            forensic
-                .get("crest")
-                .and_then(Value::as_f64)
+            VoiceRead::of(reply)
+                .and_then(|read| read.take_wide.crest)
                 .map(|v| json!(v)),
         );
         insert(
@@ -6139,31 +6154,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // the shopping - must answer for that take, never
                         // the first take that happens to span the same
                         // file-second.
-                        let mut found: Vec<(String, f64, f64)> = Vec::new();
-                        for reply in log {
-                            let Some(path) = reply.pointer("/audio/path").and_then(|v| v.as_str())
-                            else {
-                                continue;
-                            };
-                            if !sfx_source.iter().any(|take| take.take == path) {
-                                continue;
-                            }
-                            for line in reply["lines"].as_array().into_iter().flatten() {
-                                for word in line
-                                    .pointer("/prosody/emphasisWords")
-                                    .and_then(|w| w.as_array())
-                                    .into_iter()
-                                    .flatten()
-                                {
-                                    let (Some(time), Some(strength)) =
-                                        (word["t"].as_f64(), word["strength"].as_f64())
-                                    else {
-                                        continue;
-                                    };
-                                    found.push((path.to_owned(), time, strength));
-                                }
-                            }
-                        }
+                        let voice = voice_reads(log, &sfx_source);
+                        let mut found = emphasis_peaks(&voice);
                         // An accent on every emphasis peak is the robotic
                         // mistake the skill warns about: a stressed word in
                         // a calm informational line does not want a hit.
@@ -6187,7 +6179,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // a settled line. The lift is worth a tenth of its
                         // semitones - a full octave's lift adds two points
                         // of strength, a modest rise adds a fraction.
-                        let voice = voice_reads(log, &sfx_source);
                         for peak in &mut found {
                             let lift = voice_read_of(&voice, &peak.0).and_then(|voice_read| {
                                 voice_read
@@ -8013,6 +8004,7 @@ mod tests {
     fn the_brief_says_what_the_profile_could_not_measure() {
         let log = vec![
             json!({
+                "audio": { "path": "/t/a.wav" },
                 "degradations": [
                     "ffmpeg absent: loudness unmeasured",
                     "silence detect absent: pauses unclassified",
@@ -8023,6 +8015,7 @@ mod tests {
             }),
             // A second take repeating one line: the digest keeps it once.
             json!({
+                "audio": { "path": "/t/b.wav" },
                 "degradations": ["ffmpeg absent: loudness unmeasured"],
                 "signalConfidence": { "perSignal": [
                     { "signal": "prosody", "confidence": 0.8, "basis": "pitch" },
@@ -8122,6 +8115,11 @@ mod tests {
                 "the profile's own cut-style rule is prose: `cut_style` is \
                  the reading it explains, and that one sizes every shot",
             ),
+            (
+                "label",
+                "a phrase label is descriptive metadata; the measured start/end \
+                 boundary is the timing decision, and no card is inferred from the label",
+            ),
         ];
         let source = include_str!("voice_read.rs");
         let program = include_str!("director_program.rs");
@@ -8189,7 +8187,6 @@ mod tests {
             .filter(|field| {
                 !body.contains(&format!("{field}("))
                     && !body.contains(&format!(".{field}"))
-                    && !body.contains(&format!("\"{field}\""))
                     && !spent_through_helper(field)
             })
             .collect();
@@ -8208,6 +8205,7 @@ mod tests {
     #[test]
     fn the_brief_carries_the_numbers_at_the_paths_the_profile_writes() {
         let log = vec![json!({
+            "audio": { "path": "/t/a.wav" },
             "wholeTake": {
                 "loudness": { "integratedLufs": -16.5 },
                 "forensic": {
@@ -8243,6 +8241,11 @@ mod tests {
         assert_eq!(take["snrDb"], json!(9.5));
         assert_eq!(take["noiseType"], json!("hiss"));
         assert_eq!(take["spectralFlatness"], json!(0.42));
+        assert_eq!(
+            take["crest"],
+            json!(12.0),
+            "crest is carried through the typed take-wide reading"
+        );
         assert_eq!(
             take["fluxOnsets"],
             json!(3),

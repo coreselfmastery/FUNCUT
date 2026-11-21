@@ -35,7 +35,10 @@ jobs:
     name: nix build
     runs-on: ubuntu-24.04
     # A cold build of the whole workspace and its native dependencies.
-    timeout-minutes: 120
+    # Measured between 1h09m and 1h35m on this runner class, and the slower
+    # machines were the ones still compiling when this ceiling was 120 - the
+    # margin is for them, not for a hang.
+    timeout-minutes: 180
     # Read only: the job builds what is checked in and writes nothing back
     # (the lock is refreshed by hand; see the top of this file).
     permissions:
@@ -111,9 +114,9 @@ jobs:
           # the fallocate on the runner's default three every time.
           swap_kib() { awk 'NR>1 { sum += $3 } END { print sum + 0 }' /proc/swaps; }
           had_kib=$(swap_kib)
-          if [ "$had_kib" -lt 8388608 ]; then
+          if [ "$had_kib" -lt 16777216 ]; then
             for where in /mnt /; do
-              if sudo fallocate -l 8G "$where/swapfile" 2>/dev/null; then
+              if sudo fallocate -l 16G "$where/swapfile" 2>/dev/null; then
                 sudo chmod 600 "$where/swapfile"
                 sudo mkswap "$where/swapfile"
                 sudo swapon "$where/swapfile"
@@ -160,11 +163,12 @@ jobs:
 
       - name: Build
         run: |
-          # A sampler beside the build: the runs that ended "runner lost
-          # communication" took the log's last line with them, and the
-          # minutes between the last compile line and the kill were blank,
-          # so the peak that did it was never named. One line a minute
-          # names it, whether the run survives or not.
+          # A sampler beside the build. `gh run view --log` cuts every log
+          # at a megabyte, and this build's is nearly three, so the quiet
+          # half hour while the window crate compiles is exactly what the
+          # download never shows. One line a minute puts the memory and
+          # swap on the record through that half hour, and the run that
+          # dies still uploads its log if the machine survives the build.
           (
             while :; do
               sleep 60

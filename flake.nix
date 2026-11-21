@@ -157,6 +157,11 @@
           cargoBuildFlags = [
             "-p"
             "concat"
+            # Belt to the env var's braces below: `--config` beats the
+            # manifest outright, so the join is off whether or not cargo
+            # would have taken the variable.
+            "--config"
+            "profile.release.lto=false"
           ];
 
           # The workspace's tests generate their own media through the
@@ -245,6 +250,9 @@
           # the lanes, which the job's two hours still holds with room.
           preBuild = ''
             export NIX_BUILD_CORES=1
+            # Say what the build was actually told: the log is the only
+            # witness a run that loses its machine leaves behind.
+            echo "concat: cargo told lto=$CARGO_PROFILE_RELEASE_LTO codegen-units=$CARGO_PROFILE_RELEASE_CODEGEN_UNITS, and --config profile.release.lto=false"
           '';
 
           nativeBuildInputs = (nativeInputs pkgs) ++ [

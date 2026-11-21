@@ -674,6 +674,9 @@ enum GatherPhase {
     ReadContinuity,
     /// About to import the next chosen candidate.
     Import,
+    /// The import reply is in: the lane every B-roll clip shares is
+    /// minted once, before the first placement.
+    ReadTrack,
     /// The import reply is in: place the clip at its gap.
     ReadImport,
     /// The placement reply is in: style the clip and move on.
@@ -4743,9 +4746,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // slowly and a clipped one snaps.
                 let mut pending_period: Option<f64> = None;
                 let mut pending_transition: Option<&'static str> = None;
+                // The gap's own timeline position, held across the lane
+                // minting call: the placement that follows the lane's
+                // reply places at the gap the import mapped, not at
+                // whatever the intervening reply left in flight.
+                let mut pending_at: f64 = 0.0;
                 // The transition the last placed shot cut in with: the
                 // next shot never wears the same move twice running.
                 let mut last_transition: Option<&'static str> = None;
+                // The one lane every B-roll clip is placed on: a seam's
+                // transition only renders between same-lane neighbours
+                // (the export's resolver matches the outgoing clip that
+                // ends where this one starts, on the SAME track), so a
+                // first-free walk that spread the shots over whatever
+                // lanes had room orphaned every transitionIn this
+                // program ever wrote - the Python director's dedicated
+                // overlay lane is the shape that works, and this is it.
+                let mut broll_lane: Option<String> = None;
                 // The takes' readings, read once: the seam of every gap is
                 // judged against the same measurement.
                 let mut voice: Option<Vec<VoiceRead>> = None;
@@ -5248,18 +5265,40 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         &slot,
                                         last_transition,
                                     ));
-                                    phase = GatherPhase::Place;
-                                    return Some(call(
-                                        "edit_apply",
-                                        json!({
-                                            "path": gather_project,
-                                            "command": {
-                                                "op": "addClipAtFirstFree",
-                                                "mediaId": media_id,
-                                                "start": round3(at),
-                                            },
-                                        }),
-                                    ));
+                                    phase = if broll_lane.is_some() {
+                                        GatherPhase::Place
+                                    } else {
+                                        // The lane every shot shares, minted
+                                        // before the first placement: a
+                                        // transition renders between
+                                        // same-lane neighbours, so this one
+                                        // lane is what makes the seam moves
+                                        // below more than decoration.
+                                        GatherPhase::ReadTrack
+                                    };
+                                    pending_at = round3(at);
+                                    return Some(if let Some(lane) = broll_lane.clone() {
+                                        call(
+                                            "edit_apply",
+                                            json!({
+                                                "path": gather_project,
+                                                "command": {
+                                                    "op": "addClip",
+                                                    "mediaId": media_id,
+                                                    "trackId": lane,
+                                                    "start": round3(at),
+                                                },
+                                            }),
+                                        )
+                                    } else {
+                                        call(
+                                            "edit_apply",
+                                            json!({
+                                                "path": gather_project,
+                                                "command": { "op": "addTrack" },
+                                            }),
+                                        )
+                                    });
                                 }
                                 _ => {
                                     placing += 1;
@@ -5267,6 +5306,51 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     continue;
                                 }
                             }
+                        }
+                        GatherPhase::ReadTrack => {
+                            // The lane's own reply: the id every B-roll
+                            // placement uses from here on. A reply without
+                            // one falls back to the first-free walk for
+                            // this shot - and the next slot's placement
+                            // re-attempts the minting, so a transient
+                            // failure costs one shot's neighbour, not the
+                            // whole program's seams.
+                            let lane = log
+                                .last()
+                                .and_then(|reply| reply.get("createdId"))
+                                .and_then(|id| id.as_str())
+                                .map(str::to_owned);
+                            let media_id = pending_media.clone();
+                            let at = pending_at;
+                            phase = GatherPhase::Place;
+                            return Some(match lane {
+                                Some(lane) => {
+                                    broll_lane = Some(lane.clone());
+                                    call(
+                                        "edit_apply",
+                                        json!({
+                                            "path": gather_project,
+                                            "command": {
+                                                "op": "addClip",
+                                                "mediaId": media_id,
+                                                "trackId": lane,
+                                                "start": at,
+                                            },
+                                        }),
+                                    )
+                                }
+                                None => call(
+                                    "edit_apply",
+                                    json!({
+                                        "path": gather_project,
+                                        "command": {
+                                            "op": "addClipAtFirstFree",
+                                            "mediaId": media_id,
+                                            "start": at,
+                                        },
+                                    }),
+                                ),
+                            });
                         }
                         GatherPhase::Place => {
                             // The placement's own reply: the clip the
@@ -10616,10 +10700,19 @@ mod tests {
             "license": "Pexels License",
             "view": { "timeline": { "clips": [] }, "media": [] }
         }));
-        let place = (gather.next)(&log).expect("the clip is placed at the gap");
+        // The lane every B-roll clip shares, minted once before the
+        // first placement: a seam's transition only renders between
+        // same-lane neighbours, so the shots ride one dedicated lane
+        // rather than the first-free walk.
+        let lane = (gather.next)(&log).expect("the shared B-roll lane is minted");
+        assert_eq!(lane.tool, "edit_apply");
+        assert_eq!(lane.arguments["command"]["op"], "addTrack");
+        log.push(json!({ "createdId": "t-broll" }));
+        let place = (gather.next)(&log).expect("the clip is placed on the shared lane");
         assert_eq!(place.tool, "edit_apply");
-        assert_eq!(place.arguments["command"]["op"], "addClipAtFirstFree");
+        assert_eq!(place.arguments["command"]["op"], "addClip");
         assert_eq!(place.arguments["command"]["mediaId"], "stock-media");
+        assert_eq!(place.arguments["command"]["trackId"], "t-broll");
         assert_eq!(place.arguments["command"]["start"], 2.0);
 
         log.push(json!({

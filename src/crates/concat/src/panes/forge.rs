@@ -349,11 +349,14 @@ impl ForgePane {
                 // stage is read from the harness's own words as they come:
                 // the phase names the director skill prints, mapped onto
                 // the fraction of its twelve phases they sit at. A line
-                // that names no phase moves nothing, so the bar only ever
-                // advances on evidence.
+                // that names no phase moves nothing, and a line naming an
+                // earlier phase than the one the run is in - a recap, a
+                // quoted plan - moves it backwards neither: the bar only
+                // ever advances on evidence.
                 if self.auto.running
                     && self.auto.runner.is_none()
                     && let Some((phase, fraction)) = director_phase(&line)
+                    && fraction > self.auto.fraction
                 {
                     self.auto.stage = director_phase_stage(phase);
                     self.auto.fraction = fraction;
@@ -2712,23 +2715,48 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
 }
 
 /// The director skill's phases, in the order it runs them, with the
-/// words its own headings carry. A handed-over AUTO EDIT has no runner
-/// to name its stage, so the pane reads the harness's output instead and
-/// advances only when a phase is actually named - the twelve the skill
-/// prints, which is the same sequence a Start Forge run walks.
+/// words its own headings and tool calls carry. A handed-over AUTO EDIT
+/// has no runner to name its stage, so the pane reads the harness's
+/// output instead and advances only when a phase is actually named -
+/// the twelve headings the skill prints (0, 1, 1b, 1c, 2, 3, 4, 5, 5b,
+/// 6, 7, 8), which is the same sequence a Start Forge run walks.
+///
+/// The words are the *fallback*: the skill numbers every heading, so the
+/// numbered match in `director_phase` decides almost every line, and a
+/// word here only places a line the harness emitted without its number.
 const DIRECTOR_PHASES: [&[&str]; 12] = [
-    &["phase 1", "creative brief"],
-    &["phase 2", "understand"],
-    &["phase 3", "voice signal", "emotion"],
-    &["phase 4", "transcri"],
-    &["phase 5", "plan_validate", "plan"],
-    &["phase 6", "b-roll", "stock_"],
-    &["phase 7", "rough cut"],
-    &["phase 8", "motion_", "geneva"],
-    &["phase 9", "caption"],
-    &["phase 10", "bgm_", "sounds_", "music"],
-    &["phase 11", "watch_render", "craft_critique"],
-    &["phase 12", "export_"],
+    &["creative direction", "creative_brief"],
+    &["understand the material"],
+    &["emotion"],
+    &["voice_signals", "voice signal"],
+    &["tighten", "clip_cut_spans"],
+    &["plan_validate", "the edit plan"],
+    &["gather", "stock_search", "b-roll"],
+    &["place", "rough cut"],
+    &["motion_bake", "motion design", "geneva"],
+    &["grade", "the look", "effect_layer"],
+    &["watch_render", "craft_critique"],
+    &["export_start", "export_wait"],
+];
+
+/// The skill's numbered ladder: the number each heading prints, the
+/// letter suffix three of them carry (1b, 1c, 5b), and the pane's
+/// phase index for that pair. A number the ladder does not carry - a
+/// "phase 12" an older prompt might still echo - matches nothing by
+/// number, so it can never be read as "phase 1".
+const DIRECTOR_PHASE_LADDER: [(u32, &str, usize); 12] = [
+    (0, "", 0),
+    (1, "", 1),
+    (1, "b", 2),
+    (1, "c", 3),
+    (2, "", 4),
+    (3, "", 5),
+    (4, "", 6),
+    (5, "", 7),
+    (5, "b", 8),
+    (6, "", 9),
+    (7, "", 10),
+    (8, "", 11),
 ];
 
 /// The stage the pane shows for a phase. The words are spelled out here
@@ -2740,42 +2768,61 @@ fn director_phase_stage(index: usize) -> String {
         0 => t("forge.directorPhaseBrief"),
         1 => t("forge.directorPhaseUnderstand"),
         2 => t("forge.directorPhaseAudio"),
-        3 => t("forge.directorPhaseTranscribe"),
-        4 => t("forge.directorPhasePlan"),
-        5 => t("forge.directorPhaseFootage"),
-        6 => t("forge.directorPhaseCut"),
-        7 => t("forge.directorPhaseMotion"),
-        8 => t("forge.directorPhaseCaption"),
-        9 => t("forge.directorPhaseSound"),
+        3 => t("forge.directorPhaseSignals"),
+        4 => t("forge.directorPhaseTighten"),
+        5 => t("forge.directorPhasePlan"),
+        6 => t("forge.directorPhaseFootage"),
+        7 => t("forge.directorPhaseCut"),
+        8 => t("forge.directorPhaseMotion"),
+        9 => t("forge.directorPhaseGrade"),
         10 => t("forge.directorPhaseReview"),
         _ => t("forge.directorPhaseExport"),
     }
 }
 
 /// The phase a line of the harness's output names, and how far through
-/// the skill's twelve phases that is. The last phase a line matches wins
-/// nothing: a line that mentions two phases is a sentence about them,
-/// not a stage, so only the earliest match is taken and the fraction is
-/// that phase's own position.
+/// the skill's twelve phases that is. A phase sits halfway through its
+/// own slot while it runs - the last phase is 11.5/12, never 1.0, which
+/// only the accepted end of the run may show. A line that mentions two
+/// phases is a sentence about them, not a stage, so only the earliest
+/// match is taken and the fraction is that phase's own position.
 fn director_phase(line: &str) -> Option<(usize, f32)> {
     let lower = line.to_ascii_lowercase();
     let total = DIRECTOR_PHASES.len() as f32;
-    let at = |index: usize| (index, (index + 1) as f32 / total);
-    // A numbered phase is matched by its number with a boundary after it:
-    // "phase 1" sits inside "phase 12", so a plain substring scan would
-    // read every phase ten and up as phase one.
-    for index in 0..DIRECTOR_PHASES.len() {
-        let number = format!("phase {}", index + 1);
-        if let Some(found) = lower.find(&number)
-            && !lower[found + number.len()..]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_digit())
+    let at = |index: usize| (index, (index as f32 + 0.5) / total);
+    // A numbered phase is matched by its number and, where it carries
+    // one, its letter suffix: the skill prints "Phase 1b" and "Phase
+    // 5b", so a plain "phase 1" scan must not swallow them, a greedy
+    // digit read must not turn "phase 12" into "phase 1", and a number
+    // the ladder does not carry matches nothing by number at all.
+    let mut cursor = 0;
+    while let Some(found) = lower[cursor..].find("phase ") {
+        let rest = &lower[cursor + found + "phase ".len()..];
+        let digits: usize = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .map(|c| c.len_utf8())
+            .sum();
+        let after_digits = &rest[digits..];
+        let letters: usize = after_digits
+            .chars()
+            .take_while(|c| c.is_ascii_lowercase())
+            .map(|c| c.len_utf8())
+            .sum();
+        let after = &after_digits[letters..];
+        if digits > 0
+            && !after.chars().next().is_some_and(|c| c.is_alphanumeric())
+            && let Ok(number) = rest[..digits].parse::<u32>()
+            && let Some((_, _, index)) = DIRECTOR_PHASE_LADDER
+                .iter()
+                .find(|(known, suffix, _)|
+                    *known == number && *suffix == &after_digits[..letters])
         {
             return Some(at(index));
         }
+        cursor += found + "phase ".len();
     }
-    // A phase the harness names by a tool instead of a number.
+    // A phase the harness names by a tool or a word instead of a number.
     DIRECTOR_PHASES
         .iter()
         .enumerate()
@@ -3157,35 +3204,67 @@ mod tests {
 
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about
-    /// nothing in particular moves no bar, and the fraction a named phase
-    /// earns is its own position in the skill's twelve - so the pane can
-    /// never show a phase the Director has not reached.
+    /// nothing in particular moves no bar, the ladder is the one the
+    /// skill really prints (0, 1, 1b, 1c, 2 ... 5b, 6, 7, 8 - tested
+    /// against the skill's own heading strings, not a paraphrase of
+    /// them), and no phase - not the last - ever shows a finished bar,
+    /// which only the accepted end of a run may do.
     #[test]
     fn the_director_stage_is_read_from_the_harness_words() {
         assert_eq!(director_phase("just thinking"), None);
         assert_eq!(director_phase(""), None);
 
-        let (first, at_first) = director_phase("## Phase 1 - Creative Brief").expect("phase one");
+        let (first, at_first) =
+            director_phase("Phase 0 — Creative direction (do this FIRST)").expect("phase zero");
         assert_eq!(first, 0);
         assert!(at_first > 0.0 && at_first < 0.2);
 
-        // "phase 1" is inside "phase 12": the numbered match must not
-        // read the last phase as the first, which froze the bar at the
-        // end of every run.
-        let (last, at_last) =
-            director_phase("Phase 12: export_start then export_wait").expect("phase twelve");
-        assert_eq!(last, 11);
-        assert!((at_last - 1.0).abs() < 1e-6);
+        let (understand, _) =
+            director_phase("Phase 1 — Understand the material.").expect("phase one");
+        assert_eq!(understand, 1);
 
-        // The review phase is where the Director watches its own cut: the
+        // The lettered sub-phases are their own rungs: 1b is the emotion
+        // read and 1c the acoustic one, not phase 1 again.
+        let (feels, _) =
+            director_phase("Phase 1b — Read what the voiceover feels").expect("phase one b");
+        assert_eq!(feels, 2);
+        let (acoustic, _) =
+            director_phase("Phase 1c — Read what the voiceover IS").expect("phase one c");
+        assert_eq!(acoustic, 3);
+
+        // "phase 1" is inside "phase 10": a greedy digit read must not
+        // turn the older prompt's numbers into phase one, and a number
+        // the ladder does not carry matches nothing by number.
+        let (last, at_last) =
+            director_phase("Phase 12: export_start then export_wait").expect("the export words");
+        assert_eq!(last, 11);
+        assert!(at_last < 1.0, "no phase may show a finished bar");
+
+        // The watch phase is where the Director reviews its own cut: the
         // tool name alone is enough to place it.
         let (review, _) = director_phase("craft_critique the sheet").expect("review");
         assert_eq!(review, 10);
 
         // A named phase advances; the one before it is behind it.
-        let (plan, early) = director_phase("phase 5 plan_validate").expect("plan");
-        assert_eq!(plan, 4);
+        let (plan, early) =
+            director_phase("Phase 5 — Place (sequential, batched)").expect("phase five");
+        assert_eq!(plan, 7);
         assert!(early > at_first);
+
+        // 5b is motion design, its own rung after Place.
+        let (motion, _) = director_phase("Phase 5b — Motion design").expect("phase five b");
+        assert_eq!(motion, 8);
+
+        // The grade phase the skill requires is visible to the bar too.
+        let (grade, _) = director_phase("Phase 6 — Grade (required)").expect("phase six");
+        assert_eq!(grade, 9);
+
+        // The final phase never completes the bar: 1.0 is the accepted
+        // end's alone.
+        let (export, at_export) =
+            director_phase("Phase 8 — Export, then watch the actual file.").expect("phase eight");
+        assert_eq!(export, 11);
+        assert!(at_export < 1.0 && at_export > 0.9);
     }
 
     /// One run at a time on the shared project: the Start is refused while

@@ -525,10 +525,11 @@ impl ForgePane {
         }
         // One edit at a time: the lab reads the open project's own
         // voiceover, and while a run is editing the same material the
-        // reading would describe a take in motion. The refusal is the
-        // same sentence the other entry points speak.
-        if let Some(refusal) = other_run_refusal(self.running, false) {
-            studio.notify(&refusal, true);
+        // reading would describe a take in motion. The refusal names the
+        // run that is going - neither entry point's own wording, but the
+        // lab's.
+        if self.running {
+            studio.notify(&t("forge.signalsBusy"), true);
             return;
         }
         if self.auto.running || self.auto.checking {
@@ -1898,17 +1899,18 @@ fn is_bed(item: &concat_project::model::MediaItem, source_root: &std::path::Path
 /// write one sibling through the same server; letting them overlap
 /// interleaves two edits into a timeline neither planned, so the second is
 /// refused and told which run to stop. `starting_start` is true for the
-/// Start button and false for the AUTO EDIT button. The labels are written
-/// as `t(...)` calls here, not returned as keys, so the locale inventory
-/// sees them used.
+/// Start button and false for the AUTO EDIT button: a Start pressed while
+/// the auto edit runs is told to stop the AUTO EDIT, and the other way
+/// round. The labels are written as `t(...)` calls here, not returned as
+/// keys, so the locale inventory sees them used.
 fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<String> {
     if !other_running {
         return None;
     }
     Some(if starting_start {
-        t("forge.startBusy")
-    } else {
         t("forge.autoEditBusy")
+    } else {
+        t("forge.startBusy")
     })
 }
 
@@ -3285,12 +3287,12 @@ mod tests {
         let auto_refused = other_run_refusal(true, false).expect("auto edit is refused");
         assert_eq!(
             start_refused,
-            crate::i18n::t("forge.startBusy"),
+            crate::i18n::t("forge.autoEditBusy"),
             "Start while the auto edit runs names the auto edit"
         );
         assert_eq!(
             auto_refused,
-            crate::i18n::t("forge.autoEditBusy"),
+            crate::i18n::t("forge.startBusy"),
             "auto edit while the Start runs names the agent run"
         );
         assert_ne!(

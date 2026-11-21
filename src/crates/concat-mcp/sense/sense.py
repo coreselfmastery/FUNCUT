@@ -738,8 +738,14 @@ def tile_metrics(rgb, w, h, gw=32, gh=18):
     # Colour, not just light: a frame with contrast but no chroma reads
     # as grey mush. Mean HSV-style saturation over the same grid the luma
     # came from: (max-min)/max per cell, 0 for black cells. (rr/gg/bb:
-    # `g` is the luma grid the dHash below still needs.)
+    # `g` is the luma grid the dHash below still needs.) The same pass
+    # accumulates the red and blue means, so the tile also carries a
+    # warmth reading - the -1 cool through +1 warm bias the continuity
+    # gate's colour-jump rule is written on, measured from the pixels
+    # instead of guessed from a library tag.
     sat_total = 0.0
+    r_total = 0.0
+    b_total = 0.0
     for gy in range(gh):
         y = min(h - 1, int((gy + 0.5) * h / gh))
         for gx in range(gw):
@@ -748,7 +754,10 @@ def tile_metrics(rgb, w, h, gw=32, gh=18):
             rr, gg, bb = rgb[i], rgb[i + 1], rgb[i + 2]
             mx, mn = max(rr, gg, bb), min(rr, gg, bb)
             sat_total += (mx - mn) / mx if mx > 0 else 0.0
+            r_total += rr
+            b_total += bb
     saturation = sat_total / (gw * gh)
+    warmth = max(-1.0, min(1.0, ((r_total - b_total) / (gw * gh)) / 255.0))
 
     # 64-bit dHash sampled across the WHOLE frame: 8 rows x 8 horizontal
     # comparisons, evenly strided over the luma grid. The old loop broke
@@ -770,6 +779,7 @@ def tile_metrics(rgb, w, h, gw=32, gh=18):
         "blownFraction": round(blown, 3),
         "barRatio": round(bar_ratio, 3),
         "saturation": round(saturation, 3),
+        "warmth": round(warmth, 3),
         "cropHint": {
             "x": round(max(-1.0, min(1.0, (cx - 0.5) * 2)), 2),
             "y": round(max(-1.0, min(1.0, (cy - 0.5) * 2)), 2),

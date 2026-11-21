@@ -142,10 +142,9 @@ _LEXICON = {
         danger dangers dangerous dangerously risky risk risks risking creepy
         creeped chilling unsettle unsettling unnerve unnerving nightmare
         nightmares phobia phobias tremble trembling trembled shaky quiver
-        quivering desperado desperat desperate hopeless trapped trap stalked
-        stalking lurking lurker drown drowned drowning fall fell falling
-        crash crashed crashing collaps collapses collapsed collapsing burning
-        burned alive
+        quivering desperate desperation hopeless trapped stalked
+        stalking lurking lurker drown drowned drowning collapse collapses
+        collapsed collapsing wreckage inferno blaze
     """,
     "joy": """
         joy joyful joys happy happier happiest happiness delight delighted
@@ -160,22 +159,22 @@ _LEXICON = {
         grateful thankfully thankful proud pride proudly satisfied
         satisfaction satisfied hopeful hopefully hope bright brighter sunnier
         sunny sweet sweeter cozy comfy beautiful beautifully gorgeous
-        magnificen magnificent magnificent winning win wins won triumph
+        magnificen magnificent magnificent winning win wins triumph
         triumphed triumphal succeed success successful succeeded succeed
-        glorious heartwarming wholesome magic magical
+        glorious heartwarming wholesome magic magical relief relieved
     """,
     "sadness": """
         sad sadder saddest sadness unhappy unhappily sorrow sorrowful
         sorrowfully grief grieving grieved mourn mourning mourned mournful
         heartbroken heartbreak heartbroke depressed depressing depression
-        lonely loneliness alone lonelier isolated isolating empty emptiness
+        lonely loneliness lonelier isolated isolating empty emptiness
         emptying despair despairing despaired miserable misery miseries
         crying cries cried cry tears tear weep weeping wept anguish anguished
         gloom gloomy melancholy blue blues regret regrets regretful
-        regretting disappointed disappointing disappoints disappoint lost
-        loss losses losing hurt hurts hurting aching ached ache broken breaks
+        regretting disappointed disappointing disappoints disappoint
+        losses losing hurt hurts hurting aching ached ache broken
         defeat defeated defeatedly resigned resigning resignation sigh sighed
-        sighing fade fading faded forgotten forget forgot misses missed
+        sighing fade fading faded forgotten forget misses missed
         missing gone goodbye goodbyes farewell
     """,
     "surprise": """
@@ -186,8 +185,8 @@ _LEXICON = {
         plot twist twists reveal revealed revealing revelation revealed
         bam boom wham gasp gasped gasping freakish freaked odder odd
         strangely strange curiously curious mysterious mysteriously nowhere
-        startlingly wait holds believing believe unbeknownst secretly
-        secret turns turn turned flip flipped flipside underdog upsets upset
+        startlingly unbeknownst
+        flip flipped flipside underdog upsets upset overturn overturned
     """,
 }
 
@@ -721,6 +720,21 @@ def _classify_act(index, total, emotion, previous, text, intensity,
 # The arc: what the whole narration does to the viewer over time.
 # ---------------------------------------------------------------------------
 
+# The brief's arc vocabulary mapped onto the seven labels: the plan
+# schema's own examples (unease -> curiosity -> relief -> resolve) and the
+# skill's (curiosity, tension, clarity) are promises a line can only match
+# through its measured label.
+_ARC_ALIASES = {
+    "curiosity": "surprise", "curious": "surprise", "wonder": "surprise",
+    "wondering": "surprise", "intrigue": "surprise", "mystery": "surprise",
+    "relief": "joy", "relieved": "joy", "resolve": "joy", "resolved": "joy",
+    "gratitude": "joy", "pride": "joy", "triumph": "joy", "hope": "joy",
+    "tension": "fear", "unease": "fear", "uneasy": "fear", "dread": "fear",
+    "anxiety": "fear", "suspense": "fear", "worry": "fear",
+    "outrage": "anger", "frustration": "anger", "fury": "anger",
+    "clarity": "neutral", "calm": "neutral", "trust": "joy",
+}
+
 def _arc_analysis(lines, brief_arc=None):
     valences = [line["valence"] for line in lines]
     arousals = [line["arousal"] for line in lines]
@@ -783,10 +797,18 @@ def _arc_analysis(lines, brief_arc=None):
 
     # When the brief declares its emotional arc, check the traversal: the
     # plan's lines should actually visit the beats the brief promised.
+    # The beats are creative words (curiosity, relief, tension), not the
+    # seven labels - map the ones the plan schema and the skill's own
+    # examples recommend before reading them as label evidence, or every
+    # on-brief script warns "visited none".
     matched_beats = []
     if brief_arc:
         beat_emotions = []
         for beat in brief_arc:
+            alias = _ARC_ALIASES.get(str(beat).strip().lower())
+            if alias:
+                beat_emotions.append(alias)
+                continue
             beat_scores = _lexicon_scores(str(beat))
             beat_emotions.append(max(beat_scores, key=lambda e: beat_scores[e])
                                  if max(beat_scores.values()) > 0 else "neutral")
@@ -907,8 +929,14 @@ def extract(spec):
         lexicon = _lexicon_scores(text)
         if hf_rows is not None:
             scores = _normalise_distribution(_merge_scores(hf_rows[index], lexicon))
+            # The hosted model's own top probability is its support: a 0.95
+            # read is full evidence, a coin-flip is half.
+            support = min(1.0, max((hf_rows[index] or {}).values(), default=0.0))
         else:
             scores = _normalise_distribution(lexicon)
+            # Lexicon support: two distinct stem or phrase hits carry a
+            # line; one lone hit is a whisper, never a shout.
+            support = min(1.0, max(lexicon.values(), default=0.0) / 2.0)
         ranked = sorted(scores.items(), key=lambda kv: -kv[1])
         emotion, top = ranked[0]
         runner_up, second = ranked[1]
@@ -917,7 +945,15 @@ def extract(spec):
         # the line is informational, and the plan should treat it as such.
         if emotion != "neutral" and margin < 0.08 and scores["neutral"] > 0.45:
             emotion, top = "neutral", scores["neutral"]
-        intensity = max(0.1, min(1.0, 0.45 + 0.8 * margin + _intensity_signals(text))) \
+        # Intensity needs BOTH dominance (the margin) and evidence (the
+        # support): a single lexicon hit normalises to the whole
+        # distribution, so a bare margin would saturate every one-word
+        # line to 1.0 and let a stray "wait" outrank the honest peaks for
+        # the whole video's bed and grade. One hit earns ~0.5, two carry
+        # the line, and the page's own signals (caps, bangs, amplifiers)
+        # can still lift or temper it.
+        intensity = max(0.1, min(1.0, 0.1 + 0.8 * margin * support
+                                 + _intensity_signals(text))) \
             if emotion != "neutral" else max(0.1, min(0.6, 0.3 + _intensity_signals(text)))
         profile = PROFILE[emotion]
         valence = profile["valence"]
@@ -1002,15 +1038,22 @@ _QUERY_FILLER = frozenset("""
     appear appears appeared because about into onto with without from
     this that these those they them their your yours ours mine its
     watch lookin looking gonna wanna kinda sorta
+    subscribe unsubscribe channel video comment comments people person
+    results result first second third minute minutes today tomorrow
+    yesterday world everything something nothing
 """.split())
 
 
 def _queries(profile, text, act):
     """Two-or-three-word stock queries per the broll_matching law: the
-    emotion's visual register crossed with the act's shot preference."""
+    emotion's visual register crossed with the act's shot preference.
+    The shot term is the WHOLE phrase ("extreme close-up", not the
+    fragment "extreme"), and the noun is the head noun - the LAST long
+    content word, because English stacks modifiers left ("we found the
+    wreck of the titanic" shops the titanic, not "found")."""
     register = profile["vocabulary"][0].split()[:3]
-    shot = ACT_PROFILE[act]["shot"][0].split()[:1]
-    noun = next((t for t in _tokens(text) if len(t) > 4
+    shot = list(ACT_PROFILE[act]["shot"][:1])
+    noun = next((t for t in reversed(_tokens(text)) if len(t) > 4
                  and t not in _AMPLIFIERS and t not in _HEDGES
                  and t not in _QUERY_FILLER), "")
     queries = []
@@ -1167,10 +1210,14 @@ def gate(spec):
 
     # The registers a matching candidate's caption/keywords should come from:
     # the emotion's visual vocabulary plus the emotion's own word stems.
+    # Neutral has no lexicon stems (it is the absence of a claim, not one),
+    # so the register is the vocabulary alone - `.get` keeps the gate
+    # answering instead of crashing on the one label every defaulted slot
+    # carries.
     emotion_register = set()
     for entry in PROFILE[emotion]["vocabulary"]:
         emotion_register.update(entry.split())
-    emotion_register.update(t for t in _LEXICON[emotion].split() if len(t) >= 4)
+    emotion_register.update(t for t in _LEXICON.get(emotion, "").split() if len(t) >= 4)
     act_register = {word for entry in ACT_PROFILE[act]["shot"] for word in entry.split()}
 
     verdicts = []
@@ -1498,6 +1545,58 @@ def selftest():
     })
     assert "DROP THE BEAT" in hopeless["recommendation"], hopeless["recommendation"]
     out["gate"] = "ok"
+
+    # The gate must answer for neutral - the label every defaulted slot
+    # carries - instead of crashing on a lexicon it does not have.
+    calm = gate({
+        "segment": {"emotion": "neutral", "act": "setup"},
+        "candidates": [
+            {"index": 0, "id": "n1", "caption": "clean minimal desk diagram wide"},
+        ],
+    })
+    assert calm["ok"], calm
+    assert calm["order"] == [0], calm
+    out["gate-neutral"] = "ok"
+
+    # One word is a whisper: a single lexicon hit never saturates the
+    # intensity (it used to read 1.0 and outrank every honest line for
+    # the whole video's bed and grade), and a common word alone reads
+    # neutral now, not surprise at full tilt.
+    single = extract({"script": "This is magnificent."})
+    lone = single["lines"][0]
+    assert lone["emotion"] == "joy" and lone["intensity"] <= 0.62, lone
+    rich = extract({"script": "We were terrified, absolutely terrified of the dark."})
+    heated = rich["lines"][0]
+    assert heated["emotion"] == "fear", heated
+    assert heated["intensity"] > lone["intensity"], (heated, lone)
+    mundane = extract({"script": "Please wait for the results."})
+    assert mundane["lines"][0]["emotion"] == "neutral", mundane["lines"][0]
+    out["intensity"] = "ok"
+
+    # Queries are filmable: whole shot phrases and the head noun - never
+    # register fragments like "extreme burst" or "subscribe clean".
+    found = extract({"script": "We found the wreck of the titanic."})
+    row = found["lines"][0]
+    assert row["queries"], row
+    for query in row["queries"]:
+        words = query.split()
+        assert len(words) >= 2, row["queries"]
+        assert words[0] not in ("extreme", "subscribe", "direct", "pivot", "first"), row["queries"]
+    assert any("titanic" in query for query in row["queries"]), row["queries"]
+    out["queries"] = "ok"
+
+    # The arc aliases: a brief that promises the schema's own example
+    # beats can actually match measured lines instead of warning
+    # "visited none" on a perfectly on-brief script.
+    arc = extract({
+        "script": "Something terrifying waited below. "
+                  "Then the discovery shocked the world. "
+                  "The relief was overwhelming.",
+        "brief": {"emotionalArc": ["unease", "curiosity", "relief"]},
+    })
+    matched = arc["arc"]["briefBeatsMatched"]
+    assert len(matched) >= 2, (arc["arc"]["briefBeatsMatched"], arc["arc"]["warnings"])
+    out["arc-aliases"] = "ok"
 
     # Verify: aligned words pass with drift, lost words fail.
     words = lambda texts, base: [

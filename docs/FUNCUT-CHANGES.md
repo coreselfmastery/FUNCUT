@@ -3009,3 +3009,90 @@ a bare utterance count answers the burst question at twice the paired
 arm's bar. The spine and music-stage tests are re-pinned to the
 collision gate and the bed's volume shape their stages now carry, and
 clippy's own `div_ceil` lint is answered in kind.
+
+## 71. The stage fixes the producers' shapes asked for
+
+Seven fixes in the AUTO EDIT program, each found by cross-checking a
+stage's reads against what its tools actually answer:
+
+- The bed import carried no project folder: `bgm_import`'s request
+  requires `path`, so every call died in the MCP layer before a
+  backend saw it - the bed was never imported on any run that passed
+  the music gates. The stage test pins the argument now, not just
+  the tool name.
+- The captions' entrance keyed offsetY to a bare 0.05 -> 0.0, but
+  keys are absolute and a keyed property's constant is the engine's
+  neutral zero - the placement band (0.22 portrait / 0.35 landscape)
+  was discarded the moment the entrance landed and every caption
+  rendered near the frame's centre. The entrance rises from and
+  settles back to the band it was placed in.
+- The plan's beat grid called `analyze_beats` - an async job whose
+  handle carries no grid and whose finished output speaks `beatsMs` -
+  so the `cutTimes` the planner reads were never produced and every
+  monotony_run suggestion was dropped. `suggest_cuts` is the tool
+  that answers `cutTimes` synchronously; the plan calls it.
+- The accents pooled their emphasis peaks as bare file-seconds across
+  takes, then re-derived the take by first-match - a peak measured at
+  1.5 s of take B was placed and shopped through take A's clock.
+  Every peak carries its own take; the caption emphasis sets are per
+  take too.
+- The critic's frame citations are the sheet's one-based labels; the
+  fix lookup treated them as zero-based indices and landed one shot
+  late. A boundary test fails under the old reading.
+- The speech-act and claim confidences read keys their producers
+  never write, so every speechActs/claims entry read 0.0. The act
+  engine's own 0.75 for a cued act and the claim graph's strength
+  answer.
+- The picture-clip lane read `trackId` where the summary view writes
+  `track` - always the empty string. Either name answers.
+
+## 72. The keys the ears actually write
+
+Eight sense-script fixes: the arc's shape is `arcShape` (the
+`building` cut style was unreachable); the Goertzel hum probe clamps
+both ends (a negative centre indexed the file's end as its quietest
+half-second); the formants confidence gate probes the source's own
+rate with ffprobe (the forensic block carries none, and the ear's
+16 kHz handoff says nothing about the source's band); WhisperX words
+are keyed by their original line index (one untimed line shifted
+every later line's aligned words); prosody_style survives the ear's
+null rows and reads its real fields, its formant branch aggregates
+the per-line F1-F4 rows it always wanted, and f0RangeSemitones is
+the octave span rather than a spread-over-mean that read negative
+for every normal voice; audio_repair measures its floor at the
+classifier's own 50 ms windows (a 250 ms max-window put the agate
+threshold at soft-speech level on gated takes) and serves the codec
+the output's own container accepts (pcm_s16le into an mp3 muxer
+failed every non-WAV hand-in); and the craft critique's black-frame
+trim scales by the reel's measured durationSeconds instead of a
+hardcoded 30 s.
+
+## 73. The Forge harness meets the real server
+
+The harness read every project_get/timeline_read reply at the flat
+keys the self-test's mocks happen to use - on the real wire the bin
+always read empty, so the watcher never fired a single run, one-shot
+runs re-imported their voiceover on a fresh lane every time, IDEM
+reuse died, and plans naming existing clips were refused as absent.
+The reads accept the shapes the server really sends, and the mocks
+answer in the raw EditorView shape so the suite exercises the path
+it used to mask. VERIFY-15's `detect_ai_voice` was a phantom
+standalone name - it is a sense_captions member, permanently skipped
+while a mock key pretended otherwise; the call goes through the
+family tool. The music bed was the first search hit laid at full
+length and never trimmed - a 180 s track under a 12 s cut rendered a
+168 s black tail the run's own verification then refused; the pick
+is the bed that fits and the placed bed is trimmed to the cut. A
+Ctrl-C'd watcher exits 130 instead of masquerading as success, and
+the stdio transport reaps its kill and closes both pipes.
+
+## 74. The ear's availability and the entity's confidence
+
+An absent speaker ear answers `utterances: 0` (the field is not
+Option on the producer's side), so a take whose rhythm was never
+read parsed as a measured "not punchy" - the ear's own `available`
+flag gates the count now. Both entity producers write a
+per-entity `confidence` nobody parsed; a 0.3-confidence MONEY read
+still earned the stat card that claims exactness. The confidence is
+parsed and spent: under 0.6 the stat and timeline cards step down
+with the approximate ones.

@@ -123,6 +123,51 @@ passes; the GUI crate is CI's as always):
    tool. mcp.toml, FORGE.md, MCP.md, README and AGENTS.md say the
    same count, and the allowlist test holds the eight left off.
 
+## Session 9 log (2026-11-21) - the shapes pass
+
+Base: main at `4b1cd4e` (PR #186 merged, all 7 checks green at its
+head `b5847ac`). PR #189 (`fix/detectors-2026-11-21`) carries this
+session, every unit one commit, every non-GUI gate green locally
+(concat-mcp 161/161, voice-signals 31/31, fmt + clippy clean, the
+seven sense selftests, the harness self-test exit 0):
+
+1. `fix(signals)`: the detectors the previous session left unlanded,
+   cherry-picked onto #186's head (the hum Goertzel, the reverb
+   overlapping frames, the 85th-percentile rolloff, the bed skip
+   gate on the decision the profile reached, hook_lift, the
+   catalogue's confidence honesty) - plus the two tests that
+   finishing pass re-pinned (the collision gate, the bed's shape).
+2. `fix(signals)`: entitiesAvailable counts only the NER ear's own
+   answer - the CI lane without the Rust ears caught the complement
+   source note flipping the flag (DEG-01).
+3. `fix(auto-edit)`: seven stage fixes against the producers' real
+   shapes - the bed import's missing `path` (the bed was NEVER
+   imported), the entrance keys keeping the caption band (keys are
+   absolute; a keyed constant is the engine's neutral zero), the beat
+   grid on `suggest_cuts` (analyze_beats is a job whose handle has no
+   grid), per-take SFX peaks and caption emphasis sets, the critic's
+   one-based frame labels, the act/claim confidences, the lane key.
+4. `fix(sense)`: eight script fixes - arcShape, the Goertzel both-end
+   clamp, the source-rate probe for the formants gate, WhisperX words
+   by original line index, prosody_style's null rows and real fields
+   and its aggregated formants, the octave span for f0RangeSemitones,
+   the 50 ms repair floor, the codec per container, durationSeconds.
+5. `fix(forge)`: the harness reads the shapes the server really
+   sends (the watcher NEVER fired on the real wire - the bin read
+   empty on every project_get), VERIFY-15 through sense_captions (a
+   phantom standalone tool name), the bed picked to fit and trimmed
+   to the cut (a 180 s bed rendered a black tail its own run
+   refused), the Ctrl-C exit code, the transport reap.
+6. `fix(voice-read)`: the speaker ear's `available` gates its
+   utterance count (absence read as a measured "not punchy"), and the
+   entity's own confidence gates its stat/timeline cards.
+
+Found and left for the next pass (verified, not yet fixed): the
+consumer-guard's quoted-literal arm passes same-name strings
+(`LineRead.speaker`, `PhraseSpan.label` ride it); the Sfx stage
+re-walks the emphasis reply raw where a typed read exists; the brief
+reads crest and degradations raw beside the typed fields.
+
 ## Next actions
 
 1. Finish review and exact-head CI/Geneva/Nix validation for PR #91's supported native Lottie/dotLottie renderer; merge only when all required checks pass, retaining explicit unsupported-feature diagnostics.

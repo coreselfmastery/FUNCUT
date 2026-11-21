@@ -196,8 +196,6 @@ pub struct TakeRead {
     pub voicing_rate: Option<f64>,
     /// The share of the take that is speech, 0..1.
     pub speech_ratio: Option<f64>,
-    /// Whether the take already carries music, as the music gate measured.
-    pub music_present: Option<bool>,
     /// The profile's own cut style: fast, mixed, hold or building.
     pub cut_style: String,
     /// The rule the cut style carries, in the profile's words.
@@ -230,6 +228,11 @@ pub struct TakeRead {
     /// The take's RMS envelope, at most 256 points: the energy curve the
     /// drift and the pacing can read locally rather than only in summary.
     pub rms_envelope: Vec<f64>,
+    /// The take's pitch contour, at most 256 points, `0.0` where the
+    /// tracker found no voice: the curve the summary statistics flatten
+    /// away - a rise the mean cannot show, a break the range cannot
+    /// place. The hook's own lift is read from it below.
+    pub pitch_contour_hz: Vec<f64>,
     /// The mean spectral flux: how fast the take's timbre moves, the
     /// honest input to a fast-or-held cut style when the profile derived
     /// none.
@@ -392,11 +395,16 @@ impl VoiceRead {
         self.confidence.get(family).copied().unwrap_or(0.0)
     }
 
-    /// The line whose span holds a file second, if any does.
+    /// The line whose span holds a file second, if any does. An
+    /// untimed line - start and end both absent, parsed as a zero span -
+    /// matches nothing: it is a line the recogniser read as text without
+    /// times, and a zero span at second zero would otherwise let it
+    /// claim the take's opening moments from the line that really holds
+    /// them.
     pub fn line_at(&self, moment: f64) -> Option<&LineRead> {
-        self.lines
-            .iter()
-            .find(|line| line.start <= moment + 0.05 && line.end > moment - 0.05)
+        self.lines.iter().find(|line| {
+            line.end > line.start && line.start <= moment + 0.05 && line.end > moment - 0.05
+        })
     }
 
     /// Whether the pause opening at `start` is one the profile says to
@@ -453,13 +461,20 @@ impl VoiceRead {
     /// dominant period when the pulse has strength to stand behind it, or
     /// the strongest layer's own period when the derived key never landed
     /// but the layer table did - the same reading from the row it was
-    /// measured on, held to the same strength bar. `None` when no layer
-    /// with strength at or over 0.25 was measured.
+    /// measured on, held to the same strength bar and the same period
+    /// bounds (0.2-8 s) as the fallback arm: a derived period outside the
+    /// bounds is an autocorrelation artefact on the derived key just as
+    /// it is on a layer row. `None` when no layer with strength at or
+    /// over 0.25 was measured.
     pub fn pulse_period(&self) -> Option<f64> {
-        let derived = self.take_wide.dominant_period_sec.filter(|_| {
-            self.pulse_strength()
-                .is_some_and(|strength| strength >= 0.25)
-        });
+        let derived = self
+            .take_wide
+            .dominant_period_sec
+            .filter(|period| (0.2..=8.0).contains(period))
+            .filter(|_| {
+                self.pulse_strength()
+                    .is_some_and(|strength| strength >= 0.25)
+            });
         derived.or_else(|| {
             self.take_wide
                 .rhythm_layers
@@ -645,6 +660,36 @@ impl VoiceRead {
         Some(12.0 / std::f64::consts::LN_2 * (line_f0 / take_f0).ln())
     }
 
+    /// The hook's own register lift, in semitones: the distance between
+    /// the register the contour opened on (its first voiced third over
+    /// the take's first three seconds) and the one it rose to (its last
+    /// voiced third there). `None` when the contour carried fewer than
+    /// six voiced points in the hook - an unmeasured rise is not a flat
+    /// one, and a caller must not spend the one as the other.
+    pub fn hook_lift(&self) -> Option<f64> {
+        let duration = self.duration.filter(|duration| *duration > 0.0)?;
+        let contour = &self.take_wide.pitch_contour_hz;
+        if contour.is_empty() {
+            return None;
+        }
+        let voiced: Vec<f64> = contour
+            .iter()
+            .enumerate()
+            .filter(|(index, hz)| {
+                let moment = *index as f64 * duration / contour.len() as f64;
+                moment < 3.0 && **hz > 0.0
+            })
+            .map(|(_, hz)| *hz)
+            .collect();
+        if voiced.len() < 6 {
+            return None;
+        }
+        let third = (voiced.len() / 3).max(1);
+        let first = voiced[..third].iter().sum::<f64>() / third as f64;
+        let last = voiced[voiced.len() - third..].iter().sum::<f64>() / third as f64;
+        (first > 0.0).then(|| 12.0 / std::f64::consts::LN_2 * (last / first).ln())
+    }
+
     /// Whether a phrase boundary opens within `window` of a file second:
     /// the narration's own breath-group turned there, which is a seam the
     /// picture can register even when no speaker changed and no question
@@ -738,7 +783,11 @@ impl VoiceRead {
     /// Whether the take speaks in bursts, as the VAD's own rhythm answers
     /// it: six or more utterances at a mean of 1.2 s or under is a
     /// machine-gun delivery, the honest fallback for a cut style the
-    /// profile derived none. `None` when the ear read neither count.
+    /// profile derived none. `None` when the ear read no count. A count
+    /// without its mean (an ear that answered the utterances and not
+    /// their lengths) falls back to the count alone at twelve - twice
+    /// the paired arm's bar, since a bare count knows nothing about how
+    /// long each burst ran.
     pub fn punchy_delivery(&self) -> Option<bool> {
         match (self.take_wide.utterances, self.take_wide.mean_utterance_sec) {
             (Some(count), Some(mean)) => Some(count >= 6 && mean <= 1.2),
@@ -798,7 +847,14 @@ fn line_of(row: &Value) -> LineRead {
                     Some(Emphasis {
                         word: text.to_lowercase(),
                         at: word["t"].as_f64().unwrap_or_default(),
-                        strength: word["strength"].as_f64().unwrap_or(0.5),
+                        // A missing strength stays missing rather than
+                        // inventing a mid reading: the peaks' ranking and
+                        // the clean-voice gate both spend it, and a
+                        // half-strength the ear never measured is a lie
+                        // on their scale. The Rust ear always writes it;
+                        // a foreign producer that drops it loses the
+                        // word's emphasis instead of guessing one.
+                        strength: word["strength"].as_f64()?,
                     })
                 })
                 .collect()
@@ -998,7 +1054,6 @@ fn take_wide_of(reply: &Value) -> TakeRead {
             .pointer("/forensic/voicingRate")
             .and_then(Value::as_f64),
         speech_ratio: whole["speechRatio"].as_f64(),
-        music_present: reply["musicPresent"].as_bool(),
         cut_style: hints["cutStyle"].as_str().unwrap_or_default().to_owned(),
         cut_rule: hints["cutRule"].as_str().unwrap_or_default().to_owned(),
         font: hints
@@ -1041,6 +1096,11 @@ fn take_wide_of(reply: &Value) -> TakeRead {
             .unwrap_or_default(),
         rms_envelope: whole
             .pointer("/forensic/rmsEnvelope")
+            .and_then(Value::as_array)
+            .map(|points| points.iter().filter_map(Value::as_f64).collect())
+            .unwrap_or_default(),
+        pitch_contour_hz: whole
+            .pointer("/pitchContourHz")
             .and_then(Value::as_array)
             .map(|points| points.iter().filter_map(Value::as_f64).collect())
             .unwrap_or_default(),
@@ -1534,5 +1594,93 @@ mod tests {
             Some(true),
             "an unmeasured shimmer is not a shaky one"
         );
+    }
+
+    /// The hook's own lift, read from the contour itself: a delivery
+    /// that rose across the opening three seconds performed the hook
+    /// whatever the level meter read, and the caption stage spends that
+    /// rise as weight. A contour with too few voiced points in the hook
+    /// is an unmeasured rise, not a flat one.
+    #[test]
+    fn the_hook_lift_reads_the_contour_s_own_rise() {
+        // Twenty-four points over nine seconds: the first eight (t < 3.0)
+        // are the hook's own. The hook opens on 110 Hz and closes an
+        // octave up - twelve semitones, the loudest claim a rise can make.
+        let mut contour = vec![110.0_f64; 4];
+        contour.extend(vec![220.0; 4]);
+        contour.extend(vec![0.0; 16]);
+        let read = VoiceRead {
+            duration: Some(9.0),
+            take_wide: TakeRead {
+                pitch_contour_hz: contour,
+                ..TakeRead::default()
+            },
+            ..VoiceRead::default()
+        };
+        let lift = read.hook_lift().expect("a rising hook answers");
+        assert!(
+            (lift - 12.0).abs() < 0.01,
+            "an octave is twelve semitones, not {lift}"
+        );
+        // A hook the contour barely voiced: three points is too few to
+        // claim a rise, and `None` is the honest answer.
+        let mut sparse_contour = vec![110.0_f64; 3];
+        sparse_contour.extend(vec![0.0; 21]);
+        let sparse = VoiceRead {
+            duration: Some(9.0),
+            take_wide: TakeRead {
+                pitch_contour_hz: sparse_contour,
+                ..TakeRead::default()
+            },
+            ..VoiceRead::default()
+        };
+        assert_eq!(sparse.hook_lift(), None, "an unvoiced hook is unmeasured");
+    }
+
+    /// An untimed line - start and end both absent, parsed as a zero
+    /// span - claims no moment: before the guard, its zero span at
+    /// second zero let it shadow the line that really holds the take's
+    /// opening words.
+    #[test]
+    fn an_untimed_line_claims_no_moment() {
+        let read = VoiceRead {
+            lines: vec![
+                LineRead {
+                    text: "untimed".to_owned(),
+                    ..LineRead::default()
+                },
+                LineRead {
+                    text: "timed".to_owned(),
+                    start: 0.0,
+                    end: 2.0,
+                    ..LineRead::default()
+                },
+            ],
+            ..VoiceRead::default()
+        };
+        let line = read.line_at(1.0).expect("the timed line holds second one");
+        assert_eq!(line.text, "timed");
+        let opening = read
+            .line_at(0.0)
+            .expect("the opening second belongs to the timed line too");
+        assert_eq!(opening.text, "timed");
+    }
+
+    /// A bare utterance count - an ear that answered the count and not
+    /// the lengths - still answers the burst question, at twice the
+    /// paired arm's bar: twelve utterances without a mean is machine-gun
+    /// delivery, six is not.
+    #[test]
+    fn a_bare_utterance_count_answers_at_twice_the_bar() {
+        let with = |utterances: Option<u64>| VoiceRead {
+            take_wide: TakeRead {
+                utterances,
+                ..TakeRead::default()
+            },
+            ..VoiceRead::default()
+        };
+        assert_eq!(with(Some(12)).punchy_delivery(), Some(true));
+        assert_eq!(with(Some(6)).punchy_delivery(), Some(false));
+        assert_eq!(with(None).punchy_delivery(), None);
     }
 }

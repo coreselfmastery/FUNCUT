@@ -60,6 +60,7 @@ SCHEMA = "funcut.voice-quality/1"
 RATE = 16000
 HOP = 160  # the envelope answers at 100 Hz
 WIN = 1024  # the FFT window at 16 kHz: 64 ms
+HUM_WIN = 8192  # the hum probe's half-second window: ~2 Hz resolution
 
 _PCM_CACHE = {}
 
@@ -223,6 +224,29 @@ def _spectrum(samples, offset, size=WIN):
     fre, fim = _fft_pow2(re)
     mags = [math.hypot(fre[k], fim[k]) for k in range(size // 2 + 1)]
     return mags
+
+
+def _goertzel_power(samples, offset, size, hz, rate=RATE):
+    """Power at an EXACT frequency over one window. A 64 ms FFT window's
+    bins are 15.6 Hz apart - wider than the distance between 50 Hz and
+    its own guard band - so a bin-quantised hum probe can never separate
+    mains from its neighbourhood (the old `int(hz / per_bin)` probe
+    truncated 50 and 60 Hz onto the same bin and never fired at all).
+    The hum probe passes a half-second window here, whose resolution
+    (~2 Hz) the mains candidates and their guards both fit inside."""
+    if offset + size > len(samples):
+        offset = max(0, len(samples) - size)
+        if offset < 0:
+            return None
+    coeff = 2.0 * math.cos(2.0 * math.pi * hz / rate)
+    s1 = s2 = 0.0
+    for i in range(size):
+        s = samples[offset + i] / 32768.0
+        window = 0.5 - 0.5 * math.cos(2.0 * math.pi * i / size)
+        s0 = s * window + coeff * s1 - s2
+        s2 = s1
+        s1 = s0
+    return s1 * s1 + s2 * s2 - coeff * s1 * s2
 
 
 def _band_energy(mags, lo_hz, hi_hz, rate=RATE, size=WIN):
@@ -608,26 +632,32 @@ def _classify_recording_quality(spec):
     # DC offset.
     dc = sum(samples) / len(samples) / 32768.0
 
-    # Hum: FFT of the quietest 64 ms windows; peaks at 50/60 Hz harmonics
-    # that stand 6 dB over their neighbourhood.
+    # Hum: a Goertzel pass at the exact mains candidates over the
+    # quietest half-second, each tone compared against the power just
+    # off it. A tone 6 dB or more over its guards is a hum; the old
+    # bin-truncated FFT probe could not resolve 50 from 60 Hz at this
+    # window size and never reported a hum at all.
     hums = []
-    quietest = sorted(range(len(env)), key=lambda i: env[i])[:6]
+    quietest = sorted(range(len(env)), key=lambda i: env[i])[:3]
     for i in quietest:
-        mags = _spectrum(samples, i * HOP)
-        if not mags:
-            continue
+        centre = i * HOP + WIN // 2 - HUM_WIN // 2
+        found = False
         for base in (50.0, 60.0):
             for harmonic in range(1, 5):
                 hz = base * harmonic
-                per_bin = RATE / WIN
-                k = int(hz / per_bin)
-                if k <= 1 or k >= len(mags) - 2:
+                tone = _goertzel_power(samples, centre, HUM_WIN, hz)
+                low = _goertzel_power(samples, centre, HUM_WIN, hz - 12.0)
+                high = _goertzel_power(samples, centre, HUM_WIN, hz + 12.0)
+                if tone is None or low is None or high is None:
                     continue
-                centre = mags[k]
-                around = (mags[k - 1] + mags[k + 1]) / 2 + 1e-9
-                if centre / around > 2.0:  # >6 dB over its neighbours
-                    hums.append({"hz": hz, "excessDb": round(_db(centre / around), 1)})
-        break  # one quiet window is enough; harmonics repeat if real
+                guard = (low + high) / 2.0 + 1e-12
+                if tone / guard > 2.0:  # >6 dB over its guards
+                    hums.append({"hz": hz,
+                                 "excessDb": round(_db(tone / guard), 1)})
+                    found = True
+        if found:
+            break  # a window that found its hums is the answer; the
+            # harmonics repeat in the next quiet window if they are real
     hum = hums[:4]
 
     # Bandwidth: from the loudest window, where the spectrum rolls off.

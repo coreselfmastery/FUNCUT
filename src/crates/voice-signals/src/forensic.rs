@@ -98,7 +98,7 @@ pub struct WholeForensic {
     /// would act on, and the reason a bright take should not simply be
     /// turned up.
     pub sibilance_ratio: f32,
-    /// The frequency below which 95% of the take's energy sits, in Hz: the
+    /// The frequency below which 85% of the take's energy sits, in Hz: the
     /// bandwidth ceiling. A voiceover lives under 8 kHz; a take whose
     /// rolloff reaches the Nyquist carries hiss or cymbals, not speech.
     pub spectral_rolloff_hz: f32,
@@ -111,10 +111,12 @@ pub struct WholeForensic {
     /// that the onset count alone does not give (it does not know the
     /// take's length).
     pub onset_rate_per_min: f32,
-    /// A 0-1 heuristic for how music-like the take is: onset regularity,
-    /// onset density and a flatness window, averaged. Speech with a bed
-    /// reads high; a dry read reads low. It is a cross-check for the BGM
-    /// decision, not a classifier - the number says what it is built on.
+    /// A 0-1 heuristic for how music-like the take is: onset regularity
+    /// and onset density MULTIPLIED (a take needs both - an average would
+    /// let either carry the number), with a flatness window as a pure-tone
+    /// veto. Speech with a bed reads high; a dry read reads low. It is a
+    /// cross-check for the BGM decision, not a classifier - the number
+    /// says what it is built on.
     pub music_likelihood: f32,
     /// The estimated reverberation tail, in seconds: the median time the
     /// energy takes to fall 10 dB after an onset, scaled to a 60 dB decay.
@@ -414,19 +416,21 @@ fn fft_in_place(real: &mut [f64], imag: &mut [f64]) {
 }
 
 /// The band readings one averaged spectrum answers: the sibilance share
-/// (the 4-8 kHz band over the whole), the 95% rolloff frequency and the
+/// (the 4-8 kHz band over the whole), the 85% rolloff frequency and the
 /// bandwidth (the spread around the spectrum's own centroid). An empty
-/// spectrum - a take shorter than one frame - answers zeros.
+/// spectrum - a take shorter than one frame - answers zeros, and so does
+/// a digitally silent one: a zero spectrum would otherwise report a
+/// Nyquist rolloff, the brightest reading for the quietest take.
 fn band_readings(spectrum: &[f32], rate: f32) -> (f32, f32, f32) {
     if spectrum.is_empty() {
         return (0.0, 0.0, 0.0);
     }
     let hz_per_bin = rate / BAND_FRAME as f32;
-    let total: f64 = spectrum
-        .iter()
-        .map(|p| f64::from(*p))
-        .sum::<f64>()
-        .max(1.0e-12);
+    let summed: f64 = spectrum.iter().map(|p| f64::from(*p)).sum::<f64>();
+    if summed <= 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let total = summed.max(1.0e-12);
     // The sibilance band: 4-8 kHz, where the /s/ and /sh/ sounds live.
     let sibilant: f64 = spectrum
         .iter()
@@ -437,13 +441,14 @@ fn band_readings(spectrum: &[f32], rate: f32) -> (f32, f32, f32) {
         })
         .map(|(_, p)| f64::from(*p))
         .sum();
-    // The rolloff: the first bin where the running sum holds 95% of the
-    // energy, in Hz.
+    // The rolloff: the first bin where the running sum holds 85% of the
+    // energy, in Hz - the percentile the catalogue, the Rust reader's
+    // doc and the muffled-take rule all name.
     let mut running = 0.0_f64;
     let mut rolloff_bin = spectrum.len() - 1;
     for (i, power) in spectrum.iter().enumerate() {
         running += f64::from(*power);
-        if running >= 0.95 * total {
+        if running >= 0.85 * total {
             rolloff_bin = i;
             break;
         }
@@ -495,17 +500,17 @@ fn goertzel_power(samples: &[f32], rate: f32, hz: f32) -> f64 {
 /// The mains hum, when one stands over its guard bands: 50 and 60 Hz and
 /// their first harmonics, each compared against the power just off the
 /// candidate. A stationary tone 14 dB over its guards is a hum; anything
-/// quieter is the floor's own texture and stays `None`.
+/// quieter is the floor's own texture and stays `None`. A harmonic alone
+/// is not a hum: a monotone voice fundamental sitting on 100 or 120 Hz
+/// would otherwise read as mains, so the 50/60 fundamental must have
+/// passed its own guard before any harmonic is spent.
 fn hum_tone(samples: &[f32], rate: f32) -> Option<f32> {
-    const CANDIDATES: &[(f32, f32, f32)] = &[
-        (50.0, 40.0, 70.0),
-        (60.0, 40.0, 70.0),
-        (100.0, 90.0, 130.0),
-        (120.0, 90.0, 130.0),
-    ];
+    const FUNDAMENTALS: &[(f32, f32, f32)] = &[(50.0, 40.0, 70.0), (60.0, 40.0, 70.0)];
+    const HARMONICS: &[(f32, f32, f32, f32)] =
+        &[(100.0, 90.0, 130.0, 50.0), (120.0, 90.0, 130.0, 60.0)];
     const RATIO: f64 = 25.0;
     let mut best: Option<(f32, f64)> = None;
-    for (hz, low, high) in CANDIDATES {
+    for (hz, low, high) in FUNDAMENTALS {
         let power = goertzel_power(samples, rate, *hz);
         let guard = goertzel_power(samples, rate, *low).max(goertzel_power(samples, rate, *high));
         if guard <= 0.0 || power / guard < RATIO {
@@ -514,6 +519,33 @@ fn hum_tone(samples: &[f32], rate: f32) -> Option<f32> {
         match best {
             // The fundamental wins over a harmonic at the same strength:
             // the hum is where the energy starts, not where it repeats.
+            Some((_, best_power)) if power <= best_power => {}
+            _ => best = Some((*hz, power)),
+        }
+    }
+    // A harmonic is only spent beside its own fundamental: the 100 Hz
+    // arm needs the 50 Hz one to have passed, the 120 Hz arm the 60 Hz
+    // one, and the fundamental always wins at equal strength anyway.
+    let fundamental_passed = |fundamental: f32| {
+        FUNDAMENTALS.iter().any(|(fund, low, high)| {
+            if *fund != fundamental {
+                return false;
+            }
+            let guard =
+                goertzel_power(samples, rate, *low).max(goertzel_power(samples, rate, *high));
+            guard > 0.0 && goertzel_power(samples, rate, *fund) / guard >= RATIO
+        })
+    };
+    for (hz, low, high, fundamental) in HARMONICS {
+        if !fundamental_passed(*fundamental) {
+            continue;
+        }
+        let power = goertzel_power(samples, rate, *hz);
+        let guard = goertzel_power(samples, rate, *low).max(goertzel_power(samples, rate, *high));
+        if guard <= 0.0 || power / guard < RATIO {
+            continue;
+        }
+        match best {
             Some((_, best_power)) if power <= best_power => {}
             _ => best = Some((*hz, power)),
         }
@@ -559,8 +591,9 @@ fn music_likelihood(onsets: &[f32], duration: f64, flatness: f32) -> f32 {
         / intervals.len() as f64;
     let cv = variance.sqrt() / mean;
     let regularity = 1.0 - cv.min(1.0);
-    // Onset density: a beat lands at least once a second in anything a
-    // listener calls music; speech fires its transients in bursts.
+    // Onset density: full density is two onsets a second and the floor
+    // is one every 2.5 s - speech fires its transients in bursts, and a
+    // beat needs a rate a listener would tap to.
     let per_second = merged.len() as f64 / duration;
     let density = ((per_second - 0.4) / 1.6).clamp(0.0, 1.0);
     let mut pulse = regularity * density;
@@ -584,15 +617,19 @@ fn reverb_tail_sec(samples: &[f32], rate: f32, onsets: &[f32]) -> Option<f32> {
         return None;
     }
     let frame_secs = HOP as f64 / f64::from(rate);
+    // Overlapping frames, not disjoint chunks: a 1024-sample window
+    // hopped by 512 - `chunks(512)` yields slices of at most 512
+    // samples, so the old `filter(len == 1024)` kept nothing and the
+    // tail was always `None`.
     let frame_db: Vec<f64> = samples
-        .chunks(HOP)
-        .filter(|chunk| chunk.len() == WINDOW)
-        .map(|chunk| {
-            let mean_square = chunk
+        .windows(WINDOW)
+        .step_by(HOP)
+        .map(|frame| {
+            let mean_square = frame
                 .iter()
                 .map(|s| f64::from(*s) * f64::from(*s))
                 .sum::<f64>()
-                / chunk.len() as f64;
+                / frame.len() as f64;
             10.0 * (mean_square + 1.0e-12).log10()
         })
         .collect();
@@ -880,6 +917,39 @@ mod tests {
         // The noise label is the stable lowercase form, whatever the
         // profiler's enum names its variants.
         assert_eq!(whole.noise_type, whole.noise_type.to_lowercase());
+    }
+
+    #[test]
+    fn a_decaying_take_measures_its_reverb_tail() {
+        // Five bursts, each a tone that decays exponentially (tau 60 ms):
+        // the energy falls 10 dB in about 70 ms, so the RT60 the frames
+        // read should sit near 0.4 s. The old frame builder kept no
+        // frames at all - `chunks(512)` never yields a 1024-sample
+        // window - so the tail was always `None`; this test pins the
+        // revival against a synthetic room.
+        let rate = 16000_u32;
+        let mut samples: Vec<f32> = Vec::with_capacity(16000 * 6);
+        for i in 0..16000 * 6 {
+            let t = i as f64 / f64::from(rate);
+            let last_burst = t.floor().min(4.0);
+            let age = t - last_burst;
+            let decay = (-age / 0.06).exp();
+            let sample = 0.5 * decay * (500.0 * TAU * t).sin();
+            samples.push(sample as f32);
+        }
+        let take = Take {
+            samples,
+            sample_rate: rate,
+            channels: 1,
+        };
+        let whole = whole_forensic(&take).expect("a decaying take analyses");
+        let tail = whole
+            .reverb_tail_sec
+            .expect("a decaying take measures its tail");
+        assert!(
+            (0.15..=1.2).contains(&tail),
+            "the tail {tail} should sit near the 0.4 s the decay implies"
+        );
     }
 
     #[test]

@@ -2872,3 +2872,64 @@ The dev build's Rust ear is found where the workspace actually puts it
 repository root a root-workspace checkout uses, so a checkout that
 builds `voice-signals` exercises the real ears in the selftest instead
 of reporting them absent.
+
+## 68. The detectors that never fired, made to fire
+
+Three ears the catalogue had always claimed were dead in practice, and
+one gate the edit read from a key the producer never wrote:
+
+- The hum detector - both the classifier's and the repair chain's -
+  quantised its mains candidates onto a 64 ms FFT's 15.6 Hz bins, so
+  50 Hz and 60 Hz landed on the same truncated bin and no hum was ever
+  found; the notch chain below it was dead code. A Goertzel pass at
+  the exact candidates over the quietest half-second (~2 Hz
+  resolution, guards 12 Hz either side, a family needs two harmonics)
+  finds them now, and the repair selftest proves a baked 50 Hz hum is
+  detected AND notched rather than merely survived.
+- The reverb tail built its decay frames with `chunks(HOP).filter(len
+  == WINDOW)` - a 512 hop never yields a 1024-sample chunk, so the
+  filter kept nothing and every take's tail was `None`. Overlapping
+  windows measure it, and a synthetic decaying room pins the RT60 the
+  frames read near the 0.4 s the decay implies.
+- The spectral rolloff answered the 95th percentile while the
+  catalogue, the Rust reader's own doc and the muffled-take rule all
+  name the 85th, and a digitally silent take reported a Nyquist
+  rolloff - the brightest reading for the quietest take. The
+  music-likelihood heuristic averaged regularity with density (either
+  could carry the number alone); it multiplies now, with the flatness
+  veto as before, and a hum harmonic alone no longer reads as mains
+  without its fundamental's own guard passing first.
+- The bed's skip gate and the plan's `musicSegments` signal read
+  `musicPresent` from the take reply's top level - a key the producer
+  writes elsewhere - so a take that already carried music was shopped
+  a bed anyway. Both now read the decision the profile actually
+  reached (`bgm.decision`'s `skip`, and the raw reply's own key), and
+  the bed's duck skips exactly where the verdict said no bed.
+
+The hook gained its pitch twin: the take's pitch contour reaches the
+edit (`pitchContourHz`, parsed beside the RMS envelope), and a rise of
+two semitones or more across the opening three seconds (`hook_lift`)
+performed the hook whatever the level meter read - the hook's captions
+carry the weight the rise earned, not only the loudness it was
+measured at.
+
+The catalogue's own honesty, held by tests: the formants quote their
+own confidence row rather than their family's; the arc's confidence
+is the emotion read's own standing, a 0 when no read was given instead
+of the family default; a speaker ear that answered no method is an
+absent ear, not a 0.7 one; the entities reading names its complement
+source even when the Rust ear never ran; `wordsPerSec` joins the
+speech-rate row; and the word-confidence gate's quiet-arm floor sits
+18 LU under the take's own mean - the old floor, 6 LU over the
+minimum, put it near digital silence for any take with a real pause,
+and the arm never fired at all.
+
+Beside those, the smaller guards the same pass pinned: `line_at` no
+longer lets an untimed (zero-span) line shadow the line that really
+holds the take's opening words; the derived pulse period holds to the
+layer table's own 0.2-8 s bounds; an emphasis word without a measured
+strength stays unmeasured rather than inheriting a half-strength; and
+a bare utterance count answers the burst question at twice the paired
+arm's bar. The spine and music-stage tests are re-pinned to the
+collision gate and the bed's volume shape their stages now carry, and
+clippy's own `div_ceil` lint is answered in kind.

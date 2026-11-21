@@ -2623,11 +2623,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             .iter()
             .filter_map(|read| read.take_wide.bgm_decision.as_deref())
             .find(|decision| *decision != "add");
-        if reads
-            .iter()
-            .any(|read| read.take_wide.music_present.is_some())
-            || verdict == Some("skip")
-        {
+        if log.iter().any(|reply| reply.get("musicPresent").is_some()) || verdict == Some("skip") {
             signals.push("musicSegments");
         }
         // The noise character earns its place only where the profile named
@@ -5126,7 +5122,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // tail.
                         const HOUSE_CAP: usize = 1000;
                         if kept.len() > HOUSE_CAP {
-                            let stride = (kept.len() + HOUSE_CAP - 1) / HOUSE_CAP;
+                            let stride = kept.len().div_ceil(HOUSE_CAP);
                             kept = kept
                                 .into_iter()
                                 .enumerate()
@@ -5190,11 +5186,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // lifted, so the caption carries weight even
                             // when the mood is mild. This is the one place
                             // the profile's per-line `relativeLufs` reaches
-                            // the picture.
+                            // the picture. The contour's own hook lift is
+                            // its pitch twin: a delivery that rose two
+                            // semitones or more across the opening three
+                            // seconds performed the hook whatever the
+                            // level meter read, and the hook's captions
+                            // carry the weight the rise earned.
                             let lifted = take_read
                                 .and_then(|take_read| take_read.line_at(group.start))
                                 .and_then(|line| line.relative_lu)
-                                .is_some_and(|lu| lu >= 3.0);
+                                .is_some_and(|lu| lu >= 3.0)
+                                || (at < 3.0
+                                    && take_read
+                                        .and_then(|take_read| take_read.hook_lift())
+                                        .is_some_and(|lift| lift >= 2.0));
                             let performed = take_read.and_then(|take_read| {
                                 take_read
                                     .line_at(group.start)
@@ -5680,7 +5685,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let reads = voice_reads(log, &music_source);
                     if reads
                         .iter()
-                        .any(|read| read.take_wide.music_present == Some(true))
+                        .any(|read| read.take_wide.bgm_decision == Some("skip".to_owned()))
                     {
                         return None;
                     }
@@ -6852,13 +6857,19 @@ mod tests {
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
         assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
 
-        // The verify's gates: the loudness target, and the words (F-04) -
-        // on the derived step that reads the timeline as it ended up.
+        // The verify's gates: the collisions of the finished timeline
+        // (the bed and the captions must never share a lane), the
+        // loudness target, and the words (F-04) - on the derived step
+        // that reads the timeline as it ended up.
         use concat_director::ReplyGate;
         assert!(matches!(program.steps[15], ProgramStep::Derived(_)));
         assert_eq!(
             program.steps[15].gates(),
             vec![
+                ReplyGate::Empty {
+                    field: "collisions",
+                    what: "two clips share a lane in the finished timeline",
+                },
                 ReplyGate::True {
                     field: "platformTargetMet",
                     what: "the mix missed the platform loudness target",
@@ -9012,8 +9023,38 @@ mod tests {
         assert_eq!(next.tool, "clip_audio_levels_db");
         assert_eq!(next.arguments["clipId"], "bed1");
         assert_eq!(next.arguments["baseDb"], -20.0);
-        // The duck's own reply is another view: the stage is done, not
-        // ducking a second time.
+        // The level's own reply is another view: the stage still owes
+        // the bed its shape - one batch of volume keys that rides on
+        // the level just set, every key the base gain or a fraction of
+        // it (never a full-scale 1.0 that would undo the level), a fade
+        // to and from silence at both ends, and no duck keys where no
+        // voice lines were ever measured.
+        log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
+        let shape = (music.next)(log.as_slice()).expect("the bed is shaped");
+        assert_eq!(shape.tool, "edit_apply");
+        assert_eq!(shape.arguments["command"]["op"], "batch");
+        let commands = shape.arguments["command"]["commands"]
+            .as_array()
+            .expect("the shape is one batch of keys");
+        assert_eq!(commands.len(), 4, "the fades only: no lines, no duck keys");
+        for command in commands {
+            assert_eq!(command["op"], "setClipKey");
+            assert_eq!(command["clipId"], "bed1");
+            assert_eq!(command["property"], "volume");
+        }
+        assert_eq!(commands[0]["at"], 0.0);
+        assert_eq!(commands[0]["value"], 0.0);
+        assert_eq!(commands[1]["at"], 0.1);
+        assert_eq!(
+            commands[1]["value"], 0.1,
+            "the fade rides at the bed's own -20 dB base"
+        );
+        assert_eq!(commands[2]["at"], 0.9);
+        assert_eq!(commands[2]["value"], 0.1);
+        assert_eq!(commands[3]["at"], 1.0);
+        assert_eq!(commands[3]["value"], 0.0);
+        // The shape's own reply is another view: the stage is done, not
+        // shaping a second time.
         log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
         assert_eq!((music.next)(log.as_slice()), None);
     }

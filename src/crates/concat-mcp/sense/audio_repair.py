@@ -242,31 +242,36 @@ def _remove_hiss_hum_rumble(spec):
     windows.sort(key=lambda w: w[0])
     quietest_idx = [i for _, i in windows[:max(3, len(windows) // 10)]]
 
-    # The hum: FFT over the quietest window; 50/60 Hz families.
+    # The hum: a Goertzel pass at the exact mains candidates over the
+    # quietest half-second; 50/60 Hz families. A tone 6 dB or more over
+    # its guards counts, and a family needs two of its harmonics before
+    # it earns its notch chain. The old bin-truncated FFT probe could
+    # not resolve 50 from 60 Hz in a 64 ms window and never found a hum
+    # at all - the notch chain below was dead code.
     hum_base = None
     hum_peaks = []
-    for i in quietest_idx[:1]:
-        mags = _vq._spectrum(samples, i * _vq.HOP)
-        if not mags:
-            continue
-        per_bin = RATE / _vq.WIN
+    for i in quietest_idx[:3]:
+        centre = i * _vq.HOP + _vq.WIN // 2 - _vq.HUM_WIN // 2
+        found_any = False
         for base in (50.0, 60.0):
-            found = 0
+            found = []
             for harmonic in range(1, 5):
-                k = int((base * harmonic) / per_bin)
-                if k <= 1 or k >= len(mags) - 2:
+                hz = base * harmonic
+                tone = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz)
+                low = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz - 12.0)
+                high = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz + 12.0)
+                if tone is None or low is None or high is None:
                     continue
-                around = (mags[k - 1] + mags[k + 1]) / 2 + 1e-9
-                if mags[k] / around > 2.0:
-                    found += 1
-            if found >= 2:
+                guard = (low + high) / 2.0 + 1e-12
+                if tone / guard > 2.0:
+                    found.append(round(hz))
+            if len(found) >= 2:
                 hum_base = base
-                for harmonic in range(1, 5):
-                    k = int((base * harmonic) / per_bin)
-                    if 1 < k < len(mags) - 1:
-                        hum_peaks.append(round(base * harmonic))
+                hum_peaks = found
+                found_any = True
                 break
-        break
+        if found_any:
+            break
 
     # The hiss: high-band energy in the quiet windows vs the speech band.
     hiss_db = None
@@ -983,6 +988,23 @@ def selftest(only=None):
             except Exception as exc:  # noqa: BLE001
                 checks.append({"tool": name, "ok": False,
                                "error": f"{type(exc).__name__}: {exc}"})
+        # The hum the synthetic take baked in must be FOUND, not only
+        # survived: the detection feeds the notch chain, and a detector
+        # that never fires writes a clean bill of health over a humming
+        # take (the bin-truncated probe did exactly that). Provable only
+        # where ffmpeg could run the chain.
+        if not no_ffmpeg:
+            hum_read = _remove_hiss_hum_rumble(
+                {"audio": humming, "out": str(Path(tmp) / "clean2.wav"),
+                 "overwrite": True})
+            found_hum = any("hum at 50 Hz" in str(finding.get("found") or "")
+                            for finding in (hum_read.get("findings") or []))
+            checks.append({
+                "tool": "remove_hiss_hum_rumble (hum found)",
+                "ok": bool(hum_read.get("ok")) and found_hum,
+                "error": hum_read.get("error"),
+                "extra": "the baked 50 Hz hum is detected and notched",
+            })
         # The gate's two directions, proven beyond the loop above: a
         # dense-speech take (the gated-TTS pattern) must NOT gate as
         # music - the tempo veto names it a false positive - and a take

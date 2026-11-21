@@ -2445,6 +2445,8 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::director_skill_listed;
+
     #[test]
     fn only_the_director_skill_satisfies_forge_preflight() {
         assert!(director_skill_listed(

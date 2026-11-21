@@ -862,7 +862,7 @@ impl Runner {
         // whenever any required quality gate is rejected or unmeasured.
         // The receipt keeps the stage warnings alone; this sentence is
         // the receipt's verdict, not a warning it recorded.
-        if program.enforce_acceptance && receipt.verdict.label() != "accepted" {
+        if program.enforce_acceptance && receipt.verdict != crate::receipt::Verdict::Accepted {
             warnings.push(format!(
                 "quality acceptance {}: {}",
                 receipt.verdict.label(),

@@ -361,6 +361,15 @@ impl ForgePane {
                     self.auto.stage = director_phase_stage(phase);
                     self.auto.fraction = fraction;
                 }
+                // The handed-over run has no ticker of its own: its clock
+                // is the harness's own output, which arrives as long as
+                // the agent is speaking - and a multi-minute Director
+                // run used to read 0s from start to finish.
+                if self.auto.running
+                    && let Some(started) = self.auto.started
+                {
+                    self.auto.elapsed = elapsed_text(started.elapsed());
+                }
                 self.log.push(line.into());
                 let extra = self.log.len().saturating_sub(LOG_KEPT);
                 self.log.drain(0..extra);
@@ -1051,7 +1060,6 @@ impl ForgePane {
             .is_some_and(|kill| kill.load(Ordering::Relaxed));
         self.auto.started = None;
         self.auto.kill = None;
-        self.auto.fraction = 1.0;
         if cancelled {
             self.auto.running = false;
             self.auto.checking = false;
@@ -1228,8 +1236,12 @@ impl ForgePane {
             && let Some(progress) = runner.progress()
         {
             self.auto.stage = stage_label(&progress.stage);
+            // A stage in progress sits halfway through its own slot: the
+            // bar reads 100% only when the run's own accepted end says
+            // so, not while its longest stage - the export, the watch -
+            // is still running.
             let total = progress.total_stages.max(1) as f32;
-            self.auto.fraction = (progress.stage_index as f32 + 1.0) / total;
+            self.auto.fraction = (progress.stage_index as f32 + 0.5) / total;
         }
         if let Some(started) = self.auto.started {
             self.auto.elapsed = elapsed_text(started.elapsed());
@@ -1382,6 +1394,13 @@ impl ForgePane {
                 }
                 let summary = receipt.summary();
                 studio.handle(Msg::Forge(ForgeMsg::Line(format!("acceptance: {summary}"))));
+                // The pane's own log carries the line too: the nested
+                // handle above lands in the blank pane `update` runs
+                // against, so without this the fixed spine's one-line
+                // summary never appears in the log the user reads.
+                self.log.push(format!("acceptance: {summary}").into());
+                let extra = self.log.len().saturating_sub(LOG_KEPT);
+                self.log.drain(0..extra);
             }
         }
     }
@@ -1432,7 +1451,10 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     let err = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
         if let Some(pipe) = out {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -1441,7 +1463,10 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     });
     let stderr_reader = std::thread::spawn(move || {
         if let Some(pipe) = err {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -2671,7 +2696,10 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
     let err = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
         if let Some(pipe) = out {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -2680,7 +2708,10 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
     });
     let stderr_reader = std::thread::spawn(move || {
         if let Some(pipe) = err {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            // A line that is not UTF-8 is skipped, not the end of the
+            // log: `map_while` stopped at the first bad byte and silently
+            // truncated everything the harness said after it.
+            for line in BufReader::new(pipe).lines().flatten() {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });

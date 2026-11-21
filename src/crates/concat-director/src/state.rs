@@ -201,7 +201,12 @@ pub(crate) mod seconds {
                 "a duration on the wire is seconds: a non-negative, finite number",
             ));
         }
-        Ok(Duration::from_secs_f64(seconds))
+        // `from_secs_f64` panics on overflow, and a huge-but-finite
+        // seconds count (a mangled report field) is a refusal, not a
+        // panic in whoever read the event back.
+        Duration::try_from_secs_f64(seconds).map_err(|_| {
+            E::custom("a duration on the wire overflows any clock: seconds out of range")
+        })
     }
 }
 

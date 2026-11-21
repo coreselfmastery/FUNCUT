@@ -846,10 +846,12 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
     # The Rust ears.
     if rust_up:
         entry("prosody", 0.85, "spectral-prosody (Rust): F0, energy, "
-                               "flux onsets, rhythm layers")
+                               "flux onsets, rhythm layers, pitch contour")
         entry("forensic", 0.8, "oximedia-audio-analysis (Rust): noise floor, "
-                               "SNR, flatness; reverb reads carry roughly "
-                               "+/-20% on a single channel")
+                               "SNR, flatness, band and safety readings "
+                               "(peak, clipping, hum, sibilance); reverb and "
+                               "music-likelihood are heuristics that say so "
+                               "in the sources note")
         entry("speaker", 0.7, "polyvoice voice-prints (Rust); two speakers "
                               "with similar voices can merge")
         entry("entities", 0.8, "anno NER (Rust) with a regex complement")
@@ -931,6 +933,14 @@ def _bgm_decision(rust, speech_ratio):
         snr = whole.get("snrDb")
         flatness = whole.get("spectralFlatness")
         onsets = len(whole.get("fluxOnsetsSec") or [])
+        # The Rust ear's own pulse reading: dense, regular onsets that
+        # survive the pure-tone veto are a beat, whatever the floor says.
+        likelihood = whole.get("musicLikelihood")
+        if isinstance(likelihood, (int, float)) and likelihood >= 0.6:
+            return {"recommendation": "skip",
+                    "reason": f"music likelihood {likelihood:.2f}: dense, regular "
+                              "onsets with a music-like spectrum - this take "
+                              "already carries music"}
         if flatness is not None and flatness > 0.25 and onsets > 30:
             return {"recommendation": "skip",
                     "reason": f"spectral flatness {flatness:.2f} with {onsets} flux onsets: "
@@ -1155,6 +1165,9 @@ def extract(spec):
             "prosody": (rust or {}).get("prosody", {}).get("rhythmLayers"),
             "dominantPeriodSec": (rust or {}).get("prosody", {}).get("dominantPeriodSec"),
             "phrases": (rust or {}).get("prosody", {}).get("phrases"),
+            # The take's own F0 track: the curve the per-line statistics
+            # flatten away, at most 256 points, 0 where unvoiced.
+            "pitchContourHz": (rust or {}).get("prosody", {}).get("pitchContourHz"),
             "forensic": (rust or {}).get("forensic", {}).get("whole"),
             "speechRatio": round(speech_ratio, 3) if speech_ratio is not None else None,
         },
@@ -1333,6 +1346,22 @@ def selftest():
             failures.append("no cut style")
         if result["directorHints"]["bgm"]["recommendation"] not in ("add", "skip", "duck_only"):
             failures.append(f"bgm said {result['directorHints']['bgm']}")
+        # The Rust ears' new readings flow through the merge whole: the
+        # fifty-ear keys exist whenever the binary ran, so a shape that
+        # drifts (a renamed key on the Rust side) fails here rather than
+        # as a director that quietly had nothing to read.
+        if result.get("speaker"):
+            whole = result["wholeTake"]["forensic"] or {}
+            for key in ("samplePeakDbfs", "clippingRatio", "dcOffset",
+                        "sibilanceRatio", "spectralRolloffHz",
+                        "spectralBandwidthHz", "onsetRatePerMin",
+                        "musicLikelihood"):
+                if key not in whole:
+                    failures.append(f"the Rust forensic whole lost {key}")
+            if "utterances" not in (result.get("speaker") or {}):
+                failures.append("the Rust speaker reading lost utterances")
+            if not result["wholeTake"].get("pitchContourHz"):
+                failures.append("the Rust prosody contour did not flow through")
         # The confidence block: one entry per signal family, each with a
         # basis, and the loudness family confident on a real take.
         per_signal = result.get("signalConfidence", {}).get("perSignal") or []

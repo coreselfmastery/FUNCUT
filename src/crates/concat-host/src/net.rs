@@ -203,7 +203,13 @@ pub fn get(
 
 /// An agent with these timeouts, through `route` when there is one and
 /// trusting what `trust` names.
-fn routed(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust, redirects: u32) -> ureq::Agent {
+fn routed(
+    route: Option<&Route>,
+    connect: Duration,
+    read: Duration,
+    trust: Trust,
+    redirects: u32,
+) -> ureq::Agent {
     let tls = match trust {
         Trust::System => tls(),
         Trust::Shipped => shipped_tls(),
@@ -605,5 +611,4 @@ mod tests {
             "the shelf must not connect to the redirect target on its own"
         );
     }
-
 }

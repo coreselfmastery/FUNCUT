@@ -10450,6 +10450,29 @@ mod tests {
         );
     }
 
+    /// The SFX stage reads the exact same typed emphasis values as the
+    /// caption and pacing consumers; a producer key rename cannot leave
+    /// the accents silently reading an obsolete raw JSON path.
+    #[test]
+    fn sfx_emphasis_peaks_come_from_the_typed_voice_read() {
+        let reads = vec![VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            lines: vec![crate::voice_read::LineRead {
+                emphasis: vec![crate::voice_read::Emphasis {
+                    word: "launch".to_owned(),
+                    at: 2.5,
+                    strength: 0.85,
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+        assert_eq!(
+            emphasis_peaks(&reads),
+            vec![("/t/a.wav".to_owned(), 2.5, 0.85)]
+        );
+    }
+
     /// A silence after a hard line is a held beat, not dead air: the
     /// tighten leaves it alone even though the detector called it
     /// `dead_air`. A silence in the middle of a calm stretch is cut.

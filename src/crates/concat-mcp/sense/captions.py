@@ -206,8 +206,13 @@ def _detect_ai_voice(spec):
     env = _vq._envelope(samples)
     lines, words = _words_all(spec)
 
-    # 1. The floor: too clean is itself a cue.
-    win_frames = 25
+    # 1. The floor: too clean is itself a cue. The 50 ms window is the
+    # same instrument classify_recording_quality measures its floor
+    # with - a 250 ms max-window cannot see a gap shorter than itself,
+    # and a gated/TTS take's tenth-of-a-second breaths measured its
+    # softest SPEECH as the floor, under-firing the too-clean cue on
+    # the one voice class this disclosure gate exists to catch.
+    win_frames = 5
     windows = []
     for i in range(0, len(env) - win_frames, win_frames):
         windows.append(max(env[i:i + win_frames]))
@@ -387,7 +392,14 @@ def _seal_voice(spec):
         out_path = spec.get("out") or str(seal_file)
         if Path(out_path).exists() and not spec.get("overwrite"):
             return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
-        Path(out_path).write_text(json.dumps(seal, indent=1))
+        # Atomic, like every repair writer: a kill mid-write used to
+        # leave a truncated voice-seal.json beside the take, and a later
+        # status/verify then read broken JSON as its answer.
+        target = Path(out_path)
+        part = target.with_name(target.stem + ".part" + target.suffix)
+        part.write_text(json.dumps(seal, indent=1))
+        import os as _os
+        _os.replace(part, target)
         return _ok(
             "seal_voice", sealed=True, sealFile=str(out_path),
             sha256=sha, bytes=size, policy=policy,

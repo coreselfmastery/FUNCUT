@@ -333,7 +333,11 @@ def _remove_hiss_hum_rumble(spec):
                 if tone is None or low is None or high is None:
                     continue
                 guard = (low + high) / 2.0 + 1e-12
-                if tone / guard > 2.0:
+                # The probe answers POWER: 6 dB of power is a ratio of
+                # ~4.0, not 2.0 (a power ratio of 2 is 3 dB - the old
+                # threshold notched borderline tones at half the head
+                # the comment claimed).
+                if tone / guard > 4.0:
                     found.append(round(hz))
             if len(found) >= 2:
                 hum_base = base
@@ -643,7 +647,13 @@ def _detect_music_segments(spec):
         bpm, strength = _tempo_autocorr(seg_curve)
         # centroid stability over 4 windows inside the second
         cents = []
-        for j in range(i, min(i + step - _vq.HOP, len(env) - 1), 25):
+        # j walks env-frame indices (100 fps), 25 frames - 250 ms -
+        # apart: i, i+25, i+50, i+75, four spectra inside the span.
+        # The old stop (`i + step - _vq.HOP`) subtracted a SAMPLE count
+        # from a FRAME count and landed under the start, so the range
+        # was always empty, every span's centroidCv was None, and the
+        # classifier's stability arms never measured anything.
+        for j in range(i, min(i + step, len(env)), 25):
             mags = _vq._spectrum(samples, j * _vq.HOP)
             if not mags:
                 continue
@@ -656,8 +666,20 @@ def _detect_music_segments(spec):
         if duty < 0.06:
             cls = "silence"
         elif strength > 0.35 and duty > 0.85 and (cent_cv is None or cent_cv < 0.5):
+            # A beat the 1-second window can see AND a locked timbre:
+            # the per-second ear's own clear music reading.
             cls = "music"
-        elif duty > 0.85 and (cent_cv or 1) > 0.6:
+        elif duty > 0.85:
+            # Continuous energy the per-second ear cannot settle: a beat
+            # slower than ~125 BPM is invisible to a 1-second span's
+            # autocorrelation, and a gated-TTS take is just as
+            # continuous - the whole take's tempo (below) is the
+            # authority this span honestly defers to. The old arm also
+            # demanded a wandering centroid, but the number had never
+            # been measured (the loop above was dead) and its 0.6
+            # threshold sits far above anything real audio reads
+            # (0.04-0.2 on the fixtures) - the arm never fired on
+            # anything, and every dense take classified as plain speech.
             cls = "music_or_dense_speech"
         elif duty > 0.4:
             cls = "speech"

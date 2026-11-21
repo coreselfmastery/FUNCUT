@@ -129,19 +129,43 @@ def _score_emphasis_type(spec):
                            "intensifiers, list heads, new-information deicts)")
         for idx, line in enumerate(lines):
             words = _vs._words_of(line)
-            toks = [re.sub(r"[^\w']", "", str(w.get("text") or "").lower()) for w in words]
+            timed = bool(words)
+            if not timed:
+                # A script-only line has no word times, but the grammar
+                # is pure text-pattern matching: it used to see an empty
+                # token list and measure nothing at all, on the exact
+                # input class (a bare script) the tool's own refusal
+                # text says it accepts. Tokenise the text; the times
+                # stay honestly None.
+                toks = [
+                    re.sub(r"[^\w']", "", piece) for piece in re.findall(
+                        r"\S+", str(line.get("text") or "")
+                    )
+                ]
+                raws = re.findall(r"\S+", str(line.get("text") or ""))
+                words = [{"text": raw, "start": None, "end": None}
+                         for raw in raws]
+            else:
+                # Original case kept: the lists compare on a lowered
+                # copy below, and the capitalisation arm needs the case
+                # the words were actually spoken-written in.
+                toks = [re.sub(r"[^\w']", "", str(w.get("text") or "")) for w in words]
             emph = []
             for i, tok in enumerate(toks):
                 if not tok:
                     continue
+                # The word lists are lowercase; the capitalisation arm
+                # needs the token's own case, so the comparison happens
+                # on a lowered copy and the isupper arm on the original.
+                low = tok.lower()
                 why = None
-                if i > 0 and _CONTRASTIVE.match(toks[i - 1] or ""):
+                if i > 0 and _CONTRASTIVE.match(toks[i - 1].lower() or ""):
                     why = "contrastive: the word after a pivot marker"
-                elif tok in _INTENSIFIERS or (i + 1 < len(toks) and tok in _INTENSIFIERS):
+                elif low in _INTENSIFIERS or (i + 1 < len(toks) and toks[i + 1].lower() in _INTENSIFIERS):
                     why = "intensity: an amplifier or its target"
-                elif _LIST_CUES.match(tok):
+                elif _LIST_CUES.match(low):
                     why = "list: an enumeration head"
-                elif _NEWINFO_MARKERS.match(tok) and i < len(toks) - 1:
+                elif _NEWINFO_MARKERS.match(low) and i < len(toks) - 1:
                     why = "new information: a pointing word introducing it"
                 elif tok.isupper() and len(tok) > 2 and tok.isalpha():
                     why = "written emphasis: capitalised"
@@ -151,7 +175,8 @@ def _score_emphasis_type(spec):
                     emph.append({"word": tok, "why": why,
                                  "start": words[i].get("start") if i < len(words) else None,
                                  "end": words[i].get("end") if i < len(words) else None})
-            per_line.append({"line": idx, "emphasisWords": emph})
+            per_line.append({"line": idx, "emphasisWords": emph,
+                             "timed": timed})
 
     visual = {
         "contrastive": "split screen or a hard match cut - the pivot is the edit point",
@@ -521,14 +546,22 @@ def _detect_accent(spec):
     if len(toks) > 40 and per100 < 5:
         cues.append(f"article density {per100:.1f}/100 words is low for native English")
 
-    # 2. Filled pauses per minute, and their type mix.
+    # 2. Filled pauses per minute, and their type mix. The rate needs
+    # word timings to span the speech; a script-only read has no span,
+    # so the filler COUNT is the cue it can still carry and the rate
+    # stays unset (the weight arm below reads neither it nor a name
+    # error - `fpm` referenced unconditionally used to crash the whole
+    # reading on any script-only input that contained a filler).
     fillers = sum(len(_vs._FILLERS_SAFE.findall(" " + str(line.get("text") or "").lower() + " "))
                   for line in lines)
+    fpm = None
     if words:
         span_min = max(0.25, (words[-1]["end"] - words[0]["start"]) / 60.0)
         fpm = fillers / span_min
         if fpm > 6:
             cues.append(f"{fpm:.0f} filled pauses per minute - a fluency marker")
+    elif fillers >= 3:
+        cues.append(f"{fillers} filled pause(s) counted with no word times to rate")
     # 3. Mid-sentence timing breaks: long intra-phrase gaps suggest
     # formulation effort (an L2 cue when text is simple).
     breaks = 0
@@ -549,7 +582,7 @@ def _detect_accent(spec):
         cues.append(vowel_note)
 
     weight = min(1.0, 0.25 * article_slips + 0.2 * (1 if len(toks) > 40 and per100 < 5 else 0)
-                 + 0.2 * (1 if fillers and fpm > 6 else 0)
+                 + 0.2 * (1 if (fpm is not None and fpm > 6) or (fpm is None and fillers >= 3) else 0)
                  + 0.2 * (1 if words and breaks / len(words) > 0.08 else 0))
     if not cues:
         weight = 0.0
@@ -628,8 +661,16 @@ def _measure_vocal_tract(spec):
             vowel_space = None
         ctl = None
         if f3 and f4 and f4 > f3 > 0:
-            # average of the 3rd and 4th quarter-wave resonances
-            ctl = 3.0 * 343.0 / (4.0 * ((f3 / 3.0) + (f4 / 4.0)) / 2.0)
+            # The quarter-wave rule for a closed-open tract: resonances
+            # sit at the ODD harmonics of c/4L - F3 is the fifth
+            # quarter-wave resonance (F3 = 5c/4L), F4 the seventh
+            # (F4 = 7c/4L). Each formant answers its own length; the
+            # two are averaged. The old half-wave numbering (F3/3, F4/4,
+            # and a stray leading 3) answered ~31 cm for the ~17.7 cm
+            # tract an adult F3/F4 pair describes.
+            l3_m = 5.0 * 343.0 / (4.0 * float(f3))
+            l4_m = 7.0 * 343.0 / (4.0 * float(f4))
+            ctl = 100.0 * (l3_m + l4_m) / 2.0
         ctl_estimate = round(ctl, 1) if ctl else None
 
     timbre = []

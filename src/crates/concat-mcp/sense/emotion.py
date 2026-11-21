@@ -686,7 +686,18 @@ def _classify_act(index, total, emotion, previous, text, intensity,
     stream = _stream(text)
     if sections and line_start is not None:
         for section in sections:
-            if section.get("start", 0.0) <= line_start < section.get("end", 1e9):
+            # An explicit null bound is an absent bound: `.get(key,
+            # default)` does not cover a key that CARRIES None (an
+            # agent's optional field serialised as null), and `None <=
+            # float` used to raise a TypeError that killed the whole
+            # emotion read.
+            start = section.get("start")
+            end = section.get("end")
+            if start is None or not isinstance(start, (int, float)):
+                start = 0.0
+            if end is None or not isinstance(end, (int, float)):
+                end = 1e9
+            if start <= line_start < end:
                 role = str(section.get("role", ""))
                 if role in ("hook", "cta", "outro"):
                     return "cta" if role == "outro" else role

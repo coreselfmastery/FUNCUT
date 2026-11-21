@@ -2662,3 +2662,27 @@ flag through its tool context.
 Regression coverage was added for a malformed later segment invalidating
 the whole mapping. These changes were committed to PR #182; tests and
 formatting were not run in this session.
+
+
+## 62. Stop the complete Forge process group, not only its parent
+
+Both Forge launch paths previously supervised and killed only the direct
+`forge` child. Forge can launch model/provider helpers and other
+subprocesses. If one of those descendants inherited stdout or stderr and
+outlived the parent, the output-reader threads could remain blocked at
+EOF; their joins then prevented the pane from receiving its terminal
+`Ended` event. A Cancel could appear to stop the run while the UI stayed
+stuck.
+
+Forge commands now start in a dedicated process group on Unix. The
+supervisor sends SIGKILL to that group on cancellation or when polling
+the child fails, with a direct-child kill fallback if group termination
+fails. The regular Forge run and the AUTO EDIT Director launch both use
+the same setup and termination helper. Non-Unix builds retain the
+platform's direct-child kill behavior.
+
+This closes the Unix descendant/pipe hang path. Windows process-tree
+termination still needs a dedicated Job Object implementation; this
+change does not claim that equivalent guarantee on Windows. The change
+was committed to PR #182; compilation and platform tests were not run in
+this session.

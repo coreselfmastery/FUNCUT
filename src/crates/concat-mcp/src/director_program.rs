@@ -4019,6 +4019,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         "audio": take.enhanced,
                         "out": take.take,
                         "overwrite": true,
+                        // A clean take is one the cleanup would decline
+                        // without force - and the declined reply writes
+                        // nothing, which would leave the timeline playing
+                        // the raw recording while the run believed it had
+                        // shipped the enhanced one. Forced, the chain
+                        // lands: the enhancement the first call made,
+                        // carried through the second call's conservative
+                        // highpass.
+                        "force": true,
                     }),
                 ),
             ]

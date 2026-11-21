@@ -544,9 +544,20 @@ def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
     if lra is not None and lra > 12.0:
         notes.append(f"Loudness range {lra:.1f} LU is very wide; quiet lines will be hard to hear on a phone.")
     out["notes"] = notes
-    out["platformTargetMet"] = abs(out["lufsError"]) <= 3.0 and (
-        true_peak is None or true_peak <= target_peak
+    # The target is met only where both halves were measured: an
+    # unmeasured true peak (a parse failure, a stream the reader could
+    # not open) is not a pass - a mix that never showed its peak could
+    # be clipping, and the gate that reads this boolean would wave it
+    # through. The loudness band is 3 LU around the platform target.
+    out["platformTargetMet"] = (
+        abs(out["lufsError"]) <= 3.0
+        and true_peak is not None
+        and true_peak <= target_peak
     )
+    if true_peak is None:
+        out["notes"].append(
+            "True peak could not be measured; the platform target is not proven met."
+        )
     return out
 
 
@@ -2323,6 +2334,20 @@ def main():
         elif args.cmd == "voice":
             out = voice_command(spec)
         elif args.cmd in ("discourse", "voiceq", "prosody", "audiorepair", "captions"):
+            # The family doors shell out to ffmpeg themselves (the repair
+            # writers filter through it), and they resolve the binary from
+            # FUNCUT_FFMPEG or PATH alone - neither of which carries the
+            # pinned static build this process bootstraps for its own
+            # loudness and rhythm work. A stock install has no ffmpeg CLI
+            # at all, and its one-click repair used to warn out on every
+            # take while the other stages worked. The bootstrapped binary
+            # is exported before the family's own lookup runs.
+            try:
+                ff, _ = _tools(spec)
+                if ff:
+                    os.environ["FUNCUT_FFMPEG"] = ff
+            except Exception:
+                pass
             out = family_command(args.cmd, spec)
         else:
             # No external dependencies: generate a synthetic gradient sheet and

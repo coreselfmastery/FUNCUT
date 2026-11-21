@@ -1691,6 +1691,22 @@ def _scenario_state_clear(project: str) -> None:
         pass
 
 
+def _freepd_state(status: Any) -> "str | None":
+    """The FreePD shelf's own word from a bgm_status reply: 'ready',
+    'missing', 'loading (N%)' or 'failed: ...'.
+
+    The reply carries the shelf under `freepd` (with `lofi`, `percent`
+    and the track counts beside it) - a top-level `state` key was never
+    in it. Reading one made every run wait a bounded minute for a word
+    that never comes, then record a false degradation: the watcher could
+    never place a bed at all.
+    """
+    if not isinstance(status, dict):
+        return None
+    word = status.get("freepd")
+    return word if isinstance(word, str) else None
+
+
 def run_pipeline(
     transport: Any,
     project: str,
@@ -3820,7 +3836,7 @@ def run_pipeline(
             )
         else:
             status = advance("bgm_status", {})
-            state = status.get("state") if isinstance(status, dict) else None
+            state = _freepd_state(status)
             if state != "ready" and "bgm_prepare" in served:
                 # DEG-07: a library that is not ready is usually "nobody
                 # started it" or "the last server died mid-prepare" (the
@@ -3839,8 +3855,8 @@ def run_pipeline(
                 while time.monotonic() < deadline:
                     time.sleep(5.0)
                     status = advance("bgm_status", {})
-                    state = status.get("state") if isinstance(status, dict) else None
-                    if state in ("ready", "failed"):
+                    state = _freepd_state(status)
+                    if state is not None and state != "loading" and not state.startswith("loading"):
                         break
                 if state == "ready":
                     log("BGM: the music library came ready after bgm_prepare started it this session")
@@ -5208,7 +5224,8 @@ SELF_TEST_REPLIES = {
     },
     "sounds_add": {"mediaId": "m-sfx", "clipId": "c-sfx"},
     "clip_audio_levels_db": {"ok": True},
-    "bgm_status": {"state": "ready"},
+    "bgm_status": {"freepd": "ready", "lofi": "ready", "percent": 100,
+                   "freepdTracks": 1025, "lofiTracks": 166},
     "bgm_search": {
         "tracks": [{"id": "lofi-0123456789ab", "title": "Night Pulse", "duration": 180.0}],
         "total": 1,
@@ -6532,7 +6549,7 @@ def self_test() -> int:
     # DEG-06: a library that cannot be made ready is a warned, recorded
     # absence - the export ships loudly without the bed.
     deg06_world = selftest_world()
-    deg06_world["bgm_status"] = {"state": "unavailable"}
+    deg06_world["bgm_status"] = {"freepd": "failed: the Archive did not answer"}
     deg06 = deg_project("deg-06")
     deg06_calls = run_pipeline(MockMcp(deg06_world), deg06, audio, SELF_TEST_PLAN)
     entries = recorded_fallbacks(deg06)
@@ -6561,8 +6578,12 @@ def self_test() -> int:
     bgm_reads = {"count": 0}
 
     def warming_library(_args: dict[str, Any]) -> dict[str, Any]:
+        # The reply shape the server actually sends: the shelf's own word
+        # under `freepd`, never a top-level `state`.
         bgm_reads["count"] += 1
-        return {"state": "ready"} if bgm_reads["count"] > 1 else {"state": "missing"}
+        word = "ready" if bgm_reads["count"] > 1 else "missing"
+        return {"freepd": word, "lofi": "ready", "percent": 100 if word == "ready" else 0,
+                "freepdTracks": 1025 if word == "ready" else 0, "lofiTracks": 166}
 
     deg07b_world = selftest_world()
     deg07b_world["bgm_status"] = warming_library

@@ -779,7 +779,7 @@ impl ForgePane {
             && let Some(source) = self.auto.source.clone()
             && director_retry_available(&source)
         {
-            if let Err(why) = director_ready(studio) {
+            if let Err(why) = director_ready(self.connected, self.installed, studio) {
                 studio.notify(&why, true);
                 return;
             }
@@ -960,7 +960,7 @@ impl ForgePane {
         // is missing does the run fall back to the fixed spine - and the
         // pane says which one is missing, so a lesser edit is never
         // mistaken for the Director's.
-        let handed_over = match director_ready(studio) {
+        let handed_over = match director_ready(self.connected, self.installed, studio) {
             Ok(()) => {
                 let kill = Arc::new(AtomicBool::new(false));
                 self.auto = AutoEditPane {
@@ -2445,9 +2445,13 @@ fn director_run_prompt(
     )
 }
 
-/// Whether a model key is saved for the harness: any provider the Forge
-/// page keeps. A harness with no key cannot think, so a Director run
-/// without one would only fail after the sibling was built.
+/// Whether a model key is saved for the harness: one of the eight LLM
+/// provider keys the pane hands the harness for thinking. The HuggingFace
+/// key is not among them - it only feeds the emotion sidecar - and a bare
+/// `FUNCUT_FORGE_MODEL` names a model without paying for one, so neither
+/// can carry a Director run on its own. A harness with no key cannot
+/// think, so a Director run without one would only fail after the sibling
+/// was built.
 fn a_model_key_is_saved(studio: &Studio) -> bool {
     let forge = &studio.prefs.forge;
     [
@@ -2459,13 +2463,9 @@ fn a_model_key_is_saved(studio: &Studio) -> bool {
         &forge.cerebras,
         &forge.sambanova,
         &forge.nim,
-        &forge.hf,
     ]
     .iter()
     .any(|key| !key.trim().is_empty())
-        || std::env::var("FUNCUT_FORGE_MODEL")
-            .or_else(|_| std::env::var("FORGE_MODEL"))
-            .is_ok_and(|model| !model.trim().is_empty())
 }
 
 /// Whether the AUTO EDIT can hand its edit to the Director: the harness
@@ -2474,7 +2474,16 @@ fn a_model_key_is_saved(studio: &Studio) -> bool {
 /// user can see on the page, so a run that cannot hand over says which is
 /// missing instead of quietly running the fixed spine and calling it the
 /// same edit.
-fn director_ready(studio: &Studio) -> Result<(), String> {
+///
+/// The wiring answers come in as arguments, read from the pane's own
+/// fields: while `update` runs, the studio's copy of the pane is a blank
+/// `mem::take` left behind, so reading `studio.forge` here would answer
+/// "not connected" on every call and the handover could never happen.
+fn director_ready(
+    connected: Option<bool>,
+    installed: Option<bool>,
+    studio: &Studio,
+) -> Result<(), String> {
     // A saved key is enough to know the user means to use a model; the
     // harness itself still has to exist and be wired, which the page's
     // own probe answers.
@@ -2484,13 +2493,13 @@ fn director_ready(studio: &Studio) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    if studio.forge.connected != Some(true) {
+    if connected != Some(true) {
         return Err(
             "the Forge harness is not connected to this editor (press Connect on the Forge page)"
                 .to_owned(),
         );
     }
-    if studio.forge.installed != Some(true) {
+    if installed != Some(true) {
         return Err(
             "the funcut-director skill is not installed (press Install on the Forge page)"
                 .to_owned(),

@@ -1323,12 +1323,12 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             Err(_) => true,
         };
         if manifest_stale {
-            let manifest = serde_json::to_string_pretty(&baked)
-                .map_err(|error| ApiError::failed(format!("serialising the bake manifest: {error}")))?;
-            let part = concat_motion::cache::part_path(&manifest_path);
-            std::fs::write(&part, manifest).map_err(|error| {
-                ApiError::failed(format!("{}: {error}", part.display()))
+            let manifest = serde_json::to_string_pretty(&baked).map_err(|error| {
+                ApiError::failed(format!("serialising the bake manifest: {error}"))
             })?;
+            let part = concat_motion::cache::part_path(&manifest_path);
+            std::fs::write(&part, manifest)
+                .map_err(|error| ApiError::failed(format!("{}: {error}", part.display())))?;
             concat_motion::cache::publish(&part, &manifest_path).map_err(|error| {
                 ApiError::failed(format!("{}: {error}", manifest_path.display()))
             })?;

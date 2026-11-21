@@ -366,10 +366,8 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
     // import arm below used to read a key that never exists and record
     // every bed as an asset with unrecorded rights - on the one asset
     // the receipt exists to vouch for.
-    let mut bgm_rights: std::collections::HashMap<
-        String,
-        (Option<String>, Option<String>),
-    > = std::collections::HashMap::new();
+    let mut bgm_rights: std::collections::HashMap<String, (Option<String>, Option<String>)> =
+        std::collections::HashMap::new();
     let text = |value: &Value, key: &str| {
         value
             .get(key)
@@ -415,10 +413,7 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
             };
             for track in tracks {
                 if let Some(track_id) = text(track, "id") {
-                    bgm_rights.insert(
-                        track_id,
-                        (text(track, "license"), text(track, "artist")),
-                    );
+                    bgm_rights.insert(track_id, (text(track, "license"), text(track, "artist")));
                 }
             }
         }
@@ -468,10 +463,8 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
                 // one), and commercial_ok is the licence's own verdict -
                 // CC0 permits a monetized edit, MobyGratis refuses it.
                 for track_id in &ids {
-                    let (license, artist) = bgm_rights
-                        .get(track_id)
-                        .cloned()
-                        .unwrap_or((None, None));
+                    let (license, artist) =
+                        bgm_rights.get(track_id).cloned().unwrap_or((None, None));
                     let commercial_ok = match license.as_deref() {
                         Some("CC0-1.0") => Some(true),
                         Some(_) => Some(false),

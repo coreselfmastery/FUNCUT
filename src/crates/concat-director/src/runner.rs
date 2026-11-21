@@ -733,9 +733,13 @@ impl Runner {
                     // stage happened to make (the motion probe), which
                     // used to overwrite the verdict, matchRate and drift
                     // the report is read for.
-                    if call.tool == "emotion" {
-                        verification = reply.clone();
-                    } else if verification.is_null() {
+                    //
+                    // The first answer of either shape stands: the
+                    // emotion verify itself, or the first reply when no
+                    // verify ever ran - and a later emotion reply
+                    // replaces it, because the verify is the one the
+                    // report is read for.
+                    if call.tool == "emotion" || verification.is_null() {
                         verification = reply.clone();
                     }
                 }

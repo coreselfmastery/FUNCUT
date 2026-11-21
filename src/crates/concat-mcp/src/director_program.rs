@@ -2663,7 +2663,20 @@ fn signal_evidence(log: &[Value]) -> Value {
     // profile is merged family by family, keeping the higher confidence,
     // because a family measured well on any take is measured.
     let mut families: BTreeMap<String, (f64, String)> = BTreeMap::new();
+    // The profile's own account of what it could not measure. It is the
+    // only honest source for that: a family missing from `measured` may
+    // be missing because the take had none, and the critic cannot tell
+    // the two apart without this. Deduplicated and in profile order.
+    let mut degraded: Vec<String> = Vec::new();
     for reply in log {
+        if let Some(rows) = reply["degradations"].as_array() {
+            for row in rows.iter().filter_map(Value::as_str) {
+                let row = row.trim();
+                if !row.is_empty() && !degraded.iter().any(|kept| kept == row) {
+                    degraded.push(row.to_owned());
+                }
+            }
+        }
         let Some(rows) = reply
             .pointer("/signalConfidence/perSignal")
             .and_then(Value::as_array)
@@ -2714,6 +2727,9 @@ fn signal_evidence(log: &[Value]) -> Value {
         "measured".to_owned(),
         json!(families.keys().cloned().collect::<Vec<_>>()),
     );
+    if !degraded.is_empty() {
+        digest.insert("notMeasured".to_owned(), json!(degraded));
+    }
     if !strong.is_empty() {
         digest.insert("leanOn".to_owned(), json!(strong));
     }
@@ -6528,6 +6544,154 @@ mod tests {
             evidence["decides"]["forensic"],
             json!("bgm"),
             "a family the plan now spends names the decision it informs"
+        );
+    }
+
+    /// The profile says in its own words what it could not measure, and
+    /// nothing carried that to the brief: a family missing from
+    /// `measured` could be missing because the take had none or because
+    /// the tool was absent, and a critic could not tell the two apart. The
+    /// digest now repeats the profile's own account, deduplicated across
+    /// takes, so the gap is stated rather than silently absent.
+    #[test]
+    fn the_brief_says_what_the_profile_could_not_measure() {
+        let log = vec![
+            json!({
+                "degradations": [
+                    "ffmpeg absent: loudness unmeasured",
+                    "silence detect absent: pauses unclassified",
+                ],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "pauses", "confidence": 0.75, "basis": "silencedetect" },
+                ]},
+            }),
+            // A second take repeating one line: the digest keeps it once.
+            json!({
+                "degradations": ["ffmpeg absent: loudness unmeasured"],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "prosody", "confidence": 0.8, "basis": "pitch" },
+                ]},
+            }),
+        ];
+        let brief = signal_brief(&log);
+        let gaps: Vec<&str> = brief["signalEvidence"]["notMeasured"]
+            .as_array()
+            .expect("the digest reports what it could not measure")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            gaps,
+            vec![
+                "ffmpeg absent: loudness unmeasured",
+                "silence detect absent: pauses unclassified",
+            ],
+            "each gap once, in the order the profile gave it"
+        );
+    }
+
+    /// The family-level guard above is not enough, and this is the test
+    /// that proves it: `prosody` was in READ while the reading inside it
+    /// that decides whether a line is *performed* or *reported* -
+    /// `pitchRangeSemitones` - was parsed by `voice_read` and spent by
+    /// nothing. A family can be named in the program and still have its
+    /// most useful field dropped, so each field the reader parses is held
+    /// here to a consumer or a stated reason.
+    #[test]
+    fn every_reading_inside_a_family_has_a_consumer() {
+        // The fields `voice_read` parses, and the reason any that no
+        // decision spends is left alone. A field with neither a consumer
+        // nor an entry here fails: the profile measured it and the edit
+        // threw it away.
+        const NOT_SPENT: &[(&str, &str)] = &[
+            (
+                "spectral_centroid_hz",
+                "a spectral centroid describes the voice's timbre, not the \
+                 cut: the noise type and flatness already decide the repair",
+            ),
+            (
+                "voicing_rate",
+                "how much of the take is voiced separates speech from noise, \
+                 which `speechRatio` already reports at the take's own level",
+            ),
+            (
+                "dynamic_range_db",
+                "a take-wide crest factor restates what `crest` measures per \
+                 transient, and the duck depth already reads the SNR",
+            ),
+            (
+                "cut_rule",
+                "the profile's own cut-style rule is prose: `cut_style` is \
+                 the reading it explains, and that one sizes every shot",
+            ),
+        ];
+        let source = include_str!("voice_read.rs");
+        let program = include_str!("director_program.rs");
+        let body = program
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the source has a program half");
+        // Every `pub field:` the reader declares, from its struct bodies.
+        let mut fields: Vec<&str> = Vec::new();
+        for line in source.lines() {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix("pub ") else {
+                continue;
+            };
+            let Some((name, _)) = rest.split_once(':') else {
+                continue;
+            };
+            if name.chars().all(|c| c.is_alphanumeric() || c == '_') && !name.is_empty() {
+                fields.push(name);
+            }
+        }
+        assert!(
+            fields.len() > 30,
+            "the field scan found {} fields, which is too few to be the reader: \
+             the parse has drifted and this test would pass vacuously",
+            fields.len()
+        );
+        // A field is spent when the program names it directly, or when it
+        // is read by a `voice_read` method the program calls: the reader
+        // exists to put a helper between a raw field and the decision, and
+        // `noise_floor_dbfs` reaches the bed through `wants_bed`, which is
+        // a consumer even though the program never spells the field.
+        let helper_reads: Vec<(&str, Vec<&str>)> = source
+            .split("\n    pub fn ")
+            .skip(1)
+            .filter_map(|block| {
+                let name = block.split('(').next()?.trim();
+                let uses: Vec<&str> = fields
+                    .iter()
+                    .copied()
+                    .filter(|field| {
+                        block.contains(&format!(".{field}")) || block.contains(&format!("{field}:"))
+                    })
+                    .collect();
+                Some((name, uses))
+            })
+            .collect();
+        let spent_through_helper = |field: &str| {
+            helper_reads.iter().any(|(helper, uses)| {
+                uses.contains(&field) && body.contains(&format!(".{helper}("))
+            })
+        };
+        let unspent: Vec<&str> = fields
+            .iter()
+            .copied()
+            .filter(|field| !NOT_SPENT.iter().any(|(name, _)| name == field))
+            .filter(|field| {
+                !body.contains(&format!("{field}("))
+                    && !body.contains(&format!(".{field}"))
+                    && !body.contains(&format!("\"{field}\""))
+                    && !spent_through_helper(field)
+            })
+            .collect();
+        assert!(
+            unspent.is_empty(),
+            "these readings are parsed from the profile and spent by no \
+             decision: {unspent:?} - wire each to a choice, or name it above \
+             with the reason the edit is better without it"
         );
     }
 

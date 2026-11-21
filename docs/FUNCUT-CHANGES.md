@@ -2914,3 +2914,38 @@ Tests: `an_unmeasured_scale_is_not_flagged_as_a_repeat` (both sides
 unmeasured, and one side unmeasured) and
 `a_seam_never_repeats_the_last_shot_s_move` (a chapter seam whose move is
 also the mood's alternate).
+
+## 69. The dependency fetch that stopped on a truncated body
+
+The Geneva lane went red on `signals/fifty-ears` at 12:13 on 2026-11-21
+in its *dependency* step, four steps before any test ran:
+
+```text
+fetch.sh: onnxruntime-linux-x64 from https://sourceforge.net/.../onnxruntime-linux-x64-1.30.1.tgz/download
+fetch.sh: onnxruntime-linux-x64 failed: HTTP 200, curl exit 18
+  curl: curl: (18) transfer closed with 4135441 bytes remaining to read
+```
+
+HTTP 200, a body that stopped 4 MB short, and no second attempt. Steps 11
+through 14 - the sherpa libraries, the sidecar, the motion tests, the
+rendered example - were skipped, so the lane reported one red dependency
+fetch as five failed steps and no evidence at all about the code.
+
+`fetch.sh` retried HTTP 5xx, curl exit 28 (timeout) and curl exit 56
+(recv failure). Exit 18 is the same class of failure as 56 and the most
+common one a mirror actually produces: the connection closed mid-answer
+after the status line had already said 200. It now rides the backoff with
+18 (partial file), 52 (empty reply), 55 (send failure) and 92 (HTTP/2
+stream), which is the whole set of ways a transfer dies between the
+headers and the last byte.
+
+Retrying more cannot let a bad artifact through, because the digest in
+`deps.lock` is checked on every attempt and a mismatch is never retried: a
+truncated body cannot match it, and a wrong release fails on attempt 1.
+
+Verified against a local server that truncates its first response and
+serves the whole body on the second: the old script failed at once with
+`HTTP 200, curl exit 18`; the new one logged `attempt 1/8: HTTP 200, curl
+exit 18 (partial file), retrying in 4s`, then verified the digest on
+attempt 2. A wrong digest still fails on the first attempt, and a 4xx
+still fails at once.

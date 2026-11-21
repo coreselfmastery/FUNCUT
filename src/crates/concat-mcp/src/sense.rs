@@ -1685,6 +1685,19 @@ fn transcript_words(path: &str, backend: &mut dyn Backend) -> Result<Vec<Value>,
     Ok(words)
 }
 
+/// The signal catalogue, read without a backend: the fifty named
+/// readings with their families and whys, as the Python side's static
+/// table answers them. A UI builds its per-signal buttons from this
+/// before any server is listening - the catalogue is a table, not a
+/// reading, so it owes no transcript and no audio.
+pub fn voice_signals_catalog() -> Result<Value, ApiError> {
+    run(
+        "voice",
+        &json!({ "action": "catalog" }),
+        Duration::from_secs(30),
+    )
+}
+
 /// The voiceover read as a score: the `voice` tool's extract. One spec in
 /// (audio + transcript), one reading out - per-line loudness, pause
 /// classes, speech rate, word confidence, sentence types, motifs and
@@ -1710,8 +1723,8 @@ pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outc
         .and_then(Value::as_str)
         .unwrap_or("extract")
         .to_owned();
-    if !["extract", "selftest"].contains(&action.as_str()) {
-        return Err(invalid("action is `extract` or `selftest`"));
+    if !["extract", "catalog", "selftest"].contains(&action.as_str()) {
+        return Err(invalid("action is `extract`, `catalog` or `selftest`"));
     }
     if action == "extract" {
         supply_transcript(&mut fields, backend)?;
@@ -1732,6 +1745,11 @@ pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outc
         "maxSpeakers",
         "speakerThreshold",
         "whisperx",
+        // The named-signal filter: the catalogue's own names, answered
+        // with a `requested` block - one reading, its source, its
+        // confidence and its why, which is what a per-signal button
+        // shows.
+        "signals",
     ] {
         if let Some(value) = fields.get(key) {
             spec[key] = value.clone();
@@ -1756,6 +1774,8 @@ pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outc
         };
         120 + 8 * scripted.max(lined).max(segments) as u64
     } else {
+        // The catalogue is a static table and the selftest a synthetic
+        // take: neither owes the extract's per-line headroom.
         60
     };
     let result = run("voice", &spec, Duration::from_secs(budget.min(480)))?;

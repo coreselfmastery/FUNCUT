@@ -1085,7 +1085,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "voice_signals",
             title: "Read the voiceover as a score",
-            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; a lone audio path borrows the file's own transcript from the analysis registry.",
+            description: "The voiceover read as a score - loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; one signal at a time (signals) or the catalogue (action: catalog).",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1846,11 +1846,12 @@ fn sense_schema(name: &str) -> Option<Value> {
             "toleranceMs": { "type": "number", "default": 150, "minimum": 0, "description": "With action 'verify': how far a word may start from where the edit placed it." },
         }),
         "voice_signals" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "action": { "type": "string", "enum": ["extract", "catalog", "selftest"], "default": "extract", "description": "extract reads the whole profile; catalog answers the fifty-signal catalogue (names, families, what each reads, why the edit wants it); selftest proves the Python signals." },
             "audio": string("The voiceover file (any format ffmpeg reads): the take the transcript timed."),
             "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the per-line signals need." },
             "lines": { "type": "array", "description": "Lines as [{text, start, end, words}] when there is no transcript.", "items": { "type": ["object", "string"] } },
             "script": string("Raw narration text when there is no transcript or audio: only the text signals (sentence types, motifs, fillers, entities, language) answer."),
+            "signals": { "type": "array", "description": "The named readings to extract, from the catalogue's own names (action 'catalog' lists them): only the passes they need run - a filler read costs no ffmpeg pass and no Rust ear - and the reply carries a `requested` block with each reading, its source, its confidence and its why. Absent reads the whole profile.", "items": { "type": "string" } },
             "language": string("The language hint the transcribe call used (ISO code); the script detection cross-checks it."),
             "emotion": { "type": "object", "description": "An emotion extract's output; its arc (shape, variety, score, warnings) rides along and feeds the cut-style hint." },
             "thresholdDb": { "type": "number", "default": 35, "description": "Silence threshold below full scale, as analysis.silence takes it (30 for a hot VO, 40 for a noisy room)." },
@@ -4980,7 +4981,7 @@ mod tests {
             ("measure_loudness", json!({ "path": "/tmp/render.mp4" })),
             (
                 "voice_signals",
-                json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found." }),
+                json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found.", "signals": ["forensic.noiseFloorDbfs", "pauses.classes"] }),
             ),
             // The five family doors: one sample each, `action` naming a
             // member the schema's enum accepts.

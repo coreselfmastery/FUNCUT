@@ -170,6 +170,20 @@ fn dead_air_cuts(
         let Some(rows) = reply["pauses"].as_array() else {
             continue;
         };
+        // The VAD's own account of the take's silences bounds the tighten:
+        // a take whose longest measured silence never reached 0.9 s is a
+        // tight take whose every silence is its breathing, and the
+        // classifier's dead-air word over a span that short is the one
+        // mistake that makes an edit feel mechanical - the tighten leaves
+        // such a take whole. A take that did hold a second of silence has
+        // real gaps, and the classifier's word stands.
+        if VoiceRead::of(reply).is_some_and(|read| {
+            read.take_wide
+                .longest_silence_sec
+                .is_some_and(|longest| longest < 0.9)
+        }) {
+            continue;
+        }
         let spans: Vec<(f64, f64)> = rows
             .iter()
             .filter(|pause| pause["class"] == json!("dead_air") && pause["keep"] != json!(true))
@@ -706,17 +720,37 @@ fn seam_transition(
     let seam = {
         let read = voice_read_of(voice, &slot.take);
         let crosses_speaker = read.is_some_and(|read| {
-            read.take_wide
-                .speaker_changes
-                .iter()
-                .any(|change| *change > slot.from - 0.35 && *change < slot.to + 0.35)
+            // The speakers' own shares gate the change points: a
+            // change the diarization found in a take one voice holds
+            // (a second speaker under a fifth of the speech) is a
+            // clustering wobble, not a turn, and a single-voice
+            // take's seams belong to the phrase and the question -
+            // the changes are only spent where the take is a real
+            // conversation. Unmeasured shares keep the changes: the
+            // one reading is not the other's contradiction.
+            read.conversation() != Some(false)
+                && read
+                    .take_wide
+                    .speaker_changes
+                    .iter()
+                    .any(|change| *change > slot.from - 0.35 && *change < slot.to + 0.35)
         });
         let asks = read.is_some_and(|read| {
             read.line_at(slot.from).is_some_and(|line| {
-                line.sentence_type == "question" || line.rise_confirms == Some(true)
+                line.sentence_type == "question"
+                    || line.rise_confirms == Some(true)
+                    // The acoustic terminal rise stands in where the
+                    // punctuation carried no question to confirm: the
+                    // ear heard the ask even when the text did not
+                    // write it.
+                    || line.final_rise == Some(true)
             })
         });
         let holds = read.is_some_and(|read| read.keeps_pause_at(slot.from));
+        // A phrase boundary opens in the gap: the narration's own
+        // breath-group turned, a seam the picture can register even
+        // where no speaker changed and no question was asked.
+        let phrase = read.is_some_and(|read| read.phrase_seam(slot.from, 0.15));
         // A chapter opens in this gap: the strongest seam the script
         // has, and the one the chapter card is already naming.
         let chapter = chapters.iter().any(|boundary| {
@@ -729,24 +763,28 @@ fn seam_transition(
         let pivot = pivots
             .iter()
             .any(|(take, at)| take == &slot.take && *at > slot.from - 0.5 && *at < slot.to + 0.5);
-        (crosses_speaker, asks, holds, chapter, pivot)
+        (crosses_speaker, asks, holds, chapter, pivot, phrase)
     };
     let first = match seam {
         // A chapter opening is the clearest seam there is: the story
         // moved on, and the whip is the move that says so.
-        (_, _, _, true, _) => "concat.whip-pan",
+        (_, _, _, true, _, _) => "concat.whip-pan",
         // A connective pivot is the argument turning: the slice is the
         // move that makes the turn read.
-        (_, _, _, _, true) => "concat.slice-social",
+        (_, _, _, _, true, _) => "concat.slice-social",
         // A speaker change is the clearest voice seam: the frame
         // changes because the voice did.
-        (true, _, _, _, _) => "concat.glitch-social",
+        (true, _, _, _, _, _) => "concat.glitch-social",
         // A question opens a gap the answer fills: the snap is the
         // ask, not the mood.
-        (_, true, _, _, _) => "concat.snap-zoom",
+        (_, true, _, _, _, _) => "concat.snap-zoom",
         // A held beat keeps the softest move the catalogue has, so the
         // cut never fights the silence the read said to hold.
-        (_, _, true, _, _) => "concat.dissolve",
+        (_, _, true, _, _, _) => "concat.dissolve",
+        // A phrase boundary is the weakest structural seam: a visible
+        // move, but only when nothing stronger - a hold, a turn -
+        // claims the gap.
+        (_, _, _, _, _, true) => "concat.cross-pop",
         _ => transition_for_emotion(&mood),
     };
     if last == Some(first) {
@@ -1508,6 +1546,19 @@ fn entity_graphics(log: &[Value], takes: &[TakePaths]) -> Vec<Entity> {
                 continue;
             };
             if comp_for_entity(entity).is_none() {
+                continue;
+            }
+            // An approximate reading - the regex complement's fallback,
+            // not the NER's own - does not earn the cards that claim
+            // exactness. A stat asserts the number is right and a timeline
+            // asserts the date is; a lower-third only says the words were
+            // said, which a pattern can stand behind.
+            if entity.approximate
+                && matches!(
+                    entity.card.to_ascii_lowercase().as_str(),
+                    "stat" | "timeline"
+                )
+            {
                 continue;
             }
             // The moment must still be on the timeline: a card for a line
@@ -4147,6 +4198,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // loudness gate is met by measurement rather than
                         // by luck. A take already within a LU of target
                         // takes no edit.
+                        //
+                        // The gain the target asks for is then capped by
+                        // the safety readings on the loudest take: a take
+                        // that already clips is never raised, a take whose
+                        // peaks sit near full scale only rises to the -1
+                        // dB ceiling (the true peak when the loudness pass
+                        // measured one), and a heavily compressed take
+                        // takes at most +6 dB. Without the cap the stage
+                        // could meet the platform target by pushing the
+                        // mix into overs the verify gate would own later.
                         if mixed {
                             return None;
                         }
@@ -4155,13 +4216,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             Some(target) => target,
                             None => return None,
                         };
-                        let measured = voice_reads(log, &level_source)
-                            .iter()
-                            .filter_map(|read| read.take_wide.integrated_lufs)
-                            .fold(None::<f64>, |loudest, lufs| {
-                                Some(loudest.map_or(lufs, |loudest: f64| loudest.max(lufs)))
+                        let loudest = voice_reads(log, &level_source)
+                            .into_iter()
+                            .filter(|read| read.take_wide.integrated_lufs.is_some())
+                            .max_by(|left, right| {
+                                left.take_wide
+                                    .integrated_lufs
+                                    .unwrap_or_default()
+                                    .total_cmp(&right.take_wide.integrated_lufs.unwrap_or_default())
                             })?;
-                        let gain = round3(target - measured);
+                        let measured = loudest.take_wide.integrated_lufs?;
+                        let gain = round3(loudest.safe_gain(target - measured));
                         if gain.abs() < 1.0 {
                             return None;
                         }
@@ -4280,6 +4345,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // derived hint: it decides how much every shot moves when
                 // the delivery over its gap was not itself measured.
                 let mut pending_style = String::new();
+                // The energy curve's own reading under the gap, 0..1: a
+                // shot laid over a loud stretch moves a touch more than
+                // the same-paced line over a quiet one.
+                let mut pending_energy: Option<f64> = None;
                 // The take's measured tempo, when the prosody read found
                 // one: the seam's blend is a fraction of the period the
                 // energy actually repeats on, so a slow take dissolves
@@ -4603,19 +4672,60 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     let take_wide = voice_read_of(voice, &slot.take)
                                         .map(|read| read.take_wide.clone())
                                         .unwrap_or_default();
+                                    // The profile's derived style, or - when
+                                    // it derived none - the honest fallback
+                                    // the measurements themselves answer,
+                                    // each in its turn: the onsets' rate
+                                    // (one a second is a take that moves),
+                                    // then the VAD's rhythm (six short
+                                    // utterances is machine-gun delivery),
+                                    // then the flux's mean against the
+                                    // level it moved from. A take no ear
+                                    // could read keeps the default arm.
+                                    let take_read = voice_read_of(voice, &slot.take);
                                     pending_style = take_wide.cut_style.clone();
-                                    pending_period = take_wide
-                                        .dominant_period_sec
-                                        // A period the rhythm read found
-                                        // but could not put strength
-                                        // behind is an autocorrelation
-                                        // artefact, not a pulse: it must
-                                        // not size a seam.
-                                        .filter(|_| {
-                                            voice_read_of(voice, &slot.take)
-                                                .and_then(|read| read.pulse_strength())
-                                                .is_some_and(|strength| strength >= 0.25)
+                                    if pending_style.is_empty()
+                                        && take_wide
+                                            .onset_rate_per_min
+                                            .is_some_and(|rate| rate >= 60.0)
+                                    {
+                                        pending_style = "fast".to_owned();
+                                    }
+                                    if pending_style.is_empty()
+                                        && take_read.is_some_and(|read| {
+                                            read.punchy_delivery() == Some(true)
+                                        })
+                                    {
+                                        pending_style = "fast".to_owned();
+                                    }
+                                    if pending_style.is_empty()
+                                        && take_read
+                                            .as_ref()
+                                            .is_some_and(|read| read.moves_hard() == Some(true))
+                                    {
+                                        pending_style = "fast".to_owned();
+                                    }
+                                    pending_period = take_read
+                                        .as_ref()
+                                        // The period the pulse has
+                                        // strength to stand behind, from
+                                        // the derived key or the strongest
+                                        // layer's own row: a period without
+                                        // its strength is an
+                                        // autocorrelation artefact, and it
+                                        // must not size a seam.
+                                        .and_then(|read| read.pulse_period())
+                                        // The breath-group the VAD measured
+                                        // sizes the blend when the prosody
+                                        // read found no period worth its
+                                        // strength: an utterance length is a
+                                        // measured rhythm, not an artefact,
+                                        // so it stands without the guard.
+                                        .or_else(|| {
+                                            take_read.as_ref().and_then(|read| read.breath_period())
                                         });
+                                    pending_energy = voice_read_of(voice, &slot.take)
+                                        .and_then(|read| read.local_energy(slot.from));
                                     pending_transition = Some(seam_transition(
                                         voice,
                                         chapters,
@@ -4696,7 +4806,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "value": 1.0,
                                 "ease": [0.0, 0.0, 0.58, 1.0],
                             }));
-                            let drift = match pending_pace.as_str() {
+                            // The delivery over the gap sets how much the
+                            // shot moves: a punchy stretch takes a livelier
+                            // drift, a slow one a quieter, longer push. The
+                            // style arms match the profile's own cut-style
+                            // words - `fast`, `hold`, `building`, `mixed` -
+                            // which is what the hint carries; the pace arms
+                            // answer the gap's own delivery.
+                            let mut drift = match pending_pace.as_str() {
                                 "punchy" => 1.10,
                                 "conversational" => 1.07,
                                 "slow" => 1.03,
@@ -4704,9 +4821,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // The gap's own delivery was not
                                     // measured, so the take's derived cut
                                     // style decides the move.
-                                    "punchy" => 1.10,
-                                    "conversational" => 1.07,
-                                    "slow" => 1.03,
+                                    "fast" | "building" => 1.10,
+                                    "hold" => 1.03,
+                                    "mixed" => 1.07,
                                     _ => 1.06,
                                 },
                             };
@@ -4724,7 +4841,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     })
                                 })
                                 .unwrap_or(false);
-                            let drift = if hook_shot { drift + 0.04 } else { drift };
+                            if hook_shot {
+                                drift += 0.04;
+                            }
+                            // The envelope's own reading adjusts the drift:
+                            // a shot laid over the take's loud stretch
+                            // moves a touch more, over a quiet one a touch
+                            // less, at the pace the delivery itself set.
+                            if let Some(energy) = pending_energy {
+                                drift += (energy - 0.5) * 0.04;
+                            }
+                            let drift = round3(drift);
                             commands.push(json!({
                                 "op": "setClipKey",
                                 "clipId": clip_id,
@@ -4919,7 +5046,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     }
                                 })
                                 .unwrap_or(0.0);
-                            let gated = unsure_share > 0.5;
+                            let gated = unsure_share > 0.5
+                                // A line with barely any voice under it is a
+                                // line the transcript probably misaligned:
+                                // the voiced ratio is the ear's own account
+                                // of how much speech it found, and under a
+                                // fifth it sides with the gate rather than
+                                // the words.
+                                || take_read
+                                    .and_then(|take_read| take_read.line_at(group.start))
+                                    .and_then(|line| line.voiced_ratio)
+                                    .is_some_and(|ratio| ratio < 0.2);
                             // A line delivered above the take's own
                             // integrated level is a line the speaker
                             // lifted, so the caption carries weight even
@@ -4943,7 +5080,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 Some("slow") => 0.046,
                                 _ => 0.04,
                             };
-                            if performed == Some(true) && !gated {
+                            // A clean voice carries its own weight: a
+                            // line the forensic ear read as stable (an
+                            // HNR at 10 dB or better, a jitter under 5%
+                            // and a shimmer under 6%) keeps the heavier
+                            // setting its performance earned, while a
+                            // hoarse line settles to the plain setting -
+                            // weight on an unstable voice is emphasis the
+                            // delivery cannot hold. `None` (no
+                            // voice-quality reading) changes nothing.
+                            let steady = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(group.start)
+                                    .and_then(|line| take_read.clean_voice(line))
+                            });
+                            if performed == Some(true) && !gated && steady != Some(false) {
                                 size += 0.003;
                             }
                             // The vertical band is narrower and sits higher
@@ -4972,9 +5123,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "fontSize": round3(size),
                                     "fontWeight": if (intensity >= 0.65 || lifted)
                                         && !gated
+                                        && steady != Some(false)
                                     {
                                         800
-                                    } else if performed == Some(true) && !gated {
+                                    } else if performed == Some(true)
+                                        && !gated
+                                        && steady != Some(false)
+                                    {
                                         700
                                     } else {
                                         600
@@ -5406,6 +5561,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }) {
                         return None;
                     }
+                    // The forensic ear's own second opinion: dense, regular
+                    // onsets that survive the pure-tone veto are a beat,
+                    // and a bed stacked on a beat is the doubling the skip
+                    // rule exists to stop - even when the floor read dry
+                    // and the profile's own verdict said add.
+                    if reads
+                        .iter()
+                        .any(|read| read.take_wide.music_likelihood.is_some_and(|l| l >= 0.6))
+                    {
+                        return None;
+                    }
                     if ducked {
                         // The duck's own shape, once: the voice's own
                         // lines, mapped onto the timeline the bed sits
@@ -5653,7 +5819,34 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 })
                                 .map(|ratio| -6.0 * ratio)
                                 .unwrap_or(0.0);
-                            let base_db = round3((act_db + density_db).clamp(-30.0, -6.0));
+                            // The room and the band: a reverberant tail
+                            // smears the voice over whatever sits under
+                            // it, and a sibilant voice lives in the very
+                            // band a bed's own brightness occupies - each
+                            // deepens the duck a little, measured, not
+                            // guessed. A take with neither reading keeps
+                            // the act-and-density level alone.
+                            let room_db = if voice_reads(log, &music_source)
+                                .iter()
+                                .filter_map(|read| read.take_wide.reverb_tail_sec)
+                                .any(|tail| tail >= 0.4)
+                            {
+                                -3.0
+                            } else {
+                                0.0
+                            };
+                            let band_db = if voice_reads(log, &music_source)
+                                .iter()
+                                .filter_map(|read| read.take_wide.sibilance_ratio)
+                                .any(|share| share >= 0.15)
+                            {
+                                -2.0
+                            } else {
+                                0.0
+                            };
+                            let base_db = round3(
+                                (act_db + density_db + room_db + band_db).clamp(-30.0, -6.0),
+                            );
                             call(
                                 "clip_audio_levels_db",
                                 json!({
@@ -5733,6 +5926,39 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 })
                             });
                         }
+                        // The register the peak's own line sits in: a peak
+                        // on a line the delivery lifted over the take's own
+                        // register is a peak the take itself raised, so it
+                        // outranks a peak of the same measured strength on
+                        // a settled line. The lift is worth a tenth of its
+                        // semitones - a full octave's lift adds two points
+                        // of strength, a modest rise adds a fraction.
+                        let voice = voice_reads(log, &sfx_source);
+                        for peak in &mut found {
+                            let lift = voice.iter().find_map(|voice_read| {
+                                voice_read
+                                    .line_at(peak.0)
+                                    .and_then(|line| voice_read.register_lift(line))
+                            });
+                            if let Some(lift) = lift {
+                                peak.1 += lift * 0.1;
+                            }
+                        }
+                        // A hoarse line does not carry an accent: the
+                        // forensic ear's own voice-quality reading (an HNR
+                        // under 10 dB or a jitter over 5%) retires the
+                        // peak, because a hit under an unstable voice is
+                        // emphasis the delivery cannot hold. A line with no
+                        // voice-quality reading keeps its peak - unmeasured
+                        // is not the same answer as hoarse.
+                        found.retain(|(time, _)| {
+                            !voice.iter().any(|voice_read| {
+                                voice_read
+                                    .line_at(*time)
+                                    .and_then(|line| voice_read.clean_voice(line))
+                                    == Some(false)
+                            })
+                        });
                         // The strongest six, earliest first: the run's
                         // accent budget, spent where the read peaked.
                         found.sort_by(|left, right| right.1.total_cmp(&left.1));
@@ -7626,6 +7852,14 @@ mod tests {
             .skip(1)
             .filter_map(|block| {
                 let name = block.split('(').next()?.trim();
+                // The block ends where the function does - the first line
+                // that is only the method's own closing brace. Without
+                // this cut the last pub fn's block would run to the end of
+                // the file, and every field the private parse functions
+                // (which sit after it) write would count as spent through
+                // a helper whose body never names them: the guard would
+                // pass for exactly the fields it exists to catch.
+                let block = block.split("\n    }\n").next().unwrap_or(block);
                 let uses: Vec<&str> = fields
                     .iter()
                     .copied()

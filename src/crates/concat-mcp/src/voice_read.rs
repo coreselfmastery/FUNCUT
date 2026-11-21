@@ -52,6 +52,24 @@ pub struct LineRead {
     pub pitch_range: Option<f64>,
     /// The line's level against the take's integrated level, in LU.
     pub relative_lu: Option<f64>,
+    /// The line's mean voiced pitch, in Hz: the register the line sits in.
+    /// The take-wide `mean_f0_hz` is its reference, and the distance
+    /// between the two is the lift the delivery put under the line.
+    pub pitch_mean_hz: Option<f64>,
+    /// Whether the pitch's terminal rise was measured, acoustically, by
+    /// the prosody ear - the confirmation the punctuation's own reading
+    /// (`rise_confirms`) cross-checks rather than replaces.
+    pub final_rise: Option<bool>,
+    /// The share of the line's frames the pitch tracker found a voice in.
+    /// A line with barely any voice under it is a line the transcript
+    /// probably misaligned, and its caption belongs behind the gate.
+    pub voiced_ratio: Option<f64>,
+    /// The line's harmonics-to-noise ratio, in dB, from the forensic ear.
+    pub hnr_db: Option<f64>,
+    /// The line's pitch-period variation (0-1): a hoarse or unstable read.
+    pub jitter: Option<f64>,
+    /// The line's amplitude variation (0-1).
+    pub shimmer: Option<f64>,
     /// question, exclamation, statement or fragment.
     pub sentence_type: String,
     /// Whether the pitch's terminal rise confirmed (or contradicted) the
@@ -129,6 +147,10 @@ pub struct Entity {
     pub card: String,
     /// Where it lands in the take, when the NER could time it.
     pub at: Option<f64>,
+    /// Whether the reading is the NER's own or the regex complement's
+    /// fallback. An approximate entity still earns a lower-third; it does
+    /// not earn a stat or a timeline, which claim exactness.
+    pub approximate: bool,
 }
 
 /// A phrase the narration repeats: the visual or sound that should return
@@ -201,6 +223,70 @@ pub struct TakeRead {
     /// The rhythm layers the prosody read found, strongest first: the
     /// macro period the phrases sit on and the micro period inside them.
     pub rhythm_layers: Vec<RhythmLayer>,
+    /// The phrase boundaries the prosody graph cut the take into: the
+    /// narration's own breath-groups, each a natural seam for a visual
+    /// change. `start`/`end` in file seconds, `label` the segmenter's own.
+    pub phrases: Vec<PhraseSpan>,
+    /// The take's RMS envelope, at most 256 points: the energy curve the
+    /// drift and the pacing can read locally rather than only in summary.
+    pub rms_envelope: Vec<f64>,
+    /// The mean spectral flux: how fast the take's timbre moves, the
+    /// honest input to a fast-or-held cut style when the profile derived
+    /// none.
+    pub flux_mean: Option<f64>,
+    /// The take's mean F0 over voiced frames, in Hz: the register every
+    /// line's own mean pitch is measured against.
+    pub mean_f0_hz: Option<f64>,
+    /// The loudest single sample, in dBFS: the ceiling a gain stage must
+    /// respect.
+    pub sample_peak_dbfs: Option<f64>,
+    /// The share of samples at or over 99.9% of full scale: a take that
+    /// already clips must not be raised, whatever the platform target
+    /// asks for.
+    pub clipping_ratio: Option<f64>,
+    /// The share of the take's energy in the 4-8 kHz sibilance band: the
+    /// harshness reading. A sibilant voice over a bed wants the bed
+    /// further down, out of the band the voice's own clarity lives in.
+    pub sibilance_ratio: Option<f64>,
+    /// The mains frequency the floor hums at, when a Goertzel pass found
+    /// one: the repair shopping list's most specific item.
+    pub hum_hz: Option<f64>,
+    /// The take's DC offset, 0-1 of full scale: a biased take wants a DC
+    /// blocker before any other repair, and a denoise alone would leave
+    /// the bias it should have removed.
+    pub dc_offset: Option<f64>,
+    /// The frequency under which 85% of the take's energy sits, in Hz: a
+    /// low rolloff is a dark, muffled take whose clarity a presence lift
+    /// restores - a reading the repair shopping list spends.
+    pub spectral_rolloff_hz: Option<f64>,
+    /// The take's spectral bandwidth, in Hz: how wide a band the voice
+    /// occupies. A narrow, low band is the muffled reading's own second
+    /// arm - the voice that never reached the presence band at all.
+    pub spectral_bandwidth_hz: Option<f64>,
+    /// The spectral-flux onset rate, in onsets per minute.
+    pub onset_rate_per_min: Option<f64>,
+    /// The forensic ear's own 0-1 reading of how music-like the take is:
+    /// the honest second opinion the BGM decision cross-checks.
+    pub music_likelihood: Option<f64>,
+    /// The estimated reverb tail, in seconds. A reverberant voice smears
+    /// over whatever sits under it, so the duck deepens with the tail.
+    pub reverb_tail_sec: Option<f64>,
+    /// The take's loudness range, in LU. A compressed take (a small range)
+    /// amplifies whatever was squashed into it, so the gain stage caps
+    /// what it will add.
+    pub loudness_range_lu: Option<f64>,
+    /// The take's true peak, in dBTP, when the loudness pass measured one.
+    pub true_peak_dbfs: Option<f64>,
+    /// How many utterances the VAD found: the count of pause-separated
+    /// speech spans.
+    pub utterances: Option<u64>,
+    /// The mean utterance length, in seconds.
+    pub mean_utterance_sec: Option<f64>,
+    /// The longest silence between two utterances, in seconds.
+    pub longest_silence_sec: Option<f64>,
+    /// How much of the take each speaker holds, in seconds, by id: the
+    /// share that says whether the take is one voice or a conversation.
+    pub speaker_seconds: Vec<SpeakerShare>,
 }
 
 /// One speaker turn: who held the take over which span.
@@ -222,6 +308,26 @@ pub struct RhythmLayer {
     pub period_sec: f64,
     /// The layer's relative strength, 0..1.
     pub strength: f64,
+}
+
+/// One phrase boundary the prosody graph cut the take into.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PhraseSpan {
+    /// Where the phrase begins, in file seconds.
+    pub start: f64,
+    /// Where it ends, in file seconds.
+    pub end: f64,
+    /// The segmenter's own label.
+    pub label: String,
+}
+
+/// One speaker's share of the take.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpeakerShare {
+    /// The speaker's id.
+    pub id: u64,
+    /// How much of the take this speaker holds, in seconds.
+    pub speech_seconds: f64,
 }
 
 /// The whole profile for one take, with the confidence each family of
@@ -343,6 +449,27 @@ impl VoiceRead {
             })
     }
 
+    /// The period a seam's blend may be sized on, in seconds: the derived
+    /// dominant period when the pulse has strength to stand behind it, or
+    /// the strongest layer's own period when the derived key never landed
+    /// but the layer table did - the same reading from the row it was
+    /// measured on, held to the same strength bar. `None` when no layer
+    /// with strength at or over 0.25 was measured.
+    pub fn pulse_period(&self) -> Option<f64> {
+        let derived = self.take_wide.dominant_period_sec.filter(|_| {
+            self.pulse_strength()
+                .is_some_and(|strength| strength >= 0.25)
+        });
+        derived.or_else(|| {
+            self.take_wide
+                .rhythm_layers
+                .iter()
+                .filter(|layer| layer.strength >= 0.25 && (0.2..=8.0).contains(&layer.period_sec))
+                .max_by(|left, right| left.strength.total_cmp(&right.strength))
+                .map(|layer| layer.period_sec)
+        })
+    }
+
     /// How long a caption for this line needs on screen, in seconds: the
     /// reading time the profile's rates imply, which is the longer of two
     /// estimates of the same thing. Syllables and words are both proxies
@@ -418,23 +545,235 @@ impl VoiceRead {
 
     /// What a denoise should target, in the profile's own words: the
     /// noise type, and the flatness that says whether the floor is hiss.
-    /// `None` when the forensic ear named no noise type.
+    /// `None` when the forensic ear named no noise type. The repairs the
+    /// readings ask for are named in turn - a mains hum wants a notch, a
+    /// DC offset wants a blocker, a muffled take wants a presence lift -
+    /// so the shopping list the log carries says what to fix, not only
+    /// what is wrong.
     pub fn noise_character(&self) -> Option<String> {
         let kind = self.take_wide.noise_type.trim();
         if kind.is_empty() {
             return None;
         }
+        // A mains hum the Goertzel pass found is the one repair item that
+        // names its own frequency: a notch at the mains is the fix, not a
+        // broadband denoise that would eat the voice's own low end.
+        if let Some(hz) = self.take_wide.hum_hz {
+            return Some(format!(
+                "{kind} with a {hz:.0} Hz hum: a notch at the mains, not a broadband denoise"
+            ));
+        }
+        // A DC offset is the one repair a denoise cannot make: the bias
+        // rides under the floor the profile measured, and only a blocker
+        // (or a high-pass at the bottom of the band) removes it.
+        if let Some(offset) = self
+            .take_wide
+            .dc_offset
+            .filter(|offset| offset.abs() >= 0.005)
+        {
+            let percent = offset.abs() * 100.0;
+            return Some(format!(
+                "{kind} with a {percent:.1}% DC offset: a DC blocker first, then the denoise"
+            ));
+        }
+        // A voice that never reached the presence band is muffled, not
+        // noisy: the rolloff under 3.5 kHz and the band under 1.2 kHz
+        // together say the clarity is missing rather than masked, and a
+        // presence lift is the repair a denoise would only deepen.
+        let muffled = match (
+            self.take_wide.spectral_rolloff_hz,
+            self.take_wide.spectral_bandwidth_hz,
+        ) {
+            (Some(rolloff), Some(bandwidth)) if rolloff < 3500.0 && bandwidth < 1200.0 => {
+                Some(format!(
+                    " (rolloff {rolloff:.0} Hz, band {bandwidth:.0} Hz: muffled, so a presence lift, not a denoise)"
+                ))
+            }
+            _ => None,
+        };
         Some(match self.take_wide.spectral_flatness {
             Some(flatness) if flatness > 0.25 => {
-                format!("{kind} (flatness {flatness:.2}: broadband, so a spectral denoise fits)")
+                format!(
+                    "{kind} (flatness {flatness:.2}: broadband, so a spectral denoise fits){muffled}",
+                    muffled = muffled.as_deref().unwrap_or_default()
+                )
             }
             Some(flatness) => {
                 format!(
-                    "{kind} (flatness {flatness:.2}: tonal, so a notch fits better than a denoise)"
+                    "{kind} (flatness {flatness:.2}: tonal, so a notch fits better than a denoise){muffled}",
+                    muffled = muffled.as_deref().unwrap_or_default()
                 )
             }
-            None => kind.to_owned(),
+            None => format!(
+                "{kind}{muffled}",
+                muffled = muffled.as_deref().unwrap_or_default()
+            ),
         })
+    }
+
+    /// Whether the line's voice is clean enough to treat as measured: an
+    /// HNR the forensic ear could read at 10 dB or better, a jitter
+    /// under 5% and a shimmer under 6%. `None` when the ear read none of
+    /// the three - a line with no voice-quality reading is not the same
+    /// answer as a hoarse one, and a caller must not spend the one as the
+    /// other.
+    pub fn clean_voice(&self, line: &LineRead) -> Option<bool> {
+        let hnr = line.hnr_db.map(|hnr| hnr >= 10.0);
+        let jitter = line.jitter.map(|jitter| jitter <= 0.05);
+        let shimmer = line.shimmer.map(|shimmer| shimmer <= 0.06);
+        [hnr, jitter, shimmer]
+            .into_iter()
+            .fold(None, |held, reading| match (held, reading) {
+                (None, next) => next,
+                (keep, None) => keep,
+                (Some(true), next) => next,
+                (Some(false), _) => Some(false),
+            })
+    }
+
+    /// How far the line's own register sits over the take's, in semitones:
+    /// the lift the delivery put under the line. A peak that lands on a
+    /// lifted line is a peak the take itself raised, so it outranks a peak
+    /// of the same strength on a settled line. `None` when either pitch
+    /// was never measured.
+    pub fn register_lift(&self, line: &LineRead) -> Option<f64> {
+        let take_f0 = self.take_wide.mean_f0_hz?;
+        let line_f0 = line.pitch_mean_hz?;
+        if take_f0 <= 0.0 || line_f0 <= 0.0 {
+            return None;
+        }
+        Some(12.0 / std::f64::consts::LN_2 * (line_f0 / take_f0).ln())
+    }
+
+    /// Whether a phrase boundary opens within `window` of a file second:
+    /// the narration's own breath-group turned there, which is a seam the
+    /// picture can register even when no speaker changed and no question
+    /// was asked.
+    pub fn phrase_seam(&self, moment: f64, window: f64) -> bool {
+        self.take_wide
+            .phrases
+            .iter()
+            .any(|phrase| (phrase.start - moment).abs() <= window)
+    }
+
+    /// The take's normalized local energy at a file second, 0..1: where
+    /// the moment sits between the envelope's quietest and loudest. The
+    /// RMS envelope is the whole take's curve, so a shot placed over a
+    /// loud stretch knows it - a lively section earns a livelier drift
+    /// than the same-paced line over a quiet one. `None` when no envelope
+    /// was measured.
+    pub fn local_energy(&self, moment: f64) -> Option<f64> {
+        let envelope = &self.take_wide.rms_envelope;
+        if envelope.is_empty() || self.duration.unwrap_or(0.0) <= 0.0 {
+            return None;
+        }
+        let position = (moment / self.duration.unwrap_or(0.0)).clamp(0.0, 1.0);
+        let index = ((envelope.len() - 1) as f64 * position).round() as usize;
+        let value = envelope[index.min(envelope.len() - 1)];
+        let low = envelope.iter().copied().fold(f64::INFINITY, f64::min);
+        let high = envelope.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        if high - low < 1.0e-9 {
+            return Some(0.5);
+        }
+        Some(((value - low) / (high - low)).clamp(0.0, 1.0))
+    }
+
+    /// The gain the mix stage may actually apply, after the safety
+    /// readings cap what the platform target asked for: a take that
+    /// already clips is never raised; a take whose peaks sit near full
+    /// scale is only raised to the -1 dBFS (or -1 dBTP, when the loudness
+    /// pass measured a true peak) ceiling; a heavily compressed take (a
+    /// loudness range under 4 LU) takes at most +6 dB, because everything
+    /// the compressor squashed in comes up with the voice.
+    pub fn safe_gain(&self, wanted: f64) -> f64 {
+        if wanted <= 0.0 {
+            return wanted;
+        }
+        let mut gain = wanted;
+        if self
+            .take_wide
+            .clipping_ratio
+            .is_some_and(|ratio| ratio > 0.0)
+        {
+            return 0.0;
+        }
+        let ceiling = -1.0;
+        if let Some(peak) = self
+            .take_wide
+            .true_peak_dbfs
+            .or(self.take_wide.sample_peak_dbfs)
+        {
+            gain = gain.min(ceiling - peak);
+        }
+        if self
+            .take_wide
+            .loudness_range_lu
+            .is_some_and(|lra| lra < 4.0)
+        {
+            gain = gain.min(6.0);
+        }
+        gain
+    }
+
+    /// Whether the take is a conversation rather than one voice, as the
+    /// speakers' own shares answer it: a second speaker holding at least a
+    /// fifth of the speech makes the take a dialogue, whatever the
+    /// diarization's change points said. `None` when no shares were
+    /// measured - an unmeasured take is not the same answer as a
+    /// single-voice one.
+    pub fn conversation(&self) -> Option<bool> {
+        let shares = &self.take_wide.speaker_seconds;
+        if shares.is_empty() {
+            return None;
+        }
+        let mut held: Vec<f64> = shares.iter().map(|share| share.speech_seconds).collect();
+        held.sort_by(|left, right| right.total_cmp(left));
+        let total: f64 = held.iter().sum();
+        if total <= 0.0 {
+            return Some(false);
+        }
+        Some(held.get(1).is_some_and(|second| second / total >= 0.2))
+    }
+
+    /// Whether the take speaks in bursts, as the VAD's own rhythm answers
+    /// it: six or more utterances at a mean of 1.2 s or under is a
+    /// machine-gun delivery, the honest fallback for a cut style the
+    /// profile derived none. `None` when the ear read neither count.
+    pub fn punchy_delivery(&self) -> Option<bool> {
+        match (self.take_wide.utterances, self.take_wide.mean_utterance_sec) {
+            (Some(count), Some(mean)) => Some(count >= 6 && mean <= 1.2),
+            (Some(count), None) => Some(count >= 12),
+            (None, _) => None,
+        }
+    }
+
+    /// The take's own breath-group length, in seconds: the mean utterance
+    /// the VAD measured, which sizes a seam's blend the way the rhythm
+    /// period would when the prosody read found no layer strong enough to
+    /// stand behind one. `None` when no utterance rhythm was measured.
+    pub fn breath_period(&self) -> Option<f64> {
+        self.take_wide
+            .mean_utterance_sec
+            .filter(|sec| (0.2..=8.0).contains(sec))
+    }
+
+    /// Whether the take's energy turns over fast, as the flux's own mean
+    /// answers against the level it moved from: a mean spectral flux at or
+    /// over a third of the envelope's mean RMS is a take that jumps, the
+    /// second opinion on a cut style the onsets' rate and the VAD's rhythm
+    /// both failed to derive. `None` when either reading was never
+    /// measured.
+    pub fn moves_hard(&self) -> Option<bool> {
+        let flux = self.take_wide.flux_mean?;
+        let envelope = &self.take_wide.rms_envelope;
+        if envelope.is_empty() {
+            return None;
+        }
+        let mean_rms = envelope.iter().sum::<f64>() / envelope.len() as f64;
+        if mean_rms <= 1.0e-6 {
+            return None;
+        }
+        Some(flux / mean_rms >= 0.3)
     }
 }
 
@@ -521,6 +860,12 @@ fn line_of(row: &Value) -> LineRead {
             .pointer("/prosody/pitchRangeSemitones")
             .and_then(Value::as_f64),
         relative_lu: row.pointer("/loudness/relativeLu").and_then(Value::as_f64),
+        pitch_mean_hz: row.pointer("/prosody/pitchMeanHz").and_then(Value::as_f64),
+        final_rise: row.pointer("/prosody/finalRise").and_then(Value::as_bool),
+        voiced_ratio: row.pointer("/prosody/voicedRatio").and_then(Value::as_f64),
+        hnr_db: row.pointer("/forensic/hnrDb").and_then(Value::as_f64),
+        jitter: row.pointer("/forensic/jitter").and_then(Value::as_f64),
+        shimmer: row.pointer("/forensic/shimmer").and_then(Value::as_f64),
         sentence_type: row
             .pointer("/sentence/type")
             .and_then(Value::as_str)
@@ -556,6 +901,12 @@ fn pauses_of(reply: &Value) -> Vec<Pause> {
 }
 
 fn entities_of(reply: &Value, take: &str) -> Vec<Entity> {
+    // The NER ear's own reading stands behind what it found; the regex
+    // complement is a fallback the profile itself flags
+    // (`entitiesAvailable` false when anno did not answer), and an
+    // approximate entity does not claim the exactness a stat or a
+    // timeline card asserts.
+    let measured = reply["entitiesAvailable"].as_bool().unwrap_or(false);
     reply["entities"]
         .as_array()
         .map(|entities| {
@@ -566,6 +917,8 @@ fn entities_of(reply: &Value, take: &str) -> Vec<Entity> {
                     if text.is_empty() {
                         return None;
                     }
+                    let approximate =
+                        !measured || entity["source"].as_str() == Some("regex-complement");
                     Some(Entity {
                         take: take.to_owned(),
                         kind: entity["entityType"]
@@ -576,6 +929,7 @@ fn entities_of(reply: &Value, take: &str) -> Vec<Entity> {
                         text: text.to_owned(),
                         card: entity["card"].as_str().unwrap_or_default().to_owned(),
                         at: entity["start"].as_f64(),
+                        approximate,
                     })
                 })
                 .collect()
@@ -670,6 +1024,82 @@ fn take_wide_of(reply: &Value) -> TakeRead {
             .unwrap_or_default()
             .to_owned(),
         dominant_period_sec: whole["dominantPeriodSec"].as_f64(),
+        phrases: whole["phrases"]
+            .as_array()
+            .map(|phrases| {
+                phrases
+                    .iter()
+                    .filter_map(|phrase| {
+                        Some(PhraseSpan {
+                            start: phrase["startSec"].as_f64()?,
+                            end: phrase["endSec"].as_f64()?,
+                            label: phrase["label"].as_str().unwrap_or_default().to_owned(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        rms_envelope: whole
+            .pointer("/forensic/rmsEnvelope")
+            .and_then(Value::as_array)
+            .map(|points| points.iter().filter_map(Value::as_f64).collect())
+            .unwrap_or_default(),
+        flux_mean: whole.pointer("/forensic/fluxMean").and_then(Value::as_f64),
+        mean_f0_hz: whole.pointer("/forensic/meanF0Hz").and_then(Value::as_f64),
+        sample_peak_dbfs: whole
+            .pointer("/forensic/samplePeakDbfs")
+            .and_then(Value::as_f64),
+        clipping_ratio: whole
+            .pointer("/forensic/clippingRatio")
+            .and_then(Value::as_f64),
+        sibilance_ratio: whole
+            .pointer("/forensic/sibilanceRatio")
+            .and_then(Value::as_f64),
+        hum_hz: whole.pointer("/forensic/humHz").and_then(Value::as_f64),
+        dc_offset: whole.pointer("/forensic/dcOffset").and_then(Value::as_f64),
+        spectral_rolloff_hz: whole
+            .pointer("/forensic/spectralRolloffHz")
+            .and_then(Value::as_f64),
+        spectral_bandwidth_hz: whole
+            .pointer("/forensic/spectralBandwidthHz")
+            .and_then(Value::as_f64),
+        onset_rate_per_min: whole
+            .pointer("/forensic/onsetRatePerMin")
+            .and_then(Value::as_f64),
+        music_likelihood: whole
+            .pointer("/forensic/musicLikelihood")
+            .and_then(Value::as_f64),
+        reverb_tail_sec: whole
+            .pointer("/forensic/reverbTailSec")
+            .and_then(Value::as_f64),
+        loudness_range_lu: whole
+            .pointer("/loudness/loudnessRangeLu")
+            .and_then(Value::as_f64),
+        true_peak_dbfs: whole
+            .pointer("/loudness/truePeakDbfs")
+            .and_then(Value::as_f64),
+        utterances: reply.pointer("/speaker/utterances").and_then(Value::as_u64),
+        mean_utterance_sec: reply
+            .pointer("/speaker/meanUtteranceSec")
+            .and_then(Value::as_f64),
+        longest_silence_sec: reply
+            .pointer("/speaker/longestSilenceSec")
+            .and_then(Value::as_f64),
+        speaker_seconds: reply
+            .pointer("/speaker/speakers")
+            .and_then(Value::as_array)
+            .map(|speakers| {
+                speakers
+                    .iter()
+                    .filter_map(|speaker| {
+                        Some(SpeakerShare {
+                            id: speaker["id"].as_u64()?,
+                            speech_seconds: speaker["speechSeconds"].as_f64()?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         rhythm_layers: whole["prosody"]
             .as_array()
             .map(|layers| {
@@ -795,13 +1225,22 @@ mod tests {
     fn the_profile_s_own_shape_is_what_is_read() {
         let reply = json!({
             "audio": { "path": "/t/a.wav", "durationSec": 12.0 },
+            "entitiesAvailable": true,
             "wholeTake": {
-                "loudness": { "integratedLufs": -16.5 },
+                "loudness": { "integratedLufs": -16.5, "loudnessRangeLu": 8.0,
+                              "truePeakDbfs": -0.4 },
                 "prosody": [ { "periodSec": 0.6, "strength": 0.7 } ],
                 "dominantPeriodSec": 0.6,
+                "phrases": [ { "startSec": 3.0, "endSec": 6.2, "label": "p", "averageEnergy": 0.1 } ],
+                "pitchContourHz": [110.0, 0.0, 220.0],
                 "forensic": {
                     "noiseFloorDbfs": -38.0, "snrDb": 9.5, "noiseType": "hiss",
                     "spectralFlatness": 0.42, "fluxOnsetsSec": [1.0, 3.25],
+                    "samplePeakDbfs": -3.2, "clippingRatio": 0.0,
+                    "sibilanceRatio": 0.07, "humHz": null, "fluxMean": 0.05,
+                    "meanF0Hz": 140.0, "onsetRatePerMin": 40.0,
+                    "musicLikelihood": 0.1, "reverbTailSec": null,
+                    "rmsEnvelope": [0.1, 0.5, 0.9, 0.2],
                 },
                 "speechRatio": 0.71,
             },
@@ -809,6 +1248,9 @@ mod tests {
                 "bgm": { "recommendation": "skip", "reason": "already musical" },
             },
             "speaker": {
+                "utterances": 7, "meanUtteranceSec": 1.6, "longestSilenceSec": 1.9,
+                "speakers": [ { "id": 0, "speechSeconds": 8.4, "lineIndices": [0] },
+                              { "id": 1, "speechSeconds": 2.1, "lineIndices": [1] } ],
                 "changes": [
                     { "t": 4.5, "from": 0, "to": 1 },
                     { "t": 9.0, "from": 1, "to": 0 },
@@ -818,7 +1260,13 @@ mod tests {
                     { "start": 4.5, "end": 9.0, "speaker": 1 },
                 ],
             },
-            "lines": [],
+            "lines": [
+                { "start": 0.0, "end": 4.0, "text": "a line",
+                  "prosody": { "pitchMeanHz": 175.0, "finalRise": true, "voicedRatio": 0.9 },
+                  "forensic": { "hnrDb": 18.0, "jitter": 0.01, "shimmer": 0.02 } },
+            ],
+            "entities": [ { "text": "IBM", "entityType": "ORG", "card": "lower-third",
+                            "start": 2.0, "source": "anno" } ],
         });
         let read = VoiceRead::of(&reply).expect("a read");
         assert_eq!(read.take_wide.bgm_decision.as_deref(), Some("skip"));
@@ -835,5 +1283,256 @@ mod tests {
         assert_eq!(read.onset_near(3.3, 0.1), Some(3.25));
         assert_eq!(read.take_wide.integrated_lufs, Some(-16.5));
         assert_eq!(read.pulse_strength(), Some(0.7));
+        // The fifty-ear readings, at the paths the profile writes them.
+        assert_eq!(read.take_wide.sample_peak_dbfs, Some(-3.2));
+        assert_eq!(read.take_wide.clipping_ratio, Some(0.0));
+        assert_eq!(read.take_wide.sibilance_ratio, Some(0.07));
+        assert_eq!(read.take_wide.hum_hz, None);
+        assert_eq!(read.take_wide.flux_mean, Some(0.05));
+        assert_eq!(read.take_wide.mean_f0_hz, Some(140.0));
+        assert_eq!(read.take_wide.onset_rate_per_min, Some(40.0));
+        assert_eq!(read.take_wide.music_likelihood, Some(0.1));
+        assert_eq!(read.take_wide.reverb_tail_sec, None);
+        assert_eq!(read.take_wide.loudness_range_lu, Some(8.0));
+        assert_eq!(read.take_wide.true_peak_dbfs, Some(-0.4));
+        assert_eq!(read.take_wide.rms_envelope, vec![0.1, 0.5, 0.9, 0.2]);
+        assert_eq!(read.take_wide.phrases.len(), 1);
+        assert_eq!(read.take_wide.phrases[0].start, 3.0);
+        assert_eq!(read.take_wide.utterances, Some(7));
+        assert_eq!(read.take_wide.mean_utterance_sec, Some(1.6));
+        assert_eq!(read.take_wide.longest_silence_sec, Some(1.9));
+        assert_eq!(read.take_wide.speaker_seconds.len(), 2);
+        assert_eq!(read.take_wide.speaker_seconds[1].speech_seconds, 2.1);
+        // The per-line readings the new consumers spend.
+        let line = &read.lines[0];
+        assert_eq!(line.pitch_mean_hz, Some(175.0));
+        assert_eq!(line.final_rise, Some(true));
+        assert_eq!(line.voiced_ratio, Some(0.9));
+        assert_eq!(line.hnr_db, Some(18.0));
+        assert_eq!(line.jitter, Some(0.01));
+        assert_eq!(read.clean_voice(line), Some(true));
+        // The register lift: 175 Hz over the take's 140 Hz is an octave
+        // shy of a fourth - two semitones and a bit.
+        let lift = read.register_lift(line).expect("a lift");
+        assert!((3.0..=4.0).contains(&lift), "lift {lift}");
+        // The phrase seam answers at its own boundary.
+        assert!(read.phrase_seam(3.05, 0.2));
+        assert!(!read.phrase_seam(8.0, 0.2));
+        // The local energy reads the envelope's own curve.
+        assert!(read.local_energy(6.0) > Some(0.9));
+        assert!(read.local_energy(0.0) < Some(0.2));
+        // The gain ceiling: a take peaking at -0.4 dBTP takes at most
+        // -0.6 dB however far the platform target sits above it.
+        assert_eq!(read.safe_gain(9.0), -0.6);
+        assert_eq!(read.safe_gain(-2.0), -2.0, "a cut is never capped");
+        // An entity the NER measured is not approximate.
+        assert!(!read.entities[0].approximate);
+    }
+
+    /// The regex complement is a fallback the profile flags, and the
+    /// reader must not let it claim the exactness a stat card asserts:
+    /// `entitiesAvailable: false` marks every entity approximate, however
+    /// confident the complement's own pattern felt.
+    #[test]
+    fn a_complement_entity_is_approximate_whatever_it_found() {
+        let reply = json!({
+            "audio": { "path": "/t/a.wav", "durationSec": 12.0 },
+            "entitiesAvailable": false,
+            "lines": [],
+            "entities": [ { "text": "$10,450", "entityType": "MONEY", "card": "stat",
+                            "start": 2.0, "source": "regex-complement" } ],
+        });
+        let read = VoiceRead::of(&reply).expect("a read");
+        assert!(read.entities[0].approximate);
+    }
+
+    /// The gain ceiling's other two rules: a clipped take is never raised
+    /// at all, and a compressed take (loudness range under 4 LU) takes at
+    /// most +6 dB of however much the platform target asked for.
+    #[test]
+    fn the_gain_ceiling_respects_the_clip_and_the_compression() {
+        let mut read = VoiceRead::default();
+        read.take_wide.clipping_ratio = Some(0.001);
+        assert_eq!(read.safe_gain(4.0), 0.0, "a clipped take is not raised");
+        read.take_wide.clipping_ratio = Some(0.0);
+        read.take_wide.loudness_range_lu = Some(2.5);
+        read.take_wide.sample_peak_dbfs = Some(-12.0);
+        assert_eq!(
+            read.safe_gain(9.0),
+            6.0,
+            "a compressed take takes at most +6 dB"
+        );
+    }
+
+    /// The conversation reading: the shares, not the change points, say
+    /// whether the take is a dialogue. A second speaker under a fifth of
+    /// the speech is a clustering wobble, not a turn.
+    #[test]
+    fn the_shares_say_whether_the_take_is_a_dialogue() {
+        let mut read = VoiceRead::default();
+        assert_eq!(read.conversation(), None, "no shares measured is no answer");
+        read.take_wide.speaker_seconds = vec![SpeakerShare {
+            id: 0,
+            speech_seconds: 9.0,
+        }];
+        assert_eq!(
+            read.conversation(),
+            Some(false),
+            "one voice is not a dialogue"
+        );
+        read.take_wide.speaker_seconds = vec![
+            SpeakerShare {
+                id: 0,
+                speech_seconds: 8.0,
+            },
+            SpeakerShare {
+                id: 1,
+                speech_seconds: 2.0,
+            },
+        ];
+        assert_eq!(
+            read.conversation(),
+            Some(true),
+            "a fifth of the speech is already a turn"
+        );
+        read.take_wide.speaker_seconds = vec![
+            SpeakerShare {
+                id: 0,
+                speech_seconds: 8.0,
+            },
+            SpeakerShare {
+                id: 1,
+                speech_seconds: 4.0,
+            },
+        ];
+        assert_eq!(
+            read.conversation(),
+            Some(true),
+            "a third of the speech is a dialogue"
+        );
+    }
+
+    /// The utterance rhythm's two spends: the burst reading that backs a
+    /// fast cut style, and the breath-group length that sizes a seam's
+    /// blend when the rhythm layers found no period to stand behind.
+    #[test]
+    fn the_vad_rhythm_answers_bursts_and_breath_groups() {
+        let mut read = VoiceRead::default();
+        assert_eq!(read.punchy_delivery(), None);
+        assert_eq!(read.breath_period(), None);
+        read.take_wide.utterances = Some(7);
+        read.take_wide.mean_utterance_sec = Some(1.0);
+        assert_eq!(
+            read.punchy_delivery(),
+            Some(true),
+            "seven short bursts is punchy"
+        );
+        assert_eq!(read.breath_period(), Some(1.0));
+        read.take_wide.mean_utterance_sec = Some(3.2);
+        assert_eq!(
+            read.punchy_delivery(),
+            Some(false),
+            "long utterances are not bursts"
+        );
+        read.take_wide.mean_utterance_sec = Some(0.1);
+        assert_eq!(
+            read.breath_period(),
+            None,
+            "a span that short is not a breath-group"
+        );
+        read.take_wide.mean_utterance_sec = Some(9.0);
+        assert_eq!(
+            read.breath_period(),
+            None,
+            "a span that long is not a breath-group"
+        );
+        read.take_wide.utterances = Some(2);
+        read.take_wide.mean_utterance_sec = None;
+        assert_eq!(
+            read.punchy_delivery(),
+            Some(false),
+            "two utterances is not a burst"
+        );
+    }
+
+    /// The flux's mean against the envelope it moved from: the same flux
+    /// over a loud take is a shuffle, over a quiet one a jump - the
+    /// reading is the ratio, not the raw number.
+    #[test]
+    fn the_flux_means_read_against_the_level_it_moved_from() {
+        let mut read = VoiceRead::default();
+        assert_eq!(read.moves_hard(), None, "no flux measured is no answer");
+        read.take_wide.flux_mean = Some(0.05);
+        assert_eq!(read.moves_hard(), None, "no envelope measured is no answer");
+        read.take_wide.rms_envelope = vec![0.05; 10];
+        // A mean RMS of 0.05 against a flux of 0.05 is a ratio of one.
+        assert_eq!(read.moves_hard(), Some(true));
+        read.take_wide.rms_envelope = vec![0.5; 10];
+        // The same flux over a take ten times louder is a tenth of it.
+        assert_eq!(read.moves_hard(), Some(false));
+    }
+
+    /// The repair shopping list's own additions: a DC offset names its
+    /// blocker, and a muffled take (a rolloff and a band that never
+    /// reached the presence band) asks for a lift rather than a denoise.
+    #[test]
+    fn the_repair_list_names_the_blocker_and_the_lift() {
+        let mut read = VoiceRead::default();
+        read.take_wide.noise_type = "hiss".to_owned();
+        read.take_wide.dc_offset = Some(0.02);
+        assert_eq!(
+            read.noise_character().as_deref(),
+            Some("hiss with a 2.0% DC offset: a DC blocker first, then the denoise")
+        );
+        read.take_wide.dc_offset = Some(0.0);
+        read.take_wide.spectral_rolloff_hz = Some(3100.0);
+        read.take_wide.spectral_bandwidth_hz = Some(900.0);
+        assert_eq!(
+            read.noise_character().as_deref(),
+            Some("hiss (rolloff 3100 Hz, band 900 Hz: muffled, so a presence lift, not a denoise)")
+        );
+        read.take_wide.spectral_rolloff_hz = Some(5200.0);
+        assert_ne!(
+            read.noise_character().as_deref().unwrap_or_default(),
+            "",
+            "a take that reached the presence band keeps the plain character"
+        );
+        assert!(
+            !read
+                .noise_character()
+                .unwrap_or_default()
+                .contains("muffled")
+        );
+    }
+
+    /// The voice-quality gate's third arm: a shimmer over 6% retires a
+    /// line an HNR alone would have passed, and a reading the ear never
+    /// made changes nothing.
+    #[test]
+    fn a_shaky_line_is_not_a_clean_one_even_with_a_good_hnr() {
+        let read = VoiceRead::default();
+        let steady = LineRead {
+            hnr_db: Some(18.0),
+            jitter: Some(0.01),
+            shimmer: Some(0.02),
+            ..LineRead::default()
+        };
+        assert_eq!(read.clean_voice(&steady), Some(true));
+        let shaky = LineRead {
+            hnr_db: Some(18.0),
+            jitter: Some(0.01),
+            shimmer: Some(0.09),
+            ..LineRead::default()
+        };
+        assert_eq!(read.clean_voice(&shaky), Some(false));
+        let unread = LineRead {
+            hnr_db: Some(18.0),
+            ..LineRead::default()
+        };
+        assert_eq!(
+            read.clean_voice(&unread),
+            Some(true),
+            "an unmeasured shimmer is not a shaky one"
+        );
     }
 }

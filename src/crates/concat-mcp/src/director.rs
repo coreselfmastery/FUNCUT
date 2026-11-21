@@ -60,7 +60,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use concat_director::ToolCaller;
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
@@ -72,7 +71,7 @@ pub use crate::director_program::{
 pub use concat_director::{
     AutoEditError, AutoEditEvent, AutoEditProgress, AutoEditState, DerivedStep, EDIT_APPLY,
     EDIT_UNDO, EditProgram, ErrorPolicy, FanStep, LaneFactory, ProgramStep, ReplyGate, RunOutcome,
-    Runner, Stage, StageStep, ToolCall, ToolError,
+    Runner, Stage, StageStep, ToolCall, ToolCaller, ToolError,
 };
 
 /// The runner's port, stood on this crate's own ground: the toolbox a

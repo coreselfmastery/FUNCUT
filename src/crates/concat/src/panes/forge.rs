@@ -1731,15 +1731,22 @@ fn build_voiceover_sibling(
         }) => {
             // The AUTO EDIT's fixed paths: the export folder is made now,
             // so the run's first write into it is the export itself.
-            let auto = for_auto_edit.then(|| {
+            let auto = if for_auto_edit {
                 let export_dir = std::path::Path::new(&info.path).join("export");
                 if let Err(error) = std::fs::create_dir_all(&export_dir) {
-                    log::warn!(
-                        "could not make the export folder {}: {error}",
+                    let cleanup = std::fs::remove_dir_all(&info.path);
+                    if let Err(cleanup_error) = cleanup {
+                        log::warn!(
+                            "could not remove incomplete AUTO EDIT sibling {}: {cleanup_error}",
+                            info.path
+                        );
+                    }
+                    return Err(format!(
+                        "could not create the AUTO EDIT export folder {}: {error}",
                         export_dir.display()
-                    );
+                    ));
                 }
-                AutoEditSource {
+                Some(AutoEditSource {
                     project: info.path.clone(),
                     takes,
                     placements: segments
@@ -1757,8 +1764,10 @@ fn build_voiceover_sibling(
                         .to_string_lossy()
                         .into_owned(),
                     sheet: "auto-edit-sheet.png".to_owned(),
-                }
-            });
+                })
+            } else {
+                None
+            };
             Ok((
                 VoiceoverSource {
                     project: info.path,

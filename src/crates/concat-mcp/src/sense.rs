@@ -1710,8 +1710,8 @@ pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outc
         .and_then(Value::as_str)
         .unwrap_or("extract")
         .to_owned();
-    if !["extract", "selftest"].contains(&action.as_str()) {
-        return Err(invalid("action is `extract` or `selftest`"));
+    if !["extract", "catalog", "selftest"].contains(&action.as_str()) {
+        return Err(invalid("action is `extract`, `catalog` or `selftest`"));
     }
     if action == "extract" {
         supply_transcript(&mut fields, backend)?;
@@ -1732,6 +1732,11 @@ pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outc
         "maxSpeakers",
         "speakerThreshold",
         "whisperx",
+        // The named-signal filter: the catalogue's own names, answered
+        // with a `requested` block - one reading, its source, its
+        // confidence and its why, which is what a per-signal button
+        // shows.
+        "signals",
     ] {
         if let Some(value) = fields.get(key) {
             spec[key] = value.clone();
@@ -1756,6 +1761,8 @@ pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outc
         };
         120 + 8 * scripted.max(lined).max(segments) as u64
     } else {
+        // The catalogue is a static table and the selftest a synthetic
+        // take: neither owes the extract's per-line headroom.
         60
     };
     let result = run("voice", &spec, Duration::from_secs(budget.min(480)))?;

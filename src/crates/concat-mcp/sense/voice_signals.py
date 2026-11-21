@@ -2,8 +2,17 @@
 """concat-voice-signals: the voiceover read as a score, not just words.
 
 Pure Python standard library, same contract as the other sense scripts:
-`voice_signals.py <extract|selftest> --spec -` reads one JSON spec from
-stdin (or argv) and prints one JSON object on stdout.
+`voice_signals.py <extract|catalog|selftest> --spec -` reads one JSON spec
+from stdin (or argv) and prints one JSON object on stdout.
+
+`catalog` answers the signal catalogue: the fifty named readings, grouped
+by family, each with what it measures and why the edit wants it - the
+table a UI's per-signal buttons are built from. `extract` accepts a
+`signals: [name...]` filter (the catalogue's own names): a manual
+extraction of exactly the asked-for readings, where only the passes they
+need run - a filler read costs no ffmpeg pass and no Rust ear - and the
+reply carries a `requested` block with each reading, the ear that
+answered it, the family's confidence, and the why the signal exists.
 
 WHAT THIS READS
 
@@ -113,6 +122,474 @@ def _decision_policy_out():
         }
         for decision, entry in DECISION_POLICY.items()
     }
+
+
+# ---------------------------------------------------------------------------
+# The signal catalogue: the fifty named readings, one button each
+# ---------------------------------------------------------------------------
+
+# Every reading the profile answers, named, grouped by family, and held
+# to a why: the decision (or decisions) the edit spends it on, in the
+# decision policy's own vocabulary. `where` says where the reading lands
+# - ("take", <dotted path from the reply's root>) for a whole-profile
+# reading, ("line", <dotted path within one line row>) for a per-line
+# one - so a filtered extract can resolve exactly what was asked. `rust`
+# marks the readings that need the binary's ears; `new` marks the
+# fourteen the fifty-ear pass added.
+SIGNAL_CATALOGUE = [
+    # The loudness family, one ebur128 pass.
+    {"name": "loudness.integratedLufs", "family": "Loudness",
+     "label": "Integrated level",
+     "reads": "The take's integrated level, in LUFS.",
+     "why": "The level stage's gain against the platform target, capped by "
+            "the peak readings (decision: the mix level).",
+     "where": ("take", "wholeTake.loudness.integratedLufs"), "rust": False, "new": False},
+    {"name": "loudness.loudnessRangeLu", "family": "Loudness",
+     "label": "Loudness range",
+     "reads": "The take's loudness range, in LU.",
+     "why": "A compressed range (under 4 LU) caps the gain stage at +6 dB: "
+            "everything the compressor squashed in comes up with the voice.",
+     "where": ("take", "wholeTake.loudness.loudnessRangeLu"), "rust": False, "new": False},
+    {"name": "loudness.truePeakDbfs", "family": "Loudness",
+     "label": "True peak",
+     "reads": "The take's true peak, in dBTP.",
+     "why": "The -1 dB ceiling the gain stage must respect when the "
+            "loudness pass measured one.",
+     "where": ("take", "wholeTake.loudness.truePeakDbfs"), "rust": False, "new": False},
+    {"name": "loudness.meanLufsM", "family": "Loudness",
+     "label": "Line level",
+     "reads": "Each line's mean momentary level, in LUFS.",
+     "why": "A line delivered above the take's own level is a line the "
+            "speaker lifted: it carries the heavier caption weight.",
+     "where": ("line", "loudness.meanLufsM"), "rust": False, "new": False},
+    {"name": "loudness.relativeLu", "family": "Loudness",
+     "label": "Line lift",
+     "reads": "Each line's level against the take's integrated level, in LU.",
+     "why": "The measured lift behind the caption's weight-800 arm.",
+     "where": ("line", "loudness.relativeLu"), "rust": False, "new": False},
+    # The pause family, one silencedetect pass.
+    {"name": "pauses.classes", "family": "Pauses",
+     "label": "Classified pauses",
+     "reads": "Every silence, classified: breath, beat, dramatic, scene "
+              "turn or dead air - with keep/cut per span.",
+     "why": "The tighten cuts only the dead air and never a hold (decision: "
+            "cut); a held beat keeps the softest transition (decision: "
+            "transition).",
+     "where": ("take", "pauses"), "rust": False, "new": False},
+    {"name": "pauses.speechRatio", "family": "Pauses",
+     "label": "Speech ratio",
+     "reads": "The share of the take's time that is speech.",
+     "why": "The BGM gate's third input beside the floor and the music "
+            "verdict (decision: bgm).",
+     "where": ("take", "wholeTake.speechRatio"), "rust": False, "new": False},
+    # The rate family, arithmetic on the word timings.
+    {"name": "speechRate.wordsPerSec", "family": "Speech rate",
+     "label": "Words per second",
+     "reads": "Words per second, per line.",
+     "why": "The pacing class (punchy, conversational, slow) sizes every "
+            "shot's drift (decision: pacing).",
+     "where": ("line", "speechRate.wordsPerSec"), "rust": False, "new": False},
+    {"name": "speechRate.syllablesPerSec", "family": "Speech rate",
+     "label": "Syllables per second",
+     "reads": "Syllables per second, per line.",
+     "why": "The caption hold's second estimate: a line of long words "
+            "reads slower than its word count alone suggests.",
+     "where": ("line", "speechRate.syllablesPerSec"), "rust": False, "new": False},
+    # The words family.
+    {"name": "words.confidence", "family": "Words",
+     "label": "Word confidence",
+     "reads": "Each word's confidence - WhisperX alignment scores when "
+              "installed, the measured gate (timing, silence overlap, "
+              "energy) otherwise.",
+     "why": "Words under 0.5 are gated from captions rather than guessed "
+            "(decision: caption).",
+     "where": ("line", "words"), "rust": False, "new": False},
+    # The language family.
+    {"name": "language.script", "family": "Language",
+     "label": "Script",
+     "reads": "The script the words are written in, the language detected, "
+              "and the caller's hint.",
+     "why": "Non-Latin scripts get their fonts and their caption pacing "
+            "(decision: caption).",
+     "where": ("take", "language"), "rust": False, "new": False},
+    # The sentence family.
+    {"name": "sentence.type", "family": "Sentence",
+     "label": "Sentence type",
+     "reads": "Each line's type: question, exclamation, statement or "
+              "fragment.",
+     "why": "A question's caption holds past its answer, and its seam "
+            "takes the pop (decisions: caption, transition).",
+     "where": ("line", "sentence.type"), "rust": False, "new": False},
+    # The entities family.
+    {"name": "entities.cards", "family": "Entities",
+     "label": "Entity cards",
+     "reads": "Names, numbers, money, dates and places, with the card each "
+              "earns (stat, lower third, timeline) and whether the NER "
+              "measured it or the regex complement found it.",
+     "why": "Money becomes a stat card, a name a lower third, a date a "
+            "timeline (decision: graphic) - and an approximate reading "
+            "earns no card that claims exactness.",
+     "where": ("take", "entities"), "rust": False, "new": False},
+    # The motifs family.
+    {"name": "motifs.repeats", "family": "Motifs",
+     "label": "Repeated phrases",
+     "reads": "The phrases the narration repeats: n-gram motifs across "
+              "lines, 3-6 words.",
+     "why": "A repeated motif is a visual that returns - the same "
+            "treatment, the same shot family (decision: cut).",
+     "where": ("take", "motifs"), "rust": False, "new": False},
+    # The fillers family.
+    {"name": "fillers.list", "family": "Fillers",
+     "label": "Fillers",
+     "reads": "The ums, uhs and friends, per line, classed safe-remove or "
+              "keep.",
+     "why": "Safe-remove fillers leave the captions; the keep class stays "
+            "for authenticity (decision: caption).",
+     "where": ("line", "fillers"), "rust": False, "new": False},
+    # The arc family, passed through from the emotion read.
+    {"name": "arc.emotion", "family": "Arc",
+     "label": "Emotional arc",
+     "reads": "The emotional arc, passed through from the emotion read the "
+              "caller supplies.",
+     "why": "The arc's shape sizes the bed's duck and the accent family "
+            "each line asks for (decision: bgm).",
+     "where": ("take", "arc"), "rust": False, "new": False},
+    # The prosody family, the Rust ear's pitch and rhythm.
+    {"name": "prosody.emphasisWords", "family": "Prosody",
+     "label": "Emphasis words",
+     "reads": "The words the delivery stressed, with times and strength.",
+     "why": "Emphasis words carry the caption highlight and the cut "
+            "boundary (decisions: caption, cut).",
+     "where": ("line", "prosody.emphasisWords"), "rust": True, "new": False},
+    {"name": "prosody.pitchRangeSemitones", "family": "Prosody",
+     "label": "Pitch range",
+     "reads": "Each line's pitch range, in semitones.",
+     "why": "A range at or over six semitones reads performed rather than "
+            "reported: the heavier caption weight.",
+     "where": ("line", "prosody.pitchRangeSemitones"), "rust": True, "new": False},
+    {"name": "prosody.pitchMeanHz", "family": "Prosody",
+     "label": "Line register",
+     "reads": "Each line's mean voiced pitch, in Hz.",
+     "why": "The register lift - a line over the take's own register is "
+            "one the delivery raised, and its peaks outrank a settled "
+            "line's.",
+     "where": ("line", "prosody.pitchMeanHz"), "rust": True, "new": False},
+    {"name": "prosody.finalRise", "family": "Prosody",
+     "label": "Terminal rise",
+     "reads": "Whether each line's pitch rose at the end, measured "
+              "acoustically.",
+     "why": "The acoustic ask stands in where the punctuation wrote no "
+            "question (decision: transition).",
+     "where": ("line", "prosody.finalRise"), "rust": True, "new": False},
+    {"name": "prosody.voicedRatio", "family": "Prosody",
+     "label": "Voiced ratio",
+     "reads": "The share of each line's frames the pitch tracker found a "
+              "voice in.",
+     "why": "A line with barely any voice under it is a misaligned "
+            "transcript, and its caption is gated.",
+     "where": ("line", "prosody.voicedRatio"), "rust": True, "new": False},
+    {"name": "prosody.rhythmLayers", "family": "Prosody",
+     "label": "Rhythm layers",
+     "reads": "The rhythm layers, strongest first, with their periods and "
+              "strengths.",
+     "why": "The period with strength behind it sizes the seam's blend "
+            "(decision: pacing).",
+     "where": ("take", "wholeTake.prosody"), "rust": True, "new": False},
+    {"name": "prosody.phrases", "family": "Prosody",
+     "label": "Phrase boundaries",
+     "reads": "The breath-group boundaries the prosody graph cut the take "
+              "into.",
+     "why": "A phrase boundary is the weakest structural seam: a visible "
+            "move where the narration turned (decision: transition).",
+     "where": ("take", "wholeTake.phrases"), "rust": True, "new": False},
+    {"name": "prosody.pitchContourHz", "family": "Prosody",
+     "label": "Pitch contour",
+     "reads": "The take's own F0 track, at most 256 points, 0 where "
+              "unvoiced.",
+     "why": "The curve the per-line statistics flatten away: the "
+            "delivery's whole shape.",
+     "where": ("take", "wholeTake.pitchContourHz"), "rust": True, "new": True},
+    # The forensic family: the whole-take reading's keys, one button each.
+    {"name": "forensic.noiseFloorDbfs", "family": "Forensics",
+     "label": "Noise floor",
+     "reads": "The noise floor, in dBFS.",
+     "why": "A dry floor (under -45 dBFS) earns a bed; a loud one earns "
+            "the repair first (decision: bgm).",
+     "where": ("take", "wholeTake.forensic.noiseFloorDbfs"), "rust": True, "new": False},
+    {"name": "forensic.snrDb", "family": "Forensics",
+     "label": "Signal-to-noise",
+     "reads": "The signal-to-noise ratio, in dB.",
+     "why": "The duck depth reads it: a low SNR deepens the bed's dip.",
+     "where": ("take", "wholeTake.forensic.snrDb"), "rust": True, "new": False},
+    {"name": "forensic.noiseType", "family": "Forensics",
+     "label": "Noise type",
+     "reads": "The floor's character: hiss, hum, rumble or broadband.",
+     "why": "The repair shopping list: a notch for a hum, a spectral "
+            "denoise for hiss.",
+     "where": ("take", "wholeTake.forensic.noiseType"), "rust": True, "new": False},
+    {"name": "forensic.spectralFlatness", "family": "Forensics",
+     "label": "Spectral flatness",
+     "reads": "The floor's spectral flatness, 0-1.",
+     "why": "Flatness over 0.25 is broadband: the denoise that fits.",
+     "where": ("take", "wholeTake.forensic.spectralFlatness"), "rust": True, "new": False},
+    {"name": "forensic.formantsHz", "family": "Forensics",
+     "label": "Formants",
+     "reads": "The vocal-tract formants, per line.",
+     "why": "The speaker's own identity reading: no timeline decision "
+            "follows from it, but the profile stands behind it.",
+     "where": ("line", "forensic.formantsHz"), "rust": True, "new": False},
+    {"name": "forensic.hnrDb", "family": "Forensics",
+     "label": "Harmonics-to-noise",
+     "reads": "Each line's harmonics-to-noise ratio, in dB.",
+     "why": "A clean voice (10 dB or better) keeps the weight its "
+            "performance earned.",
+     "where": ("line", "forensic.hnrDb"), "rust": True, "new": False},
+    {"name": "forensic.jitter", "family": "Forensics",
+     "label": "Jitter",
+     "reads": "Each line's pitch-period variation, 0-1.",
+     "why": "Jitter over 5% retires the accent: emphasis an unstable "
+            "delivery cannot hold.",
+     "where": ("line", "forensic.jitter"), "rust": True, "new": False},
+    {"name": "forensic.shimmer", "family": "Forensics",
+     "label": "Shimmer",
+     "reads": "Each line's amplitude variation, 0-1.",
+     "why": "Shimmer over 6% retires the accent with the jitter it rides "
+            "with.",
+     "where": ("line", "forensic.shimmer"), "rust": True, "new": False},
+    {"name": "forensic.fluxMean", "family": "Forensics",
+     "label": "Mean spectral flux",
+     "reads": "The mean spectral flux, read against the level it moved "
+              "from.",
+     "why": "A flux at or over a third of the envelope's mean is a take "
+            "that moves: the fast cut style's third fallback.",
+     "where": ("take", "wholeTake.forensic.fluxMean"), "rust": True, "new": False},
+    {"name": "forensic.fluxOnsetsSec", "family": "Forensics",
+     "label": "Transients",
+     "reads": "The transient times spectral flux found, in seconds.",
+     "why": "A cut lands on a transient, not an arbitrary frame (decision: "
+            "cut).",
+     "where": ("take", "wholeTake.forensic.fluxOnsetsSec"), "rust": True, "new": False},
+    {"name": "forensic.rmsEnvelope", "family": "Forensics",
+     "label": "Energy envelope",
+     "reads": "The take's RMS envelope, at most 256 points.",
+     "why": "The energy curve: a shot laid over a loud stretch moves a "
+            "touch more than the same line over a quiet one.",
+     "where": ("take", "wholeTake.forensic.rmsEnvelope"), "rust": True, "new": False},
+    {"name": "forensic.samplePeakDbfs", "family": "Forensics",
+     "label": "Sample peak",
+     "reads": "The loudest single sample, in dBFS.",
+     "why": "The gain ceiling: peaks near full scale only rise to -1 dB.",
+     "where": ("take", "wholeTake.forensic.samplePeakDbfs"), "rust": True, "new": True},
+    {"name": "forensic.clippingRatio", "family": "Forensics",
+     "label": "Clipping",
+     "reads": "The share of samples at or over 99.9% of full scale.",
+     "why": "A take that already clips is never raised, whatever the "
+            "platform target asks for.",
+     "where": ("take", "wholeTake.forensic.clippingRatio"), "rust": True, "new": True},
+    {"name": "forensic.dcOffset", "family": "Forensics",
+     "label": "DC offset",
+     "reads": "The take's DC offset, 0-1 of full scale.",
+     "why": "A biased take wants a DC blocker before the denoise: the one "
+            "repair a denoise cannot make.",
+     "where": ("take", "wholeTake.forensic.dcOffset"), "rust": True, "new": True},
+    {"name": "forensic.humHz", "family": "Forensics",
+     "label": "Mains hum",
+     "reads": "The mains frequency the floor hums at, when a Goertzel pass "
+              "found one.",
+     "why": "A notch at the mains, not a broadband denoise that would eat "
+            "the voice's own low end.",
+     "where": ("take", "wholeTake.forensic.humHz"), "rust": True, "new": True},
+    {"name": "forensic.sibilanceRatio", "family": "Forensics",
+     "label": "Sibilance",
+     "reads": "The share of the take's energy in the 4-8 kHz sibilance "
+              "band.",
+     "why": "A sibilant voice wants the bed further down, out of the band "
+            "its own clarity lives in.",
+     "where": ("take", "wholeTake.forensic.sibilanceRatio"), "rust": True, "new": True},
+    {"name": "forensic.spectralRolloffHz", "family": "Forensics",
+     "label": "Spectral rolloff",
+     "reads": "The frequency under which 85% of the take's energy sits, in "
+              "Hz.",
+     "why": "A low rolloff with a narrow band is a muffled take: a "
+            "presence lift, not a denoise.",
+     "where": ("take", "wholeTake.forensic.spectralRolloffHz"), "rust": True, "new": True},
+    {"name": "forensic.spectralBandwidthHz", "family": "Forensics",
+     "label": "Spectral bandwidth",
+     "reads": "The width of the band the voice occupies, in Hz.",
+     "why": "The muffled reading's second arm: the voice that never "
+            "reached the presence band at all.",
+     "where": ("take", "wholeTake.forensic.spectralBandwidthHz"), "rust": True, "new": True},
+    {"name": "forensic.onsetRatePerMin", "family": "Forensics",
+     "label": "Onset rate",
+     "reads": "The spectral-flux onset rate, in onsets per minute.",
+     "why": "An onset a second is a take that moves: the fast cut style's "
+            "first fallback.",
+     "where": ("take", "wholeTake.forensic.onsetRatePerMin"), "rust": True, "new": True},
+    {"name": "forensic.reverbTailSec", "family": "Forensics",
+     "label": "Reverb tail",
+     "reads": "The estimated reverb tail, in seconds (a median 10 dB decay "
+              "scaled to RT60).",
+     "why": "A reverberant tail smears over whatever sits under it: the "
+            "duck deepens with it.",
+     "where": ("take", "wholeTake.forensic.reverbTailSec"), "rust": True, "new": True},
+    {"name": "forensic.musicLikelihood", "family": "Forensics",
+     "label": "Music likelihood",
+     "reads": "How music-like the take is, 0-1: dense regular onsets that "
+              "survive the pure-tone veto.",
+     "why": "The BGM gate's second opinion: a beat at or over 0.6 says the "
+            "take already carries music (decision: bgm).",
+     "where": ("take", "wholeTake.forensic.musicLikelihood"), "rust": True, "new": True},
+    # The speaker family: the diarization and the VAD's own rhythm.
+    {"name": "speaker.turns", "family": "Speakers",
+     "label": "Speaker turns",
+     "reads": "Who held the take over which span, and the moments it "
+              "changed hands.",
+     "why": "A speaker change earns the flash transition - but only where "
+            "the shares say the take is a conversation (decision: "
+            "transition).",
+     "where": ("take", "speaker.turns"), "rust": True, "new": False},
+    {"name": "speaker.shares", "family": "Speakers",
+     "label": "Speaker shares",
+     "reads": "How much of the take each speaker holds, in seconds.",
+     "why": "A second speaker under a fifth of the speech is a clustering "
+            "wobble, not a turn - the gate on the speaker seam.",
+     "where": ("take", "speaker.speakers"), "rust": True, "new": False},
+    {"name": "speaker.utterances", "family": "Speakers",
+     "label": "Utterances",
+     "reads": "How many pause-separated speech spans the VAD found.",
+     "why": "With the mean: six short utterances is machine-gun delivery, "
+            "the fast cut style's second fallback.",
+     "where": ("take", "speaker.utterances"), "rust": True, "new": True},
+    {"name": "speaker.meanUtteranceSec", "family": "Speakers",
+     "label": "Mean utterance",
+     "reads": "The mean utterance length, in seconds.",
+     "why": "The breath-group length that sizes a seam's blend when the "
+            "rhythm read found no period (decision: pacing).",
+     "where": ("take", "speaker.meanUtteranceSec"), "rust": True, "new": True},
+    {"name": "speaker.longestSilenceSec", "family": "Speakers",
+     "label": "Longest silence",
+     "reads": "The longest stretch of detected silence between two "
+              "utterances, in seconds.",
+     "why": "A take whose longest silence never reached 0.9 s is left "
+            "whole: its silences are its breathing, not dead air.",
+     "where": ("take", "speaker.longestSilenceSec"), "rust": True, "new": True},
+]
+
+# The catalogue as the `catalog` action answers it: the families in
+# catalogue order, and every signal with its name, label, family, what
+# it reads and why the edit wants it.
+CATALOGUE_BY_NAME = {entry["name"]: entry for entry in SIGNAL_CATALOGUE}
+CATALOGUE_FAMILIES = []
+for _entry in SIGNAL_CATALOGUE:
+    if _entry["family"] not in CATALOGUE_FAMILIES:
+        CATALOGUE_FAMILIES.append(_entry["family"])
+
+
+def _catalog_out():
+    """The catalogue whole: what the fifty signals are and why each one
+    exists - the table the UI's signal buttons are built from, and the
+    vocabulary the `signals` filter accepts."""
+    return {
+        "ok": True,
+        "schema": SCHEMA,
+        "count": len(SIGNAL_CATALOGUE),
+        "new": sum(1 for entry in SIGNAL_CATALOGUE if entry["new"]),
+        "families": list(CATALOGUE_FAMILIES),
+        "signals": [
+            {
+                "name": entry["name"],
+                "family": entry["family"],
+                "label": entry["label"],
+                "reads": entry["reads"],
+                "why": entry["why"],
+                "new": entry["new"],
+            }
+            for entry in SIGNAL_CATALOGUE
+        ],
+    }
+
+
+def _wanted_signals(spec):
+    """The `signals` filter as a set of catalogue names, or None when the
+    caller asked for the whole profile. A name the catalogue does not
+    carry is refused with the names that exist, not silently dropped."""
+    wanted = spec.get("signals")
+    if wanted is None:
+        return None
+    if isinstance(wanted, str):
+        wanted = [wanted]
+    if not isinstance(wanted, list) or not wanted:
+        return None
+    names = []
+    for name in wanted:
+        if not isinstance(name, str) or name not in CATALOGUE_BY_NAME:
+            return {"error": "unknown signal name: pass one of the "
+                             "catalogue's names (action 'catalog' lists "
+                             "them); got " + repr(name)}
+        names.append(name)
+    return set(names)
+
+
+def _resolve_requested(out, wanted):
+    """The requested block: one row per asked-for signal, in catalogue
+    order, each with the reading resolved from the profile the extract
+    built, the ear that answered it, and the confidence the family
+    carries. A reading the ear could not make resolves to None - an
+    absent measurement, never a guess."""
+    confidences = {row["signal"]: row
+                   for row in (out.get("signalConfidence") or {}).get("perSignal", [])}
+    sources = out.get("sources") or {}
+    family_confidence = {
+        "Loudness": "loudness", "Pauses": "pauses", "Speech rate": "speechRate",
+        "Words": "wordConfidence", "Language": "language", "Sentence": "sentenceType",
+        "Entities": "entities", "Motifs": "motifs", "Fillers": "fillers",
+        "Arc": "arc", "Prosody": "prosody", "Forensics": "forensic",
+        "Speakers": "speaker",
+    }
+    family_source = {
+        "Loudness": "loudness", "Pauses": "pauses", "Speech rate": "speechRate",
+        "Words": "wordConfidence", "Language": "language", "Sentence": "sentenceType",
+        "Entities": "entities", "Motifs": "motifs", "Fillers": "fillers",
+        "Arc": "arc", "Prosody": "prosody", "Forensics": "forensic",
+        "Speakers": "speaker",
+    }
+    rows = []
+    for entry in SIGNAL_CATALOGUE:
+        if entry["name"] not in wanted:
+            continue
+        kind, path = entry["where"]
+        if kind == "line":
+            value = []
+            for line in out.get("lines") or []:
+                node = line
+                for step in path.split("."):
+                    node = (node or {}).get(step) if isinstance(node, dict) else None
+                value.append({
+                    "line": line.get("index"),
+                    "start": line.get("start"),
+                    "end": line.get("end"),
+                    "text": line.get("text"),
+                    "value": node,
+                })
+        else:
+            node = out
+            for step in path.split("."):
+                node = (node or {}).get(step) if isinstance(node, dict) else None
+            value = node
+        confidence = confidences.get(family_confidence.get(entry["family"], ""))
+        rows.append({
+            "name": entry["name"],
+            "family": entry["family"],
+            "label": entry["label"],
+            "reads": entry["reads"],
+            "why": entry["why"],
+            "new": entry["new"],
+            "value": value,
+            "source": sources.get(family_source.get(entry["family"], "")) or None,
+            "confidence": confidence["confidence"] if confidence else None,
+            "basis": confidence["basis"] if confidence else None,
+        })
+    return rows
 
 # ---------------------------------------------------------------------------
 # The transcript in
@@ -861,7 +1338,9 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
                  "formants are missing" if band and band < 5000 else ""))
     else:
         for name in ("prosody", "forensic", "speaker", "entities", "formants"):
-            basis = next((n for n in notes if "voice-signals binary" in n), None)
+            basis = next(
+                (n for n in notes if "filtered to" in n
+                 or "voice-signals binary" in n), None)
             entry(name, 0.0, basis or "the Rust ear is not built: "
                                      "cargo build -p voice-signals")
 
@@ -977,6 +1456,25 @@ def extract(spec):
     audio = spec.get("audio") or spec.get("path")
     if audio and not os.path.isfile(audio):
         return {"ok": False, "error": f"no such audio file: {audio}"}
+    # The `signals` filter: a manual extraction of named readings, not
+    # the whole profile. Only the passes the asked-for signals need run -
+    # a filler read costs no ffmpeg pass and no Rust ear - and the reply
+    # carries a `requested` block with each reading, its source and its
+    # confidence, beside the (honestly degraded) profile.
+    wanted = _wanted_signals(spec)
+    if isinstance(wanted, dict):
+        return {"ok": False, "error": wanted["error"]}
+    need_pauses = wanted is None or any(
+        name in ("pauses.classes", "pauses.speechRatio") for name in wanted)
+    # The measured word gate reads the momentary series, so a
+    # words.confidence ask owes the loudness pass too - WhisperX's own
+    # scores replace the gate only when the alignment actually ran.
+    need_loudness = wanted is None or any(
+        name.startswith("loudness.") for name in wanted) \
+        or "words.confidence" in wanted
+    need_rust = wanted is None or any(
+        CATALOGUE_BY_NAME[name]["rust"] for name in wanted)
+    need_whisperx = wanted is None or "words.confidence" in wanted
     language = _detect_language(lines, spec.get("language"))
     notes = []
     sources = {
@@ -1002,7 +1500,7 @@ def extract(spec):
     integrated = None
     lra = None
     true_peak = None
-    if audio:
+    if audio and need_pauses:
         threshold_db = abs(float(spec.get("thresholdDb") or 35.0))
         min_silence = max(0.05, float(spec.get("minSilenceMs") or 350) / 1000.0)
         try:
@@ -1010,6 +1508,7 @@ def extract(spec):
             sources["pauses"] = "ffmpeg silencedetect, classified in python"
         except Exception as exc:
             notes.append(f"silence detection failed: {exc}")
+    if audio and need_loudness:
         try:
             series = _momentary_series(ff, audio)
             integrated, lra, true_peak = _integrated(ff, audio)
@@ -1019,9 +1518,12 @@ def extract(spec):
             notes.append(f"loudness measurement failed: {exc}")
     pauses = _classify_pauses(silence_spans, lines)
 
-    # WhisperX: replace the token-timestamp words with aligned ones.
+    # WhisperX: replace the token-timestamp words with aligned ones -
+    # only when the ask needs them, so a filler read never pays for an
+    # alignment model.
     wx_words = None
-    if audio and str(spec.get("whisperx", "auto")).lower() not in ("off", "0", "no"):
+    if audio and need_whisperx \
+            and str(spec.get("whisperx", "auto")).lower() not in ("off", "0", "no"):
         wx_words, wx_note = _whisperx_words(audio, lines, language.get("detected"))
         if wx_note:
             notes.append(wx_note)
@@ -1030,8 +1532,12 @@ def extract(spec):
             sources["wordConfidence"] = "whisperx alignment scores"
 
     # The Rust ears (text-only when there is no audio: the NER ear answers
-    # for a script before any TTS has run).
-    rust, rust_note = _rust_ears(spec, lines, audio, ff)
+    # for a script before any TTS has run) - and only when the ask needs
+    # them: a text signal costs no audio conversion and no binary.
+    rust = None
+    rust_note = None
+    if need_rust:
+        rust, rust_note = _rust_ears(spec, lines, audio, ff)
     if rust_note:
         notes.append(rust_note)
 
@@ -1114,6 +1620,13 @@ def extract(spec):
         speech_ratio = max(0.0, min(1.0, spoken / max(0.1, duration)))
     bgm = _bgm_decision(rust, speech_ratio)
     hints = _director_hints(lines_out, pauses, rust, language, arc, bgm)
+    # The filter's own note lands before the confidence builder reads the
+    # notes, so an ear the ask never needed explains itself as skipped by
+    # request rather than as broken.
+    if wanted is not None:
+        notes.append(
+            f"filtered to {len(wanted)} signal(s): the passes the ask does "
+            "not need did not run")
     confidence = _signal_confidence(sources, audio, rust, wx_words, series, notes)
 
     # The honest headline the notes bury: which ears did not answer. The
@@ -1121,16 +1634,30 @@ def extract(spec):
     # caller reading one field knows the reading's standing without
     # parsing prose - "ok" only when every ear that could run did, and a
     # degraded reading is still a reading, never a silent half of one.
+    # A filtered extract is held to a different bar: only the ears the
+    # ask needs are owed an answer, and an ear the ask never needed is
+    # not a degradation - the note says what ran and what the filter
+    # skipped, and the status is the asked-for signals' own.
     degradations = []
-    if rust is None:
-        degradations.append(
-            "voice-signals binary absent: prosody/forensics/speakers/NER missing")
-    if wx_words is None:
-        degradations.append("whisperx words absent: word timings estimated")
-    if not sources.get("loudness"):
-        degradations.append("ffmpeg absent: loudness unmeasured")
-    if not sources.get("pauses"):
-        degradations.append("silencedetect absent: pauses unclassified")
+    if wanted is not None:
+        for name in sorted(wanted):
+            family = CATALOGUE_BY_NAME[name]["family"]
+            owed = {"Loudness": "loudness", "Pauses": "pauses",
+                    "Words": "wordConfidence", "Prosody": "prosody",
+                    "Forensics": "forensic", "Speakers": "speaker",
+                    "Entities": "entities"}.get(family)
+            if owed and not sources.get(owed):
+                degradations.append(f"{name}: the {owed} ear did not answer")
+    else:
+        if rust is None:
+            degradations.append(
+                "voice-signals binary absent: prosody/forensics/speakers/NER missing")
+        if wx_words is None:
+            degradations.append("whisperx words absent: word timings estimated")
+        if not sources.get("loudness"):
+            degradations.append("ffmpeg absent: loudness unmeasured")
+        if not sources.get("pauses"):
+            degradations.append("silencedetect absent: pauses unclassified")
 
     # DEG-01: "no entities found" and "the NER ear missing" are different
     # facts, and an empty list could not tell them apart. The flag says
@@ -1140,7 +1667,7 @@ def extract(spec):
     # alone, and a caller driving decisions off them should record the
     # fallback rather than trust the reading as measured.
     entities_available = bool(sources.get("entities"))
-    if not entities_available:
+    if wanted is None and not entities_available:
         degradations.append(
             "NER absent: entities answered by the regex complement alone")
 
@@ -1177,6 +1704,8 @@ def extract(spec):
         "sources": {k: v for k, v in sources.items() if v},
         "notes": notes,
     }
+    if wanted is not None:
+        out["requested"] = _resolve_requested(out, wanted)
     return out
 
 
@@ -1379,11 +1908,49 @@ def selftest():
             entry = policy.get(decision)
             if not entry or not entry.get("signals") or not entry.get("rule"):
                 failures.append(f"no decision policy for {decision}: {entry}")
+        # The catalogue: the fifty named readings, fourteen of them the
+        # fifty-ear pass added, every name unique, every family named,
+        # every entry held to a why and a where.
+        catalog = _catalog_out()
+        if catalog["count"] != 50:
+            failures.append(f"catalogue carries {catalog['count']} signals, not 50")
+        if catalog["new"] != 14:
+            failures.append(f"catalogue marks {catalog['new']} new signals, not 14")
+        names = [entry["name"] for entry in catalog["signals"]]
+        if len(set(names)) != len(names):
+            failures.append("catalogue names repeat")
+        for entry in catalog["signals"]:
+            if not entry["why"] or not entry["reads"] or not entry["label"]:
+                failures.append(f"catalogue entry incomplete: {entry['name']}")
+        # A filtered extract: one text signal, nothing else owed. The
+        # filler read must answer without the Rust ears, and the reply
+        # must carry the requested block with the reading resolved.
+        filtered = extract({
+            "transcript": spec["transcript"],
+            "language": "en",
+            "whisperx": "off",
+            "signals": ["fillers.list"],
+        })
+        if not filtered.get("ok"):
+            failures.append(f"filtered extract failed: {filtered.get('error')}")
+        else:
+            requested = filtered.get("requested") or []
+            if len(requested) != 1 or requested[0]["name"] != "fillers.list":
+                failures.append(f"requested block wrong: {requested}")
+            elif not requested[0]["value"]:
+                failures.append("the filler read resolved to no value")
+            elif not any("filtered to" in str(n) for n in filtered.get("notes", [])):
+                failures.append("the filter never said what it skipped")
+        # An unknown name is refused, never dropped.
+        refused = extract({"script": "hello", "signals": ["not.a.signal"]})
+        if refused.get("ok") or "unknown signal name" not in str(refused.get("error")):
+            failures.append(f"an unknown signal name was not refused: {refused}")
         if failures:
             return {"ok": False, "selftest": "failures", "failures": failures}
         return {"ok": True, "selftest": "python signals answer",
                 "durationSec": round(duration, 3),
                 "pauseClasses": sorted(kinds),
+                "catalogue": f"{catalog['count']} signals, {catalog['new']} new",
                 "measured": "ffmpeg-backed signals proven" if measured
                             else "no ffmpeg: the text, timing and confidence signals proven, "
                                  "the loudness and pause readings named as absent in the notes",
@@ -1403,14 +1970,16 @@ def command(spec):
             return extract(spec)
         if action == "selftest":
             return selftest()
-        return {"ok": False, "error": "action is extract or selftest"}
+        if action == "catalog":
+            return _catalog_out()
+        return {"ok": False, "error": "action is extract, catalog or selftest"}
     except Exception as exc:  # noqa: BLE001  the contract: never crash
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def main():
     parser = argparse.ArgumentParser(description="Read the voiceover as a score.")
-    parser.add_argument("cmd", choices=["extract", "selftest"])
+    parser.add_argument("cmd", choices=["extract", "catalog", "selftest"])
     parser.add_argument("--spec", default="{}")
     args = parser.parse_args()
     raw = sys.stdin.read() if args.spec == "-" else args.spec

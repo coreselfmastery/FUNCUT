@@ -17,9 +17,6 @@ use serde::Serialize;
 
 use crate::{Error, Spec, Take};
 
-/// The VAD's `process` lives on this trait.
-use polyvoice::vad::VoiceActivityDetector as _;
-
 /// One stretch of detected speech.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -152,16 +149,30 @@ const MIN_WINDOW_SECS: f64 = 0.8;
 pub fn analyse(take: &Take, spec: &Spec) -> Result<SpeakerOutAll, Error> {
     let rate = take.sample_rate;
     let frame = spec.vad.frame_size.max(1);
-    let mut vad = polyvoice::vad::EnergyVad::new(spec.vad.threshold_db, rate, frame);
+    // The frames are scored here rather than through the VAD's own
+    // probability: that probability is an un-normalised L2 norm against
+    // an amplitude threshold - frame-size-dependent, and at the spec's
+    // -35 dB default it counted every frame above roughly -68 dBFS as
+    // speech, so a room floor read as a voice, `utterances` collapsed
+    // to one and `longestSilenceSec` went null on any real recording.
+    // The threshold is read the way the spec names it - ffmpeg's
+    // `silencedetect` convention: a frame is speech when its RMS sits
+    // above the threshold in dBFS, and the probability carries how far
+    // above it landed (a frame at the threshold is exactly half, which
+    // is what the 0.5 probability cut then means).
+    let threshold_db = f64::from(spec.vad.threshold_db);
     let mut probs = Vec::with_capacity(take.samples.len() / frame);
     // The VAD's frame contract: whole frames only, the trailing partial
     // frame is dropped (it is at most 31 ms of a 16 kHz take).
     for chunk in take.samples.chunks(frame) {
         if chunk.len() == frame {
-            let frames = vad
-                .process(chunk)
-                .map_err(|e| Error::Analysis(format!("vad: {e}")))?;
-            probs.extend(frames);
+            let mean_square = chunk
+                .iter()
+                .map(|s| f64::from(*s) * f64::from(*s))
+                .sum::<f64>()
+                / chunk.len() as f64;
+            let rms_db = 10.0 * (mean_square + 1.0e-12).log10();
+            probs.push(((rms_db - threshold_db) / 6.0 + 0.5).clamp(0.0, 1.0) as f32);
         }
     }
     let frame_secs = frame as f64 / f64::from(rate);
@@ -329,7 +340,7 @@ fn speech_spans(
 
 /// Split speech spans into diarization windows.
 fn speech_windows(speech: &[Span]) -> Vec<Span> {
-    let mut windows = Vec::new();
+    let mut windows: Vec<Span> = Vec::new();
     for span in speech {
         let mut cursor = span.start;
         while span.end - cursor >= MIN_WINDOW_SECS {
@@ -337,11 +348,15 @@ fn speech_windows(speech: &[Span]) -> Vec<Span> {
             windows.push(Span { start: cursor, end });
             cursor = end;
         }
-        // A tail too short for its own window joins the previous one when
-        // there is one, and is dropped when there is not.
+        // A tail too short for its own window joins the span's previous
+        // one when there is one, and is dropped when there is not. The
+        // guard is the window that ends exactly where the tail begins: a
+        // previous span's windows all end before this span starts, so a
+        // short span is never glued onto a different span's voice-print
+        // across the silence between them.
         if span.end - cursor > 0.0 {
             match windows.last_mut() {
-                Some(last) if last.end - cursor < 1.0 => last.end = span.end,
+                Some(last) if last.end == cursor => last.end = span.end,
                 _ => {}
             }
         }

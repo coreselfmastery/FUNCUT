@@ -57,12 +57,22 @@ pub fn entities(lines: &[LineSpec]) -> Result<Vec<EntityOut>, Error> {
         if text.is_empty() {
             continue;
         }
+        // The NER reads the trimmed text and the word walker the raw
+        // line: leading whitespace shifts every word span right by
+        // exactly the trim, so it is added back before the two are
+        // compared - an indented transcript line otherwise maps its
+        // entities onto the wrong words.
+        let trim = line
+            .text
+            .chars()
+            .count()
+            .saturating_sub(line.text.trim_start().chars().count());
         let found = model
             .extract_entities(text, None)
             .map_err(|e| Error::Analysis(format!("NER on line {index}: {e}")))?;
         for entity in found {
             let (word_start, word_end, approximate) =
-                map_to_words(line, entity.start(), entity.end());
+                map_to_words(line, entity.start() + trim, entity.end() + trim);
             let (start, end) = match (word_start, word_end) {
                 (Some(ws), Some(we)) if we > ws => {
                     (Some(line.words[ws].start), Some(line.words[we - 1].end))

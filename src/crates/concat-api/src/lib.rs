@@ -30,6 +30,7 @@
 
 mod analysis;
 mod job;
+pub mod live;
 pub mod message;
 pub mod rpc;
 #[cfg(feature = "speech")]
@@ -60,7 +61,9 @@ use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
 use concat_project::Command;
 use concat_project::commands::TrimEdge;
 use concat_project::model::{MediaKind, VideoSettings};
+use live::{LiveOp, LiveReply};
 
+pub use live::{LiveBridge, LiveProjectControl};
 pub use message::{
     API_VERSION, ApiError, BgmFound, BgmImport, BgmLicense, BgmState, BgmTrack, Dirs, Done,
     ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound,
@@ -292,6 +295,11 @@ pub struct Api {
     /// The window's playhead, when a window embeds this API. `None` - a
     /// headless API - makes `window.seek` refuse with the reason.
     playhead: Option<PlayheadControl>,
+    /// The window's own open project, when a window embeds this API
+    /// (live mode, #337): the project on screen, edited *through* the
+    /// window rather than refused. `None` - a headless API, or a
+    /// window built before the bridge - keeps the old behaviour whole.
+    live: Option<LiveProjectControl>,
     titles: Titles,
     cutouts: Arc<Cutouts>,
     stabilizers: Arc<Stabilizers>,
@@ -480,6 +488,7 @@ impl Api {
             roots: Vec::new(),
             open: OpenProjects::default(),
             playhead: None,
+            live: None,
             events,
             jobs: Jobs::default(),
             dirs,
@@ -567,6 +576,37 @@ impl Api {
         self.open = open;
     }
 
+    /// Takes the window's own open project in place of the refusal
+    /// (live mode, #337): from here on, the project the window holds
+    /// is *not* refused here - `project.open` answers with its view,
+    /// and every edit lands on the window's own session, on its
+    /// history, under its autosave, on the timeline on screen. The
+    /// bridge hops to the window's event loop the way the playhead
+    /// control does; see [`live`](self::live).
+    pub fn share_live_project(&mut self, live: LiveProjectControl) {
+        self.live = Some(live);
+        self.add_capability("window.live");
+    }
+
+    /// Whether the window's bridge holds `path` - the same `key_of`
+    /// comparison the API's own sessions are keyed by, so a symlinked
+    /// or differently-spelled folder is still recognised.
+    fn live_holds(&self, path: &str) -> bool {
+        self.live
+            .as_ref()
+            .and_then(|live| live.path())
+            .is_some_and(|held| key_of(&held) == key_of(path))
+    }
+
+    /// The live bridge, when the request is for the project it holds.
+    fn live(&self, path: &str) -> Option<&LiveProjectControl> {
+        if self.live_holds(path) {
+            self.live.as_ref()
+        } else {
+            None
+        }
+    }
+
     /// Confines every write to `roots`: from here on a created project, an
     /// instantiated template, an export and a preview file must land under
     /// one of them, and any other path is `refused`. Reads - a probe, a
@@ -650,19 +690,63 @@ impl Api {
             } => view(self.create(&location, &name, video.unwrap_or_default())?),
             Request::ProjectOpen { path } => view(self.open(&path)?),
             Request::ProjectClose { path, save } => {
+                if let Some(live) = self.live(&path) {
+                    let held = live
+                        .path()
+                        .map(|held| format!("{held} is"))
+                        .unwrap_or_else(|| "that folder is".to_owned());
+                    return Err(ApiError::new(
+                        ErrorCode::Refused,
+                        format!(
+                            "{held} the project the window is showing - closing it from \
+                             here would close the user's editor. Close it in the window"
+                        ),
+                    ));
+                }
                 self.close(&path, save)?;
                 Ok(Reply::Done(Done {}))
             }
             Request::ProjectList => Ok(Reply::Projects(self.recents())),
-            Request::ProjectGet { path } => view(self.session(&path)?.view()),
-            Request::ProjectDocument { path } => Ok(Reply::Document(
-                self.session(&path)?.document().map_err(ApiError::failed)?,
-            )),
+            Request::ProjectGet { path } => {
+                if let Some(live) = self.live(&path) {
+                    return view(live.view().map_err(ApiError::failed)?);
+                }
+                view(self.session(&path)?.view())
+            }
+            Request::ProjectDocument { path } => {
+                if let Some(live) = self.live(&path) {
+                    return match live.run(LiveOp::Document).map_err(ApiError::failed)? {
+                        LiveReply::Document(document) => Ok(Reply::Document(document)),
+                        _ => Err(ApiError::failed(
+                            "the window answered a document ask without one".to_owned(),
+                        )),
+                    };
+                }
+                Ok(Reply::Document(
+                    self.session(&path)?.document().map_err(ApiError::failed)?,
+                ))
+            }
             Request::ProjectSave { path, name } => {
+                if let Some(live) = self.live(&path) {
+                    live.run(LiveOp::Save { name: name.clone() })
+                        .map_err(ApiError::failed)?;
+                    return Ok(Reply::Done(Done {}));
+                }
                 self.save(&path, name.as_deref())?;
                 Ok(Reply::Done(Done {}))
             }
             Request::ProjectSetVideo { path, video } => {
+                if let Some(live) = self.live(&path) {
+                    return match live
+                        .run(LiveOp::SetVideo { video })
+                        .map_err(ApiError::failed)?
+                    {
+                        LiveReply::View(held) => view(*held),
+                        _ => Err(ApiError::failed(
+                            "the window answered a set-video ask without a view".to_owned(),
+                        )),
+                    };
+                }
                 let set = self.session_mut(&path)?.set_video(video).map_err(refused)?;
                 view(self.told_unsaved(&path, set))
             }
@@ -672,10 +756,26 @@ impl Api {
                 idempotency_key,
             } => view(self.apply_keyed(&path, *command, idempotency_key)?),
             Request::EditUndo { path } => {
+                if let Some(live) = self.live(&path) {
+                    return match live.run(LiveOp::Undo).map_err(ApiError::failed)? {
+                        LiveReply::View(held) => view(*held),
+                        _ => Err(ApiError::failed(
+                            "the window answered an undo ask without a view".to_owned(),
+                        )),
+                    };
+                }
                 let undone = self.session_mut(&path)?.undo();
                 view(self.told_unsaved(&path, undone))
             }
             Request::EditRedo { path } => {
+                if let Some(live) = self.live(&path) {
+                    return match live.run(LiveOp::Redo).map_err(ApiError::failed)? {
+                        LiveReply::View(held) => view(*held),
+                        _ => Err(ApiError::failed(
+                            "the window answered a redo ask without a view".to_owned(),
+                        )),
+                    };
+                }
                 let redone = self.session_mut(&path)?.redo();
                 view(self.told_unsaved(&path, redone))
             }
@@ -1043,11 +1143,18 @@ impl Api {
         self.adopt(info)
     }
 
-    /// [`Request::ProjectOpen`].
+    /// [`Request::ProjectOpen`]. Opening one already open returns its state
+    /// as it stands, edits and all. The project the window holds - live
+    /// mode - is answered through the window's own session, so a caller
+    /// over the socket opens what is on screen and every later edit
+    /// lands on the timeline the user is watching.
     pub fn open(&mut self, path: &str) -> Result<EditorView, ApiError> {
         let key = key_of(path);
         if let Some(session) = self.sessions.get(&key) {
             return Ok(session.view());
+        }
+        if let Some(live) = self.live(path) {
+            return live.view().map_err(ApiError::failed);
         }
         let info = projects::open(path).map_err(ApiError::failed)?;
         self.adopt(info)
@@ -1061,7 +1168,9 @@ impl Api {
             // go through that window instead of around it.
             let how = match &refusal {
                 Refusal::Elsewhere(owner) if owner.role == "window" => {
-                    ". To work on it from an agent, turn on Settings > Automation in that window and run the agent with `concat --mcp window`; the project on screen stays the window's until live mode lands"
+                    ". To work on it from an agent, turn on Settings > Automation in that \
+                     window and run the agent with `concat --mcp window`; when that window \
+                     serves live mode, the project on screen opens and edits through it"
                 }
                 Refusal::Elsewhere(_) => ". Close it there first",
                 Refusal::Here(_) => "",
@@ -1168,6 +1277,17 @@ impl Api {
         command: Command,
         key: Option<String>,
     ) -> Result<EditorView, ApiError> {
+        if self.live_holds(path) {
+            // Cloned, not borrowed: the ring and the ledger this method
+            // still writes are the API's own, and a control is cheap to
+            // clone - every clone is the same bridge.
+            let live = self
+                .live
+                .as_ref()
+                .expect("live_holds says the bridge is there")
+                .clone();
+            return self.apply_live(&live, path, command, key);
+        }
         let Some(key) = key else {
             return self.apply(path, command);
         };
@@ -1187,6 +1307,51 @@ impl Api {
             return Ok(self.session_mut(path)?.view());
         }
         let view = self.apply(path, command)?;
+        let hash = view_hash(&view);
+        self.applied.record(id, hash, view.clone());
+        self.write_idempotency_ledger(path);
+        Ok(view)
+    }
+
+    /// [`Api::apply_keyed`] for the project the window holds: the same
+    /// key discipline - a re-sent key is answered without a second
+    /// edit, the ring is bounded, the ledger rides the project - around
+    /// an edit the window applies on its own session. The window's
+    /// autosave is the save here: `told_unsaved` never wraps the view,
+    /// because the window already tells the user what a save cost, its
+    /// own way, on its own screen.
+    fn apply_live(
+        &mut self,
+        live: &LiveProjectControl,
+        path: &str,
+        command: Command,
+        key: Option<String>,
+    ) -> Result<EditorView, ApiError> {
+        let apply = |command: Command| match live
+            .run(LiveOp::Apply {
+                command: Box::new(command),
+            })
+            .map_err(ApiError::failed)?
+        {
+            LiveReply::View(view) => Ok(*view),
+            _ => Err(ApiError::failed(
+                "the window answered an apply without a view".to_owned(),
+            )),
+        };
+        let Some(key) = key.filter(|key| !key.is_empty()) else {
+            return apply(command);
+        };
+        let id = format!("{path}\n{key}");
+        if let Some(answered) = self.applied.answer(&id) {
+            if let Some(view) = &answered.view {
+                return Ok(view.clone());
+            }
+            // The ring no longer holds this key's view (F-05 / F-06):
+            // the edit stands, it applied once, and the honest answer is
+            // the project as the window holds it now.
+            return live.view().map_err(ApiError::failed);
+        }
+        let view = apply(command)?;
         let hash = view_hash(&view);
         self.applied.record(id, hash, view.clone());
         self.write_idempotency_ledger(path);
@@ -1630,14 +1795,10 @@ impl Api {
         }
         self.openvid_ready()?;
         self.writable(path)?;
-        let folder = {
-            let session = self.session(path)?;
-            let folder = std::path::PathBuf::from(session.path()).join("openvid");
-            std::fs::create_dir_all(&folder).map_err(|error| {
-                ApiError::failed(format!("could not create {}: {error}", folder.display()))
-            })?;
-            folder
-        };
+        let folder = self.project_dir(path)?.join("openvid");
+        std::fs::create_dir_all(&folder).map_err(|error| {
+            ApiError::failed(format!("could not create {}: {error}", folder.display()))
+        })?;
         let library = self.library();
         // Everything is fetched and checked before anything is added, so a
         // clip that will not arrive - or arrives unreadable - refuses the
@@ -1854,14 +2015,10 @@ impl Api {
         // a clip that will not arrive refuses the whole request rather
         // than leaving half an import behind.
         let cached = self.stock_fetch_checked(provider, id, url)?;
-        let folder = {
-            let session = self.session(path)?;
-            let folder = std::path::PathBuf::from(session.path()).join("stock");
-            std::fs::create_dir_all(&folder).map_err(|error| {
-                ApiError::failed(format!("could not create {}: {error}", folder.display()))
-            })?;
-            folder
-        };
+        let folder = self.project_dir(path)?.join("stock");
+        std::fs::create_dir_all(&folder).map_err(|error| {
+            ApiError::failed(format!("could not create {}: {error}", folder.display()))
+        })?;
         // The provider's own name plus the id: unique for ever, and the
         // same clip imported twice is the same file, copied over itself.
         let name = format!("{}-{}.mp4", provider.name(), live_stock::safe_stem(id));
@@ -1989,14 +2146,10 @@ impl Api {
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let cached = sounds::fetch_sound(&self.dirs, &sound, &cancel, &mut |_, _| {})
             .map_err(ApiError::failed)?;
-        let folder = {
-            let session = self.session(path)?;
-            let folder = PathBuf::from(session.path()).join("audio");
-            std::fs::create_dir_all(&folder).map_err(|error| {
-                ApiError::failed(format!("could not create {}: {error}", folder.display()))
-            })?;
-            folder
-        };
+        let folder = self.project_dir(path)?.join("audio");
+        std::fs::create_dir_all(&folder).map_err(|error| {
+            ApiError::failed(format!("could not create {}: {error}", folder.display()))
+        })?;
         // The library's own file name: unique for ever, and the same sound
         // imported twice is the same file, copied over itself.
         let into = folder.join(&sound.file);
@@ -2281,14 +2434,10 @@ impl Api {
             }
         }
         self.writable(path)?;
-        let folder = {
-            let session = self.session(path)?;
-            let folder = std::path::PathBuf::from(session.path()).join("bgm");
-            std::fs::create_dir_all(&folder).map_err(|error| {
-                ApiError::failed(format!("could not create {}: {error}", folder.display()))
-            })?;
-            folder
-        };
+        let folder = self.project_dir(path)?.join("bgm");
+        std::fs::create_dir_all(&folder).map_err(|error| {
+            ApiError::failed(format!("could not create {}: {error}", folder.display()))
+        })?;
         let library = self.music();
         let cancel = std::sync::atomic::AtomicBool::new(false);
         // Everything is fetched and copied before anything is added, so a
@@ -2529,14 +2678,10 @@ impl Api {
             .stickers()
             .fetch(sticker.source, id, &cancel, &mut progress)
             .map_err(ApiError::failed)?;
-        let folder = {
-            let session = self.session(path)?;
-            let folder = PathBuf::from(session.path()).join("magick");
-            std::fs::create_dir_all(&folder).map_err(|error| {
-                ApiError::failed(format!("could not create {}: {error}", folder.display()))
-            })?;
-            folder
-        };
+        let folder = self.project_dir(path)?.join("magick");
+        std::fs::create_dir_all(&folder).map_err(|error| {
+            ApiError::failed(format!("could not create {}: {error}", folder.display()))
+        })?;
         // The caption plus the id: unique for as long as the picture is
         // in the library, and the same picture imported twice is the
         // same file, copied over itself.
@@ -2680,6 +2825,24 @@ impl Api {
     /// shot where there is none; then the render, with the titles already
     /// painted here and rejoining the clip list as stills.
     pub fn export(&mut self, path: &str, spec: &ExportSpec) -> Result<Started, ApiError> {
+        // The project the window holds is the one folder whose render is
+        // not this API's to start (live mode): the window's Export sheet
+        // owns the picture on screen. A timeline-ready run ends at the
+        // revised cut on the timeline; the export, when one is wanted,
+        // is the user's own click.
+        if let Some(live) = self.live(path) {
+            let held = live
+                .path()
+                .map(|held| format!("{held} is"))
+                .unwrap_or_else(|| "that folder is".to_owned());
+            return Err(ApiError::new(
+                ErrorCode::Refused,
+                format!(
+                    "{held} the project the window is showing - export it from the \
+                     window's Export sheet, whose render owns the picture on screen"
+                ),
+            ));
+        }
         self.writable(&spec.output)?;
         let session = self.session(path)?;
         if session.project().active().clips.is_empty() {
@@ -2874,13 +3037,50 @@ impl Api {
         })
     }
 
-    /// The composited RGBA frame at `time`.
+    /// The composited RGBA frame at `time`. The project the window
+    /// holds is drawn by the window - live mode - through the same
+    /// frame op `preview.frame` asks of its own pool, so the picture a
+    /// caller pages through is the picture on screen, motion bakes and
+    /// titles included; the window reads its proxies where the size is
+    /// small enough that a copy serves it whole.
     fn pixels(
         &mut self,
         path: &str,
         time: f64,
         size: Option<(u32, u32)>,
     ) -> Result<(u32, u32, Vec<u8>), ApiError> {
+        if let Some(live) = self.live(path) {
+            let (width, height) = match size {
+                Some(size) => size,
+                // The frame the project itself is: the window's own
+                // settings name the size, the way a held session's do.
+                None => {
+                    let view = live.view().map_err(ApiError::failed)?;
+                    (view.settings.width, view.settings.height)
+                }
+            };
+            let (width, height) = checked_size(width, height)?;
+            let proxy =
+                size.is_some_and(|(width, height)| concat_host::proxy::serves_frame(width, height));
+            return match live
+                .run(LiveOp::Frame {
+                    time,
+                    width,
+                    height,
+                    proxy,
+                })
+                .map_err(ApiError::failed)?
+            {
+                LiveReply::Frame {
+                    width,
+                    height,
+                    pixels,
+                } => Ok((width, height, pixels)),
+                _ => Err(ApiError::failed(
+                    "the window answered a frame ask without a frame".to_owned(),
+                )),
+            };
+        }
         let session = self.session(path)?;
         let settings = session.settings();
         let (width, height) = size.unwrap_or((settings.width, settings.height));
@@ -2921,8 +3121,7 @@ impl Api {
     /// A legacy project without a brief remains non-monetized; a malformed
     /// brief is refused rather than treated as permission.
     fn project_is_monetized(&self, path: &str) -> Result<bool, ApiError> {
-        let session = self.session(path)?;
-        let brief_path = std::path::PathBuf::from(session.path()).join("creative-brief.json");
+        let brief_path = self.project_dir(path)?.join("creative-brief.json");
         let contents = match std::fs::read_to_string(&brief_path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -2950,6 +3149,19 @@ impl Api {
         self.sessions
             .get(&key_of(path))
             .ok_or_else(|| not_open(path))
+    }
+
+    /// The project folder a request names: the API's own session's when
+    /// it holds one, the window's when live mode does. The imports all
+    /// land their files under the folder either way - and the edits
+    /// that follow ride `apply`, which routes itself.
+    fn project_dir(&self, path: &str) -> Result<PathBuf, ApiError> {
+        if let Some(live) = self.live(path) {
+            return Ok(PathBuf::from(live.path().ok_or_else(|| {
+                ApiError::failed("the window no longer holds a project".to_owned())
+            })?));
+        }
+        Ok(PathBuf::from(self.session(path)?.path()))
     }
 
     fn session_mut(&mut self, path: &str) -> Result<&mut Session, ApiError> {
@@ -4706,6 +4918,302 @@ mod tests {
             !freepd.message.contains("MobyGratis"),
             "the CC0 shelf is not refused by the monetized gate: {freepd}"
         );
+    }
+
+    // ── live mode: the project the window holds, edited through it ─────
+
+    /// A window for the live-mode tests: one session behind a Mutex, the
+    /// way a real window's is behind its event loop. The frame op hands
+    /// back four transparent bytes a pixel - routing is what these tests
+    /// prove; the pixels themselves are the window's own render, and the
+    /// window's are tested beside the window.
+    struct HeldWindow {
+        session: Mutex<Option<Session>>,
+        frames: Mutex<Vec<(u32, u32)>>,
+    }
+
+    impl HeldWindow {
+        fn over(path: &str) -> HeldWindow {
+            let info = projects::open(path).expect("project opens");
+            HeldWindow {
+                session: Mutex::new(Some(Session::open_info(&info).expect("session"))),
+                frames: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl LiveBridge for HeldWindow {
+        fn path(&self) -> Option<String> {
+            self.session
+                .lock()
+                .expect("window")
+                .as_ref()
+                .map(|session| session.path().to_owned())
+        }
+
+        fn run(&self, op: LiveOp) -> Result<LiveReply, String> {
+            let mut guard = self.session.lock().expect("window");
+            let session = guard
+                .as_mut()
+                .ok_or_else(|| "the window has no project open".to_owned())?;
+            match op {
+                LiveOp::View => Ok(LiveReply::View(Box::new(session.view()))),
+                LiveOp::Document => Ok(LiveReply::Document(session.document()?)),
+                LiveOp::Apply { command } => {
+                    Ok(LiveReply::View(Box::new(session.apply(*command)?)))
+                }
+                LiveOp::Undo => Ok(LiveReply::View(Box::new(session.undo()))),
+                LiveOp::Redo => Ok(LiveReply::View(Box::new(session.redo()))),
+                LiveOp::Save { name } => {
+                    session.save(name.as_deref())?;
+                    Ok(LiveReply::Done)
+                }
+                LiveOp::SetVideo { video } => {
+                    Ok(LiveReply::View(Box::new(session.set_video(video)?)))
+                }
+                LiveOp::Frame {
+                    time: _,
+                    width,
+                    height,
+                    proxy: _,
+                } => {
+                    self.frames.lock().expect("frames").push((width, height));
+                    Ok(LiveReply::Frame {
+                        width,
+                        height,
+                        pixels: vec![0; (width * height * 4) as usize],
+                    })
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_project_the_window_holds_opens_and_edits_live() {
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Held");
+        // The API closes its copy; the window opens the folder the way
+        // the real one does, and claims it in the shared register - the
+        // exact arrangement that used to refuse every project.open.
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        let window = HeldWindow::over(&path);
+        let open = OpenProjects::default();
+        api.share_open_projects(open.clone());
+        open.claim(&path, Holder::Window)
+            .expect("the window has it");
+        api.share_live_project(LiveProjectControl::new(window));
+
+        // Open: answered through the window, not refused - the register
+        // still says the window holds it, and the reply is the window's
+        // own session view, timeline and all.
+        let held = view(ok(api.dispatch(Request::ProjectOpen { path: path.clone() })));
+        assert_eq!(
+            held.settings.name, "Held",
+            "the window's session answers, not a refusal"
+        );
+
+        // Edit: lands on the window's session, and the reply is its view.
+        let media = still("/nowhere/live.png");
+        let added = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia { item: media }),
+            idempotency_key: None,
+        })));
+        assert!(
+            added
+                .project
+                .media
+                .iter()
+                .any(|item| item.path == "/nowhere/live.png"),
+            "the edit landed on the window's session"
+        );
+        assert_eq!(
+            view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })))
+                .project
+                .media
+                .len(),
+            added.project.media.len(),
+            "a read of the held project is the window's own state"
+        );
+
+        // Undo: steps the window's history back, not an API's.
+        let undone = view(ok(api.dispatch(Request::EditUndo { path: path.clone() })));
+        assert!(undone.project.media.is_empty(), "the window undid it");
+    }
+
+    #[test]
+    fn live_edits_answer_once_under_a_key() {
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Keyed");
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        let window = HeldWindow::over(&path);
+        api.share_live_project(LiveProjectControl::new(window));
+
+        let first = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/one.png"),
+            }),
+            idempotency_key: Some("the same batch".to_owned()),
+        })));
+        assert_eq!(first.project.media.len(), 1);
+        let again = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/one.png"),
+            }),
+            idempotency_key: Some("the same batch".to_owned()),
+        })));
+        assert_eq!(
+            again.project.media.len(),
+            1,
+            "a re-sent key is answered without a second edit"
+        );
+    }
+
+    #[test]
+    fn the_live_project_refuses_close_and_export() {
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Guarded");
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        let window = HeldWindow::over(&path);
+        api.share_live_project(LiveProjectControl::new(window));
+
+        let refused = err(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        assert_eq!(refused.code, ErrorCode::Refused);
+        let refused = err(api.dispatch(Request::ExportRun {
+            path: path.clone(),
+            spec: ExportSpec {
+                output: scratch
+                    .path()
+                    .join("out.mp4")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..Default::default()
+            },
+        }));
+        assert_eq!(refused.code, ErrorCode::Refused);
+    }
+
+    #[test]
+    fn a_live_frame_comes_from_the_window() {
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Seen");
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        // A window that only answers frames, and remembers every size it
+        // was asked for: routing is what this test proves - the pixels
+        // themselves are the window's own render, and the window's are
+        // tested beside the window.
+        struct Framing {
+            session: Mutex<Option<Session>>,
+            frames: Arc<Mutex<Vec<(u32, u32)>>>,
+        }
+        impl LiveBridge for Framing {
+            fn path(&self) -> Option<String> {
+                self.session
+                    .lock()
+                    .expect("window")
+                    .as_ref()
+                    .map(|session| session.path().to_owned())
+            }
+            fn run(&self, op: LiveOp) -> Result<LiveReply, String> {
+                let mut guard = self.session.lock().expect("window");
+                let session = guard
+                    .as_mut()
+                    .ok_or_else(|| "the window has no project open".to_owned())?;
+                match op {
+                    LiveOp::Frame {
+                        time: _,
+                        width,
+                        height,
+                        proxy: _,
+                    } => {
+                        self.frames.lock().expect("frames").push((width, height));
+                        Ok(LiveReply::Frame {
+                            width,
+                            height,
+                            pixels: vec![0; (width * height * 4) as usize],
+                        })
+                    }
+                    LiveOp::View => Ok(LiveReply::View(Box::new(session.view()))),
+                    LiveOp::Document => Ok(LiveReply::Document(session.document()?)),
+                    LiveOp::Apply { command } => {
+                        Ok(LiveReply::View(Box::new(session.apply(*command)?)))
+                    }
+                    LiveOp::Undo => Ok(LiveReply::View(Box::new(session.undo()))),
+                    LiveOp::Redo => Ok(LiveReply::View(Box::new(session.redo()))),
+                    LiveOp::Save { name } => {
+                        session.save(name.as_deref())?;
+                        Ok(LiveReply::Done)
+                    }
+                    LiveOp::SetVideo { video } => {
+                        Ok(LiveReply::View(Box::new(session.set_video(video)?)))
+                    }
+                }
+            }
+        }
+        let info = projects::open(&path).expect("project opens");
+        let asked: Arc<Mutex<Vec<(u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+        let window = Framing {
+            session: Mutex::new(Some(Session::open_info(&info).expect("session"))),
+            frames: Arc::clone(&asked),
+        };
+        api.share_live_project(LiveProjectControl::new(window));
+
+        let reply = ok(api.dispatch(Request::PreviewFrame {
+            path: path.clone(),
+            time: 1.0,
+            output: None,
+            width: Some(320),
+            height: Some(180),
+        }));
+        let Reply::Picture(picture) = reply else {
+            panic!("not a picture");
+        };
+        assert_eq!(picture.width, 320);
+        assert_eq!(picture.height, 180);
+        assert!(
+            !picture.png.is_empty(),
+            "the window's frame came back inline"
+        );
+        assert_eq!(
+            asked.lock().expect("frames").as_slice(),
+            &[(320, 180)],
+            "the frame was asked of the window, at the size asked for"
+        );
+    }
+
+    #[test]
+    fn a_window_without_a_live_bridge_keeps_the_old_refusal() {
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Classic");
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        let open = OpenProjects::default();
+        api.share_open_projects(open.clone());
+        open.claim(&path, Holder::Window)
+            .expect("the window has it");
+        // No share_live_project: the API built before the bridge, or a
+        // headless one - the old refusal stands, word for word.
+        let refused = err(api.dispatch(Request::ProjectOpen { path }));
+        assert_eq!(refused.code, ErrorCode::Refused);
     }
 }
 

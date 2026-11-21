@@ -83,6 +83,18 @@ export SHERPA_ONNX_LIB_DIR="$_funcut_root/sherpa/$_funcut_sherpa_stem/lib"
 _funcut_sysroot_lib="$_funcut_root/sysroot/usr/lib/$_funcut_multiarch"
 if [ -d "$_funcut_sysroot_lib" ]; then
   export LIBCLANG_PATH="${LIBCLANG_PATH:-$_funcut_sysroot_lib}"
+  # The same directory on the linker's and the loader's paths: the -sys
+  # crates bind against the unpacked ALSA/fontconfig/freetype/xkbcommon
+  # without an install, and the test binaries they link need their .so
+  # at run time too.
+  case ":${RUSTFLAGS:-}:" in
+    *"-L $_funcut_sysroot_lib"*) ;;
+    *) export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-L $_funcut_sysroot_lib" ;;
+  esac
+  case ":${LD_LIBRARY_PATH:-}:" in
+    *":$_funcut_sysroot_lib:"*) ;;
+    *) export LD_LIBRARY_PATH="$_funcut_sysroot_lib:${LD_LIBRARY_PATH:-}" ;;
+  esac
   case ":${LD_LIBRARY_PATH:-}:" in
     *":$_funcut_sysroot_lib:"*) ;;
     *) export LD_LIBRARY_PATH="$_funcut_sysroot_lib:${LD_LIBRARY_PATH:-}" ;;
@@ -98,6 +110,17 @@ fi
 
 export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
+# The no-root sysroot's pkg-config entries, when a --debs (or fuller)
+# setup unpacked them: the -sys crates that bind against ALSA,
+# fontconfig, freetype and xkbcommon find them here without an install.
+_funcut_pkgconfig="$_funcut_root/sysroot/usr/lib/$_funcut_multiarch/pkgconfig"
+if [ -d "$_funcut_pkgconfig" ]; then
+  case ":${PKG_CONFIG_PATH:-}:" in
+    *":$_funcut_pkgconfig:"*) ;;
+    *) export PKG_CONFIG_PATH="$_funcut_pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" ;;
+  esac
+fi
 
 echo "funcut-env.sh: FFMPEG_DIR, ORT_LIB_LOCATION, SHERPA_ONNX_LIB_DIR set for $_funcut_sherpa_stem" >&2
 

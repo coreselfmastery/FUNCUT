@@ -505,6 +505,10 @@ fn start(
             .set_results(ModelRc::from(models.magick_results.clone()));
         app.global::<crate::ui::Forge>()
             .set_log(ModelRc::from(models.forge_log.clone()));
+        app.global::<crate::ui::Forge>()
+            .set_signal_families(ModelRc::from(models.forge_signal_families.clone()));
+        app.global::<crate::ui::Forge>()
+            .set_signal_rows(ModelRc::from(models.forge_signal_rows.clone()));
         app.global::<Sounds>()
             .set_voices_builtin(ModelRc::from(models.voices_builtin.clone()));
         app.global::<Sounds>()
@@ -1726,6 +1730,20 @@ fn start(
         }));
         forge.on_auto_edit_cancel(on_window!(|state| {
             state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditCancel));
+        }));
+        // The voice-signal lab: a family chosen, a signal extracted -
+        // one button per reading the profile answers, taken from the
+        // timeline's own voiceover through the same server an agent's
+        // call means.
+        forge.on_signal_family_chosen(on_window!(|state, row: i32| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::SignalFamily(
+                row.max(0) as usize,
+            )));
+        }));
+        forge.on_signal_extract(on_window!(|state, row: i32| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::SignalExtract(
+                row,
+            )));
         }));
     }
 

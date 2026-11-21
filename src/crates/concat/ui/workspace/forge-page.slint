@@ -69,6 +69,25 @@ export global Forge {
     /// button offers Retry); 2 when it failed hard (Fix and restart).
     in property <int> auto-edit-outcome;
 
+    /// The voice-signal lab: the catalogue's families, as its own order
+    /// names them, and the selected family's signals as button labels.
+    /// Every reading the profile answers has its own button - the
+    /// manual extraction the AUTO EDIT spends automatically.
+    in property <[string]> signal-families;
+    /// The selected family's signals, one button each: the label the
+    /// catalogue gives the reading.
+    in property <[string]> signal-rows;
+    /// The catalogue answered, so the lab can show its buttons.
+    in property <bool> signal-available;
+    /// A reading is being taken: the buttons wait their turn.
+    in property <bool> signal-busy;
+    /// The last reading's title - the signal's own label - or the
+    /// sentence that says why there is none.
+    in property <string> signal-title;
+    /// The last reading's body: what it measures, why the edit wants
+    /// it, the ear that answered, the confidence, and the values.
+    in property <string> signal-body;
+
     /// The script and the three choices went to the harness.
     callback forge-start(script: string, source: int, voice: int, niche: int, mood: int);
     /// Cancel stops the run; the agent's next line is its last.
@@ -85,6 +104,11 @@ export global Forge {
     /// Stop the auto-edit at its next stage boundary; the edits it
     /// applied are rolled back.
     callback auto-edit-cancel();
+    /// A signal family was chosen: the lab shows its buttons.
+    callback signal-family-chosen(row: int);
+    /// One signal button: extract that reading from the timeline's own
+    /// voiceover and show what it measured, and why it exists.
+    callback signal-extract(row: int);
     /// Open Settings on the Forge page, where the keys live.
     callback open-settings();
     /// A library pane turned to the page or away from it.
@@ -143,6 +167,37 @@ component LogLine inherits Text {
     font-family: Theme.font-technical;
     font-size: Theme.fs-xs;
     overflow: elide;
+}
+
+// One signal's button in the lab: slimmer than a page button, because a
+// family carries up to twenty-one of them and the column scrolls.
+component SignalButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 26px;
+    border-radius: Theme.r-sm;
+    background: !root.enabled ? Theme.field
+        : touch.has-hover ? Theme.field-hover : Theme.field;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: Theme.fg;
+            font-size: Theme.fs-xs;
+        }
+    }
 }
 
 // The Forge page itself: the script, the choices, the start, and the log of
@@ -392,6 +447,81 @@ export component ForgePage inherits VerticalLayout {
                     font-size: Theme.fs-xs;
                     font-family: Theme.font-technical;
                     vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // The voice-signal lab: every reading the profile answers, one
+    // button each. The family select picks the shelf; each button
+    // extracts its one signal from the timeline's own voiceover and the
+    // card beneath answers with the reading, the ear that took it, the
+    // confidence it carries, and why the edit wants it - the manual half
+    // of what the AUTO EDIT button spends automatically.
+    if Forge.signal-available: VerticalLayout {
+        spacing: 6px;
+
+        Text {
+            text: I18n.t("forge.signalsTitle");
+            color: Theme.fg-muted;
+            font-size: Theme.fs-xs;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text {
+                    text: I18n.t("forge.signalsFamily");
+                    color: Theme.fg-muted;
+                    font-size: Theme.fs-xs;
+                }
+                Select {
+                    current: 0;
+                    enabled: !Forge.signal-busy;
+                    options: Forge.signal-families;
+                    changed(index) => { Forge.signal-family-chosen(index); }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 4px;
+
+            for row[i] in Forge.signal-rows: SignalButton {
+                label: row;
+                enabled: !Forge.signal-busy;
+                clicked => { Forge.signal-extract(i); }
+            }
+        }
+
+        if Forge.signal-title != "": Rectangle {
+            border-radius: Theme.r;
+            background: Theme.panel;
+            clip: true;
+
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
+
+                Text {
+                    text: Forge.signal-title;
+                    color: Theme.fg;
+                    font-size: Theme.fs-sm;
+                    font-weight: Theme.weight-title;
+                }
+
+                Text {
+                    text: Forge.signal-body;
+                    color: Theme.fg-muted;
+                    font-size: Theme.fs-xs;
+                    wrap: word-wrap;
+                    horizontal-alignment: left;
                 }
             }
         }

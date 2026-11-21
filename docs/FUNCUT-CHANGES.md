@@ -2686,3 +2686,25 @@ termination still needs a dedicated Job Object implementation; this
 change does not claim that equivalent guarantee on Windows. The change
 was committed to PR #182; compilation and platform tests were not run in
 this session.
+
+## 63. Keep the Stop control available during independent acceptance
+
+Forge used to set AUTO EDIT to idle as soon as the Director child exited.
+The independent acceptance pass could then continue probing, measuring
+and rendering a contact sheet with no way for the user to stop it. The
+button also changed away from its Stop state even though the run was not
+finished.
+
+The AI path now keeps its running/UI state active while acceptance is
+pending and gives the acceptance worker its own shared cancellation
+flag. The existing Stop action raises that flag; the acceptance caller
+checks it before every independent tool call, and active tools receive
+the same flag through their context. The UI returns to idle only when
+the acceptance result or backend failure arrives. The process-exit
+failure path explicitly releases the running state so Retry remains
+available.
+
+This is cooperative cancellation for the acceptance phase: a tool
+already executing must honor the shared context flag to stop promptly.
+The regression and UI behavior still require a full application build
+and manual run; they were not executed in this session.

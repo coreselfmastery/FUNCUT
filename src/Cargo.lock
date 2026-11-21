@@ -1201,7 +1201,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "url",
 ]
 
 [[package]]
@@ -1286,6 +1285,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "ureq 2.12.1",
+ "url",
  "webpki-roots 0.26.11",
  "zstd",
 ]

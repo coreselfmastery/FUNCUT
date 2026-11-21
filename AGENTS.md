@@ -109,3 +109,42 @@ export LIBCLANG_PATH=/usr/lib/llvm-19/lib
 
 Build with `-j2`: the 4-core box runs out of memory and the container is
 restarted mid-build at higher parallelism.
+
+## The report card: what runs, and how each lane fails
+
+Seven workflows. Three checks are required on `main` by branch protection
+(`enforce_admins` is on, force pushes and deletions are off), all from
+`ci.yml`: `Format, locales and models`, `The analysis senses against real
+fixtures`, `Engine tests and lints`. The rest - `Build app`, `Geneva`,
+`Nix`, `Dependency security audit`, `Release` - are the lanes that turn
+red without blocking a merge, so read them before calling `main` green.
+
+The failure modes this repository has actually paid for, and the fix each
+one has:
+
+- **A job that cancels itself.** `The analysis senses against real
+  fixtures` had a 15-minute ceiling and needed 15m16s; a timeout counts as
+  a failure, so the lane was red on a working tree. Ceilings are for hangs,
+  so they sit well above the measured worst case now (30 minutes there,
+  200 for the engine job, whose cold build has run 2h31m58s).
+- **A retry that gives up too early.** `scripts/ci/fetch.sh` retried the
+  release CDN five times over 62 seconds while the CDN was returning 500s
+  for 61 of them. Backoff is 2/4/8/16/32s per attempt, digest re-verified
+  each time, and never retried at all on a digest mismatch or a 4xx.
+- **The Nix lane losing the runner.** Three runs on `main` ended "runner
+  lost communication" with no step conclusion, 1h15m-1h18m in, always in
+  the silence after the last compile line. That silence is the thin-LTO
+  join, which loads every codegen unit of every crate at once; the
+  derivation now sets `CARGO_PROFILE_RELEASE_LTO=false` (the codegen-units
+  ladder is untouched, because those units keep the window crate's own
+  rustc alive), and `Build app` still builds the shipping `app` profile
+  with fat LTO, so LTO stays tested.
+- **A dependency audit with ignores.** Seven `--ignore` entries hid the
+  `zip 2.4.2`/`zstd` subtree that sherpa-onnx-sys 1.13 pulled in. PR #173
+  moved to sherpa-onnx 2.x and deleted every ignore; the audit is green on
+  `main` with zero suppressions, and a new advisory is meant to fail the
+  lane rather than be suppressed.
+
+When a lane goes red, read the job's steps first: a step with no
+conclusion and a log that stops mid-line is a runner death, not a test
+failure, and retrying it is the honest first move.

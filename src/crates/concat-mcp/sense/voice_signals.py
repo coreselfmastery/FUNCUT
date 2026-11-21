@@ -1148,11 +1148,15 @@ def _rust_binary():
     beside = here / "voice-signals"
     if beside.is_file():
         return str(beside)
-    for profile in ("release", "debug"):
-        built = here.parents[3] / "target" / profile / "voice-signals" \
-            if len(here.parents) > 3 else None
-        if built and built.is_file():
-            return str(built)
+    # A build tree checked out beside the sense scripts: the workspace's
+    # target/ (this repo keeps its Cargo workspace under src/, so the
+    # script's grandparents are the workspace root) and, for a checkout
+    # whose workspace sits at the root, the repository's own target/.
+    for base in (here.parents[2], here.parents[3]):
+        for profile in ("release", "debug"):
+            built = base / "target" / profile / "voice-signals"
+            if built.is_file():
+                return str(built)
     return None
 
 

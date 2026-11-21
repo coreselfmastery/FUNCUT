@@ -2725,3 +2725,20 @@ remembering to close inherited pipes.
 Unix is covered by the process-group implementation. Non-Unix still
 uses direct-child termination and does not yet have equivalent process
 tree cleanup. Compilation and subprocess integration tests were not run.
+
+## 65. Refuse an AUTO EDIT handoff when its export folder cannot be made
+
+The sibling builder used to log a warning if it could not create the
+sibling's export directory, but still returned a valid-looking
+AutoEditSource. Forge would then be launched with an export path whose
+parent did not exist; the run could spend time editing before discovering
+that its required delivery destination was unavailable.
+
+The AUTO EDIT sibling builder now treats export-directory creation as a
+required handoff step. If it fails, the incomplete sibling is removed
+(and cleanup failure is logged) and the run returns a clear error before
+Forge or the deterministic pipeline starts. Non-AUTO EDIT Forge sibling
+creation is unchanged.
+
+Committed to PR #182; filesystem failure injection and application tests
+were not run in this session.

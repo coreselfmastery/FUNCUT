@@ -819,14 +819,14 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                         .map(|overall| format!("{overall}"))
                         .unwrap_or_else(|| score.to_string())
                 ),
-                false,
+                true,
             ));
         }
         None => gates.push(GateRecord::new(
             "visual",
             GateStatus::Skipped,
             "no craft score was taken",
-            false,
+            true,
         )),
     }
 
@@ -969,7 +969,7 @@ mod tests {
         let gates = derive_gates(&[]);
         // Nothing measured: every required dimension is skipped, never a
         // pass the run did not earn.
-        for name in ["story", "words", "audio", "export-integrity"] {
+        for name in ["story", "words", "audio", "export-integrity", "visual"] {
             let gate = gates
                 .iter()
                 .find(|gate| gate.gate == name)

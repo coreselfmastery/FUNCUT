@@ -839,6 +839,10 @@ impl ForgePane {
             // a second Start/AUTO EDIT can replace the active project and the
             // first run's receipt can be written beside the wrong project.
             self.auto.checking = true;
+            // The Director phases have ended, but independent acceptance is
+            // still outstanding. Do not display 100% until every required
+            // export gate has actually passed.
+            self.auto.fraction = director_acceptance_fraction(false);
             // The harness exiting zero says the agent stopped, not that the
             // edit exists. So the run is held to the same four questions the
             // fixed spine asks of its own export - is the file readable, is
@@ -914,6 +918,7 @@ impl ForgePane {
         self.auto.checking = false;
         self.auto.running = false;
         let accepted = checked.accepted();
+        self.auto.fraction = director_acceptance_fraction(accepted);
         let receipt = checked.receipt;
         if let Some(project) = self.auto.project.clone() {
             let path = std::path::Path::new(&project).join("auto-edit-receipt.json");
@@ -2268,6 +2273,11 @@ fn auto_edit_busy(running: bool, checking: bool) -> bool {
     running || checking
 }
 
+/// The AI phase is not complete until the independent export gates accept.
+fn director_acceptance_fraction(accepted: bool) -> f32 {
+    if accepted { 1.0 } else { 0.98 }
+}
+
 /// Whether the harness is wired to Concat and the skill is where it
 /// reads: `forge mcp get funcut` says the one, `forge commands` lists the
 /// other. Neither is a reason to fail: the buttons say what is missing.
@@ -2530,6 +2540,7 @@ fn elapsed_text(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::auto_edit_busy;
+    use super::director_acceptance_fraction;
     use super::director_retry_available;
     use super::{AutoEditSource, TakePaths};
     use super::director_phase;
@@ -2538,6 +2549,12 @@ mod tests {
     use super::voiceover_copy_name;
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn director_progress_reaches_one_hundred_percent_only_after_acceptance() {
+        assert_eq!(director_acceptance_fraction(false), 0.98);
+        assert_eq!(director_acceptance_fraction(true), 1.0);
+    }
 
     #[test]
     fn director_retry_reuses_only_a_complete_sibling_handoff() {

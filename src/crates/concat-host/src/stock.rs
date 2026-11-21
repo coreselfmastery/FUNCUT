@@ -239,14 +239,17 @@ pub struct Found {
     pub total: u64,
 }
 
-/// The live libraries, one per process: a shared HTTP shelf for the API
-/// hosts and the app's own folders for the fetched clips' cache.
+/// The live libraries, one per process: one shelf for provider searches,
+/// one no-auto-redirect shelf for validated clip downloads, and the app's
+/// own folders for the fetched clips' cache.
 pub struct Library {
     /// Where fetched clips are cached, `<data>/stock/<provider>/.
     dirs: AppDirs,
     /// The agents for the burst of a search page, the way OpenVid's
     /// reads share one.
     shelf: crate::net::Shelf,
+    /// Redirects are disabled here so each provider hop can be checked first.
+    fetch_shelf: crate::net::Shelf,
 }
 
 impl Library {
@@ -256,7 +259,12 @@ impl Library {
         static LIBRARY: OnceLock<Library> = OnceLock::new();
         LIBRARY.get_or_init(|| Library {
             dirs: dirs.clone(),
-            shelf: crate::net::Shelf::new_without_redirects("https://api.pexels.com/", CONNECT, READ),
+            shelf: crate::net::Shelf::new("https://api.pexels.com/", CONNECT, READ),
+            fetch_shelf: crate::net::Shelf::new_without_redirects(
+                "https://api.pexels.com/",
+                CONNECT,
+                READ,
+            ),
         })
     }
 
@@ -389,7 +397,7 @@ impl Library {
     fn fetch_response(&self, provider: Provider, mut url: Url) -> Result<ureq::Response, String> {
         let send = |request: ureq::Request| request;
         for followed in 0..=MAX_REDIRECTS {
-            let response = match self.shelf.get(url.as_str(), &send) {
+            let response = match self.fetch_shelf.get(url.as_str(), &send) {
                 Ok(response) => response,
                 Err(failure) => {
                     let redirect = matches!(
@@ -427,7 +435,10 @@ impl Library {
                 return Ok(response);
             }
             if followed == MAX_REDIRECTS {
-                return Err(format!("{} sent more than {MAX_REDIRECTS} redirects", provider.name()));
+                return Err(format!(
+                    "{} sent more than {MAX_REDIRECTS} redirects",
+                    provider.name()
+                ));
             }
             let location = response
                 .header("Location")
@@ -776,7 +787,6 @@ mod tests {
         assert!(license_of(Provider::Pixabay).contains("do not redistribute"));
     }
 
-
     #[test]
     fn live_download_urls_are_exact_https_provider_hosts() {
         let pexels = Provider::Pexels
@@ -815,9 +825,18 @@ mod tests {
         )
         .expect("the provider CDN");
         assert_eq!(cdn.host_str(), Some("videos.pexels.com"));
-        assert!(redirected_url(Provider::Pexels, &start, "https://127.0.0.1/latest/meta-data").is_err());
-        assert!(redirected_url(Provider::Pexels, &start, "http://videos.pexels.com/file.mp4").is_err());
-        assert!(redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4").is_err());
+        assert!(
+            redirected_url(Provider::Pexels, &start, "https://127.0.0.1/latest/meta-data")
+                .is_err()
+        );
+        assert!(
+            redirected_url(Provider::Pexels, &start, "http://videos.pexels.com/file.mp4")
+                .is_err()
+        );
+        assert!(
+            redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4")
+                .is_err()
+        );
     }
 
     #[test]

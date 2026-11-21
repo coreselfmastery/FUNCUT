@@ -2593,3 +2593,27 @@ and surface an unaccepted result, rather than leaving the pane stuck.
 
 A regression test pins all four states of the busy predicate. The test
 was added in this change; it was not executed in this session.
+
+
+## 59. Retry the AI Director on the sibling it already edited
+
+The deterministic runner already resumes a failed run from its completed
+stages. The AI Director has no deterministic Runner, so the old retry
+guard did not match it: after a Director failure or an unaccepted export,
+the next button press fell through to `build_voiceover_sibling` and made
+a new project. That contradicted the UI's promise that the existing
+sibling was retained for retry, and could discard the prior Director's
+work.
+
+The AI path now has its own retry branch. When the previous Director
+attempt left a valid sibling, the next press re-launches Forge against
+that same project and keeps its source mapping and export destination.
+The retry is allowed only when the project document, voiceover mapping,
+all copied source takes and export directory still exist. If any of
+those prerequisites is missing, the code does not pretend it can safely
+resume that sibling.
+
+The regression test creates a real temporary sibling layout and verifies
+that a complete handoff is retryable, while a missing mapping or source
+take is not. The test was added in this change; it was not executed in
+this session.

@@ -163,7 +163,7 @@ pub fn check(
         let arguments = json!({
             "sheet": sheet,
             "project": check.project,
-            "autoSetup": true,
+            "autoSetup": false,
         });
         let reply = caller.ask("craft_critique", arguments.clone());
         if !reply.as_object().is_some_and(|reply| reply.is_empty()) {

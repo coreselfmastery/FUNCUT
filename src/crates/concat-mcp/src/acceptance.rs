@@ -137,7 +137,10 @@ pub fn check(
             answered.push("plan_validate".to_owned());
         }
         observed.push((
-            ToolCall { tool: "plan_validate".to_owned(), arguments },
+            ToolCall {
+                tool: "plan_validate".to_owned(),
+                arguments,
+            },
             reply,
         ));
     }
@@ -152,7 +155,10 @@ pub fn check(
             watch_sheet = Some(reply.clone());
         }
         observed.push((
-            ToolCall { tool: tool.to_owned(), arguments },
+            ToolCall {
+                tool: tool.to_owned(),
+                arguments,
+            },
             reply,
         ));
     }
@@ -170,7 +176,10 @@ pub fn check(
             answered.push("craft_critique".to_owned());
         }
         observed.push((
-            ToolCall { tool: "craft_critique".to_owned(), arguments },
+            ToolCall {
+                tool: "craft_critique".to_owned(),
+                arguments,
+            },
             reply,
         ));
     }
@@ -190,7 +199,10 @@ pub fn check(
             answered.push("emotion".to_owned());
         }
         observed.push((
-            ToolCall { tool: "emotion".to_owned(), arguments },
+            ToolCall {
+                tool: "emotion".to_owned(),
+                arguments,
+            },
             reply,
         ));
     }
@@ -283,10 +295,8 @@ mod tests {
 
     #[test]
     fn expected_takes_are_reconstructed_from_the_handoff_mapping() {
-        let dir = std::env::temp_dir().join(format!(
-            "funcut-acceptance-map-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("funcut-acceptance-map-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("voiceover-mapping.json"),

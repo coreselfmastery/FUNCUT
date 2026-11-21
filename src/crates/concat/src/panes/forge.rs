@@ -2176,9 +2176,9 @@ fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
     let installed = match forge(&["commands"]) {
         // Supporting shelves do not replace the required Director entry
         // point. A partial install must not pass preflight.
-        Ok((code, words)) => Ok(
-            code == 0 && words.to_ascii_lowercase().contains("funcut-director")
-        ),
+        Ok((code, words)) => {
+            Ok(code == 0 && words.to_ascii_lowercase().contains("funcut-director"))
+        }
         Err(error) => Err(error),
     };
     (connected, installed)

@@ -113,3 +113,38 @@ with the ICD json's `library_path` rewritten to the sysroot copy).
   unchanged); its four fixes this session (wave/speed, mute/muted,
   apply_within flush, monitor quality clear) are validated by CI's
   engine lane on the branch.
+
+## Session 9 (2026-11-21, later) - the timeline-live branch, local gates
+
+Branch `auto-edit/timeline-live-2026-11-21` (PR #190), six commits, one
+unit per commit. Every non-GUI crate touched was tested on this box; the
+GUI crate (`concat`) is CI's as ever (rustc OOMs at 4 GB), validated by
+rustfmt-parse plus the branch's engine lane.
+
+- `cargo test -p concat-project`: 215 passed, 0 failed (incl. the new
+  `a_motion_clip_records_the_engine_it_is_given`).
+- `cargo test -p concat-host --lib`: 205 passed, 0 failed, 4 ignored.
+  The integration `tests/export.rs` lane (15 tests) needs a Vulkan
+  renderer this box does not have ("install Mesa's Vulkan drivers
+  (lavapipe)") - proven environmental by `git stash`: the identical
+  failures occur on the unmodified tree. CI's lavapipe passes them.
+- `cargo test -p concat-mcp --lib`: 152 passed, 0 failed (incl. the
+  three motion-engine-choice regressions and the new
+  `a_release_closes_the_session_an_agent_left_open`, which starts a real
+  `concat_server` on a loopback port, opens a project through a client,
+  releases it, and proves the session closed and the document survived).
+  The e2e `an_agent_edits_previews_and_exports_a_project_headless`
+  failure is the same no-GPU lane, also proven on the stashed clean
+  tree.
+- `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`
+  clean for concat-mcp, concat-project and concat-host; rustfmt-parse
+  clean on the two GUI files (studio.rs, panes/forge.rs).
+- `python3 scripts/locales.py --check`: 0 missing, 0 stale over 26
+  locales (3 new keys added by the repo's own updater).
+- Disk note for whoever inherits this box: `src/target` fills the 9.9 GB
+  disk during test linking; `scripts/prune-dupes.sh` found nothing this
+  time (no byte-identical duplicates), so a new
+  `/home/z/my-project/scripts/prune-stale.sh` removes stale fingerprints
+  (older rlib/rmeta of crates with two hashes) and old test binaries -
+  3.1 GB reclaimed on the first run, ~1.8 GB twice more during the
+  clippy/test cycle.

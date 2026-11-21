@@ -200,6 +200,13 @@ pub enum ReplyGate {
         /// What the gate proves, said as the failure's own sentence.
         what: &'static str,
     },
+    /// A list field that must be empty in every reply carrying it.
+    Empty {
+        /// The reply's field: `collisions` on a collision report.
+        field: &'static str,
+        /// What the gate proves, said as the failure's own sentence.
+        what: &'static str,
+    },
 }
 
 impl ReplyGate {
@@ -209,7 +216,8 @@ impl ReplyGate {
         match self {
             ReplyGate::True { field, .. }
             | ReplyGate::Word { field, .. }
-            | ReplyGate::AtLeast { field, .. } => field,
+            | ReplyGate::AtLeast { field, .. }
+            | ReplyGate::Empty { field, .. } => field,
         }
     }
 
@@ -250,6 +258,16 @@ impl ReplyGate {
                 },
                 seen => Some(Err(format!(
                     "{what}: the reply said {field}={seen}, not a number"
+                ))),
+            },
+            ReplyGate::Empty { field, what } => match reply.get(*field)? {
+                Value::Array(list) if list.is_empty() => Some(Ok(())),
+                Value::Array(list) => Some(Err(format!(
+                    "{what}: the reply named {} of them",
+                    list.len()
+                ))),
+                seen => Some(Err(format!(
+                    "{what}: the reply said {field}={seen}, not a list"
                 ))),
             },
         }

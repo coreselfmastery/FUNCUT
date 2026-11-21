@@ -378,6 +378,40 @@ impl StockCandidate {
     }
 }
 
+/// The bed that fits the cut, from the page the shelf answered with:
+/// among the tracks long enough to cover the runtime, the shortest one
+/// (least waste); when none covers, the longest (most coverage). A track
+/// whose duration the census could not measure is never guessed at -
+/// `None`, and the caller keeps the shelf's own first answer.
+fn best_bed(tracks: &[Value], runtime: f64) -> Option<Value> {
+    let measured: Vec<(f64, &Value)> = tracks
+        .iter()
+        .filter_map(|track| {
+            let seconds = track["seconds"].as_f64()?;
+            (seconds.is_finite() && seconds > 0.0).then_some((seconds, track))
+        })
+        .collect();
+    if measured.is_empty() {
+        return None;
+    }
+    let covers: Vec<&(f64, &Value)> = measured
+        .iter()
+        .filter(|(seconds, _)| *seconds >= runtime)
+        .collect();
+    let chosen: &(f64, &Value) = if covers.is_empty() {
+        // Nothing covers: the longest covers the most.
+        measured
+            .iter()
+            .max_by(|left, right| left.0.total_cmp(&right.0))?
+    } else {
+        // Something covers: the shortest of those wastes the least.
+        covers
+            .iter()
+            .min_by(|left, right| left.0.total_cmp(&right.0))?
+    };
+    Some((*chosen.1).clone())
+}
+
 /// The shelf hits a slot will actually be looked at through: the ones
 /// with an explicit provider licence, long enough to cover the span,
 /// facing the way the project's frame faces, and not already chosen -
@@ -4019,6 +4053,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Box::new({
                 let mut queue: Option<Vec<ToolCall>> = None;
                 let mut graded = false;
+                let mut keyed = false;
                 let mut mixed = false;
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
@@ -4032,6 +4067,78 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return Some(next);
                     }
                     if graded {
+                        // The grade's own arc, on the layer it just landed
+                        // on: the hook carries the look at full strength,
+                        // the body settles under it, and the call to act
+                        // lifts back - the plan's own per-act intensity
+                        // variation, keyed on the package's own parameter.
+                        // Values only ever move DOWN from the base the
+                        // package ships, so no key can leave the range.
+                        if !keyed {
+                            keyed = true;
+                            let layer = log
+                                .last()
+                                .and_then(|reply| reply.get("createdId").and_then(Value::as_str));
+                            let runtime = latest_view(log).and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            });
+                            if let (Some(layer), Some(runtime)) = (layer, runtime)
+                                && runtime > 1.0
+                            {
+                                let look = dominant(&emotion_lines(log, &grade_source))
+                                    .map(|line| look_for_temperature(&line.temperature))
+                                    .unwrap_or("concat.teal-orange");
+                                let (key, base) = grade_param(look);
+                                let body = base * 0.85;
+                                let mut commands = vec![json!({
+                                    "op": "setEffectKey",
+                                    "clipId": layer,
+                                    "entry": 0,
+                                    "key": key,
+                                    "at": 0.0,
+                                    "value": base,
+                                })];
+                                let hook_share = (3.0 / runtime).clamp(0.05, 0.4);
+                                commands.push(json!({
+                                    "op": "setEffectKey",
+                                    "clipId": layer,
+                                    "entry": 0,
+                                    "key": key,
+                                    "at": round3(hook_share),
+                                    "value": round3(body),
+                                }));
+                                if runtime > 12.0 {
+                                    commands.push(json!({
+                                        "op": "setEffectKey",
+                                        "clipId": layer,
+                                        "entry": 0,
+                                        "key": key,
+                                        "at": round3(
+                                            ((runtime - 2.0) / runtime).max(0.0)
+                                        ),
+                                        "value": base,
+                                    }));
+                                }
+                                return Some(call(
+                                    "edit_apply",
+                                    json!({
+                                        "path": grade_project,
+                                        "command": {
+                                            "op": "batch",
+                                            "commands": commands,
+                                        },
+                                    }),
+                                ));
+                            }
+                        }
                         // The mix: the profile measured the take's own
                         // integrated loudness, and the plan already names
                         // the platform the cut ships to. The one number the
@@ -5246,6 +5353,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The bed is ducked once; the duck's own reply is another
                 // timeline view, and the stage must not duck it again.
                 let mut ducked = false;
+                // The duck's own shape: after the base level lands, one
+                // batch of volume keys follows the voice's own envelope -
+                // down under every line, back up in the gaps that can
+                // hold it - and the stage ends when it has.
+                let mut shaped = false;
+                // The bed the duck landed on: its clip id, start and
+                // duration, kept for the shape's key positions.
+                let mut bed_span: Option<(String, f64, f64)> = None;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever. The reading's own forensic
@@ -5292,7 +5407,93 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return None;
                     }
                     if ducked {
-                        return None;
+                        // The duck's own shape, once: the voice's own
+                        // lines, mapped onto the timeline the bed sits
+                        // in, become volume keys - the bed drops under
+                        // the words and lifts back in the gaps that can
+                        // hold it, which is what a mix engineer rides by
+                        // hand and what one static level never was.
+                        if shaped {
+                            return None;
+                        }
+                        shaped = true;
+                        let (bed_id, bed_start, bed_len) = bed_span.clone()?;
+                        let view = latest_view(log)?;
+                        let media = media_paths(view);
+                        // The lines the voice measured, as timeline
+                        // spans, merged where they run together: a duck
+                        // that lifts between two words of one breath is
+                        // a stutter, not a shape.
+                        let mut spans: Vec<(f64, f64)> = Vec::new();
+                        for read in voice_reads(log, &music_source) {
+                            for line in &read.lines {
+                                if let (Some(at), Some(to)) = (
+                                    timeline_at(view, &media, &read.take, line.start),
+                                    timeline_at(view, &media, &read.take, line.end),
+                                ) && to > at
+                                {
+                                    spans.push((at, to));
+                                }
+                            }
+                        }
+                        spans.sort_by(|left, right| {
+                            left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
+                        });
+                        let mut merged: Vec<(f64, f64)> = Vec::new();
+                        for (at, to) in spans {
+                            match merged.last_mut() {
+                                Some((_, end)) if at <= *end + 0.35 => {
+                                    *end = (*end).max(to);
+                                }
+                                _ => merged.push((at, to)),
+                            }
+                        }
+                        const DUCK: f64 = 0.45;
+                        const MOST_KEYS: usize = 28;
+                        let mut commands: Vec<Value> = vec![json!({
+                            "op": "setClipKey", "clipId": bed_id,
+                            "property": "volume", "at": 0.0, "value": 1.0,
+                        })];
+                        let at_fraction =
+                            |moment: f64| ((moment - bed_start) / bed_len.max(0.1)).clamp(0.0, 1.0);
+                        for (at, to) in &merged {
+                            if commands.len() >= MOST_KEYS {
+                                break;
+                            }
+                            let duck_at = at_fraction(*at);
+                            let lift_at = at_fraction(to + 0.2);
+                            if duck_at > 0.0 && duck_at < 1.0 {
+                                commands.push(json!({
+                                    "op": "setClipKey", "clipId": bed_id,
+                                    "property": "volume",
+                                    "at": round3(duck_at), "value": DUCK,
+                                }));
+                            }
+                            // Lift only where the gap can hold it: the
+                            // next line more than half a second away, or
+                            // the bed's own end.
+                            let next = merged
+                                .iter()
+                                .find(|(next_at, _)| *next_at > to + 0.05)
+                                .map(|(next_at, _)| *next_at);
+                            if lift_at < 1.0 && next.is_none_or(|next| next > to + 0.6) {
+                                commands.push(json!({
+                                    "op": "setClipKey", "clipId": bed_id,
+                                    "property": "volume",
+                                    "at": round3(lift_at), "value": 1.0,
+                                }));
+                            }
+                        }
+                        if commands.len() < 2 {
+                            return None;
+                        }
+                        return Some(call(
+                            "edit_apply",
+                            json!({
+                                "path": music_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        ));
                     }
                     let base = *base.get_or_insert(log.len());
                     if log.len() == base {
@@ -5362,11 +5563,35 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         };
                     }
                     if last.get("tracks").is_some() {
-                        // A bgm_search reply: the first track is the bed.
-                        let id = last
-                            .pointer("/tracks/0/id")
-                            .and_then(|id| id.as_str())
-                            .map(str::to_owned);
+                        // A bgm_search reply: the bed is the track that
+                        // actually fits the cut, not the shelf's first
+                        // answer. A track shorter than the runtime leaves
+                        // the ending silent; among the ones that cover,
+                        // the shortest wastes the least; when none
+                        // covers, the longest covers the most. A track
+                        // whose duration the census could not measure is
+                        // not guessed at.
+                        let runtime = latest_view(log)
+                            .and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            })
+                            .unwrap_or(0.0);
+                        let tracks = last["tracks"].as_array().cloned().unwrap_or_default();
+                        let id = best_bed(&tracks, runtime)
+                            .and_then(|track| track["id"].as_str().map(str::to_owned))
+                            .or_else(|| {
+                                last.pointer("/tracks/0/id")
+                                    .and_then(|id| id.as_str())
+                                    .map(str::to_owned)
+                            });
                         return id.map(|id| {
                             call(
                                 "bgm_import",
@@ -5401,6 +5626,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             });
                         return bed.map(|bed| {
                             ducked = true;
+                            bed_span = Some((
+                                bed["id"].as_str().unwrap_or_default().to_owned(),
+                                bed["start"].as_f64().unwrap_or(0.0),
+                                bed["duration"].as_f64().unwrap_or(0.0),
+                            ));
                             // The bed sits at the level the piece's own
                             // act profile sets: a payoff may carry a
                             // louder bed than a quiet setup, and the

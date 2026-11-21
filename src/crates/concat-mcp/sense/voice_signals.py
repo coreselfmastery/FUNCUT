@@ -546,6 +546,13 @@ def _resolve_requested(out, wanted):
         "Arc": "arc", "Prosody": "prosody", "Forensics": "forensic",
         "Speakers": "speaker",
     }
+    # A few signals carry their own confidence row rather than their
+    # family's: the formants are a separate, lower-confidence LPC reading
+    # inside the forensic family, and the catalogue's button must quote
+    # the row the formants themselves earned.
+    signal_confidence = {
+        "forensic.formantsHz": "formants",
+    }
     family_source = {
         "Loudness": "loudness", "Pauses": "pauses", "Speech rate": "speechRate",
         "Words": "wordConfidence", "Language": "language", "Sentence": "sentenceType",
@@ -576,7 +583,9 @@ def _resolve_requested(out, wanted):
             for step in path.split("."):
                 node = (node or {}).get(step) if isinstance(node, dict) else None
             value = node
-        confidence = confidences.get(family_confidence.get(entry["family"], ""))
+        confidence = confidences.get(
+            signal_confidence.get(entry["name"])
+            or family_confidence.get(entry["family"], ""))
         rows.append({
             "name": entry["name"],
             "family": entry["family"],
@@ -867,6 +876,7 @@ def _speech_rate(line, words):
         pace = "slow"
     return {
         "wordsPerMinute": round(wpm, 1),
+        "wordsPerSec": round(token_count / dur, 2),
         "syllablesPerSec": round(sps, 2),
         "pace": pace,
     }
@@ -883,7 +893,10 @@ def _word_confidences(words, silence_spans, series):
     if not words:
         return []
     loud = [m for _, m, _ in series if m is not None]
-    floor = (min(loud) + 6.0) if loud else None
+    # The quiet arm's floor sits 18 LU under the take's own mean, not 6 LU
+    # over its minimum: any take with a real silence in it put the old
+    # floor near digital silence, and the arm never fired at all.
+    floor = (sum(loud) / len(loud) - 18.0) if loud else None
     out = []
     for word in words:
         conf = 0.9
@@ -1323,6 +1336,13 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
     entry("motifs", 0.7, "n-gram overlap; a motif shorter than three words "
                          "can be coincidence")
     entry("language", 0.85, "Unicode script census")
+    # The arc is a pass-through: its confidence is the emotion read's
+    # own standing, not this module's - and an arc nobody passed is a
+    # 0 the requested block must not read as a high one.
+    if sources.get("arc"):
+        entry("arc", 0.8, "emotion.py's arc, passed through with the spec")
+    else:
+        entry("arc", 0.0, "no emotion read was given, so no arc")
 
     # The Rust ears.
     if rust_up:
@@ -1333,8 +1353,14 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
                                "(peak, clipping, hum, sibilance); reverb and "
                                "music-likelihood are heuristics that say so "
                                "in the sources note")
-        entry("speaker", 0.7, "polyvoice voice-prints (Rust); two speakers "
-                              "with similar voices can merge")
+        # The speaker confidence rides the same gate as its source: a stub
+        # that answered no method is an absent ear, not a 0.7 one.
+        if (rust.get("speaker") or {}).get("method"):
+            entry("speaker", 0.7, "polyvoice voice-prints (Rust); two speakers "
+                                  "with similar voices can merge")
+        else:
+            entry("speaker", 0.0, "the speaker ear answered no method "
+                                 "(no WAV in the spec)")
         entry("entities", 0.8, "anno NER (Rust) with a regex complement")
         entry("formants", (0.55 if band and band < 5000 else 0.75),
               "vocal-tract formants"
@@ -1469,7 +1495,8 @@ def extract(spec):
     if isinstance(wanted, dict):
         return {"ok": False, "error": wanted["error"]}
     need_pauses = wanted is None or any(
-        name in ("pauses.classes", "pauses.speechRatio") for name in wanted)
+        name in ("pauses.classes", "pauses.speechRatio", "words.confidence")
+        for name in wanted)
     # The measured word gate reads the momentary series, so a
     # words.confidence ask owes the loudness pass too - WhisperX's own
     # scores replace the gate only when the alignment actually ran.
@@ -1552,7 +1579,13 @@ def extract(spec):
         rust_forensic = rust.get("forensic", {}).get("lines") or []
         sources["prosody"] = (rust.get("sources") or {}).get("prosody")
         sources["forensic"] = (rust.get("sources") or {}).get("forensic")
-        sources["speaker"] = (rust.get("speaker") or {}).get("method") or "polyvoice"
+        # The speaker ear's own answer gates the source claim: a stub that
+        # ran without a WAV answers no method, and an unanswered ear must
+        # not be named as one - the degradation check below owes its truth
+        # to this gate.
+        speaker_method = (rust.get("speaker") or {}).get("method") or ""
+        if speaker_method:
+            sources["speaker"] = speaker_method
         sources["entities"] = (rust.get("sources") or {}).get("entities")
 
     # The per-line assembly.
@@ -1605,6 +1638,14 @@ def extract(spec):
         for entity in entities:
             entity["source"] = "anno"
     entities = _merge_entities(entities, _entity_complement(lines))
+    # The complement ran on the text whenever there were lines, so the
+    # entities reading is sourced even when the Rust ear never was: a
+    # filtered entities ask answers from the complement and is not a
+    # degradation.
+    if lines and not sources.get("entities"):
+        sources["entities"] = "regex complement (python)"
+        if rust:
+            sources["entities"] = "anno NER (Rust) with a regex complement"
 
     # The arc, passed through from the emotion read when the caller gave it.
     emotion = spec.get("emotion")

@@ -3233,3 +3233,53 @@ where the code always computed 85%; the text now says what the
 instrument measures. The captions' weight-800 arm learned the
 catalogue's two-factor pairing: a line BOTH lifted and performed
 carries one more notch of size (#4 + #18).
+
+## 76. The readings the commit parsed, and the decisions that now spend them
+
+The previous pass parsed more of the fifty-signal profile than the
+edit spent. The three guards in `director_program.rs` were already
+there; this pass closes the readings the second guard could still
+see inside a family, and makes the remaining omissions explicit
+rather than silent.
+
+**The card shows the number, not the words.** `entity_card_words`
+now formats the parsed `value` and `unit`: `$10,450`, `45%`,
+`2026` (a year is not grouped as `2,026`), `10,450 USD`, and the
+entity's own text when no value was parsed. The stat and timeline
+cards were still quoting the recogniser's words while the profile
+had already done the arithmetic.
+
+**The loudness fallback.** `LineRead` parses `/loudness/meanLufsM`.
+`VoiceRead::line_lift` uses the producer's `relativeLu` first and
+completes a foreign reply with `meanLufsM - integratedLufs`, so a
+line's lift survives when the producer did not subtract it. The
+caption stage spends the same helper for its weight and size.
+
+**The seam reads the silence and the sentence.** The coverage
+transition now spends `pause.class`: a `scene_turn` gets a
+whip-pan, a `dramatic` or `beat` keeps the dissolve, a `breath`
+keeps the soft move, and `dead_air` remains the only class the
+tighten cuts. It also spends `sentenceType`: an exclamation lands
+on the crash-zoom, a fragment on the cross-pop. Captions carry the
+same shape - exclamations one notch larger, fragments one smaller.
+
+**The picture cuts where the voice breathes.** The coverage tiling
+now snaps a bound to a phrase boundary after a speaker change and
+before a pause, so a shot changes on the narration's own
+breath-group. A tile over a line the confidence gate could not
+hear, or one with almost no voice under it, shops a neutral
+establishing shot instead of a misheard phrase. A repeated motif
+shops its own phrase, so the visual callback returns with the
+words that established it.
+
+**Motion opens on the stress and holds on the performance.** A
+card's `at` is the strongest `emphasis` word inside its line, not a
+fixed offset. `pitchRangeSemitones` and the line's register lift
+over the take lengthen the hold, and `wordsPerMinute` now supplies
+a pace class when a foreign reply omitted `speechRate.pace`.
+
+**Still deliberately unspent.** `formants` stays diagnostic.
+`fillers` and `breath` edge-trims are not cut: the first has no
+word end to cut against, and the second would shorten a breath the
+profile says to preserve. Those are named reasons, not silent
+drops.

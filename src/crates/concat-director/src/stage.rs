@@ -569,10 +569,8 @@ mod tests {
     fn the_register_holds_all_possible_stages_and_the_first_and_last_say_so() {
         assert_eq!(Stage::ALL.len(), 18);
         assert_eq!(Stage::ALL.first(), Some(&Stage::HandoffVoiceover));
-        // The watch is last: it scores the file the export wrote, after
-        // the revise has already corrected the timeline the export read.
-        // The revise therefore comes BEFORE the export - a revision after
-        // the render would leave the shipped file showing the old cut.
+        // The watch is last: it scores the final timeline preview (or an
+        // explicitly requested render) after the revise has corrected it.
         assert_eq!(Stage::ALL.last(), Some(&Stage::Watch));
         assert_eq!(Stage::ALL[12], Stage::Preview);
         assert_eq!(Stage::ALL[13], Stage::Revise);

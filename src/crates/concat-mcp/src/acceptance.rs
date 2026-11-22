@@ -268,7 +268,9 @@ fn timeline_integrity(view: &Value) -> Result<String, String> {
         let kind = clip.get("kind").and_then(Value::as_str).unwrap_or_default();
         let media_id = clip.get("media").and_then(Value::as_str);
         if matches!(kind, "video" | "audio" | "image") && media_id.is_none() {
-            return Err(format!("file-backed {kind} clip `{id}` has no media reference"));
+            return Err(format!(
+                "file-backed {kind} clip `{id}` has no media reference"
+            ));
         }
         if let Some(media_id) = media_id {
             let source = media_by_id
@@ -276,7 +278,9 @@ fn timeline_integrity(view: &Value) -> Result<String, String> {
                 .copied()
                 .ok_or_else(|| format!("clip `{id}` references missing media `{media_id}`"))?;
             if source.trim().is_empty() {
-                return Err(format!("clip `{id}` media `{media_id}` has an empty source path"));
+                return Err(format!(
+                    "clip `{id}` media `{media_id}` has an empty source path"
+                ));
             }
             if checked_sources.insert(source) && !std::path::Path::new(source).is_file() {
                 return Err(format!(
@@ -611,10 +615,8 @@ mod tests {
 
     #[test]
     fn timeline_integrity_accepts_valid_file_backed_and_title_clips() {
-        let dir = std::env::temp_dir().join(format!(
-            "funcut-acceptance-media-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("funcut-acceptance-media-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("source.mp4");
         std::fs::write(&source, b"fixture").unwrap();
@@ -642,8 +644,11 @@ mod tests {
             ]},
             "media":[]
         });
-        assert!(timeline_integrity(&missing_track)
-            .unwrap_err().contains("missing track"));
+        assert!(
+            timeline_integrity(&missing_track)
+                .unwrap_err()
+                .contains("missing track")
+        );
 
         let missing_media = json!({
             "timeline":{"tracks":[{"id":"v1"}],"clips":[
@@ -651,8 +656,11 @@ mod tests {
             ]},
             "media":[]
         });
-        assert!(timeline_integrity(&missing_media)
-            .unwrap_err().contains("missing media"));
+        assert!(
+            timeline_integrity(&missing_media)
+                .unwrap_err()
+                .contains("missing media")
+        );
 
         let missing_file = json!({
             "timeline":{"tracks":[{"id":"v1"}],"clips":[
@@ -660,8 +668,11 @@ mod tests {
             ]},
             "media":[{"id":"m1","path":"/definitely/missing/funcut-source.mp4"}]
         });
-        assert!(timeline_integrity(&missing_file)
-            .unwrap_err().contains("source file is missing"));
+        assert!(
+            timeline_integrity(&missing_file)
+                .unwrap_err()
+                .contains("source file is missing")
+        );
     }
 
     #[test]
@@ -672,8 +683,11 @@ mod tests {
             ]},
             "media":[]
         });
-        assert!(timeline_integrity(&invalid_timing)
-            .unwrap_err().contains("invalid start"));
+        assert!(
+            timeline_integrity(&invalid_timing)
+                .unwrap_err()
+                .contains("invalid start")
+        );
 
         let duplicate = json!({
             "timeline":{"tracks":[{"id":"v1"}],"clips":[
@@ -682,8 +696,11 @@ mod tests {
             ]},
             "media":[]
         });
-        assert!(timeline_integrity(&duplicate)
-            .unwrap_err().contains("duplicates clip id"));
+        assert!(
+            timeline_integrity(&duplicate)
+                .unwrap_err()
+                .contains("duplicates clip id")
+        );
     }
 
     #[test]

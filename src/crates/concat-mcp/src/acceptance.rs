@@ -930,7 +930,7 @@ mod tests {
             "timeline": {
                 "tracks": [{"id":"video-1"},{"id":"titles-1"}],
                 "clips": [
-                    {"id":"c1","kind":"video","track":"video-1","start":0.0,"duration":4.0,"media":"m1"},
+                    {"id":"c1","kind":"video","track":"video-1","start":0.0,"duration":4.0,"sourceStart":0.0,"media":"m1"},
                     {"id":"c2","kind":"text","track":"titles-1","start":1.0,"duration":2.0}
                 ]
             },

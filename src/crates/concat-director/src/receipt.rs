@@ -572,7 +572,15 @@ impl AcceptanceReceipt {
             let mut tools: Vec<String> = Vec::new();
             for record in &stages {
                 for tool in &record.calls {
-                    if Capability::of_tool(tool) == Some(capability) && !tools.contains(tool) {
+                    let named_capability = Capability::of_tool(tool) == Some(capability);
+                    // The built-in caption composer deliberately emits a
+                    // custom edit_apply batch for per-group styles and
+                    // word accents instead of captions_add. Its stage is
+                    // the reliable capability identity for that call.
+                    let stage_capability = record.stage == Stage::Captions
+                        && tool == "edit_apply"
+                        && capability == Capability::Captions;
+                    if (named_capability || stage_capability) && !tools.contains(tool) {
                         tools.push(tool.clone());
                     }
                 }
@@ -1830,6 +1838,22 @@ mod tests {
                 Capability::Delivery,
             ]
         );
+    }
+
+    #[test]
+    fn caption_stage_edit_batches_consume_caption_capability() {
+        let stages = vec![StageRecord::completed(
+            Stage::Captions,
+            vec!["edit_apply".to_owned()],
+        )];
+        let receipt = AcceptanceReceipt::new("/p", "timeline", stages, Vec::new(), Vec::new());
+        let captions = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Captions)
+            .expect("caption capability is listed");
+        assert!(captions.consumed);
+        assert_eq!(captions.tools, vec!["edit_apply".to_owned()]);
     }
 
     #[test]

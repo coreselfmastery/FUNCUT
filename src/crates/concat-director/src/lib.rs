@@ -58,7 +58,7 @@ pub mod state;
 pub use error::{AutoEditError, ToolCall, ToolError, is_retryable};
 pub use receipt::{
     AcceptanceReceipt, Capability, CapabilityRecord, GateRecord, GateStatus, StageOutcome,
-    StageRecord, Verdict, derive_gates,
+    StageRecord, Verdict, derive_gates, timeline_integrity,
 };
 pub use runner::{EDIT_APPLY, EDIT_UNDO, LaneFactory, Runner, ToolCaller};
 pub use stage::{

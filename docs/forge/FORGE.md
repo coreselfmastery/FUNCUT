@@ -161,7 +161,8 @@ AUTO EDIT
        plans, validates the plan (plan_validate: valid + creativeReady)
        cuts, gathers B-roll, builds motion, captions, grades, scores music
        watch_render -> craft_critique -> revises -> watch_render again
-       exports, then verifies the exported file
+       saves the editable project, reads the timeline back and checks every lane
+       watch_render -> craft_critique on the final project preview
   -> the finished edit opens on the timeline (the server lets the
        project go and the window claims it, undoable from the first edit)
 ```

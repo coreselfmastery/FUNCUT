@@ -1371,6 +1371,19 @@ mod tests {
                 call("motion_probe"),
                 json!({ "file": "/p/out.mp4", "probe": {} }),
             ),
+            (
+                call("timeline_read"),
+                json!({
+                    "timeline": {
+                        "tracks": [{"id":"titles"}],
+                        "clips": [{
+                            "id":"title-1","kind":"text","track":"titles",
+                            "start":0.0,"duration":2.0
+                        }]
+                    },
+                    "media": []
+                }),
+            ),
         ];
         let gates = derive_gates(&observed);
         let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
@@ -1386,6 +1399,65 @@ mod tests {
             .expect("the visual gate is recorded");
         assert_eq!(visual.status, GateStatus::Skipped);
         assert!(!visual.required);
+    }
+
+    #[test]
+    fn a_timeline_ready_run_can_be_accepted_without_an_export() {
+        let call = |tool: &str, arguments: Value| ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let observed = vec![
+            (
+                call("plan_validate", json!({ "plan": { "signalLog": [] } })),
+                json!({ "valid": true, "creativeReady": true }),
+            ),
+            (
+                call("timeline_read", json!({ "path": "/p" })),
+                json!({
+                    "timeline": {
+                        "tracks": [{"id":"titles"}],
+                        "clips": [{
+                            "id":"title-1","kind":"text","track":"titles",
+                            "start":0.0,"duration":2.0
+                        }]
+                    },
+                    "media": []
+                }),
+            ),
+            (
+                call("collision_check", json!({ "path": "/p" })),
+                json!({ "clean": true, "count": 0 }),
+            ),
+            (
+                call("watch_render", json!({ "project": "/p", "audio": true })),
+                json!({ "pngPath": "/p/preview.png" }),
+            ),
+            (
+                call("craft_critique", json!({ "project": "/p" })),
+                json!({ "overall": 8.1 }),
+            ),
+        ];
+        let gates = derive_gates(&observed);
+        let receipt = AcceptanceReceipt::new("/p", "timeline", Vec::new(), gates, Vec::new());
+        assert_eq!(receipt.verdict, Verdict::Accepted);
+        for name in ["story", "timeline-integrity", "collisions", "visual"] {
+            assert_eq!(
+                receipt.gates.iter().find(|gate| gate.gate == name).unwrap().status,
+                GateStatus::Pass,
+                "{name} must pass for timeline delivery"
+            );
+        }
+        for name in ["words", "audio", "export-integrity"] {
+            assert_eq!(
+                receipt.gates.iter().find(|gate| gate.gate == name).unwrap().status,
+                GateStatus::Skipped,
+                "{name} is honestly skipped without an export"
+            );
+            assert!(
+                !receipt.gates.iter().find(|gate| gate.gate == name).unwrap().required
+            );
+        }
     }
 
     #[test]
@@ -1483,7 +1555,7 @@ mod tests {
         let gates = derive_gates(&[]);
         // Nothing measured: every required dimension is skipped, never a
         // pass the run did not earn.
-        for name in ["story", "words", "audio", "export-integrity"] {
+        for name in ["story", "timeline-integrity"] {
             let gate = gates
                 .iter()
                 .find(|gate| gate.gate == name)
@@ -1491,15 +1563,22 @@ mod tests {
             assert_eq!(gate.status, GateStatus::Skipped, "{name} was not measured");
             assert!(gate.required);
         }
-        // The craft score is a judgement, not proof of the file: it is
-        // recorded when the critic saw the frames and never blocks a run
-        // whose required gates all answered.
+        for name in ["words", "audio", "export-integrity"] {
+            let gate = gates
+                .iter()
+                .find(|gate| gate.gate == name)
+                .expect("the optional export gate is listed");
+            assert_eq!(gate.status, GateStatus::Skipped, "{name} was not measured");
+            assert!(!gate.required);
+        }
+        // The final visual review is required when the timeline itself is
+        // the deliverable: no MP4 is needed, but the open edit must be seen.
         let visual = gates
             .iter()
             .find(|gate| gate.gate == "visual")
             .expect("the visual gate is listed");
         assert_eq!(visual.status, GateStatus::Skipped);
-        assert!(!visual.required);
+        assert!(visual.required);
         let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
         assert_eq!(receipt.verdict, Verdict::Incomplete);
     }

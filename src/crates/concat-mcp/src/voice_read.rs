@@ -155,6 +155,15 @@ pub struct Entity {
     /// per-entity score, the complement's flat 0.75. `None` when the
     /// producer wrote none - a foreign reply's card spends as it did.
     pub confidence: Option<f64>,
+    /// The parsed magnitude, when the entity is a number the edit can
+    /// chart: `$10,450` is 10450, `45%` is 45. The Python ear's own
+    /// parsing, passed through - `None` when the words name no number,
+    /// which is the honest answer for a name or a place.
+    pub value: Option<f64>,
+    /// What the value is counted in: USD, percent, INR, a year. `None`
+    /// beside a `Some` value means the unit was not parsed, not that the
+    /// value is unitless.
+    pub unit: Option<String>,
 }
 
 /// A phrase the narration repeats: the visual or sound that should return
@@ -991,6 +1000,11 @@ fn entities_of(reply: &Value, take: &str) -> Vec<Entity> {
                         at: entity["start"].as_f64(),
                         approximate,
                         confidence: entity["confidence"].as_f64(),
+                        value: entity["value"].as_f64(),
+                        unit: entity["unit"]
+                            .as_str()
+                            .filter(|unit| !unit.trim().is_empty())
+                            .map(str::to_owned),
                     })
                 })
                 .collect()

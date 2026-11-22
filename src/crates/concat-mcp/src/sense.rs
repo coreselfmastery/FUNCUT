@@ -1884,7 +1884,7 @@ struct SenseFamilyTool {
     base: u64,
 }
 
-/// The thirty-three consumption-layer tools, five families: discourse
+/// The thirty-five consumption-layer tools, five families: discourse
 /// (the script as language), voiceq (the take's health), prosody (the
 /// delivery), audiorepair (the clean and the music) and captions (the
 /// words made to agree with the take).
@@ -2043,6 +2043,24 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
         base: 240,
         fields: &["audio", "out", "overwrite", "force"],
     },
+    // The signal-selected pair: diagnose_take measures what the repair
+    // decision needs (hum, DC offset, flatness, rolloff, sibilance,
+    // clipping) and repair_by_diagnosis applies only the chain those
+    // numbers ordered. The auto edit used to run the generic clean
+    // unconditionally, so the forensic signals that name the right
+    // repair were measured by nobody and spent by nobody.
+    SenseFamilyTool {
+        tool: "diagnose_take",
+        cmd: "audiorepair",
+        base: 240,
+        fields: &["audio"],
+    },
+    SenseFamilyTool {
+        tool: "repair_by_diagnosis",
+        cmd: "audiorepair",
+        base: 240,
+        fields: &["audio", "out", "overwrite", "force"],
+    },
     SenseFamilyTool {
         tool: "normalize_loudness",
         cmd: "audiorepair",
@@ -2172,6 +2190,8 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
         &[
             "enhance_speech",
             "remove_hiss_hum_rumble",
+            "diagnose_take",
+            "repair_by_diagnosis",
             "normalize_loudness",
             "detect_music_segments",
             "identify_music",
@@ -2383,7 +2403,7 @@ fn family_key(tool: &str) -> &str {
     }
 }
 
-/// The door the thirty-three consumption-layer readings come through
+/// The door the thirty-five consumption-layer readings come through
 /// from their five family tools: `action` names the member, the member's
 /// row names the sidecar command and the fields that travel, and the
 /// budget scales with the lines the way `voice_signals`'s does - a
@@ -2431,7 +2451,7 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
     })
 }
 
-/// The door the thirty-three family members come through when named
+/// The door the thirty-five family members come through when named
 /// directly (the internal dispatch `sense_family_action` lands on): the
 /// name selects the row, the row names the sidecar command and the
 /// fields that travel, and the budget scales with the lines the way
@@ -2956,7 +2976,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 33, "thirty-three readings behind five doors");
+        assert_eq!(members, 35, "thirty-five readings behind five doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(

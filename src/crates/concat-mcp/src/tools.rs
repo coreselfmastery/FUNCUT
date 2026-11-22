@@ -138,7 +138,7 @@ pub enum Action {
     Sense(&'static str),
     /// A family door to the consumption-layer readings: `action` in the
     /// arguments names one of the family's [`Sense`] members, and this
-    /// dispatch forwards to it - thirty-three readings, five tools, so
+    /// dispatch forwards to it - thirty-five readings, five tools, so
     /// an agent's tool list stays small without losing a single one.
     SenseFamily(&'static str),
     /// Read or write the project's persisted creative brief.
@@ -1091,7 +1091,7 @@ pub fn catalogue() -> Vec<Tool> {
             idempotent: true,
             action: Action::VoiceSignals,
         },
-        // The five family doors to the thirty-three consumption-layer
+        // The five family doors to the thirty-five consumption-layer
         // readings: what the director DOES with the voice_signals profile,
         // grouped so an agent's tool list stays small without losing a
         // single reading - the `action` names the reading, the family
@@ -1127,7 +1127,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "sense_audio_repair",
             title: "The clean and the music",
-            description: "The clean and the music, behind one `action`: enhance speech, remove hiss/hum/rumble, normalize loudness, detect/identify/structure music.",
+            description: "The clean and the music, behind one `action`: diagnose a take, repair by that diagnosis, enhance speech, remove hiss/hum/rumble, normalize loudness, detect/identify/structure music.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1180,7 +1180,7 @@ impl Tool {
             // The sense family, whose own budgets are 240-480 s: a
             // critique, a cut suggestion, a loudness pass, an emotion
             // read, a voice-signal read, a contact sheet with its ranking,
-            // and the five family doors behind which the thirty-three
+            // and the five family doors behind which the thirty-five
             // consumption-layer readings live (their member budgets are
             // the sense.rs table's own).
             "craft_critique",
@@ -1855,7 +1855,7 @@ fn sense_schema(name: &str) -> Option<Value> {
             "audio": string("The voiceover file (any format ffmpeg reads): the take the transcript timed."),
             "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the per-line signals need." },
             "lines": { "type": "array", "description": "Lines as [{text, start, end, words}] when there is no transcript.", "items": { "type": ["object", "string"] } },
-            "script": string("Raw narration text when there is no transcript or audio: only the text signals (sentence types, motifs, fillers, entities, language) answer."),
+            "script": string("The narration's authoritative text. With a transcript it is aligned against the recognised words - misheard words corrected to the script's spelling, measured timings kept, a scriptAlignment verdict in the reply - so captions and queries spend the author's wording. Alone (no transcript or audio) it answers the text signals only: sentence types, motifs, fillers, entities, language."),
             "signals": { "type": "array", "description": "The named readings to extract, from the catalogue's own names (action 'catalog' lists them): only the passes they need run - a filler read costs no ffmpeg pass and no Rust ear - and the reply carries a `requested` block with each reading, its source, its confidence and its why. Absent reads the whole profile.", "items": { "type": "string" } },
             "language": string("The language hint the transcribe call used (ISO code); the script detection cross-checks it."),
             "emotion": { "type": "object", "description": "An emotion extract's output; its arc (shape, variety, score, warnings) rides along and feeds the cut-style hint." },

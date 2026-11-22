@@ -21,10 +21,36 @@ script keeps.
 voice_signals {
   "audio": "/project/audio/voiceover.wav",
   "transcript": <the transcribe job's output>,
+  "script": <the author's own text, when there is one>,
   "emotion": <an emotion extract's output, for the arc>,
   "language": "en"
 }
 ```
+
+## The script and the voice
+
+The script and the voiceover are **not the same input, and neither
+alone is the whole truth**. The voice measures what no text can — the
+timings, the levels, the pauses, the delivery, the speakers, the noise.
+The script owns what no recogniser can — the author's exact wording.
+When the spec carries both, the reading aligns them (difflib, word
+level, monotonically): a transcript line is paired with its script
+sentence, every word the two share is **confirmed** (its confidence is
+floored at 0.85), a misheard word is **corrected** to the script's
+spelling while keeping its measured timing, and words said but not
+scripted (or scripted but not said) are counted in a `scriptAlignment`
+block — matched lines, corrections, insertions, omissions, coverage, a
+verdict (`aligned` / `partial` / `unaligned`). The corrected lines flow
+through every ear downstream, so the captions, the entity cards, the
+B-roll queries and the emotion read all spend the author's words.
+
+With only a script (no audio, no transcript) the text signals answer as
+they always did — sentence types, motifs, fillers, entities, language:
+the NER ear reads a script before any TTS has run. With only a
+transcript, the words stand as the recogniser heard them. The AUTO EDIT
+button carries the Forge page's script box along when it has text, and
+the Director agent's prompt tells it to pass the script to every
+`voice_signals` call.
 
 ## The signal inventory
 
@@ -38,11 +64,11 @@ voice_signals {
 | `prosody.pitch*` | Pitch mean/min/max/range (semitones), slope (semitones/s), terminal rise | spectral-prosody autocorrelation | rising delivery = building; falling = settling |
 | `prosody.emphasisWords` | The words the energy peaks land on, with strength | spectral-prosody energy envelope → word spans | SFX peaks and caption highlights land ON them |
 | `fillers` | um/uh (safe-remove) and discourse markers (context-call), timed | regex (English core) | remove for punch, keep for authenticity |
-| `words[].confidence` | Measured gate: timing sanity, silence overlap, quiet audio — or WhisperX scores | Python heuristic / whisperx | below 0.5 is re-checked or dropped before captions |
+| `words[].confidence` | Measured gate: timing sanity, silence overlap, quiet audio — or WhisperX scores; script-confirmed words floored at 0.85, corrected words flagged `corrected` | Python heuristic / whisperx / script alignment | below 0.5 is re-checked or dropped before captions |
 | `words[].syllables` | Vowel-group estimate per word | Python | karaoke caption pacing |
 | `forensic.formantsHz`, `f0Hz`, `jitter`, `shimmer`, `hnrDb` | The line's voice fingerprint | oximedia LPC + voice analyzer | checks TTS regeneration consistency |
 | `speaker` | Which speaker holds the line | polyvoice diarization | a change is a scene change |
-| `entities` | MONEY/PER/ORG/DATE/PII spans mapped to word times, each with its artefact: stat / lower-third / timeline / redact | anno offline NER + regex complement | `$10,450` becomes a stat card, a name a lower-third |
+| `entities` | MONEY/PER/ORG/DATE/PII spans mapped to word times, each with its artefact (stat / lower-third / timeline / redact), its char `span`, and — for the numbers — a parsed `value` and `unit` (`$10,450` is 10450 USD, `45%` is 45 percent, `10 lakh` is 1000000) | anno offline NER + regex complement, enriched in Python | `$10,450` becomes a stat card, a name a lower-third; the value and unit are what a chart can plot |
 
 **Around the lines:**
 
@@ -57,7 +83,9 @@ voice_signals {
 | `language` | Detected script + caller's hint, `fontHint`, `musicGenreHint` | Unicode script scan (Python) |
 | `directorHints` | cutStyle (fast/mixed/hold/building) + cutRule, captionGate, bgm decision + reason, speakerChanges, questions, emphasisWords, protectedPauses, font and genre | the wiring itself |
 
-Roughly **36 distinct signals**, every one with its source named in
+Roughly **fifty named signals** (the catalogue inside the script counts
+them, and `action: "catalog"` answers the list), every one with its
+source named in
 `sources` — and every one optional: an ear that cannot run says so in
 `notes` instead of guessing.
 
@@ -110,7 +138,23 @@ x-vector model; its `method` field says exactly that.
 - Syllable counts are vowel-group estimates (labelled as such), exact
   for English, flat-estimated for unvowelled scripts.
 - Entity time mapping is best-effort: an entity no word claims is
-  flagged `approximate: true` and timed to the line's own span.
+  flagged `approximate: true` and timed to the line's own span. The
+  parsed `value`/`unit` come from the Python enrichment for every
+  producer (the NER ear, the regex complement): a number the parser
+  cannot read stays absent rather than guessed, and a written-out date
+  (`March 4, 2026`) declines a value — which number is THE value is a
+  judgement the reader does not make.
+- The script alignment is a **correction of wording, never of timing**:
+  a corrected word keeps the start and end the transcript measured, and
+  a script sentence no line paired with is not an omission — the
+  `pairings` list says which sentences paired, and the gap stays
+  visible instead of inflated into a claim.
+- `forensic.spectralRolloffHz` is the frequency under which **85%** of
+  the take's energy sits (the same percentile the Rust ear and the
+  repair diagnosis measure — the 95% the old catalogue text claimed was
+  never what the code computed).
 - `voice_signals {action: "selftest"}` synthesises a two-voice take with
-  every pause class built in and asserts the whole chain — run it after
-  any change to the ears.
+  every pause class built in and asserts the whole chain — the script
+  alignment (exact-match confirmation and a `maket`→`market`
+  correction), the entity values and units, and the pause classes — run
+  it after any change to the ears.

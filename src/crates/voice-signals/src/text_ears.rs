@@ -44,6 +44,13 @@ pub struct EntityOut {
     pub word_end: Option<usize>,
     /// Whether the time mapping is approximate (entity to line span).
     pub approximate: bool,
+    /// The entity's character span `[start, end)` in the line's RAW
+    /// text - the NER reads the trimmed text, so the leading-whitespace
+    /// trim is added back, the same coordinates `map_to_words` walks.
+    /// A UI can lift the entity out of the line without re-finding it,
+    /// and the Python side's span enrichment agrees with this one
+    /// instead of second-guessing it.
+    pub span: [usize; 2],
     /// The edit artefact this entity suggests.
     pub card: &'static str,
 }
@@ -89,6 +96,11 @@ pub fn entities(lines: &[LineSpec]) -> Result<Vec<EntityOut>, Error> {
                 word_start,
                 word_end,
                 approximate,
+                // The entity's own character span, shifted by the same
+                // trim the word mapping uses - without the shift an
+                // indented line's entities would point one or more
+                // characters left of where they sit in the raw text.
+                span: [entity.start() + trim, entity.end() + trim],
                 card: card_for(&entity.entity_type.to_string()),
             });
         }
@@ -268,6 +280,10 @@ mod tests {
         assert_eq!(money.text, "$10,450");
         assert!(!money.approximate, "word mapping held");
         assert_eq!(money.word_start, Some(7));
+        // The span is in the raw line text, counted by hand:
+        // "Lynn Conway worked at IBM and earned " is 37 characters, and
+        // "$10,450" runs 7 more, so the entity covers [37, 44).
+        assert_eq!(money.span, [37, 44]);
         assert_eq!(money.card, "stat");
         let person = found
             .iter()

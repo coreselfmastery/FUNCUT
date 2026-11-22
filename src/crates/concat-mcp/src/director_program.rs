@@ -8634,7 +8634,7 @@ mod tests {
         // that never arrived, and every word-derived stage downstream
         // silently shipped defaults.
         assert_eq!(
-            program.steps[2].gates,
+            program.steps[2].gates(),
             vec![ReplyGate::Word {
                 field: "state",
                 equals: "done",
@@ -8642,7 +8642,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            program.steps[16].gates,
+            program.steps[16].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -8652,7 +8652,7 @@ mod tests {
         // The plan's own gate: its structure is refused before a single
         // edit lands, not warned about after the fact.
         assert_eq!(
-            program.steps[5].gates,
+            program.steps[5].gates(),
             vec![ReplyGate::True {
                 field: "valid",
                 what: "the plan the run wrote did not validate",
@@ -8661,7 +8661,7 @@ mod tests {
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
             if at != 2 && at != 5 && at != 15 && at != 16 {
-                assert!(step.gates.is_empty(), "step {at} gates its replies");
+                assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
         // The fan compile-time proof the type system wanted: the repair
@@ -10389,7 +10389,7 @@ mod tests {
             .position(|step| step.stage() == Stage::Revise)
             .expect("the revise stage is in the program");
         assert!(
-            program.steps[at].gates.is_empty(),
+            program.steps[at].gates().is_empty(),
             "the revise gates nothing"
         );
         let ProgramStep::Derived(revise) = &mut program.steps[at] else {

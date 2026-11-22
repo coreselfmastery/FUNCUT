@@ -42,6 +42,7 @@ concurrency:
   # both build it and race the publish step.
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+  queue: max
 
 # The tag's own build needs no more of the token than the read that
 # checks it out; the publish job widens this to `contents: write` at its

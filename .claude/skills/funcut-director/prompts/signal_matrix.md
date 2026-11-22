@@ -6,6 +6,9 @@ informs; the plan's `signalLog` must name the reading (or its family) and
 the confidence and basis for every decision it drove. A reading that was
 not measured is named as unmeasured — never cited with a confidence of 0.
 
+The recipes that turn a reading into a cut seam, a density and a cut type are in
+`prompts/signal_recipes.md`.
+
 | # | Reading | It informs |
 |---|---|---|
 | 1 | `pause.start` | where a cut, hold or breath begins |

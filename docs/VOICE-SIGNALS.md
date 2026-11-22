@@ -9,7 +9,7 @@ that knows *what was said* and *how it felt* into one that also knows
 named, whether there is noise, who is speaking, and where every beat
 lands*.
 
-The MCP tool is `voice_signals`; the director skill calls it in Phase 1c
+The MCP tool is `voice_signals`; the director skill calls it in Phase 4
 and obeys its "A — the voice is a score" law. The Python half lives in
 `src/crates/concat-mcp/sense/voice_signals.py` (pure stdlib + ffmpeg,
 embedded in the binary, proxied by `sense.py`'s `voice` command); the Rust

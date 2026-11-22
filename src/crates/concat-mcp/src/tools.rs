@@ -3467,7 +3467,7 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     }
     if longest_hard_run >= 6 {
         warnings.push(format!(
-            "{longest_hard_run} hard cuts in a row; the catalog has twelve cut types - a run of hards is a slideshow"
+            "{longest_hard_run} hard cuts in a row; the catalog has eighteen cut types - a run of hards is a slideshow"
         ));
     }
     if missing_entrances > 0 {
@@ -3691,6 +3691,15 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         .unwrap_or_default();
     let mut problems: Vec<String> = Vec::new();
     let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    // A cut entry is only evidence when it lands on a real segment boundary.
+    // Counting entries alone let a plan log five cuts at arbitrary times and
+    // call the voice read spent; the boundary is what makes it inspectable.
+    let boundaries: Vec<f64> = segments
+        .iter()
+        .skip(1)
+        .filter_map(|segment| segment.get("start").and_then(Value::as_f64))
+        .collect();
+    let mut covered = vec![false; boundaries.len()];
     for (at, entry) in entries.iter().enumerate() {
         let decision = entry
             .get("decision")
@@ -3711,6 +3720,19 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             problems.push(format!(
                 "entry {at}: at {time} lies outside the plan's 0-{runtime} s"
             ));
+        }
+        if decision == "cut" {
+            if let Some(time) = entry.get("at").and_then(Value::as_f64) {
+                match boundaries
+                    .iter()
+                    .position(|boundary| (*boundary - time).abs() <= 0.06)
+                {
+                    Some(boundary) => covered[boundary] = true,
+                    None => problems.push(format!(
+                        "entry {at}: cut at {time} s is not a segment boundary - the signal did not drive a cut"
+                    )),
+                }
+            }
         }
         let signals = entry
             .get("signals")
@@ -3771,12 +3793,19 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
     // segment boundaries, and one BGM choice and one caption style are
     // the video-wide minimum. Entries beyond the minimum are welcome;
     // the coverage names how many cuts there are.
-    let expected_cuts = segments.len().saturating_sub(1);
+    let expected_cuts = boundaries.len();
     let logged_cuts = *counts.get("cut").unwrap_or(&0);
     if expected_cuts > 0 && logged_cuts < expected_cuts {
         problems.push(format!(
             "the signalLog logs {logged_cuts} of {expected_cuts} cuts - every segment boundary needs the signal that drove it"
         ));
+    }
+    for (index, boundary) in boundaries.iter().enumerate() {
+        if !covered[index] {
+            problems.push(format!(
+                "the signalLog has no cut entry at {boundary} s - the boundary was not driven"
+            ));
+        }
     }
     if has_voiceover && *counts.get("caption").unwrap_or(&0) == 0 {
         problems.push(
@@ -7102,6 +7131,22 @@ mod tests {
                 .iter()
                 .any(|problem| problem.as_str().is_some_and(|text| text.contains("99"))),
             "the out-of-plan time is named: {result}"
+        );
+        // A cut entry between boundaries is a claim, not a driven cut.
+        let mut off_boundary = base.clone();
+        off_boundary["signalLog"] = json!([
+            { "at": 2.5, "decision": "cut", "signals": ["pause"], "confidence": 0.8, "note": "not a boundary" }
+        ]);
+        let result = validate_edit_plan(&off_boundary).expect("valid");
+        assert!(
+            result["signalLog"]["problems"]
+                .as_array()
+                .expect("problems")
+                .iter()
+                .any(|problem| problem
+                    .as_str()
+                    .is_some_and(|text| text.contains("not a segment boundary"))),
+            "the off-boundary cut is named: {result}"
         );
     }
 

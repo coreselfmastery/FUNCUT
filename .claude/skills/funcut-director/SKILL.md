@@ -62,6 +62,12 @@ reaches it.
 - `prompts/signal_matrix.md` names the decision every `voice_signals`
   reading informs (25 families, 50+ readings). Spend the readings, not just
   the family names; a reading that is absent is named unmeasured.
+- `prompts/signal_recipes.md` turns those readings into a cut score, a cut
+  density, a cut type and a confidence fallback. Read it at the plan phase.
+- `prompts/emotion_to_edit.md` is the seven-label recipe: pace, cut types,
+  captions, sound, grade, motion and duck for each emotion and intensity.
+- `prompts/token_budget.md` is the 10-minute budget and the reduction rules
+  that protect the hook, the turn, the contact sheet and the whole-cut watch.
 - `creative_brief`, `watch_render`, `stock_contact_sheet`, `craft_critique`
   and `local_vlm` are part of the required pipeline, not optional extras.
   `local_vlm` with `action: "setup"` fetches a 0.5B local vision critic once
@@ -104,7 +110,7 @@ judgment is better when independent work is done independently. The rules:
 
 ## 1. The pipeline (in order — do not skip phases)
 
-**Phase 0 — Creative direction (do this FIRST, before any tool that cuts).**
+**Phase 1 — Creative direction (do this FIRST, before any tool that cuts).**
 An edit with no thesis is an assembly, not a video. Call `creative_brief`
 with `{action: "set", path: <the project folder>, brief: {audience, platform,
 goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle}}` - `path`
@@ -124,7 +130,7 @@ Copy the brief into the plan's `creativeBrief` field. Optional: `local_vlm`
 with `action: "status"` (and `setup` once on a low-end machine) so the later
 critic can actually see.
 
-**Phase 1 — Understand the material.** If there is narration to make:
+**Phase 2 — Understand the material.** If there is narration to make:
 `tts_generate` with a `delivery` matched to the brief's `emotionalArc` —
 `urgent` for the hook, `calm`/`awed` for the reveal, `authoritative` or
 `conversational` for the CTA. Delivery sets BOTH speaking rate and the
@@ -171,21 +177,23 @@ anything unfamiliar before you cut it. **A cut on every beat is a
 slideshow with a metronome:** keep a few cuts deliberately off the pulse,
 and never place more cuts than the story needs.
 
-**Phase 1b — Read what the voiceover feels (the edit's true driver).**
+**Phase 3 — Read what the voiceover feels (the edit's true driver).**
 `emotion {action: "extract", transcript: <the transcribe output>, project}`
 — or `lines`/`script` before any recording exists. Every line returns its
 **emotion** (7 labels) and intensity, its **act** (hook → setup → tension →
 turn → reveal → proof → cta), the hormone shorthand for the state it puts
 the viewer in, the TTS `delivery` + `speed` that would read it (the measured
-version of Phase 1's delivery choice), the **easing curve** as exact
+version of Phase 2's delivery choice), the **easing curve** as exact
 concat-motion authoring JSON (**tense lines ease in, warm ones ease out, a
 burst pops, anger snaps**), the **colour temperature** + grade hint, the SFX
 register, the **BGM duck depth** in dB, pacing, and 2–3 word stock `queries`
 (emotion register × act shot) — plus the whole piece's **arc** (shape,
-score, warnings) checked against the brief's `emotionalArc`. **This read
-drives everything after it:** the plan carries it per segment (Phase 3), the
-placement gate enforces it on candidates (Phase 4), motion easing and the
-mix duck by it (Phases 5/5b), the grade pushes with it (Phase 6). With
+score, warnings) checked against the brief's `emotionalArc`. **Spend it with `prompts/emotion_to_edit.md`:** each of the seven labels
+sets pace, cut types, captions, sound, grade, motion and duck, and intensity
+scales the recipe. **This read
+drives everything after it:** the plan carries it per segment (Phase 9), the
+placement gate enforces it on candidates (Phase 13), motion easing and the
+mix duck by it (Phases 15/16), the grade pushes with it (Phase 19). With
 `FUNCUT_EMOTION_API_KEY` (or `HF_TOKEN`) set, the free hosted
 `tabularisai/multilingual-emotion-classification` sharpens the read —
 XLM-RoBERTa across 23 languages, its 11 labels folded onto the edit's 7
@@ -200,9 +208,9 @@ one to copy, then store it as `brandKit` via `creative_brief`) is applied on
 the same call: its taboos are checked against every planned query, and a
 taboo hit is a blocker — replace the query, never the taboo.
 
-**Phase 1c — Read what the voiceover IS (the acoustic score).**
+**Phase 4 — Read what the voiceover IS (the acoustic score).**
 `voice_signals {audio: <the voiceover>, transcript: <the transcribe output>,
-emotion: <the Phase-1b extract>, language: <the hint used>}` — one call,
+emotion: <the Phase 3 extract>, language: <the hint used>}` — one call,
 the whole reading. Every line returns its **momentary loudness relative to
 the take** (a line 3 LU over the mean is a punch line; 3 LU under is a
 confession), its **speech rate** (words-per-minute and syllables-per-second
@@ -238,9 +246,12 @@ never guess the missing ones. **Spend every reading, not just the family:**
 decision each one informs. Every family and every reading you spend must
 appear in the plan's `signalLog` with its confidence and one-sentence basis;
 a reading that was absent is named unmeasured, never cited at confidence 0.
+**Turn the reading into cuts with `prompts/signal_recipes.md`:** score the
+seam, set the density, choose the cut type, and use the conservative fallback
+when confidence is low. The reading is not a dashboard; it is the cut.
 **This reading is what the edit cuts by:**
-Phase 2 cuts only the dead air and never a dramatic hold, Phase 3's pacing
-takes the cut style, Phase 5's SFX peaks land on the emphasis words and
+Phase 7 cuts only the dead air and never a dramatic hold, Phase 9's pacing
+takes the cut style, Phase 15's SFX peaks land on the emphasis words and
 the BGM obeys the noise-floor decision, the captions drop or re-check the
 gated words, and a speaker change is staged like a scene change. The
 deeper consumption readings — script quality, restarts, fillers, rhythm
@@ -250,10 +261,10 @@ family tools (`sense_discourse`, `sense_voice_quality`,
 `action` naming one reading. Three of them are wired into the pipeline,
 not left to judgment: `sense_voice_quality {action:
 "classify_recording_quality"}` + `sense_audio_repair {action:
-"enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 1),
+"enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 2),
 `sense_audio_repair {action: "detect_music_segments"}` before any BGM is
-chosen (Phase 4), and `sense_audio_repair {action: "identify_music"}` as
-the copyright check on a take that already carries music (Phase 4). The
+chosen (Phase 13), and `sense_audio_repair {action: "identify_music"}` as
+the copyright check on a take that already carries music (Phase 13). The
 rest are called where the edit needs them, each as its door's `action`
 (`sense_discourse {action: "score_script_quality"}` before the read,
 `sense_discourse {action: "detect_restarts"}` + `sense_discourse
@@ -263,7 +274,7 @@ rest are called where the edit needs them, each as its door's `action`
 "clean_subtitles"}` before burning captions). A bare reading name is
 never a tool - always the door with its action.
 
-**Phase 1d — Story map and shot budget.** Before the plan, write the
+**Phase 5 — Story map and shot budget.** Before the plan, write the
 film's argument as a map the plan can execute: the one-sentence thesis, the
 hook's curiosity gap, the sections and their jobs, every claim and the
 evidence that proves it, the turn, the payoff, and the CTA. Give each
@@ -275,7 +286,7 @@ and a real gap is not left uncovered. The map is an artifact, not a mood
 board: if a claim has no evidence, cut the claim or find the evidence before
 you write the plan. No edit tool is called in this phase.
 
-**Phase 1e — Scene, beat and transition map.** Turn the story map into a
+**Phase 6 — Scene, beat and transition map.** Turn the story map into a
 technical grid: `analyze_scenes` for real shot boundaries, `suggest_cuts`
 for voice/beat candidates, `analyze_silence` for the pauses that can carry a
 turn, and `emotion`/`analyze_beats` for the beat and energy curve. Mark
@@ -285,8 +296,8 @@ argument, not decoration. `scene_timeline` and `scene_analysis` are opt-in
 reads; if they are not served, use the served scene and cut tools and say
 so. No edit tool is called in this phase.
 
-**Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
-(remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c
+**Phase 7 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
+(remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase 4
 reading already classified them: cut ONLY the `dead_air` pauses, keep every
 `breath`, `beat` and `dramatic` hold (a hold is the performance — removing
 it is the classic auto-edit failure), and treat each `scene_turn` as a
@@ -300,7 +311,7 @@ removed spans before using them on the timeline. Word times are the transcript's
 measured `words`, never estimates interpolated from segment times — timing
 that is claimed but wrong is worse than timing that is honest.
 
-**Phase 2b — Voice edit proof.** Read the timeline back with
+**Phase 8 — Voice edit proof.** Read the timeline back with
 `timeline_read` after the tighten. The runtime must equal the original
 runtime minus exactly the spans you removed; every later transcript time
 must be shifted by the same amount; no word may be clipped, duplicated, or
@@ -309,7 +320,10 @@ and redo it before planning — a plan built on a timeline that does not match
 its transcript is a plan built on a lie. Keep the before/after runtime in
 the run report.
 
-**Phase 3 — Write the edit plan (ONE reasoning pass).** Emit the JSON plan
+**Phase 9 — Write the edit plan (ONE reasoning pass).** Read
+`prompts/token_budget.md` first: a 10-minute cut is budgeted at 250–500k
+tokens (800k hard stop), and the plan is the one source of truth that keeps
+the run from re-reading its own tool output. Emit the JSON plan
 from `templates/edit_plan.schema.json` (example beside it). The plan declares
 its **mode** (`reel` ≤ 60 s or `longform`), its **sections** by role
 (hook → intro → body chapters → cta → outro), and every segment with: its
@@ -322,19 +336,20 @@ scale, motion and register - and NAME the module each decision used in
 the plan's signalLog notes (the craft warning asks for exactly that).
 The cut lands on the emphasis
 word and the beat, not the line boundary. Segments under
-a voiceover also carry the Phase-1b read — **emotion, act, easing,
+a voiceover also carry the Phase 3 read — **emotion, act, easing,
 colourTemp, duckDb** — copied from the extract's lines (the schema documents
-them, the example shows them); they are what Phases 4–6 answer to. Consult
+them, the example shows them); they are what Phases 13–19 answer to. Consult
 maestro's shot cards for scale, motion, and register. Pick the card that
 matches the beat's emotion and act. Put the
-Phase-0 brief in `plan.creativeBrief`. **The plan also carries the
+Phase 1 brief in `plan.creativeBrief`. **The plan also carries the
 `signalLog` — the decision log**: one entry per cut, caption highlight,
-graphic, BGM choice and transition, naming the Phase-1c signals that drove
+graphic, BGM choice and transition, naming the Phase 4 signals that drove
 it (`{"at": 4.2, "decision": "cut", "signals": ["pause.class=dead_air",
 "emphasisWords"], "confidence": 0.8, "note": "2.1s of dead air before the emphasis word"}`).
 Every entry carries the confidence the profile rated its signals at and a
 one-sentence basis; an entry with no note, no confidence, or confidence 0
-is a claim the validator refuses.
+is a claim the validator refuses, and a `cut` entry must land on a real
+segment boundary or it did not drive a cut.
 The profile's `decisionPolicy` says which signals each decision reads; a
 plan with a voiceover and no signalLog is NOT creativeReady — the reading
 exists to be consumed, not admired. Before validation, persist the exact canonical plan object (not a wrapper) as `<project>/edit-plan.json`; the acceptance check re-reads and validates this artifact after the save, so a plan that exists only in chat is not verifiable. Then call `plan_validate` on the completed JSON;
@@ -363,7 +378,7 @@ the slots are a shopping list, never a second timeline. There is no
 universal footage/graphics/hold percentage: choose the mix from this
 film's story, evidence, emotion, and available material.
 
-**Phase 3b — Storyboard and shot list.** Turn every plan segment into a
+**Phase 10 — Storyboard and shot list.** Turn every plan segment into a
 shot the timeline can execute: `visual.type`, shot scale, subject,
 movement, screen direction, the line or beat it answers, and the reason it
 is there (cover / contrast / proof / breathe / transition). A `textCard` or
@@ -376,7 +391,7 @@ repeated, no two adjacent shots with the same scale and direction unless
 that repetition is the point. This is the plan's visual spine, not a second
 timeline — the `segments[]` remain the contract.
 
-**Phase 3c — Motion design code.** Every section makes an explicit motion
+**Phase 11 — Motion design code.** Every section makes an explicit motion
 decision: a designed comp, a kinetic-caption treatment, or a deliberate
 "no comp" with a reason (footage/performance/hold already carries it). The
 density floor is one designed beat per section and at least one per 15 s;
@@ -386,13 +401,13 @@ comp — `funcut.ticker.count`, `funcut.chart.bars|line|donut`,
 For each comp, author the actual document: a preset plus one validated
 `ops` batch, or a full comp JSON; `motion_inspect` the slots and nodes,
 `motion_frame` the entrance/settled/exit stills, and write the exact
-comp/ops into `visual.storyboard` so Phase 5b can bake it without guessing.
+comp/ops into `visual.storyboard` so Phase 16 can bake it without guessing.
 For kinetic captions, write the word-timed `captions_animate` recipe; for
 external motion, `motion_import` the Lottie/GSAP source. Record the decision
 and its reason in the plan's `signalLog` (graphic decision) so the critic
 can see why the beat exists.
 
-**Phase 3d — Geneva deep design.** This is the comp engine, not a preset
+**Phase 12 — Geneva deep design.** This is the comp engine, not a preset
 picker. Read `.claude/skills/motion/SKILL.md` and
 `prompts/motion_comps.md` whole. For every motion beat, author the actual
 Geneva document: `motion_presets` for the nearest starting point, then a
@@ -412,7 +427,7 @@ comp id, preset, ops, slots, frame proof and the decision in the plan's
 `signalLog`; a comp that is not baked and placed is not an executed visual
 decision.
 
-**Phase 4 — Gather (parallel if your harness allows).**
+**Phase 13 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
 `sense_audio_repair {action: "detect_music_segments", audio: <the
 voiceover>}`: when it answers `musicPresent: true` the take already
@@ -423,7 +438,7 @@ spans the reading marked music-free, duck it deeper than the L floor
 (−15 to −18 dB under speech). A positive gate also runs the copyright
 check: `sense_audio_repair {action: "identify_music", audio}` reads the
 embedded track's tempo, key and mood (an offline descriptor — it cannot
-name the song), and you WARN THE USER at once, and again in the Phase-8
+name the song), and you WARN THE USER at once, and again in the Phase 25
 report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
@@ -510,7 +525,7 @@ shopping — the treatment changes, the slot stops searching, and the
 comp or the A-roll carries the span. `count: 0` is the clean answer;
 fetch and import only when the gate is quiet.
 
-**Phase 4b — Stock review, gate and continuity.** Do not place the first
+**Phase 14 — Stock review, gate and continuity.** Do not place the first
 page. For each slot, LOOK at the `stock_contact_sheet`; run
 `emotion {action: "gate"}` on the candidate against the beat's register,
 act semantics and brand taboos; reject two failed checks and drop the beat
@@ -520,9 +535,9 @@ repeated scale, one-category run, under-floor motion. Keep the provider,
 id and url licence triple with every chosen clip; a monetized brief never
 shops OpenVid. No clip may repeat a shot already used, and no slot may be
 filled with a generic "pretty" clip that does not answer its sentence.
-Only the approved manifest proceeds to Phase 5.
+Only the approved manifest proceeds to Phase 15.
 
-**Phase 5 — Place (sequential, batched).** Cut to the plan: add B-roll clips
+**Phase 15 — Place (sequential, batched).** Cut to the plan: add B-roll clips
 (`clips_add_sequence` or `clip_add`), trim so the video LEADS the narration
 slightly (J-cut feel — but keep plan segments contiguous; the lead is inside
 the segment, not between them), then per clip: `clip_frame {framing: "fill"}`
@@ -537,10 +552,10 @@ the incoming clip** (see §3.T, never `effect_layer_add`) — SFX
 (absolute dB: 0 is unchanged, −60 is the floor; **automate to the plan's
 per-segment `duckDb`** — the act's value from the emotion read: −15 under
 the naked hook, −12 under standard speech, −9 letting the reveal ride, −10
-behind the ask). The Phase-1c reading places the accents: an SFX peak lands
+behind the ask). The Phase 4 reading places the accents: an SFX peak lands
 ON an emphasis word, not merely near its line; the BGM obeys the reading's
 `bgm` decision (dry voice → bed it and duck; a take that already carries
-music → none added — Phase 4's `detect_music_segments` gate already
+music → none added — Phase 13's `detect_music_segments` gate already
 skipped the search — and the embedded bed rides, ducked deeper where it
 fights the words); and a `speakerChanges` time is staged like a
 section change — new angle, colour or lower-third at the change, never a
@@ -555,7 +570,7 @@ The playhead moves on the timeline the user is looking at, so the edit
 arrives as a thing being made rather than a file that appears — and
 the refusal on a headless server costs one line, not the run.
 
-**Phase 5b — Motion design (use when the story calls for it).**
+**Phase 16 — Motion design (use when the story calls for it).**
 A bespoke comp can make an edit clearer, more memorable, or more emotionally
 precise; it is not a mandatory quota. A film led entirely by strong footage,
 performance, typography, and sound can be complete without a motion comp. The motion layer is
@@ -591,7 +606,7 @@ full-frame piece → `media_import` → `clip_add`. An encoded caption reel is
 opaque; never lay one over footage you still want to see. Full doctrine:
 `prompts/motion_comps.md` and the `motion` skill.
 
-**Phase 5c — Caption choreography.** Captions are a second performance,
+**Phase 17 — Caption choreography.** Captions are a second performance,
 not a transcript dump. Use the measured words; group 2–4 words or one
 breath, never a wall; hold each line long enough to read twice; put the
 stressed word in the accent treatment the plan named; keep every line
@@ -602,7 +617,7 @@ measured word times and a kinetic recipe; for longform, use
 "align_captions"}` and `{action: "clean_subtitles"}` are the proof, not a
 guess. Never let a caption cover a face, a number, or another caption.
 
-**Phase 5d — Sound design.** Build the sound spine: the BGM gate decides
+**Phase 18 — Sound design.** Build the sound spine: the BGM gate decides
 whether a bed exists at all; the bed is cut to the beat grid and ducked per
 act to the plan's `duckDb`; every SFX peak lands on a measured emphasis
 word or cut, not merely near one; no machine-gun repetition; leave breath
@@ -622,7 +637,7 @@ boundaries. `scene_analysis`, `scene_timeline`, `motion_preview` and
 None of this is decoration: every use answers a sentence, a claim or a beat,
 and the plan's `signalLog` records why it is there.
 
-**Phase 6 — Grade (required).** One consistent look per video. Either ONE
+**Phase 19 — Grade (required).** One consistent look per video. Either ONE
 effect layer spanning the whole runtime — `effect_layer_add {start: 0,
 duration: <runtime>, effectId, ...}` with the duration WRITTEN (the default
 when absent is 5 seconds, which grades five seconds and stops) — or the same
@@ -634,7 +649,7 @@ the package's own (`concat.teal-orange` → `amount` 0–100; find each in
 as intensity variation of the same base recipe, never as a second filter.
 Prove the grade with a `preview_frame` A/B at 25% and 75% of runtime.
 
-**Phase 6b — Grade proof.** Do not call the grade done because a filter is
+**Phase 20 — Grade proof.** Do not call the grade done because a filter is
 on the timeline. `preview_frame` an A/B at 25% and 75% of the runtime:
 the same look, the right direction, no crushed skin, no clipped highlights,
 no bars, no accidental second filter. If the grade is an effect layer, its
@@ -643,7 +658,7 @@ per-clip, every clip carries the same chain. Record the effect id, the
 intensity key and both sample times in the run report. A grade nobody
 looked at is a guess.
 
-**Phase 7 — Watch the whole cut (never skip).** Call `watch_render` on the
+**Phase 21 — Watch the whole cut (never skip).** Call `watch_render` on the
 open project: ONE call returns a labelled contact sheet sampled across the
 whole timeline, as an image, plus measured craft facts (black frames,
 letterbox bars, flat/duplicate shots, static transitions, audio envelope).
@@ -672,7 +687,7 @@ every clip fits the canvas, SFX peaks hit their cuts, the BGM ducks under
 speech. `preview_frame` is still there for a close-up on one suspicious
 moment — keep it under 5 calls per minute of video.
 
-**Phase 7b — Independent critique and revision.** The editor who made the
+**Phase 22 — Independent critique and revision.** The editor who made the
 cut is the worst judge of it. If the harness exposes subagents, send a
 fresh-context critic the contact sheet, the brief and the plan — not this
 conversation — and ask for findings, not a score to rubber-stamp. Otherwise
@@ -683,7 +698,7 @@ critic names specific slots, re-shop only those, keeping every passing slot
 and its `exclude_ids`; never re-roll a passing slot. Record what changed and
 what did not.
 
-**Phase 8 — Save and hand off the timeline (no export).** The deliverable
+**Phase 23 — Save and hand off the timeline (no export).** The deliverable
 is the editable timeline, not a render: the user wants to customize the cut
 after the Director finishes. Do **not** call `export_start` or `export_wait`.
 Call `project_save`; write the canonical `<project>/edit-plan.json`; then
@@ -693,7 +708,7 @@ captions, comps and audio are on the timeline the user will open. If you
 already rendered by mistake, leave the timeline as the deliverable and say
 so; do not re-export.
 
-**Phase 8b — Final timeline acceptance.** The pane's independent acceptance
+**Phase 24 — Final timeline acceptance.** The pane's independent acceptance
 now checks the timeline, not an encoded file. Run the same proof:
 `timeline_read` (the saved timeline has clips), `watch_render {project,
 audio: true}` (the composited picture and audio envelope), `craft_critique`
@@ -707,7 +722,7 @@ cannot prove the run, say so — do not call a red receipt a finished timeline.
 If the user later exports, that export earns the encoded gates: readable
 streams, platform loudness, the rendered picture and the words.
 
-**Phase 9 — Delivery, customization and the wow bar.** A "wow" cut is not a
+**Phase 25 — Delivery, customization and the wow bar.** A "wow" cut is not a
 pile of effects. It has one signature idea the audience can say back, one
 visual system (type, palette, grain, transition logic), one sound motif, a
 designed beat in every section, and a reason for every cut. Every number,
@@ -742,7 +757,7 @@ The numbers you are held to. `plan_validate` enforces what it can; you are
 held to the rest at review.
 
 **E — Emotion is the driver, not a decoration.** Under a voiceover, every
-segment carries its measured `emotion`/`act` (Phase 1b), and every layer
+segment carries its measured `emotion`/`act` (Phase 3), and every layer
 answers to it: motion easing (tense eases in, warm eases out, a burst pops),
 colour temperature, SFX register, duck depth, stock vocabulary. The
 placement gate is absolute: a stock candidate failing 2+ of its three checks
@@ -769,7 +784,7 @@ faster; a reveal may deliberately hold. Interrupt a pattern when attention
 needs renewal, not on a timer. The hook should create a compelling question
 quickly, but do not sacrifice clarity to meet an arbitrary second count.
 Not only hard cuts: the cut-type catalog (`prompts/cuts_and_pacing.md`)
-has twelve — match cuts, smash cuts, whips, montage, cut-on-action,
+has eighteen — match cuts, smash cuts, whips, montage, cut-on-action, cutaways, inserts, reactions, cross-cutting, freeze and contrast,
 cut-on-beat — and a piece that only hard-cuts is a slideshow.
 
 **V — Variety.** A clip id appears at most ONCE in a reel, and at most once
@@ -788,7 +803,7 @@ style. Keyframes via `keyframe_set`; fades via `clip_update`'s
 `fadeIn`/`fadeOut`; the grammar is `prompts/keyframes_motion.md`.
 
 **G — The grade is not optional.** One filter recipe per video, applied to
-the WHOLE runtime (see Phase 6 — the duration field is the trap), intensity
+the WHOLE runtime (see Phase 19 — the duration field is the trap), intensity
 set once, proven at 25% and 75% of runtime.
 
 **F — Fit the frame.** The canvas is set before anything is placed
@@ -826,7 +841,7 @@ whisper segments with per-word estimates are not timing). Captions: 2–4
 words a cue where the segment permits, bold (600+), stroke or plate
 contrast, no text touching frame edges, `offsetY` ≈ 0.35 default.
 
-**A — The voice is a score, not a bed.** The Phase-1c reading is measured,
+**A — The voice is a score, not a bed.** The Phase 4 reading is measured,
 and the edit answers to it: only `dead_air` pauses are cut — a `dramatic`
 hold or a `scene_turn` gap survives to carry its weight; the pacing follows
 the reading's cut style (loud fast lines cut fast, quiet slow lines hold —
@@ -835,7 +850,7 @@ word; the words the confidence gate flagged (below 0.5) are re-checked or
 dropped before `captions_animate`; a repeated motif brings its visual back;
 and the BGM decision comes from the measured noise floor and the music
 gate (`detect_music_segments`), not from habit — a rough take is
-repaired before it is read (Phase 1), and a take that already carries
+repaired before it is read (Phase 2), and a take that already carries
 music never gets a second bed. A
 reading that was never taken is a note in the report, never a guess.
 
@@ -924,8 +939,8 @@ timeline) rather than rebuilding it. Export only if the user asks.
 ## 4. Hard rules
 
 1. Never claim "done" before `project_save` has written the timeline, the
-   Phase-7 watch/critique loop has produced a score >= 7 after the LAST edit,
-   and the Phase-8 timeline acceptance passed. If the user asks for an export,
+   Phase 21 watch/critique loop has produced a score >= 7 after the LAST edit,
+   and the Phase 24 timeline acceptance passed. If the user asks for an export,
    `export_wait` must report the file and the encoded gates must pass too.
 2. Never leave a segment without a visual; never leave the timeline with
    overlapping clips or gaps you did not plan.
@@ -954,7 +969,7 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/script_analysis.md` | turning a topic into a script (hooks, beat sheets, reel vs longform, CTA frameworks) |
 | `prompts/edit_plan.md` | writing the plan JSON (with a worked 30 s example) |
 | `prompts/broll_matching.md` | choosing B-roll queries and slot descriptions, shopping by the slot, scoring results, the fallback ladder, aspect fit |
-| `prompts/cuts_and_pacing.md` | the twelve cut types, J/L feel, pacing curves by mode |
+| `prompts/cuts_and_pacing.md` | the eighteen cut types, J/L feel, pacing curves by mode |
 | `prompts/transitions_guide.md` | the 122 transitions (classic 22 + the 100 viral pack), the clip-patch mechanics, when a plain cut wins |
 | `prompts/sfx_design.md` | sound design: categories, semantic mapping, sync peaks, anti-repetition |
 | `prompts/motion_comps.md` | designing graphics: which comp, worked plans, density floors |
@@ -965,11 +980,14 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/niche_playbooks.md` | the whole look for a niche in one place (10 niches, reel + longform) |
 | `prompts/reels_vs_longform.md` | the two modes' structures, pacing curves, CTA placement |
 | `prompts/memory.md` | the editing journal: what to write, when to re-read |
-| `prompts/review.md` | the Phase-7 checklist and the definition of done |
-| `prompts/creative_direction.md` | Phase 0: turning a topic into a sharp angle, arc and payoff |
+| `prompts/review.md` | the Phase 21 checklist and the definition of done |
+| `prompts/creative_direction.md` | Phase 1: turning a topic into a sharp angle, arc and payoff |
 | `prompts/quality_loop.md` | watch_render -> craft_critique -> revise, and how to read the scores |
 | `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
 | `prompts/signal_matrix.md` | all 25 signal families and 50+ readings, and the decision each informs |
+| `prompts/signal_recipes.md` | cut score, cut density, cut type and confidence fallback from the readings |
+| `prompts/emotion_to_edit.md` | the seven emotion labels as pace/cut/sound/grade/motion/duck recipes |
+| `prompts/token_budget.md` | the 10-minute token estimate and the rules that cut waste, not craft |
 | `prompts/tool_reference.md` | every tool's arguments, units, and gotchas |
 
 ## 6. The maestro shelf (judgment, when a phase wants taste)
@@ -981,16 +999,16 @@ over ten vendored corpora: a 157-card product-shot vocabulary, engine-agnostic
 motion principles, a sound-design and beat-sync method, art-direction
 catalogs). Read it when a phase wants taste, not tool mechanics — and read
 only the module the phase needs, never the whole shelf. Its Grill Gate does
-not run here: the Phase-0 `creative_brief` is the one locked brief; use
+not run here: the Phase 1 `creative_brief` is the one locked brief; use
 maestro's interview questions to fill it, never to open a second one.
 
 | Phase | Reach into `.claude/skills/maestro/references/` for |
 | --- | --- |
-| 0 direction | `design-direction.md` (style registers, art direction), `process.md` (brief-locking discipline) |
-| 3 plan | `video-direction.md` (story structure, beat planning, pacing), `video-shotcraft.md` (the 157-shot vocabulary for product/demo work) |
-| 5b comps | `motion-principles.md` (timing, easing, choreography), `design-foundations.md` (typography, color, hierarchy) |
-| 6 grade | `design-foundations.md` (color systems) |
-| 7 critique | `design-audit.md` (systematic critique, anti-slop gates) — feed its findings into the mandatory revision |
+| 1 direction | `design-direction.md` (style registers, art direction), `process.md` (brief-locking discipline) |
+| 9 plan | `video-direction.md` (story structure, beat planning, pacing), `video-shotcraft.md` (the 157-shot vocabulary for product/demo work) |
+| 16 comps | `motion-principles.md` (timing, easing, choreography), `design-foundations.md` (typography, color, hierarchy) |
+| 19 grade | `design-foundations.md` (color systems) |
+| 21 critique | `design-audit.md` (systematic critique, anti-slop gates) — feed its findings into the mandatory revision |
 | SFX/BGM | `video-sound.md` (SFX pinning, anti-machine-gun spacing, beat-sync that verifies the render) |
 
 When guidance conflicts, the hard floors in §3 win — maestro refines how a
@@ -1022,16 +1040,16 @@ both (a comp over a beat-matched cut) uses both.
 
 | Phase | Reach into `.claude/skills/clip-skills/references/` for |
 | --- | --- |
-| 0 direction | `01-视频分类与剪辑逻辑.md` (type the video, pick the edit skeleton), `05-节奏与结构.md` (hook three-step, duration strategy, wave pacing) |
-| 1 understand | `02-音频驱动剪辑流程.md` (the audio-first spine, breath/gap typology, the three gap rules behind the Phase-2 padding rule) |
-| 2 tighten | `02` §三 (气口三规则: keep/expand/crossfade-pad — the judgment behind the 80 ms shrink), `15-人声与对白处理.md` (cleanup chain order, de-noise restraint) |
-| 3 plan | `01`/`05` (section skeleton, 时钟理论 wave points as a thinking tool — labeled heuristic), `14-转场决策.md` (transition semantics for the plan's `transitionIn` fields — the "earned, not decorated" rule) |
-| 4 gather | `03-素材AB分类与替换.md` (A/B classification to seed queries, the five B-roll rules: cover the sentence, group shots, no repeats, mute the track) |
-| 5 place | `04-声音与音乐衔接.md` (J/L-cut feel, duck depths, leaving breath between peaks), `14` (transition choice + duration numbers), `15` (duck dB by context) |
-| 5b comps | `13-字幕与文字设计.md` (caption readability six rules, the four-zone text system, word-time honesty) — with the `motion` skill for execution |
-| 6 grade | `06-调色.md` (Log/LUT order, correct-then-style, scope-quantified deltas — map them to `effect_key_set` values) |
-| 7 watch | `05` (pacing diagnosis: information density vs shot length, the fix list for a sagging middle) |
-| 8 handoff | `12-导出与交付.md` (resolution/fps follow the source, bit-rate "recommended not max", platform framing table, naming), `15` §六 (LUFS targets per platform — what `measure_loudness` should read) |
+| 1 direction | `01-视频分类与剪辑逻辑.md` (type the video, pick the edit skeleton), `05-节奏与结构.md` (hook three-step, duration strategy, wave pacing) |
+| 2 understand | `02-音频驱动剪辑流程.md` (the audio-first spine, breath/gap typology, the three gap rules behind the Phase 7 padding rule) |
+| 7 tighten | `02` §三 (气口三规则: keep/expand/crossfade-pad — the judgment behind the 80 ms shrink), `15-人声与对白处理.md` (cleanup chain order, de-noise restraint) |
+| 9 plan | `01`/`05` (section skeleton, 时钟理论 wave points as a thinking tool — labeled heuristic), `14-转场决策.md` (transition semantics for the plan's `transitionIn` fields — the "earned, not decorated" rule) |
+| 13 gather | `03-素材AB分类与替换.md` (A/B classification to seed queries, the five B-roll rules: cover the sentence, group shots, no repeats, mute the track) |
+| 15 place | `04-声音与音乐衔接.md` (J/L-cut feel, duck depths, leaving breath between peaks), `14` (transition choice + duration numbers), `15` (duck dB by context) |
+| 17 captions | `13-字幕与文字设计.md` (caption readability six rules, the four-zone text system, word-time honesty) — with the `motion` skill for execution |
+| 19 grade | `06-调色.md` (Log/LUT order, correct-then-style, scope-quantified deltas — map them to `effect_key_set` values) |
+| 21 watch | `05` (pacing diagnosis: information density vs shot length, the fix list for a sagging middle) |
+| 25 delivery | `12-导出与交付.md` (resolution/fps follow the source, bit-rate "recommended not max", platform framing table, naming), `15` §六 (LUFS targets per platform — what `measure_loudness` should read) |
 
 Two integration rules, mirroring maestro's:
 

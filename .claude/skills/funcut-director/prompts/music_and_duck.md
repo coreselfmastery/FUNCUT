@@ -19,7 +19,7 @@ match) while you warn the user that its licence is unknown. A dry take
 `bgm_search` (shelves: freepd 1,025 CC0 tracks; lofi 166, free for
 non-commercial use only; a search that
 names no shelf searches whichever are ready). The words come from the
-read, not from you: every line of the Phase-1b extract carries
+read, not from you: every line of the Phase 3 extract carries
 `bgmWords` — two queries its emotion and act want, the second a shelf
 category the search always matches (`upbeat`, `epic`, `horror`,
 `scoring`…). Start from the arc's dominant line's `bgmWords[0]`; if the

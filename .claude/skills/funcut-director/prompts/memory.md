@@ -37,7 +37,7 @@ before placing anything else.
   which SFX ids are spent).
 - Before the SFX pass (the anti-repetition law: no id twice within 30 s —
   the journal is how you check without guessing).
-- At review (Phase 7): the recap above is a checklist item.
+- At review (Phase 21): the recap above is a checklist item.
 - After any `edit_undo` (write what came back out).
 
 ## What the journal is not

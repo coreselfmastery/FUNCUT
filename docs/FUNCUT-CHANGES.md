@@ -32,6 +32,31 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## 0. Latest director pass: 25 plain phases, 18 cuts, recipes and a token budget
+
+- The Director ladder is now **25 phases numbered 1–25**, with no lettered
+  sub-phases. `DIRECTOR_PHASES`, `DIRECTOR_PHASE_LADDER` and the pane's tests
+  agree on the same sequence, so a harness line cannot advance the wrong rung.
+- The plan's cut vocabulary grew from 12 to **18**: `cutaway`, `insert`,
+  `reaction`, `cross`, `freeze` and `contrast` join the original twelve.
+- `prompts/signal_recipes.md` turns the 50+ `voice_signals` readings into a
+  seam score, a cut density and a cut type, with a conservative fallback for
+  low confidence and a named-unmeasured rule for absence.
+- `prompts/emotion_to_edit.md` gives all seven emotion labels (and intensity)
+  a pace/cut/caption/sound/grade/motion/duck recipe, so the emotion read is
+  spent on the timeline rather than cited.
+- `plan_validate`'s signal gate now requires every `signalLog` cut entry to
+  land on a real segment boundary; a log at an arbitrary time is no longer
+  evidence that the voice read drove a cut.
+- `prompts/token_budget.md` estimates a 10-minute cut at 250–500k tokens
+  (800k hard stop) and lists the reads that can be compressed without
+  cutting the hook, the turn, the contact sheet, the frame proof or the
+  whole-cut watch.
+- The AUTO EDIT prompt now asks for a `timeline_read` after every batch and
+  a live `timeline_seek` when the window owns the server, so the edit is
+  visible as it is made. The deliverable stays the editable timeline; no
+  export is forced.
+
 ## 1. Memory: fixed sizes versus the machine's own
 
 Upstream's frame cache was already a share of installed RAM (a sixteenth,

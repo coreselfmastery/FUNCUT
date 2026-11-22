@@ -1,4 +1,4 @@
-# Phase 0 — Creative direction
+# Phase 1 — Creative direction
 
 The single biggest reason an AI edit looks like a "$10 video" is not the
 encoder, the transitions or the font. It is that nobody decided what the

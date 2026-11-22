@@ -339,48 +339,41 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 ## The director skill (the AI's brain)
 
 `.claude/skills/funcut-director/` — how an agent directs a whole video
-instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b, 1c and 5b**:
+instead of randomly calling tools. **Twenty-five phases, numbered 1–25**:
 
-0. **Creative direction** — `creative_brief` before any cutting tool; the
-   returned `directorPrompt` stays in context.
-1. **Understand the material** — measure everything: TTS with per-section
-   delivery, transcription with measured word times, dead air, scene cuts,
-   beat grids; `suggest_cuts` when Python extras are missing.
-1b. **Read what the voiceover feels** — `emotion {action:"extract"}`; flat
-   scripts are fixed before planning.
-2. **Tighten the voice** — silence removal with the padding rule; transcript
-   times retime by exactly what was cut.
-3. **Write the edit plan** — one JSON contract
-   (`templates/edit_plan.schema.json`, v2) with sections, per-segment
-   emotion/act/easing/colourTemp/duckDb, every segment's `visual`, cut
-   types, entrances and exits, SFX with peak times, captions, one required
-   grade, and the optional `slots[]` shopping list — one per opening, with
-   its treatment, job, entry/exit, rich description, fallback queries,
-   `hero` and `motionMin`, agreeing with the segments — validated
-   by `plan_validate` until **both** `valid` and `creativeReady` are true.
-4. **Gather (parallel)** — batched library searches; each `broll` slot
-   ranked against its own description (`openvid_rank_for_slot`: used ids
-   and under-floor clips never returned); candidates are SEEN
-   (`stock_contact_sheet`) and gated (`emotion {action:"gate"}`); the
-   filled manifest read by `footage_continuity` — colour jumps, reversed
-   travels, repeated scales, one-category runs — with each flag's remedy
-   applied before anything is fetched.
-5. **Place (sequential, batched)** — atomic `edit_apply` batches; J-cut
-   lead, entrance/exit motion from the plan, SFX at peak time, BGM ducked
-   per act.
-5b. **Motion comps** — one designed beat per section (every number,
-   comparison and process in finance/science/tech is a comp, never a text
-   card); inspect → ops → frames → bake → overlay.
-6. **Grade** — one look per video, proved at 25 % and 75 % of runtime.
-7. **Watch the whole cut** — `watch_render` → `craft_critique`; at least one
-   revision acted on and re-watched, or it is not done — and when the plan
-   carries slots, the revision gate decides what re-shops: below the 0.65
-   ship line exactly the slots the critic named, two revisions, each
-   render its own file, then ship with the failures recorded per slot.
-8. **Export and watch the file** — the exported file gets its own
-   `watch_render` + `craft_critique` (≥7), `measure_loudness` against the
-   platform target, and `emotion {action:"verify"}` proving the speech
-   survived the render.
+1. **Creative direction** — `creative_brief` before any cutting tool.
+2. **Understand the material** — TTS delivery, transcription, silence,
+   scenes, beats and `suggest_cuts` when the Python extras are absent.
+3. **Emotion** — `emotion {action:"extract"}`; a flat script is fixed first.
+4. **Voice signals** — `voice_signals`: the 25 families and 50+ readings.
+5. **Story map and shot budget** — sections, beats, seconds and shot count.
+6. **Scene, beat and transition map** — measured boundaries and the change
+   each transition carries.
+7. **Tighten the voice** — silence removal with the padding rule.
+8. **Voice edit proof** — read the timeline back and check the cut.
+9. **Edit plan** — one JSON contract validated to `valid` and
+   `creativeReady`.
+10. **Storyboard and shot list** — every segment has a designed picture.
+11. **Motion design code** — each section's motion decision, written down.
+12. **Geneva deep design** — the comp graph, slots, timing, frame proof and
+    bake plan, not a stock preset.
+13. **Gather** — batched stock/library searches and contact sheets.
+14. **Stock review and continuity** — gate every candidate and fix flags.
+15. **Place** — atomic `edit_apply` batches, J-cut lead, motion, SFX, duck.
+16. **Motion build** — inspect → ops → frames → bake → overlay.
+17. **Caption choreography** — measured words, 2–4 per line, kinetic where
+    the beat earns it.
+18. **Sound design** — BGM gate, duck per act, SFX on emphasis peaks.
+19. **Grade** — one look per video.
+20. **Grade proof** — A/B frames at 25% and 75% of runtime.
+21. **Watch the whole cut** — `watch_render` → `craft_critique` → revise.
+22. **Independent critique and revision** — a fresh-context critic, then one
+    high-leverage fix and a full re-watch.
+23. **Save and hand off the timeline** — no forced export.
+24. **Final timeline acceptance** — timeline, story, visual and collision
+    gates, plus customization readiness.
+25. **Delivery** — honest receipt, measured score, licence provenance and a
+    timeline the user can edit.
 
 Backed by **14 hard floors** (motion is the driver, transition mechanics,
 pacing bands by words-per-minute, variety laws, motion on every element,
@@ -407,9 +400,9 @@ genjutsu, gsap-skills, design-dna, motion-design-skill, higgsfield skills,
 comfy-skills, video-shotcraft, and the author's own), including a verified
 **157-card product-shot vocabulary** across 10 categories, a
 twelve-upstream drift checker (`scripts/maestro/check-upstreams.mjs`), and
-per-phase routing: Phase 0 → design-direction, Phase 3 → video-direction +
-the 157 shots, Phase 5b → motion-principles, Phase 6 → design-foundations,
-Phase 7 → design-audit, SFX/BGM → video-sound. The director's hard floors
+per-phase routing: Phase 1 → design-direction, Phase 9 → video-direction +
+the 157 shots, Phase 16 → motion-principles, Phase 19 → design-foundations,
+Phase 21 → design-audit, SFX/BGM → video-sound. The director's hard floors
 always win; maestro refines how a floor is met, never lowers it. See
 [docs/MAESTRO.md](MAESTRO.md).
 

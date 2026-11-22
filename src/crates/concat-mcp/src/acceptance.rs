@@ -162,7 +162,7 @@ fn expected_takes(project: &str) -> Result<Vec<Value>, String> {
 
 /// The expected narration coordinates the EDIT ITSELF ended with: the
 /// timeline's voiceover clips, each mapped as the take it plays. A
-/// Director that tightened the narration - the skill's own Phase 2, the
+/// Director that tightened the narration - the skill's own Phase 7, the
 /// ripple the auto prompt permits - moves every later word, and the
 /// mapping the pane wrote before the run would then fail a compliant
 /// edit. The mapping remains the fallback when no timeline answers: the

@@ -47,13 +47,13 @@ build-and-verify utility). They do not overlap; they stack:
 
 | Skill | What it owns | Format |
 | --- | --- | --- |
-| `funcut-director` | The pipeline: measure, plan, execute, verify — every MCP tool, the phases (0–8 plus the 1b/5b sub-phases), the hard floors | Contract + router (`SKILL.md`) with playbooks in `prompts/` |
+| `funcut-director` | The pipeline: measure, plan, execute, verify — every MCP tool, the 25 phases, the hard floors | Contract + router (`SKILL.md`) with playbooks in `prompts/` |
 | `motion` | The editor's own motion-comp engine: presets, nodes, baking, overlays | `SKILL.md` (see also `docs/MOTION.md`) |
 | `maestro` | Judgment: what good design, motion, film and sound look like — plus escape-hatch engines when a piece needs code | 28 modules + vendored corpora |
 | `clip-skills` | Editing craft: how to cut — audio spine, B-roll, pacing, grading workflow, voice, transitions, export numbers | 15 knowledge modules + 4 execution guides (see [docs/CLIPSKILLS.md](CLIPSKILLS.md)) |
 
 The routing from the director's phases into maestro modules is in the
-funcut-director skill, §6. Two rules govern the interaction: the Phase-0
+funcut-director skill, §6. Two rules govern the interaction: the Phase 1
 `creative_brief` remains the single locked brief (maestro's interview
 questions are a way to fill it, not a second brief), and the director's hard
 floors always win where guidance conflicts — maestro refines how a floor is

@@ -4,7 +4,7 @@ The cut is the sentence; pacing is the paragraph. A piece that only
 hard-cuts is a slideshow, and a piece that cuts on every frame is a strobe.
 This is the vocabulary between them.
 
-## The twelve cut types (the plan's `cutType`)
+## The eighteen cut types (the plan's `cutType`)
 
 | Cut | What it is | Use it for |
 | --- | --- | --- |
@@ -20,6 +20,12 @@ This is the vocabulary between them.
 | `beat` | cut exactly on a downbeat (`analyze_beats`) | music-driven sections, reels |
 | `flash` | 1-frame white/flash frame between clips | glitch energy, tech error beats — sparingly |
 | `speed` | speed-ramp through the cut (`setClipSpeedCurve`) | dramatic emphasis: slow into the moment, whip out |
+| `cutaway` | leave the speaker/action for the thing being said | explain, orient, show the consequence |
+| `insert` | cut to a detail of an object, screen, number or hand | evidence, texture, a number that matters |
+| `reaction` | cut to the listener's face or body | emotion, doubt, agreement, consequence |
+| `cross` | intercut two actions that will meet | tension, comparison, a process with two sides |
+| `freeze` | freeze the frame on the claim or decision | the beat that must land; use once or twice |
+| `contrast` | cut wide→close or loud→quiet for emphasis | a turn, a reveal, a hard change of state |
 
 `montage` is not reserved for the finale any more than a period is
 reserved for the last sentence — one montage per 20 s is fine in

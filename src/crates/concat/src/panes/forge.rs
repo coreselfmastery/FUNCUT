@@ -2896,8 +2896,8 @@ fn director_run_prompt(
              overlaps it played with are the edit's timing, and voiceover-mapping.json in the \
              project root maps each sibling clip to its source. Do NOT re-import, re-place, \
              retime or ripple the voiceover clips. Direct the WHOLE edit around that \
-             pre-placed narration: repair a rough take before analysing it (Phase 1), tighten \
-             only the dead air (Phase 2 - a dramatic hold is the performance, keep it), then \
+             pre-placed narration: repair a rough take before analysing it (Phase 2), tighten \
+             only the dead air (Phase 7 - a dramatic hold is the performance, keep it), then \
              the full pipeline: emotion and voice-signal reads, plan, B-roll, captions, \
              motion comps, ONE grade, the watch/critique loop, export.\n\n",
             project = source.project,
@@ -2938,8 +2938,8 @@ fn director_run_prompt(
          consult, not decorate with: maestro (design, motion and film judgment - its shot \
          cards, its 157-shot vocabulary, its sound-design method) and clip-skills (the \
          editing craft - where to cut, the audio spine, B-roll matching, pacing, grading, \
-         voice processing, export numbers). Phase 3 draws on clip-skills' audio-driven \
-         cutting module and maestro's shot cards for scale, motion and register; Phase 4 \
+         voice processing, export numbers). Phase 9 draws on clip-skills' audio-driven \
+         cutting module and maestro's shot cards for scale, motion and register; Phase 13 \
          draws on clip-skills' B-roll matching module; name the module each decision used \
          in the plan's signalLog notes. An edit that never opened a shelf is an edit that \
          guessed.\n\n{brief}{material}\
@@ -3079,14 +3079,26 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          READ THE DEEP PLAYBOOKS BEFORE YOU DECIDE: read .claude/skills/funcut-director/SKILL.md, \
          prompts/creative_direction.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
          and the example, prompts/motion_comps.md with .claude/skills/motion/SKILL.md, \
-         prompts/quality_loop.md, prompts/power_moves.md, prompts/signal_matrix.md and \
-         prompts/tool_reference.md. The skill is the pipeline; the playbooks are the craft. \
-         Do not plan from memory.\n\n\
+         prompts/quality_loop.md, prompts/power_moves.md, prompts/signal_matrix.md, \
+         prompts/signal_recipes.md, prompts/emotion_to_edit.md, prompts/token_budget.md \
+         and prompts/tool_reference.md. The skill is the pipeline; the playbooks are the \
+         craft. Do not plan from memory.\n\n\
          ALL-SIGNAL CONTRACT: voice_signals answers 25 families and 50+ readings. Read \
          prompts/signal_matrix.md and spend the readings, not just the family names: every \
          family and every reading you use lands in signalLog with its confidence and a \
          one-sentence basis; a reading that was absent is named unmeasured, never cited at \
-         confidence 0. A silent family is a broken promise, not a neutral choice.\n\n\
+         confidence 0. A silent family is a broken promise, not a neutral choice. Then use \
+         prompts/signal_recipes.md: score the seam, set the cut density, choose the cut type, \
+         and fall back conservatively when confidence is low.\n\n\
+         EMOTION IS A RECIPE: prompts/emotion_to_edit.md turns each of the seven labels and \
+         its intensity into pace, cut types, captions, sound, grade, motion and duck. The act \
+         wins the structure; the label wins the texture; log both.\n\n\
+         TOKEN BUDGET: prompts/token_budget.md is the 10-minute estimate (250-500k typical, \
+         800k hard stop) and the reduction rules. Read each tool result once, keep a compact \
+         per-section note, contact-sheet before metadata, cap candidates at three, one plan, \
+         one critique per pass, one revision before the re-watch. Never cut the first three \
+         seconds, the turn, the voice read, the contact sheet, the frame proof or the whole-cut \
+         watch to save tokens.\n\n\
          MULTI-AGENT, WHEN THE HARNESS EXPOSES IT: if spawn_agents or /workflow is available, \
          fan out the independent read-only work - one agent per stock slot, one per motion beat, \
          one for sound, one for the story map, and a fresh-context critic. Subagents return \
@@ -3098,7 +3110,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          volume and fades; voiceover-mapping.json maps each clip to its source. Do NOT \
          re-import, re-place or otherwise retime the narration clips - with ONE \
          exception: you MAY tighten measured dead air with removeSpans on the narration \
-         clips (ripple on), which the skill's own Phase 2 asks for. The WORDS must \
+         clips (ripple on), which the skill's own Phase 7 asks for. The WORDS must \
          survive the tighten: never cut inside a word, and verify with emotion \
          {{action:\"verify\"}} on the exported file before you claim success.\n\n\
          {critic}\
@@ -3126,7 +3138,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          the profile into a note: every signal you read must land on a choice.\n\n\
          FIRST THE BRIEF: call creative_brief {{action:\"set\", path:'{project}', brief:...}} \
          before any planning tool; the plan carries that brief and a plan without one is not \
-         creativeReady. Then write the Phase-1d story map, not a shot list with no argument.\n\n\
+         creativeReady. Then write the Phase 5 story map, not a shot list with no argument.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
          (plan_validate must return valid:true AND creativeReady:true), B-roll shopped on \
          the licensed live shelves (stock_search with the keys in your environment, \
@@ -3152,7 +3164,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          overlays, scene analysis, clip_speed and clip_transform for a designed retime or \
          reframe, tts_generate only for a missing pickup, and the full transition catalogue \
          where the story earns them - not as decoration.\n\n\
-         STORYBOARD AND MOTION CODE: before placement, write the scene/beat/transition map (Phase 1e), the storyboard (Phase 3b), the motion decision (Phase 3c) and the Geneva deep design (Phase 3d) for every section. Each section has a designed beat or a \
+         STORYBOARD AND MOTION CODE: before placement, write the scene/beat/transition map (Phase 6), the storyboard (Phase 10), the motion decision (Phase 11) and the Geneva deep design (Phase 12) for every section. Each section has a designed beat or a \
          stated reason it does not; every number, percentage, comparison, ranking, trend or \
          process becomes a purpose-built comp (ticker, chart, triptych, compare) - never a plain \
          text card. A textCard or titleCard carries a complete visual.storyboard accepted by \
@@ -3160,6 +3172,10 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          entrance/settled/exit, then motion_bake at the cut size; use motion_overlay for \
          transparent comps and captions_animate for word-timed kinetic captions. The plan's \
          signalLog records the graphic decision and its reason.\n\n\
+         LIVE TIMELINE: after every edit_apply batch, timeline_read the project; on the \
+         window's own server, timeline_seek the moment just placed so the user sees it arrive. \
+         On a headless server, preview_frame each section boundary and watch_render each act. \
+         The timeline is the deliverable; a decision that is not on it did not happen.\n\n\
          MANDATORY QUALITY LOOP: watch_render the OPEN timeline, craft_critique it, act on \
          at least one revision, watch_render AGAIN and compare the two craft scores, and \
          repeat until the overall score is >= 7 with no black frames, letterbox bars or long \
@@ -3358,8 +3374,7 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
 /// words its own headings and tool calls carry. A handed-over AUTO EDIT
 /// has no runner to name its stage, so the pane reads the harness's
 /// output instead and advances only when a phase is actually named -
-/// the twenty-five headings the skill prints (0, 1, 1b, 1c, 1d, 1e, 2, 2b,
-/// 3, 3b, 3c, 3d, 4, 4b, 5, 5b, 5c, 5d, 6, 6b, 7, 7b, 8, 8b, 9), which is
+/// the twenty-five headings the skill prints (1 through 25), which is
 /// the same sequence a Start Forge run walks.
 ///
 /// The words are the *fallback*: the skill numbers every heading, so the
@@ -3384,7 +3399,7 @@ const DIRECTOR_PHASES: [&[&str]; 25] = [
     &["motion_bake", "motion design", "geneva"],
     &["caption choreography", "captions_animate", "captions_add"],
     &["sound design", "sounds_add", "duck"],
-    &["grade", "the look", "effect_layer"],
+    &["grade (required)", "the look", "effect_layer"],
     &["grade proof", "preview_frame"],
     &["watch_render", "craft_critique"],
     &["independent critique", "revise"],
@@ -3395,42 +3410,41 @@ const DIRECTOR_PHASES: [&[&str]; 25] = [
         "export_start",
         "export_wait",
     ],
-    &["final watch", "motion_probe", "measure_loudness"],
-    &["delivery", "acceptance", "receipt"],
+    &["final watch", "motion_probe", "measure_loudness", "timeline acceptance"],
+    &["delivery", "receipt", "wow bar"],
 ];
 
 /// The skill's numbered ladder: the number each heading prints, the
-/// letter suffixes they carry (1b, 1c, 1d, 1e, 2b, 3b, 3c, 3d, 4b, 5b, 5c,
-/// 5d, 6b, 7b, 8b), and the pane's phase index for that pair. A
-/// number the ladder does not carry - a "phase 12" an older prompt might
+/// numbers 1 through 25, and the pane's phase index for each one. A
+/// number the ladder does not carry - a "phase 99" an older prompt might
 /// still echo - matches nothing by number, so it can never be read as
 /// "phase 1".
 const DIRECTOR_PHASE_LADDER: [(u32, &str, usize); 25] = [
-    (0, "", 0),
-    (1, "", 1),
-    (1, "b", 2),
-    (1, "c", 3),
-    (1, "d", 4),
-    (1, "e", 5),
-    (2, "", 6),
-    (2, "b", 7),
-    (3, "", 8),
-    (3, "b", 9),
-    (3, "c", 10),
-    (3, "d", 11),
-    (4, "", 12),
-    (4, "b", 13),
-    (5, "", 14),
-    (5, "b", 15),
-    (5, "c", 16),
-    (5, "d", 17),
-    (6, "", 18),
-    (6, "b", 19),
-    (7, "", 20),
-    (7, "b", 21),
-    (8, "", 22),
-    (8, "b", 23),
-    (9, "", 24),
+    (1, "", 0),
+    (2, "", 1),
+    (3, "", 2),
+    (4, "", 3),
+    (5, "", 4),
+    (6, "", 5),
+    (7, "", 6),
+    (8, "", 7),
+    (9, "", 8),
+    (10, "", 9),
+    (11, "", 10),
+    (12, "", 11),
+    (13, "", 12),
+    (14, "", 13),
+    (15, "", 14),
+    (16, "", 15),
+    (17, "", 16),
+    (18, "", 17),
+    (19, "", 18),
+    (20, "", 19),
+    (21, "", 20),
+    (22, "", 21),
+    (23, "", 22),
+    (24, "", 23),
+    (25, "", 24),
 ];
 
 /// The stage the pane shows for a phase. The words are spelled out here
@@ -3477,11 +3491,11 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
     let lower = line.to_ascii_lowercase();
     let total = DIRECTOR_PHASES.len() as f32;
     let at = |index: usize| (index, (index as f32 + 0.5) / total);
-    // A numbered phase is matched by its number and, where it carries
-    // one, its letter suffix: the skill prints "Phase 1b" and "Phase
-    // 5b", so a plain "phase 1" scan must not swallow them, a greedy
-    // digit read must not turn "phase 12" into "phase 1", and a number
-    // the ladder does not carry matches nothing by number at all.
+    // A numbered phase is matched by its number: the skill prints
+    // "Phase 1" through "Phase 25", so a plain "phase 1" scan must not
+    // swallow "phase 15", a greedy digit read must not turn "phase 12"
+    // into "phase 1", and a number the ladder does not carry matches
+    // nothing by number at all.
     let mut cursor = 0;
     while let Some(found) = lower[cursor..].find("phase ") {
         let rest = &lower[cursor + found + "phase ".len()..];
@@ -3893,7 +3907,7 @@ mod tests {
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about
     /// nothing in particular moves no bar, the ladder is the one the
-    /// skill really prints (0, 1, 1b, 1c, 1d, 2 ... 8b, 9 - tested
+    /// skill really prints (1 through 25 - tested
     /// against the skill's own heading strings, not a paraphrase of
     /// them), and no phase - not the last - ever shows a finished bar,
     /// which only the accepted end of a run may do.
@@ -3903,36 +3917,29 @@ mod tests {
         assert_eq!(director_phase(""), None);
 
         let (first, at_first) =
-            director_phase("Phase 0 — Creative direction (do this FIRST)").expect("phase zero");
+            director_phase("Phase 1 — Creative direction (do this FIRST)").expect("phase one");
         assert_eq!(first, 0);
         assert!(at_first > 0.0 && at_first < 0.2);
 
-        let (understand, _) =
-            director_phase("Phase 1 — Understand the material.").expect("phase one");
-        assert_eq!(understand, 1);
+        // Every heading the skill prints maps to its own rung, 1 through 25.
+        for (number, index) in (1usize..=25).map(|number| (number, number - 1)) {
+            let heading = format!("Phase {number} — the skill's own heading");
+            assert_eq!(
+                director_phase(&heading).map(|(at, _)| at),
+                Some(index),
+                "{heading}"
+            );
+        }
 
-        // The lettered sub-phases are their own rungs: 1b is the emotion
-        // read, 1c the acoustic one and 1d the story map, not phase 1.
-        let (feels, _) =
-            director_phase("Phase 1b — Read what the voiceover feels").expect("phase one b");
-        assert_eq!(feels, 2);
-        let (acoustic, _) =
-            director_phase("Phase 1c — Read what the voiceover IS").expect("phase one c");
-        assert_eq!(acoustic, 3);
-        let (story, _) =
-            director_phase("Phase 1d — Story map and shot budget").expect("phase one d");
-        assert_eq!(story, 4);
-        let (scene, _) =
-            director_phase("Phase 1e — Scene, beat and transition map").expect("phase one e");
-        assert_eq!(scene, 5);
-
-        // "phase 1" is inside "phase 10": a greedy digit read must not
-        // turn the older prompt's numbers into phase one, and a number
-        // the ladder does not carry matches nothing by number.
-        let (last, at_last) =
-            director_phase("Phase 12: export_start then export_wait").expect("the export words");
-        assert_eq!(last, 22);
-        assert!(at_last < 1.0, "no phase may show a finished bar");
+        // A greedy digit read must not turn "phase 15" into "phase 1",
+        // and a number the ladder does not carry matches nothing.
+        let (ten, _) = director_phase("Phase 10 — Storyboard and shot list").expect("phase ten");
+        assert_eq!(ten, 9);
+        let (twenty, at_twenty) =
+            director_phase("Phase 25 — Delivery, customization and the wow bar").expect("phase twenty-five");
+        assert_eq!(twenty, 24);
+        assert!(at_twenty < 1.0 && at_twenty > 0.8);
+        assert_eq!(director_phase("Phase 99 — not on the ladder"), None);
 
         // The watch phase is where the Director reviews its own cut: the
         // tool name alone is enough to place it.
@@ -3941,46 +3948,24 @@ mod tests {
 
         // A named phase advances; the one before it is behind it.
         let (place, early) =
-            director_phase("Phase 5 — Place (sequential, batched)").expect("phase five");
+            director_phase("Phase 15 — Place (sequential, batched)").expect("phase fifteen");
         assert_eq!(place, 14);
         assert!(early > at_first);
 
-        // 5b is motion design, its own rung after Place.
-        let (motion, _) = director_phase("Phase 5b — Motion design").expect("phase five b");
+        // 16 is motion design, its own rung after Place.
+        let (motion, _) = director_phase("Phase 16 — Motion design").expect("phase sixteen");
         assert_eq!(motion, 15);
 
         // The grade phase the skill requires is visible to the bar too.
-        let (grade, _) = director_phase("Phase 6 — Grade (required)").expect("phase six");
+        let (grade, _) = director_phase("Phase 19 — Grade (required)").expect("phase nineteen");
         assert_eq!(grade, 18);
 
         // The final phase never completes the bar: 1.0 is the accepted
         // end's alone.
-        let (export, at_export) =
-            director_phase("Phase 8 — Save and hand off the timeline (no export).").expect("phase eight");
-        assert_eq!(export, 22);
-        assert!(at_export < 1.0 && at_export > 0.8);
-
-        // The new rungs the skill prints are read by their numbers, not
-        // collapsed into the phase that shares their digit.
-        for (heading, index) in [
-            ("Phase 2b — Voice edit proof", 7),
-            ("Phase 3b — Storyboard and shot list", 9),
-            ("Phase 3c — Motion design code", 10),
-            ("Phase 3d — Geneva deep design", 11),
-            ("Phase 4b — Stock review, gate and continuity", 13),
-            ("Phase 5c — Caption choreography", 16),
-            ("Phase 5d — Sound design", 17),
-            ("Phase 6b — Grade proof", 19),
-            ("Phase 7b — Independent critique and revision", 21),
-            ("Phase 8b — Final timeline acceptance", 23),
-            ("Phase 9 — Delivery, customization and the wow bar", 24),
-        ] {
-            assert_eq!(
-                director_phase(heading).map(|(at, _)| at),
-                Some(index),
-                "{heading}"
-            );
-        }
+        let (save, at_save) =
+            director_phase("Phase 23 — Save and hand off the timeline (no export).").expect("phase twenty-three");
+        assert_eq!(save, 22);
+        assert!(at_save < 1.0 && at_save > 0.8);
     }
 
     /// One run at a time on the shared project: the Start is refused while

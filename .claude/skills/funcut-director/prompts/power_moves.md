@@ -5,7 +5,7 @@ mandate: use the ones the story earns, and record the ones you deliberately
 leave out. "More effects" is not a power move; a move that answers the
 narration is.
 
-## Story and brief — phases 0, 1d (1–6)
+## Story and brief — phases 1, 5 (1–6)
 
 1. **One-sentence thesis.** Write the sentence the film must leave in the
    viewer's head; every section serves it.
@@ -20,7 +20,7 @@ narration is.
 6. **Brand and claim guardrails.** List taboos, protected claims and anything
    the film must not imply; the plan's brief carries them.
 
-## Hook and structure — phases 1d, 3 (7–12)
+## Hook and structure — phases 9, 15 (7–12)
 
 7. **First-frame interrupt.** Open on the strongest image or line, not a
    logo or a slow establishing shot.
@@ -35,7 +35,7 @@ narration is.
 12. **Payoff and CTA.** Land the promise, then make one ask; do not end on a
     second, weaker hook.
 
-## Voice and edit — phases 2, 2b, 5 (13–18)
+## Voice and edit — phases 7, 8, 15 (13–18)
 
 13. **Measured word timing.** Cut and caption from the measured words, never
     interpolated segment times.
@@ -49,7 +49,7 @@ narration is.
 18. **Sentence-level pacing.** Match the cut length to the sentence, not to a
     fixed BPM; the voice is the clock.
 
-## Footage — phases 4, 4b, 5 (19–26)
+## Footage — phases 13, 14, 15 (19–26)
 
 19. **Semantic B-roll.** Every shot answers its sentence; a pretty clip that
     answers nothing is a slot wasted.
@@ -68,7 +68,7 @@ narration is.
 26. **Licence triple.** Keep provider, id and url for every chosen clip; a
     monetized brief never shops an unlicensed index.
 
-## Motion — phases 3c, 5b (27–34)
+## Motion — phases 11, 16 (27–34)
 
 27. **One motion system.** One type behaviour, one easing family, one
     transition logic; variety inside a system, not random presets.
@@ -87,7 +87,7 @@ narration is.
 34. **Motivated transitions.** A whip, mask or match cut must carry a change
     in place, time or argument; never decorate a straight cut.
 
-## Captions — phase 5c (35–38)
+## Captions — phase 17 (35–38)
 
 35. **Two-to-four word groups.** One breath or one thought per line; never a
     wall of transcript.
@@ -98,7 +98,7 @@ narration is.
 38. **Read-twice hold.** Hold each line long enough to read twice; if it
     cannot, split it.
 
-## Sound — phase 5d (39–43)
+## Sound — phase 18 (39–43)
 
 39. **BGM gate.** Detect embedded music first; never stack a bed on a take
     that already carries one.
@@ -111,7 +111,7 @@ narration is.
 43. **Silence and breath.** Leave air between accents; silence is a sound
     design choice.
 
-## Grade and polish — phases 6, 6b (44–47)
+## Grade and polish — phases 19, 20 (44–47)
 
 44. **One look.** One grade across the whole runtime; no second filter and no
     five-second layer on a long cut.
@@ -122,7 +122,7 @@ narration is.
 47. **A/B proof.** Look at 25% and 75% of the runtime; the same look, the
     right direction, no bars.
 
-## Quality and timeline-ready — phases 7, 7b, 8, 8b, 9 (48–50)
+## Quality and timeline-ready — phases 21, 22, 23, 24, 25 (48–50)
 
 48. **Story gates.** The plan validates, is creativeReady and carries the
     signal log with confidence and basis.
@@ -131,7 +131,7 @@ narration is.
 50. **Timeline acceptance.** The saved timeline reads, has clips, has no
     shared lanes and opens for customization; no export is required.
 
-## Scene and beat map — phase 1e (51–55)
+## Scene and beat map — phase 6 (51–55)
 
 51. **Real shot boundaries.** `analyze_scenes` every take; cut on a real
     scene change, not a guessed interval.
@@ -144,7 +144,7 @@ narration is.
 55. **Energy curve.** Plot the energy through the film; put the biggest
     visual and sonic event at the turn, not at random.
 
-## Geneva deep — phase 3d (56–70)
+## Geneva deep — phase 12 (56–70)
 
 56. **Read the comp schema.** `motion_inspect` the preset before editing;
     know every slot, node and duration you are about to change.
@@ -177,7 +177,7 @@ narration is.
 70. **One motion system.** One easing family, one type behaviour, one
     transition logic across the film; variety inside the system.
 
-## Full editor power — phases 5, 5b, 5c, 5d (71–80)
+## Full editor power — phases 15, 16, 17, 18 (71–80)
 
 71. **Masks.** `clip_mask` when a shape, a face or a graphic must share the
     frame; a mask without a reason is a hole.
@@ -201,7 +201,7 @@ narration is.
 80. **Effects with a job.** Grain, halation, blur and glow only when they
     serve the motif; every layer names the problem it solves.
 
-## Editorial and creative — phases 3, 5 (81–90)
+## Editorial and creative — phases 9, 15 (81–90)
 
 81. **One signature idea.** The cut has one image, sound or line the
     audience can repeat; every section feeds it.
@@ -224,7 +224,7 @@ narration is.
 90. **One ask.** End with one CTA or one question; never two competing
     asks.
 
-## Timeline and acceptance — phases 7, 8, 9 (91–100)
+## Timeline and acceptance — phases 21, 23, 25 (91–100)
 
 91. **Read the timeline.** `timeline_read` the saved project; confirm the
     clips, captions, comps and audio are the ones you judged.

@@ -1,4 +1,4 @@
-# Review (Phase 7): verify by thirds
+# Review (Phase 21): verify by thirds
 
 Three frames was verification theater for a 2-minute video. The gate is
 now: **preview_frame at the start, middle and end of EACH THIRD** of the

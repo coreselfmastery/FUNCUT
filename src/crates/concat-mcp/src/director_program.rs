@@ -8377,17 +8377,17 @@ mod tests {
                 "sfx",
                 "preview",
                 "revise",
-                "export",
+                "timeline-ready",
                 "verify",
                 "watch",
             ]
         );
-        // The register and the run are the same order, not merely the same
-        // set: `Runner::completed` reports a resumed run in `Stage::ALL`'s
-        // order, so an `ALL` that disagreed with the program would resume
-        // a run in an order it never ran.
+        // Stage::ALL is the complete register, including the optional
+        // explicit-export stage. The default run must be an ordered
+        // subsequence and must not schedule an export.
         let register: Vec<&str> = Stage::ALL.iter().map(|stage| stage.label()).collect();
-        assert_eq!(register, order, "the register is the run's own order");
+        assert!(order.iter().all(|stage| register.contains(stage)));
+        assert!(!order.contains(&"export"));
         // The warn-policy stages, and only them: a take that cannot be
         // repaired ships as recorded, an emotional read that cannot be
         // made leaves the cut on its defaults, a plan the gate refuses
@@ -8419,11 +8419,16 @@ mod tests {
             ]
         );
 
-        // The export is promised where the program says it lands.
-        assert_eq!(
-            program.export,
-            std::path::Path::new("/edits/Reel edit/export/auto-edit.mp4")
-        );
+        // The program's artifact is the editable timeline. Rendering
+        // remains an explicit user action in the editor.
+        assert_eq!(program.export, std::path::Path::new("timeline"));
+        let called: Vec<&str> = program
+            .steps
+            .iter()
+            .flat_map(|step| step.calls().iter().map(|call| call.tool.as_str()))
+            .collect();
+        assert!(!called.contains(&"export_start"));
+        assert!(!called.contains(&"export_wait"));
         assert!(
             program.enforce_acceptance,
             "the auto edit claims the whole edit, so its receipt must decide the outcome"
@@ -8475,58 +8480,32 @@ mod tests {
         // keyed by the stage, so a second step sharing `Stage::Timeline`
         // was skipped the moment the first completed and the run never
         // graded.
-        for at in [5usize, 6, 7, 8, 9, 10, 11, 12, 13, 15] {
+        for at in [4usize, 6, 7, 8, 9, 10, 11, 12, 13, 16] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
             );
         }
 
-        // The export is waited on by its project folder - the job's name
-        // is minted at run time - and the watch's sheet is a project-
-        // relative name, because the window's server refuses absolute
-        // write paths. The watch itself is derived now: the final
-        // critique carries the measured brief the preview's did. The
-        // export's own gate: a wait that gives up must not read as a
-        // landed render.
-        let export = program.steps[14].as_static();
-        assert_eq!(export.calls[0].tool, "export_start");
-        assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
-        assert_eq!(export.calls[1].tool, "export_wait");
-        assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
-
-        // The verify's gates: the loudness target, the words (F-04), and
-        // the collision read the stage opened with - on the derived step
-        // that reads the timeline as it ended up.
-        use concat_director::ReplyGate;
-        assert!(matches!(program.steps[15], ProgramStep::Derived(_)));
+        // The saved timeline is explicitly written and read back; the
+        // final verify checks collisions, and the final watch reviews the
+        // open project rather than an automatically encoded MP4.
+        let ready = program.steps[14].as_static();
+        assert_eq!(ready.calls[0].tool, "project_save");
+        assert_eq!(ready.calls[0].arguments["path"], source.project.as_str());
+        assert_eq!(ready.calls[1].tool, "timeline_read");
+        assert_eq!(ready.calls[1].arguments["path"], source.project.as_str());
+        let verify = program.steps[15].as_static();
+        assert_eq!(verify.calls[0].tool, "collision_check");
+        assert_eq!(verify.calls[1].tool, "timeline_read");
         assert_eq!(
-            program.steps[15].gates(),
-            vec![
-                ReplyGate::True {
-                    field: "platformTargetMet",
-                    what: "the mix missed the platform loudness target",
-                },
-                ReplyGate::Word {
-                    field: "verdict",
-                    equals: "pass",
-                    what: "the export's words are not the words the edit placed",
-                },
-                ReplyGate::True {
-                    field: "clean",
-                    what: "clips share a lane on the timeline",
-                },
-            ]
-        );
-        assert_eq!(
-            program.steps[14].gates(),
-            vec![ReplyGate::Word {
-                field: "state",
-                equals: "done",
-                what: "the render was still running when its waits ran out",
+            verify.gates(),
+            vec![ReplyGate::True {
+                field: "clean",
+                what: "clips share a lane on the saved timeline",
             }]
         );
+        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
         // The transcription's own done gate: a wait that gives up with
         // "still running" used to complete the stage over a transcript
         // that never arrived, and every word-derived stage downstream
@@ -8544,7 +8523,7 @@ mod tests {
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
-                what: "the cut scored under the craft bar",
+                what: "the final timeline preview scored under the craft bar",
             }]
         );
         // The plan's own gate: its structure is refused before a single
@@ -8558,7 +8537,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 2 && at != 5 && at != 14 && at != 15 && at != 16 {
+            if at != 2 && at != 5 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }

@@ -61,6 +61,17 @@ on:
         type: string
         default: ""
 
+# Keyed on what is built, the same shape as ci.yml's and geneva.yml's groups:
+# a release building its tag and a push to main never cancel each other, and
+# only a pull request's run is cancelled by the next push to it. Without a
+# group every push to a PR that touches these paths queues another
+# multi-hour build of a commit the next push has already replaced, and the
+# queue only grows; with one, the superseded pending builds are dropped and
+# a PR's in-flight build is cancelled by its own next push.
+concurrency:
+  group: build-app-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   # The prebuilt dependencies - BtbN's FFmpeg 8.1 (GPL, shared, one per

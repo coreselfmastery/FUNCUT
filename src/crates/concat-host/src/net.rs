@@ -310,7 +310,13 @@ impl Shelf {
         let (agent, shown): (&ureq::Agent, Option<&str>) = match (&route, &self.proxied) {
             (Some(route), Some((shown, agent))) if *shown == route.shown => (agent, Some(shown)),
             (Some(route), _) => {
-                own = routed(Some(route), self.connect, self.read, Trust::System, self.redirects);
+                own = routed(
+                    Some(route),
+                    self.connect,
+                    self.read,
+                    Trust::System,
+                    self.redirects,
+                );
                 (&own, Some(route.shown.as_str()))
             }
             (None, _) => (&self.direct, None),
@@ -567,7 +573,9 @@ mod tests {
             .expect("write the redirect");
             first.flush().expect("flush the redirect");
 
-            listener.set_nonblocking(true).expect("nonblocking listener");
+            listener
+                .set_nonblocking(true)
+                .expect("nonblocking listener");
             let deadline = std::time::Instant::now() + Duration::from_millis(500);
             let mut followed = false;
             while std::time::Instant::now() < deadline {
@@ -605,7 +613,10 @@ mod tests {
                 error => panic!("expected the redirect response, got {error}"),
             },
         };
-        assert_eq!(status, 302, "the caller must see the redirect before following it");
+        assert_eq!(
+            status, 302,
+            "the caller must see the redirect before following it"
+        );
         assert!(
             !server.join().expect("the local server"),
             "the shelf must not connect to the redirect target on its own"

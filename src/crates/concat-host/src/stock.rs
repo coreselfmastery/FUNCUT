@@ -96,13 +96,15 @@ impl Provider {
     /// by the same rule, so a provider-host redirect cannot turn this fetch
     /// into a request to an unrelated or local service.
     pub fn validate_download_url(self, raw: &str) -> Result<Url, String> {
-        let parsed = Url::parse(raw)
-            .map_err(|error| format!("the clip URL does not parse: {error}"))?;
+        let parsed =
+            Url::parse(raw).map_err(|error| format!("the clip URL does not parse: {error}"))?;
         if parsed.scheme() != "https" {
             return Err("the clip URL must be https - the shelves serve no plain http".to_owned());
         }
         if !parsed.username().is_empty() || parsed.password().is_some() {
-            return Err("the clip URL must not contain username or password credentials".to_owned());
+            return Err(
+                "the clip URL must not contain username or password credentials".to_owned(),
+            );
         }
         if parsed.port().is_some_and(|port| port != 443) {
             return Err("the clip URL must use the standard https port".to_owned());
@@ -166,11 +168,17 @@ fn is_redirect(status: u16) -> bool {
 fn redirected_url(provider: Provider, current: &Url, location: &str) -> Result<Url, String> {
     let location = location.trim();
     if location.is_empty() {
-        return Err(format!("{} redirected the clip without a Location value", provider.name()));
+        return Err(format!(
+            "{} redirected the clip without a Location value",
+            provider.name()
+        ));
     }
-    let next = current
-        .join(location)
-        .map_err(|error| format!("{} returned an invalid redirect URL: {error}", provider.name()))?;
+    let next = current.join(location).map_err(|error| {
+        format!(
+            "{} returned an invalid redirect URL: {error}",
+            provider.name()
+        )
+    })?;
     provider.validate_download_url(next.as_str())
 }
 
@@ -798,24 +806,36 @@ mod tests {
             .validate_download_url("https://videos.pexels.com/video-files/1.mp4")
             .expect("the Pexels CDN");
         assert_eq!(pexels.host_str(), Some("videos.pexels.com"));
-        assert!(Provider::Pexels
-            .validate_download_url("http://videos.pexels.com/video-files/1.mp4")
-            .is_err());
-        assert!(Provider::Pexels
-            .validate_download_url("https://videos.pexels.com.evil.test/file.mp4")
-            .is_err());
-        assert!(Provider::Pexels
-            .validate_download_url("https://user@videos.pexels.com/file.mp4")
-            .is_err());
-        assert!(Provider::Pexels
-            .validate_download_url("https://videos.pexels.com:8443/file.mp4")
-            .is_err());
-        assert!(Provider::Pixabay
-            .validate_download_url("https://videos.pexels.com/file.mp4")
-            .is_err());
-        assert!(Provider::Pixabay
-            .validate_download_url("https://cdn.pixabay.com/video/1.mp4")
-            .is_ok());
+        assert!(
+            Provider::Pexels
+                .validate_download_url("http://videos.pexels.com/video-files/1.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pexels
+                .validate_download_url("https://videos.pexels.com.evil.test/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pexels
+                .validate_download_url("https://user@videos.pexels.com/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pexels
+                .validate_download_url("https://videos.pexels.com:8443/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pixabay
+                .validate_download_url("https://videos.pexels.com/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pixabay
+                .validate_download_url("https://cdn.pixabay.com/video/1.mp4")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -831,17 +851,22 @@ mod tests {
         .expect("the provider CDN");
         assert_eq!(cdn.host_str(), Some("videos.pexels.com"));
         assert!(
-            redirected_url(Provider::Pexels, &start, "https://127.0.0.1/latest/meta-data")
-                .is_err()
+            redirected_url(
+                Provider::Pexels,
+                &start,
+                "https://127.0.0.1/latest/meta-data"
+            )
+            .is_err()
         );
         assert!(
-            redirected_url(Provider::Pexels, &start, "http://videos.pexels.com/file.mp4")
-                .is_err()
+            redirected_url(
+                Provider::Pexels,
+                &start,
+                "http://videos.pexels.com/file.mp4"
+            )
+            .is_err()
         );
-        assert!(
-            redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4")
-                .is_err()
-        );
+        assert!(redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4").is_err());
     }
 
     #[test]

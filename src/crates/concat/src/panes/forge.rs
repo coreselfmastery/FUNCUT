@@ -2416,7 +2416,7 @@ fn build_voiceover_sibling(
                 audio_codec: item.audio_codec.clone(),
                 has_audio: true,
                 audio_tracks: Vec::new(),
-                origin: concat_project::model::MediaOrigin::Processed,
+                origin: Some(concat_project::model::MediaOrigin::Processed),
                 placeholder: false,
                 color_range: None,
                 color_space: item.color_space,

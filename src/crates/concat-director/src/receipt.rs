@@ -1402,6 +1402,78 @@ mod tests {
     }
 
     #[test]
+    fn signal_evidence_gate_accepts_only_measured_profile_families() {
+        let plan = json!({
+            "signalLog": [
+                {"signals":["pause.class=dead_air","words"],"confidence":0.7}
+            ]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"wordConfidence","confidence":0.75}
+                ]
+            }
+        })];
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles);
+        assert_eq!(status, GateStatus::Pass);
+        assert!(evidence.contains("2 claimed voice-signal families"));
+    }
+
+    #[test]
+    fn signal_evidence_gate_rejects_unmeasured_or_inflated_confidence() {
+        let plan = json!({
+            "signalLog": [
+                {"signals":["pause","words"],"confidence":0.95}
+            ]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8}
+                ]
+            }
+        })];
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("did not measure wordConfidence"));
+        assert!(evidence.contains("above measured pauses confidence"));
+    }
+
+    #[test]
+    fn signal_evidence_gate_rejects_empty_logs_and_unrated_families() {
+        let empty = json!({"signalLog":[]});
+        let (status, evidence) = signal_evidence_gate(&empty, &[]);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("no signalLog entries"));
+
+        let plan = json!({
+            "signalLog": [{"signals":["speaker"],"confidence":0.7}]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [{"signal":"speaker","confidence":0.0}]
+            }
+        })];
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("did not measure speaker"));
+    }
+
+    #[test]
+    fn signal_family_aliases_match_the_voice_profile_confidence_keys() {
+        assert_eq!(measured_voice_family("pause.class=dead_air"), Some("pauses"));
+        assert_eq!(measured_voice_family("words"), Some("wordConfidence"));
+        assert_eq!(measured_voice_family("sentence.type"), Some("sentenceType"));
+        assert_eq!(measured_voice_family("noiseFloor.snr_db"), Some("forensic"));
+        assert_eq!(measured_voice_family("speechActs"), None);
+    }
+
+    #[test]
     fn a_timeline_ready_run_can_be_accepted_without_an_export() {
         let call = |tool: &str, arguments: Value| ToolCall {
             tool: tool.to_owned(),

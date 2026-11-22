@@ -217,14 +217,35 @@ fn timeline_integrity(view: &Value) -> Result<String, String> {
         return Err("the saved timeline contains no clips".to_owned());
     }
 
-    let track_ids: std::collections::HashSet<&str> = tracks
-        .iter()
-        .filter_map(|track| track.get("id").and_then(Value::as_str))
-        .collect();
-    let media_by_id: std::collections::HashMap<&str, &str> = media
-        .iter()
-        .filter_map(|item| Some((item.get("id")?.as_str()?, item.get("path")?.as_str()?)))
-        .collect();
+    let mut track_ids = std::collections::HashSet::new();
+    for (index, track) in tracks.iter().enumerate() {
+        let id = track
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("track {} has no id", index + 1))?;
+        if !track_ids.insert(id) {
+            return Err(format!("duplicate track id `{id}`"));
+        }
+    }
+
+    let mut media_by_id = std::collections::HashMap::new();
+    for (index, item) in media.iter().enumerate() {
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("media item {} has no id", index + 1))?;
+        let path = item
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| format!("media item `{id}` has no source path"))?;
+        let duration = item.get("duration").and_then(Value::as_f64);
+        if media_by_id.insert(id, (path, duration)).is_some() {
+            return Err(format!("duplicate media id `{id}`"));
+        }
+    }
 
     let mut clip_ids = std::collections::HashSet::new();
     let mut checked_sources = std::collections::HashSet::new();
@@ -261,7 +282,7 @@ fn timeline_integrity(view: &Value) -> Result<String, String> {
         if !start.is_finite() || start < 0.0 {
             return Err(format!("clip `{id}` has invalid start {start}"));
         }
-        if !duration.is_finite() || duration <= 0.0 {
+        if !duration.is_finite() || duration <= 0.0 || !(start + duration).is_finite() {
             return Err(format!("clip `{id}` has invalid duration {duration}"));
         }
 
@@ -273,18 +294,36 @@ fn timeline_integrity(view: &Value) -> Result<String, String> {
             ));
         }
         if let Some(media_id) = media_id {
-            let source = media_by_id
+            let (source, source_duration) = media_by_id
                 .get(media_id)
                 .copied()
                 .ok_or_else(|| format!("clip `{id}` references missing media `{media_id}`"))?;
-            if source.trim().is_empty() {
-                return Err(format!(
-                    "clip `{id}` media `{media_id}` has an empty source path"
-                ));
-            }
             if checked_sources.insert(source) && !std::path::Path::new(source).is_file() {
                 return Err(format!(
                     "clip `{id}` media `{media_id}` source file is missing: {source}"
+                ));
+            }
+            let source_start = clip
+                .get("sourceStart")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| format!("clip `{id}` has no numeric sourceStart"))?;
+            let speed = clip
+                .get("speed")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0);
+            if !source_start.is_finite() || source_start < 0.0 {
+                return Err(format!("clip `{id}` has invalid sourceStart {source_start}"));
+            }
+            if !speed.is_finite() || speed <= 0.0 {
+                return Err(format!("clip `{id}` has invalid playback speed {speed}"));
+            }
+            if let Some(source_duration) = source_duration
+                && source_start + duration * speed > source_duration + 0.05
+            {
+                return Err(format!(
+                    "clip `{id}` reads past media `{media_id}`: source end {:.3}s exceeds {:.3}s",
+                    source_start + duration * speed,
+                    source_duration
                 ));
             }
             file_backed += 1;

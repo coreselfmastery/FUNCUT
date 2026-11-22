@@ -2689,7 +2689,8 @@ fn motion_specs(
         // Label under it. Without the fill the card showed the sentence
         // where its number belonged, and the profile's own measurement
         // never reached the screen.
-        let slots: Vec<(&'static str, String)> = entity.value
+        let slots: Vec<(&'static str, String)> = entity
+            .value
             .map(|value| {
                 let number = match entity
                     .unit

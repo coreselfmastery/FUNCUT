@@ -1478,9 +1478,18 @@ mod tests {
         assert_eq!(measured_voice_family("words"), Some("wordConfidence"));
         assert_eq!(measured_voice_family("sentence.type"), Some("sentenceType"));
         assert_eq!(measured_voice_family("speechRatio"), Some("pauses"));
-        assert_eq!(measured_voice_family("loudness.truePeakDbfs"), Some("loudness"));
-        assert_eq!(measured_voice_family("prosody.emphasisWords"), Some("prosody"));
-        assert_eq!(measured_voice_family("forensic.formantsHz"), Some("formants"));
+        assert_eq!(
+            measured_voice_family("loudness.truePeakDbfs"),
+            Some("loudness")
+        );
+        assert_eq!(
+            measured_voice_family("prosody.emphasisWords"),
+            Some("prosody")
+        );
+        assert_eq!(
+            measured_voice_family("forensic.formantsHz"),
+            Some("formants")
+        );
         assert_eq!(measured_voice_family("noiseFloor.snr_db"), Some("forensic"));
         assert_eq!(measured_voice_family("speakerChanges"), Some("speaker"));
         assert_eq!(measured_voice_family("speechActs"), None);
@@ -1540,7 +1549,12 @@ mod tests {
         }
         for name in ["words", "audio", "export-integrity"] {
             assert_eq!(
-                receipt.gates.iter().find(|gate| gate.gate == name).unwrap().status,
+                receipt
+                    .gates
+                    .iter()
+                    .find(|gate| gate.gate == name)
+                    .unwrap()
+                    .status,
                 GateStatus::Skipped,
                 "{name} is honestly skipped without an export"
             );

@@ -338,6 +338,131 @@ fn timeline_integrity(view: &Value) -> Result<String, String> {
     ))
 }
 
+/// Map the Director's accepted signal-log vocabulary to the confidence
+/// family the voice profile actually returns. Discourse and emotion signals
+/// are measured by their own tools and are deliberately not guessed here.
+fn measured_voice_family(signal: &str) -> Option<&'static str> {
+    let family = signal.split(['.', '[', '=']).next()?;
+    Some(match family {
+        "pause" | "speechRatio" => "pauses",
+        "emphasisWords" | "rhythmLayers" | "prosody" => "prosody",
+        "speechRate" => "speechRate",
+        "words" => "wordConfidence",
+        "language" => "language",
+        "sentence" => "sentenceType",
+        "entities" => "entities",
+        "motifs" => "motifs",
+        "fillers" => "fillers",
+        "forensic" | "noiseFloor" | "musicSegments" => "forensic",
+        "speaker" | "speakerChanges" => "speaker",
+        "loudness" => "loudness",
+        "formants" => "formants",
+        _ => return None,
+    })
+}
+
+/// Verify that voice-signal families claimed in the saved plan were
+/// actually measured on at least one narration take. The plan validator
+/// checks vocabulary and confidence shape; this independent gate checks
+/// the claims against fresh profile replies instead of trusting a number
+/// the Director wrote into its own signalLog.
+fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String) {
+    let entries = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if entries.is_empty() {
+        return (
+            GateStatus::Fail,
+            "the voiceover plan has no signalLog entries to verify".to_owned(),
+        );
+    }
+
+    let mut measured = std::collections::HashMap::<&str, f64>::new();
+    for profile in profiles {
+        if profile.get("ok").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        for row in profile
+            .pointer("/signalConfidence/perSignal")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(family), Some(confidence)) = (
+                row.get("signal").and_then(Value::as_str),
+                row.get("confidence").and_then(Value::as_f64),
+            ) {
+                measured
+                    .entry(family)
+                    .and_modify(|best| *best = best.max(confidence))
+                    .or_insert(confidence);
+            }
+        }
+    }
+
+    let mut claimed = std::collections::BTreeSet::new();
+    let mut failures = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let confidence = entry.get("confidence").and_then(Value::as_f64);
+        for signal in entry
+            .get("signals")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let Some(family) = measured_voice_family(signal) else {
+                continue;
+            };
+            claimed.insert(family);
+            match measured.get(family).copied().filter(|value| *value > 0.0) {
+                Some(actual) => {
+                    if confidence.is_some_and(|claimed_confidence| claimed_confidence > actual + 0.05)
+                    {
+                        failures.push(format!(
+                            "entry {} claims confidence {:.2} above measured {} confidence {:.2}",
+                            index + 1,
+                            confidence.unwrap_or_default(),
+                            family,
+                            actual
+                        ));
+                    }
+                }
+                None => failures.push(format!(
+                    "entry {} cites {}, but the voice profile did not measure {}",
+                    index + 1,
+                    signal,
+                    family
+                )),
+            }
+        }
+    }
+
+    if claimed.is_empty() {
+        return (
+            GateStatus::Fail,
+            "the signalLog cites no independently measurable voice-signal family".to_owned(),
+        );
+    }
+    if !failures.is_empty() {
+        return (GateStatus::Fail, failures.join("; "));
+    }
+    (
+        GateStatus::Pass,
+        format!(
+            "{} claimed voice-signal families verified against {} measured take profile(s): {}",
+            claimed.len(),
+            profiles
+                .iter()
+                .filter(|profile| profile.get("ok").and_then(Value::as_bool) == Some(true))
+                .count(),
+            claimed.into_iter().collect::<Vec<_>>().join(", ")
+        ),
+    )
+}
+
 /// Runs the check: every call, the replies it drew, and the receipt those
 /// replies earn. Nothing here can pass on a promise - a gate reads only an
 /// answer this function itself received.
@@ -358,7 +483,8 @@ pub fn check(
     // Story validation is evidence only when the Director persisted the
     // exact plan it validated. Do not infer this gate from a successful
     // process exit or from the existence of a creative brief.
-    if let Some(plan) = saved_plan(check.project) {
+    let plan = saved_plan(check.project);
+    if let Some(plan) = plan.as_ref() {
         let arguments = json!({ "plan": plan });
         if let Some(reply) = caller.ask("plan_validate", arguments.clone()) {
             answered.push("plan_validate".to_owned());
@@ -369,6 +495,57 @@ pub fn check(
                 },
                 reply,
             ));
+        }
+    }
+
+    // Re-read the voice profile for every distinct narration take. This
+    // independent pass makes a fabricated signalLog confidence fail even
+    // when the plan's own structural validator accepts its vocabulary.
+    let mut signal_profiles = Vec::new();
+    let mut signal_evidence_error = None;
+    let signal_required = plan.as_ref().is_some_and(|plan| {
+        plan.pointer("/audio/voiceover")
+            .is_some_and(|voiceover| !voiceover.is_null())
+    });
+    if signal_required {
+        match expected_takes(check.project) {
+            Ok(mapping_rows) => {
+                let paths: std::collections::BTreeSet<String> = mapping_rows
+                    .iter()
+                    .filter_map(|row| row.get("path").and_then(Value::as_str).map(str::to_owned))
+                    .collect();
+                for path in paths {
+                    let arguments = json!({ "audio": path });
+                    if let Some(reply) = caller.ask("voice_signals", arguments.clone()) {
+                        answered.push("voice_signals".to_owned());
+                        if reply.get("ok").and_then(Value::as_bool) == Some(true) {
+                            signal_profiles.push(reply.clone());
+                        } else {
+                            signal_evidence_error = Some(
+                                reply.get("error").and_then(Value::as_str)
+                                    .unwrap_or("voice_signals returned no measured profile")
+                                    .to_owned(),
+                            );
+                        }
+                        observed.push((
+                            ToolCall {
+                                tool: "voice_signals".to_owned(),
+                                arguments,
+                            },
+                            reply,
+                        ));
+                    } else {
+                        signal_evidence_error = Some(
+                            "voice_signals could not independently read a narration take".to_owned(),
+                        );
+                    }
+                }
+                if paths.is_empty() {
+                    signal_evidence_error =
+                        Some("voiceover mapping contains no distinct narration takes".to_owned());
+                }
+            }
+            Err(error) => signal_evidence_error = Some(error),
         }
     }
 
@@ -509,6 +686,24 @@ pub fn check(
         true,
     ));
 
+    if signal_required {
+        let (status, evidence) = if let Some(error) = signal_evidence_error {
+            (GateStatus::Skipped, error)
+        } else if let Some(plan) = plan.as_ref() {
+            signal_evidence_gate(plan, &signal_profiles)
+        } else {
+            (
+                GateStatus::Skipped,
+                "the saved edit plan is unavailable for signal verification".to_owned(),
+            )
+        };
+        gates.push(GateRecord::new(
+            "signal-evidence",
+            status,
+            evidence,
+            true,
+        ));
+    }
     let plan_validation = observed
         .iter()
         .rev()

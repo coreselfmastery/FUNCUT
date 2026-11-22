@@ -1240,7 +1240,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                         .map(|overall| format!("{overall}"))
                         .unwrap_or_else(|| score.to_string())
                 ),
-                false,
+                !has_export,
             ));
         }
         None => gates.push(GateRecord::new(

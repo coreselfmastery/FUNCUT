@@ -864,6 +864,40 @@ pub fn timeline_integrity(view: &Value) -> Result<String, String> {
     ))
 }
 
+/// A narration edit is not complete if the saved timeline contains
+/// only titles: it must carry the voiceover and at least one visual source.
+/// The deeper timeline-integrity gate separately verifies every media id,
+/// source path, trim and track reference.
+pub fn timeline_content_gate(view: &Value) -> (GateStatus, String) {
+    let Some(clips) = view
+        .pointer("/timeline/clips")
+        .and_then(Value::as_array)
+    else {
+        return (
+            GateStatus::Skipped,
+            "timeline_read did not return clips for the voiceover/visual check".to_owned(),
+        );
+    };
+    let has_voiceover = clips
+        .iter()
+        .any(|clip| clip.get("kind").and_then(Value::as_str) == Some("audio"));
+    let has_visual = clips.iter().any(|clip| {
+        matches!(
+            clip.get("kind").and_then(Value::as_str),
+            Some("video" | "image")
+        )
+    });
+    let status = if has_voiceover && has_visual {
+        GateStatus::Pass
+    } else {
+        GateStatus::Fail
+    };
+    (
+        status,
+        format!("saved timeline contains voiceover={has_voiceover}, visual={has_visual}"),
+    )
+}
+
 /// Map the Director's accepted signal-log vocabulary to the confidence
 /// family the voice profile actually returns. Discourse and emotion signals
 /// are measured by their own tools and are deliberately not guessed here.
@@ -1063,7 +1097,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         .and_then(|(call, _)| call.arguments.get("plan"));
     let voiceover_required = plan
         .and_then(|plan| plan.pointer("/audio/voiceover"))
-        .is_some_and(|voiceover| !voiceover.is_null());
+        .is_some_and(|voiceover| !voiceover.is_null() && voiceover != &Value::Bool(false));
     if voiceover_required {
         let profiles: Vec<Value> = observed
             .iter()
@@ -1221,6 +1255,20 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         timeline_evidence,
         true,
     ));
+    if voiceover_required {
+        let (status, evidence) = timeline_view
+            .map(timeline_content_gate)
+            .unwrap_or((
+                GateStatus::Skipped,
+                "the run never read the saved timeline's audio and visual clips".to_owned(),
+            ));
+        gates.push(GateRecord::new(
+            "content-completeness",
+            status,
+            evidence,
+            true,
+        ));
+    }
 
     // The picture: the final craft score after the last watch_render.
     // In timeline mode this is the final editable-project preview; in an
@@ -1404,6 +1452,31 @@ mod tests {
             .expect("the visual gate is recorded");
         assert_eq!(visual.status, GateStatus::Skipped);
         assert!(!visual.required);
+    }
+
+    #[test]
+    fn voiceover_timeline_requires_both_audio_and_visual_content() {
+        let complete = json!({
+            "timeline": {"clips": [
+                {"kind":"audio","media":"voice"},
+                {"kind":"video","media":"footage"},
+                {"kind":"text"}
+            ]}
+        });
+        let (status, evidence) = timeline_content_gate(&complete);
+        assert_eq!(status, GateStatus::Pass);
+        assert!(evidence.contains("voiceover=true, visual=true"));
+
+        let title_only = json!({
+            "timeline": {"clips": [{"kind":"text"}]}
+        });
+        let (status, evidence) = timeline_content_gate(&title_only);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("voiceover=false, visual=false"));
+
+        let missing = json!({});
+        let (status, _) = timeline_content_gate(&missing);
+        assert_eq!(status, GateStatus::Skipped);
     }
 
     #[test]

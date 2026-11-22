@@ -864,19 +864,21 @@ impl Runner {
         // replies its calls drew. A stage that never got its turn stays
         // `NotReached`, and a gate whose measurement never landed is
         // `Skipped` - never a pass the run did not earn.
+        let gates = derive_gates_with_stages(&observed, &records);
         let receipt = AcceptanceReceipt::new(
             self.project().display().to_string(),
             program.export.display().to_string(),
             records,
-            derive_gates_with_stages(&observed, &records),
+            gates,
             warnings.clone(),
         )
         .with_assets(provenance_of(&observed));
-        // A completed render is not an accepted edit. Keep the exported
-        // sibling for inspection, but force the warning terminal state
-        // whenever any required quality gate is rejected or unmeasured.
-        // The receipt keeps the stage warnings alone; this sentence is
-        // the receipt's verdict, not a warning it recorded.
+        // A completed stage sequence is not an accepted edit. Keep its
+        // editable project or explicit export for inspection, but force
+        // the warning terminal state whenever any required quality gate
+        // is rejected or unmeasured. The receipt keeps stage warnings
+        // alone; this sentence is the receipt's verdict, not a warning it
+        // recorded.
         if program.enforce_acceptance && receipt.verdict != crate::receipt::Verdict::Accepted {
             warnings.push(format!(
                 "quality acceptance {}: {}",
@@ -884,10 +886,12 @@ impl Runner {
                 receipt.summary()
             ));
         }
-        let detail = if warnings.is_empty() {
-            "the export is complete"
-        } else {
-            "the export is complete, with warnings"
+        let timeline_delivery = program.export.as_path() == std::path::Path::new("timeline");
+        let detail = match (timeline_delivery, warnings.is_empty()) {
+            (true, true) => "the editable timeline is ready",
+            (true, false) => "the editable timeline is ready, with warnings",
+            (false, true) => "the export is complete",
+            (false, false) => "the export is complete, with warnings",
         };
         let progress = AutoEditProgress::new(
             last.stage(),

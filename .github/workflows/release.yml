@@ -134,14 +134,14 @@ jobs:
 
   nix:
     name: Nix package
-    needs: check
+    needs: [check, engine]
     uses: ./.github/workflows/nix.yml
     with:
       ref: ${{ needs.check.outputs.tag }}
 
   security:
     name: Dependency security audit
-    needs: check
+    needs: [check, engine]
     uses: ./.github/workflows/security-audit.yml
     with:
       ref: ${{ needs.check.outputs.tag }}

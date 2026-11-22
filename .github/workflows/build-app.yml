@@ -73,10 +73,6 @@ on:
 # multi-hour build of a commit the next push has already replaced, and the
 # queue only grows; with one, the superseded pending builds are dropped and
 # a PR's in-flight build is cancelled by its own next push.
-concurrency:
-  group: build-app-${{ inputs.ref || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 # The bundles read the tree and fetch their pinned dependencies; the
 # token has nothing to write until the release workflow's own publish
 # job says otherwise.

@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "src/crates/concat-mcp/sense/voice_signals.py"
 MATRIX = ROOT / ".claude/skills/funcut-director/prompts/signal_matrix.md"
+TOOLS_RS = ROOT / "src/crates/concat-mcp/src/tools.rs"
 
 
 def main() -> int:
@@ -29,12 +30,21 @@ def main() -> int:
         if isinstance(entry, dict) and isinstance(entry.get("family"), str)
     }
     matrix_text = MATRIX.read_text(encoding="utf-8")
-    actual = re.findall(
-        r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|",
+    rows = re.findall(
+        r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
         matrix_text,
         flags=re.MULTILINE,
     )
+    actual = [reading for reading, _ in rows]
     actual_set = set(actual)
+    rust_tools = TOOLS_RS.read_text(encoding="utf-8")
+    vocabulary_match = re.search(
+        r"const SIGNAL_VOCABULARY:\s*&\[&str\]\s*=\s*&\[(.*?)\];",
+        rust_tools,
+        flags=re.DOTALL,
+    )
+    vocabulary = set(re.findall(r"\"([^\"]+)\"", vocabulary_match.group(1))) if vocabulary_match else set()
+    aliases = {alias for _, alias in rows}
 
     errors: list[str] = []
     if len(expected) != len(expected_set):
@@ -47,6 +57,13 @@ def main() -> int:
         errors.append("missing from matrix: " + ", ".join(missing))
     if stale:
         errors.append("not in runtime catalogue: " + ", ".join(stale))
+    if not vocabulary_match:
+        errors.append("Rust SIGNAL_VOCABULARY could not be read")
+    rejected_aliases = sorted(aliases - vocabulary)
+    if rejected_aliases:
+        errors.append(
+            "signalLog aliases rejected by plan_validate: " + ", ".join(rejected_aliases)
+        )
 
     declared = re.search(
         r"contains \*\*(\d+) named readings across (\d+) families\*\*",

@@ -9586,7 +9586,7 @@ mod tests {
         let claims = uncovered_claims(&log, &takes);
         assert_eq!(claims.len(), 1, "the uncovered claim is the one read");
         assert_eq!(claims[0].text, "this ship sank in 1912");
-        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &claims, false);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &[], &claims, false);
         let card = specs
             .iter()
             .find(|spec| spec.earned_by == "claims")
@@ -9637,7 +9637,7 @@ mod tests {
         let questions = question_acts(&log, &takes);
         assert_eq!(questions.len(), 1, "only the question line is an ask");
         assert_eq!(questions[0].start, 0.0);
-        let specs = motion_specs(&[], &[], &[], &[], &[], &questions, &[], false);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &questions, &[], false);
         assert!(
             specs
                 .iter()
@@ -13508,7 +13508,7 @@ mod tests {
             }],
             ..LineRead::default()
         });
-        let specs = motion_specs(&[line], &[read], &[], &[], &[], &[], &[], false);
+        let specs = motion_specs(&[], &[line], &[read], &[], &[], &[], &[], &[], false);
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].at, 2.5, "the card opens on the stressed word");
         assert_eq!(specs[0].pitch_range, Some(8.0));

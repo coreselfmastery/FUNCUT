@@ -442,6 +442,7 @@ mod tests {
                 start: 2.0,
                 comp: "lower-third".into(),
                 hash: hash.into(),
+                engine: None,
             })
             .expect("places a motion clip");
         let created = view.created_id.expect("the new clip's id");

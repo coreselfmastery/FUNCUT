@@ -6087,17 +6087,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // under the project's comps/, which
                                     // the bake named after the hash; the
                                     // reply's `comp` is that file's full
-                                    // path, which the command refuses.
+                                    // path, which the command refuses. The
+                                    // engine rides along when the bake said
+                                    // one: the clip records the engine that
+                                    // drew its frames, so a native bake is
+                                    // never recorded as geneva's pixels.
+                                    let mut command = json!({
+                                        "op": "addMotionClip",
+                                        "start": round3(start),
+                                        "comp": format!("{hash}.json"),
+                                        "hash": hash,
+                                    });
+                                    if let Some(engine) =
+                                        baked["engine"].as_str().filter(|engine| {
+                                            matches!(*engine, "geneva" | "native" | "lottie")
+                                        })
+                                    {
+                                        command["engine"] = json!(engine);
+                                    }
                                     return Some(call(
                                         "edit_apply",
                                         json!({
                                             "path": motion_project,
-                                            "command": {
-                                                "op": "addMotionClip",
-                                                "start": round3(start),
-                                                "comp": format!("{hash}.json"),
-                                                "hash": hash,
-                                            },
+                                            "command": command,
                                         }),
                                     ));
                                 }

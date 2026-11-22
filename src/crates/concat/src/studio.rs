@@ -869,6 +869,54 @@ fn thousands(count: u64) -> String {
     grouped
 }
 
+/// The live AUTO EDIT follow: the sibling a run is editing, displayed on
+/// the timeline while the run works.
+///
+/// The window shows the run's project as a **display only** - a
+/// [`Session`] built from the folder, claimed by nobody, refreshed each
+/// time the run's own autosave rewrites the document - so the whole edit
+/// is visible as it happens: B-roll landing, captions appearing, motion
+/// cards placed, the bed ducking. The run edits through the server, whose
+/// claim on the folder stands for as long as the run runs; the window's
+/// own edits are refused (a display two writers would fight over is no
+/// display at all), and when the run ends the follow gives way to the
+/// real open: the server releases the folder, and the window opens it
+/// with a claim, an undo history and a place in the recents. A run that
+/// fails hands the window back the project it held before, saved.
+pub struct LiveFollow {
+    /// The sibling folder the run is editing, and the window displays.
+    pub project: String,
+    /// The project the window held when the follow began, saved and let
+    /// go: reopened when a run fails or is cancelled, so a stopped edit
+    /// never leaves the user without their project.
+    pub parked: Option<String>,
+    /// The document's last-seen fingerprint (mtime, size), so a refresh
+    /// re-reads only when the run wrote something.
+    pub stamp: Option<(std::time::SystemTime, u64)>,
+    /// Whether the read-only refusal has been said once: a gesture that
+    /// keeps trying must not say it per move.
+    pub said: bool,
+}
+
+impl LiveFollow {
+    /// A follow of `project`, with the window's own project `parked` for
+    /// the run that fails, and the document's fingerprint as it stands
+    /// now - the follow's first refresh re-reads only what the run writes
+    /// after this.
+    pub fn new(
+        project: String,
+        parked: Option<String>,
+        stamp: Option<(std::time::SystemTime, u64)>,
+    ) -> LiveFollow {
+        LiveFollow {
+            project,
+            parked,
+            stamp,
+            said: false,
+        }
+    }
+}
+
 pub struct Studio {
     pub host: Host,
     pub prefs: Preferences,
@@ -1101,6 +1149,12 @@ pub struct Studio {
     pub sounds: crate::panes::sounds::SoundsPane,
     /// The library's Forge page: the AI director's chair.
     pub forge: crate::panes::forge::ForgePane,
+    /// While an AUTO EDIT runs: the sibling its runner is editing, held
+    /// on the timeline as a live view - a display of a document the
+    /// window does not claim, refreshed as the run's own autosaves land,
+    /// read-only until the run ends and the edit opens for real. See
+    /// [`LiveFollow`].
+    pub live_follow: Option<LiveFollow>,
     /// The library's Motion page: the project's comps, listed and placed.
     pub motion: crate::panes::motion::MotionPane,
     pub openvid: crate::panes::openvid::OpenvidPane,
@@ -1348,6 +1402,19 @@ pub(crate) fn same_folder(a: &str, b: &str) -> bool {
             (std::fs::canonicalize(a), std::fs::canonicalize(b)),
             (Ok(a), Ok(b)) if a == b
         )
+}
+
+/// A project document's fingerprint - when it was written, and how big -
+/// so a live follow re-reads only when the run wrote something. A save
+/// lands by rename, so the pair changes only when a whole document is
+/// there; `None` for a folder with no document yet, which a follow reads
+/// as "nothing to show" until the run writes one.
+fn document_stamp(path: &str) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(std::path::Path::new(path).join("concat.json")).ok()?;
+    Some((
+        meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+        meta.len(),
+    ))
 }
 
 /// A look made from a table - an imported `.cube`, or any package that
@@ -2546,6 +2613,7 @@ impl Studio {
             speech: crate::panes::speech::SpeechPane::with_saved(&host.dirs),
             sounds: crate::panes::sounds::SoundsPane::open(&host.dirs),
             forge: crate::panes::forge::ForgePane::default(),
+            live_follow: None,
             motion: crate::panes::motion::MotionPane::default(),
             openvid: crate::panes::openvid::OpenvidPane::open(&host.dirs),
             music: crate::panes::bgm::MusicPane::open(&host.dirs),
@@ -2667,7 +2735,7 @@ impl Studio {
             }
             Some(Confirm::QuitWithoutSaving { .. }) => {
                 log::warn!("close: quitting without saving, as asked");
-                self.release_project();
+                self.release_project(true);
                 slint::quit_event_loop().ok();
             }
             None => {}
@@ -2952,6 +3020,11 @@ impl Studio {
     }
 
     pub fn apply(&mut self, command: Command) -> Option<String> {
+        // The live follow's document is the run's to write: a display two
+        // writers would fight over is no display at all.
+        if self.refuse_live_edit() {
+            return None;
+        }
         // An edit ends whatever burst the view was in.
         self.end_burst();
         log::info!("edit: {}", command_name(&command));
@@ -2983,6 +3056,12 @@ impl Studio {
     /// bookkeeping, but the editor folds it into the gesture's undo step
     /// and the coalescing window stays open for the next move.
     fn apply_within(&mut self, gesture: &str, command: Command) -> Option<String> {
+        // The live follow's document is the run's to write, gestures
+        // included - the refusal was said by the first move of the
+        // gesture, and the rest are quiet.
+        if self.live_follow.is_some() {
+            return None;
+        }
         // A knob's gesture, folded into one step; said at Debug, since a
         // dial turned is many of these.
         log::debug!("edit: {} ({gesture})", command_name(&command));
@@ -3052,6 +3131,9 @@ impl Studio {
     }
 
     pub fn undo(&mut self) {
+        if self.refuse_live_edit() {
+            return;
+        }
         self.flush_commit();
         self.echo = None;
         self.words = None;
@@ -3064,6 +3146,9 @@ impl Studio {
     }
 
     pub fn redo(&mut self) {
+        if self.refuse_live_edit() {
+            return;
+        }
         self.flush_commit();
         self.echo = None;
         self.words = None;
@@ -3105,6 +3190,9 @@ impl Studio {
     /// Writes the document, on a worker. `announce` says so on success;
     /// a failure is always said.
     pub fn save(&mut self, announce: bool) {
+        if self.refuse_live_edit() {
+            return;
+        }
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -9269,8 +9357,16 @@ impl Studio {
     }
 
     /// [`Studio::close_project`] without the notice: the project saved, then
-    /// let go, or left open when the save fails.
+    /// let go, or left open when the save fails. During a live follow the
+    /// "project" is the run's display - nothing to save, and a claim not
+    /// the window's to give back - so the follow simply ends and the
+    /// caller's own open proceeds.
     fn save_and_release(&mut self) -> Result<(), String> {
+        if self.live_follow.is_some() {
+            log::info!("project: ending the live follow");
+            self.drop_live_display();
+            return Ok(());
+        }
         log::info!("project: closing {}", self.project_name);
         // Words still being typed land in the save, not on the floor.
         self.flush_commit();
@@ -9292,8 +9388,179 @@ impl Studio {
                 return Err(error);
             }
         }
-        self.release_project();
+        self.release_project(true);
         Ok(())
+    }
+
+    /// Whether an edit is refused because a live AUTO EDIT owns the
+    /// timeline: the follow's document is the run's to write. The
+    /// refusal is said once per follow - a gesture that keeps trying
+    /// must not say it per move.
+    fn refuse_live_edit(&mut self) -> bool {
+        let said = match &mut self.live_follow {
+            None => return false,
+            Some(live) => std::mem::replace(&mut live.said, true),
+        };
+        if !said {
+            self.notify(&t("studio.liveFollowReadOnly"), true);
+        }
+        true
+    }
+
+    /// Begins following a run's edit live: the window's own project is
+    /// saved and let go (exactly as an open would), the run's sibling
+    /// takes the timeline as a display - claimed by nobody, written by
+    /// the run through the server - and the parked project is remembered
+    /// for the run that fails. The view resets the way an open does,
+    /// because the pane the user is looking at must not carry the last
+    /// project's lanes over a document it did not come from.
+    pub fn begin_live_follow(&mut self, path: &str) -> Result<(), String> {
+        if self
+            .live_follow
+            .as_ref()
+            .is_some_and(|live| live.project == path)
+        {
+            return Ok(());
+        }
+        // The project the window holds, if any, as an owned path: the
+        // save that lets it go borrows the studio, so nothing of the
+        // session outlives the read.
+        let held = self
+            .session
+            .as_ref()
+            .map(|session| session.path().to_owned());
+        if let Some(open) = held.as_deref() {
+            if same_folder(open, path) {
+                // The run edits what the window already shows: no parking
+                // to do, and the follow begins from the document as it
+                // stands.
+                self.live_follow =
+                    Some(LiveFollow::new(path.to_owned(), None, document_stamp(path)));
+                return Ok(());
+            }
+            self.save_and_release()
+                .map_err(|error| tf("studio.couldNotSave", &[&error]))?;
+        }
+        let info = projects::open(path)?;
+        let session = Session::open_info(&info)?;
+        self.install_live_display(session, &info);
+        self.live_follow = Some(LiveFollow::new(path.to_owned(), held, document_stamp(path)));
+        Ok(())
+    }
+
+    /// The display session installed, with every reset an open does except
+    /// the ones an open earns: no claim (the run's server holds the
+    /// folder), no place in the recents (the landing open gives it that),
+    /// no relink dialog (a run that cannot find its own media says so in
+    /// its log).
+    fn install_live_display(&mut self, session: Session, info: &ProjectInfo) {
+        self.pause();
+        self.session = Some(session);
+        self.relink = Default::default();
+        crate::host::next_project_epoch();
+        self.forget_art();
+        self.art_failed.clear();
+        self.art_stamp = None;
+        self.proxied.clear();
+        self.echo = None;
+        self.dirty = false;
+        self.project_name = info.name.clone();
+        self.export.name = projects::folder_name(&info.name);
+        self.selection.clear();
+        self.timeline_views.clear();
+        self.lanes = crate::panes::timeline::TimelinePane::default();
+        self.transition_selected = None;
+        self.media.selected.clear();
+        self.playhead = 0.0;
+        self.handle(crate::panes::Msg::Timeline(
+            crate::panes::timeline::TimelineMsg::Reset,
+        ));
+        self.on_start = false;
+        self.handle(crate::panes::Msg::Monitor(
+            crate::panes::monitor::MonitorMsg::Opened,
+        ));
+        self.host.monitor.clear();
+        self.audition = None;
+        self.revision += 1;
+        self.flat = None;
+        self.sync_audio();
+        self.request_media_art();
+        self.request_preview();
+        self.ensure_cutouts();
+        self.ensure_stabilizers();
+        self.ensure_regions();
+    }
+
+    /// Re-reads the followed document when the run wrote one, keeping the
+    /// playhead where it is (the point of watching is the edit moving
+    /// under a still hand). Returns whether the display changed.
+    pub fn refresh_live_follow(&mut self) -> bool {
+        let Some(path) = self.live_follow.as_ref().map(|live| live.project.clone()) else {
+            return false;
+        };
+        let stamp = document_stamp(&path);
+        if self
+            .live_follow
+            .as_ref()
+            .is_some_and(|live| live.stamp == stamp)
+        {
+            return false;
+        }
+        let Ok(info) = projects::open(&path) else {
+            return false;
+        };
+        let Ok(session) = Session::open_info(&info) else {
+            return false;
+        };
+        // The stamp is committed only on a re-read that succeeded, so a
+        // document that could not be read is tried again on the next
+        // tick rather than skipped as already seen.
+        if let Some(live) = &mut self.live_follow {
+            live.stamp = stamp;
+        }
+        // The playhead survives the swap; everything the document's own
+        // ids key (the selection) does not, and the art of clips that
+        // left is dropped so the filmstrips of the ones that arrived are
+        // asked for afresh.
+        self.selection.clear();
+        self.forget_art();
+        self.art_stamp = None;
+        self.session = Some(session);
+        self.revision += 1;
+        self.flat = None;
+        self.sync_audio();
+        self.request_media_art();
+        self.request_preview();
+        true
+    }
+
+    /// Ends the follow and drops the display, claiming nothing: the
+    /// run's server keeps the folder for the landing open to take over,
+    /// or for the retry to keep editing.
+    fn drop_live_display(&mut self) {
+        self.live_follow = None;
+        self.release_project(false);
+    }
+
+    /// The follow's end when the run did not land: the window goes back
+    /// to the project it held before the run, saved as it was.
+    pub fn end_live_follow_back(&mut self) {
+        if self.live_follow.is_none() {
+            return;
+        }
+        let parked = self
+            .live_follow
+            .as_ref()
+            .and_then(|live| live.parked.clone());
+        self.drop_live_display();
+        let Some(path) = parked else {
+            return;
+        };
+        if let Ok(info) = projects::open(&path)
+            && let Err(error) = self.open_project(info)
+        {
+            self.notify(&tf("forge.openFailed", &[&error]), true);
+        }
     }
 
     /// Asks whether to quit though the project could not be saved: the
@@ -9304,7 +9571,10 @@ impl Studio {
 
     /// Lets the open project go, unsaved: what `close_project` does once
     /// the save has landed, and what quitting without saving does instead.
-    fn release_project(&mut self) {
+    /// `claim` says whether the folder's claim is the window's to give
+    /// back - a live follow's display holds none (the run's server does),
+    /// so releasing it there would drop a claim the window never had.
+    fn release_project(&mut self, claim: bool) {
         self.host.cutouts.cancel();
         self.host.stabilizers.cancel();
         self.host.enhancers.cancel();
@@ -9326,7 +9596,7 @@ impl Studio {
         if let Some(session) = self.session.as_ref() {
             self.lengths.remove(session.path());
         }
-        if let Some(session) = self.session.as_ref() {
+        if claim && let Some(session) = self.session.as_ref() {
             self.host.open_projects.release(session.path());
         }
         self.session = None;

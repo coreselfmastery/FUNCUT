@@ -111,8 +111,8 @@ pub enum Op {
     SetTrack {
         /// The node.
         node: String,
-        /// `position`, `scale`, `rotation`, `opacity`, `blur`, `dash`, or
-        /// `param:<key>`.
+        /// `position`, `scale`, `rotation`, `opacity`, `blur`, `dash`,
+        /// `gradient-offset`, or `param:<key>`.
         property: String,
         /// The keys.
         keys: Vec<(f64, f64, Option<Curve>)>,
@@ -126,6 +126,35 @@ pub enum Op {
         /// The node.
         node: String,
         /// The keys, each `(at, x, y, curve)`.
+        keys: Vec<(f64, f64, f64, Option<Curve>)>,
+    },
+    /// Add or replace a colour track: `fill` on a shape, `ink` on the
+    /// words, `plate` on the plate behind them, or `stroke-color` on a
+    /// stroked path.
+    ///
+    /// The keys carry `#rrggbb`/`#rrggbbaa` strings, mixed key to key
+    /// the way the engines mix everything else - straight components,
+    /// alpha riding along. This is the op a measured read turns into
+    /// motion: a card whose ink shifts from the brand's calm to its
+    /// alert as the line lands, a karaoke colour trip, a plate that
+    /// cools as the scene settles.
+    SetTrackColors {
+        /// The node.
+        node: String,
+        /// `fill`, `ink`, `plate` or `stroke-color`.
+        property: String,
+        /// The keys, each `(at, colour, curve)`.
+        keys: Vec<(f64, String, Option<Curve>)>,
+    },
+    /// Add or replace a `size` track on a rectangle or an ellipse: the
+    /// two dimensions carried apart, as `(at, width, height, curve)`
+    /// quadruples in frame pixels - the shape a sentence like "grow the
+    /// chip from its label's width to the card's" produces. A bar
+    /// filling, a window opening, a reveal wiping by its own box.
+    SetTrackSize {
+        /// The node.
+        node: String,
+        /// The keys, each `(at, width, height, curve)`.
         keys: Vec<(f64, f64, f64, Option<Curve>)>,
     },
     /// Give a node organic drift on a seeded noise field: the property
@@ -560,6 +589,82 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
             let entry = node_mut(&mut comp, node)?;
             entry.tracks.insert("position".into(), track);
+            Ok(comp)
+        }
+        Op::SetTrackColors {
+            node,
+            property,
+            keys,
+        } => {
+            if !documented_colour_property(property) {
+                return Err(fail(
+                    format!("{property:?} is not a colour this format animates"),
+                    "use fill, ink, plate, or stroke-color",
+                ));
+            }
+            let mut track = Track::default();
+            for (at, colour, curve) in keys {
+                // The hex reader answers opaque white for anything it
+                // cannot read, because a comp must render even when a
+                // hand-written document is wrong - but an op that hands
+                // it garbage is a caller's mistake worth naming now,
+                // before it paints every frame white.
+                if Rgba::hex(colour) == Rgba::new(1.0, 1.0, 1.0, 1.0)
+                    && !matches!(
+                        colour.trim().to_ascii_lowercase().as_str(),
+                        "#fff" | "#ffffff" | "#ffffffff" | "fff" | "ffffff" | "ffffffff"
+                    )
+                {
+                    return Err(fail(
+                        format!("{colour:?} is not a colour"),
+                        "write it as #rrggbb or #rrggbbaa",
+                    ));
+                }
+                let value = Value::Color {
+                    r: Rgba::hex(colour).r,
+                    g: Rgba::hex(colour).g,
+                    b: Rgba::hex(colour).b,
+                    a: Rgba::hex(colour).a,
+                };
+                track.keys.push(match curve {
+                    Some(curve) => Key::eased(*at, value, curve.clone()),
+                    None => Key::new(*at, value),
+                });
+            }
+            track
+                .keys
+                .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+            let entry = node_mut(&mut comp, node)?;
+            entry.tracks.insert(property.clone(), track);
+            Ok(comp)
+        }
+        Op::SetTrackSize { node, keys } => {
+            let mut track = Track::default();
+            for (at, width, height, curve) in keys {
+                let value = Value::Size {
+                    width: *width,
+                    height: *height,
+                };
+                track.keys.push(match curve {
+                    Some(curve) => Key::eased(*at, value, curve.clone()),
+                    None => Key::new(*at, value),
+                });
+            }
+            track
+                .keys
+                .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+            let entry = node_mut(&mut comp, node)?;
+            // A size track on a node that is not a box is a mistake the
+            // validation pass would rather name than ignore: the kind is
+            // checked here so the error points at the op, not the
+            // document it produced.
+            if !matches!(entry.kind, NodeKind::Rect { .. } | NodeKind::Ellipse { .. }) {
+                return Err(fail(
+                    format!("{:?} is not a box a size track grows", node),
+                    "size tracks ride rectangles and ellipses; scale is every node's",
+                ));
+            }
+            entry.tracks.insert("size".into(), track);
             Ok(comp)
         }
         Op::SetNoiseTrack {
@@ -1184,8 +1289,13 @@ pub fn replace_last_text_run(markup: &str, value: &str) -> String {
 fn documented_property(name: &str) -> bool {
     matches!(
         name,
-        "position" | "scale" | "rotation" | "opacity" | "blur" | "dash"
+        "position" | "scale" | "rotation" | "opacity" | "blur" | "dash" | "gradient-offset"
     ) || name.starts_with("param:")
+}
+
+/// The properties a [`Op::SetTrackColors`] key may drive.
+fn documented_colour_property(name: &str) -> bool {
+    matches!(name, "fill" | "ink" | "plate" | "stroke-color")
 }
 
 fn node_mut<'a>(comp: &'a mut Comp, id: &str) -> Result<&'a mut Node, MotionError> {

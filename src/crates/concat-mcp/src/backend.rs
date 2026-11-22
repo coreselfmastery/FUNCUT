@@ -177,6 +177,38 @@ impl Backend for Window {
     }
 }
 
+/// Asks the window's server to close its session on a project folder, so
+/// the window itself can open what a run edited there.
+///
+/// The server holds every session an agent opened until it is closed this
+/// way - a connection ending is not a project closing, and the next caller
+/// of the same folder is served from the session that is already there -
+/// while the window's claim on the same folder is refused for as long as
+/// it stands ("the project is open through a remote connection"). A
+/// finished AUTO EDIT lands by the window opening the project the run
+/// edited, so the hand-off asks the server to let go first. Nothing is
+/// lost: every applied edit autosaves, so the document on disk is the
+/// whole edit, and a folder the server does not hold - the run was
+/// headless, or never got as far as opening it - is released already,
+/// which is the answer, not an error.
+pub fn release_window_session(path: &str) -> Result<(), String> {
+    release_on(Window::find()?, path)
+}
+
+/// The release over a connection the caller already holds: the same ask,
+/// without the discovery - the window's own pane hands the connection it
+/// found the server by, and a test hands one it made on purpose.
+fn release_on(mut window: Window, path: &str) -> Result<(), String> {
+    match window.call(concat_api::Request::ProjectClose {
+        path: path.to_owned(),
+        save: false,
+    }) {
+        Ok(_) => Ok(()),
+        Err(error) if error.code == concat_api::ErrorCode::NotOpen => Ok(()),
+        Err(error) => Err(error.message),
+    }
+}
+
 /// An API in this process.
 pub struct Headless {
     api: Api,
@@ -257,5 +289,71 @@ impl Backend for Headless {
     fn finish(&mut self) {
         self.stopper.cancel_all();
         self.api.finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concat_api::{Api, AppDirs, Request};
+
+    /// A finished run's hand-off, over a real server: the session an
+    /// agent opened is closed by the release, a second release of the
+    /// same folder is already-released rather than an error, and the
+    /// close takes nothing with it - the document on disk is what the
+    /// run's own autosaves wrote, so the close asks for no save of its
+    /// own and the edits are all still there for the window to open.
+    #[test]
+    fn a_release_closes_the_session_an_agent_left_open() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let home = scratch.path().to_path_buf();
+        let dirs = AppDirs {
+            config: home.join("config"),
+            data: home.join("data"),
+        };
+        let server = concat_server::Server::start(
+            concat_server::Config {
+                json: Some("127.0.0.1:0".parse().expect("an address")),
+                roots: vec![home.clone()],
+                ..concat_server::Config::default()
+            },
+            move |events| Ok(Api::with_dirs(dirs, events)),
+        )
+        .expect("a server");
+        let address = server.json_addr().expect("listening");
+        let mut agent = Window::connect(address, server.token()).expect("a connection");
+        agent
+            .call(Request::ProjectCreate {
+                location: home.display().to_string(),
+                name: "Edited".to_owned(),
+                video: None,
+            })
+            .expect("the project is made");
+        let path = home.join("Edited").display().to_string();
+        // The server holds the project open, the way a run's own calls
+        // would leave it: a read through a second connection is served
+        // from that session.
+        let mut other = Window::connect(address, server.token()).expect("a second connection");
+        assert!(
+            other
+                .call(Request::ProjectGet { path: path.clone() })
+                .is_ok()
+        );
+        // The release closes it, and says so with nothing.
+        release_on(agent, &path).expect("the release closes the session");
+        // A folder the server no longer holds reads as not open, and
+        // releasing it again is the same answer as releasing one it never
+        // had: already released, not an error - a run that fell back
+        // headless hands the window a folder no server session holds.
+        let mut third = Window::connect(address, server.token()).expect("a third connection");
+        let refused = third
+            .call(Request::ProjectGet { path: path.clone() })
+            .expect_err("the session is closed");
+        assert_eq!(refused.code, concat_api::ErrorCode::NotOpen);
+        release_on(third, &path).expect("an already-released folder is not an error");
+        // The document is the whole edit: the close asked for no save,
+        // and the project's own manifest is still on disk for the window
+        // to open.
+        assert!(std::path::Path::new(&path).join("concat.json").is_file());
     }
 }

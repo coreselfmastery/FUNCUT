@@ -44,15 +44,17 @@ case "$(uname -m)" in
     ;;
 esac
 
-# A mirror URL ending in `/download` (SourceForge's redirect suffix) is
-# stripped first: its basename is the word "download", not the archive's
-# name, and the stem checks below would fail on a URL the lock does
-# carry a version in.
+# The same URL-to-stem reading setup-build-env.sh does: a SourceForge
+# mirror URL ends in /download, so that suffix is stripped before
+# basename runs, or the stem comes out empty and every check below
+# fails with a version complaint that is really a parsing bug.
 _funcut_stem_of() {
-  basename "${1%/download}" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
+  local path=${1%/download}
+  basename "$path" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
 }
 _funcut_ort_stem=$(_funcut_stem_of "$("$_fetch" --url "$_funcut_ort_row")")
 _funcut_sherpa_stem=$(_funcut_stem_of "$("$_fetch" --url "$_funcut_sherpa_row")")
+unset -f _funcut_stem_of
 test -n "$_funcut_ort_stem" || { echo "funcut-env.sh: no ONNX Runtime version in deps.lock" >&2; return 1; }
 test -n "$_funcut_sherpa_stem" || { echo "funcut-env.sh: no sherpa-onnx version in deps.lock" >&2; return 1; }
 

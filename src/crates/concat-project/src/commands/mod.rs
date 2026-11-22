@@ -443,6 +443,13 @@ pub enum Command {
         comp: String,
         /// Bake key: 16 hex digits.
         hash: String,
+        /// The engine the bake was drawn on, as `motion_bake`'s reply
+        /// says: `geneva`, `native` or `lottie`. Absent keeps `geneva`,
+        /// the engine a comp is authored for - the document records the
+        /// truth when the caller knows it, and stays compatible when it
+        /// predates the field.
+        #[serde(default)]
+        engine: Option<String>,
     },
     /// Places a layer: a look or an effect over a span of the timeline that
     /// treats everything beneath it. No media; the chain starts as the one

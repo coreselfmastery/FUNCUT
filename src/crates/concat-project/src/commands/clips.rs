@@ -225,10 +225,15 @@ pub(super) fn apply(
             })
         }
 
-        Command::AddMotionClip { start, comp, hash } => {
+        Command::AddMotionClip {
+            start,
+            comp,
+            hash,
+            engine,
+        } => {
             let comp = comp.trim().to_owned();
             let hash = hash.trim().to_ascii_lowercase();
-            let engine = "geneva";
+            let engine = engine.as_deref().map(str::trim).unwrap_or("geneva");
             if !valid_motion_reference(&comp, &hash, engine) {
                 return Err(CommandError::InvalidMotion);
             }
@@ -1530,6 +1535,7 @@ mod motion_clip_tests {
                 start: 2.0,
                 comp: "lower-third".into(),
                 hash: hash.clone(),
+                engine: None,
             },
         )
         .expect("valid motion clip");
@@ -1579,10 +1585,51 @@ mod motion_clip_tests {
                     start: 0.0,
                     comp,
                     hash,
+                    engine: None,
                 },
             );
             assert_eq!(result, Err(CommandError::InvalidMotion));
         }
         assert!(project.active().clips.is_empty());
+    }
+
+    /// The engine a caller names is the engine the document records:
+    /// `motion_bake` says which one drew the frames, and the clip that
+    /// points at them says the same thing - a native bake recorded as
+    /// geneva would be a document lying about its own pixels.
+    #[test]
+    fn a_motion_clip_records_the_engine_it_is_given() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        let outcome = apply(
+            &mut project,
+            &mut mint,
+            Command::AddMotionClip {
+                start: 0.0,
+                comp: "colour-card".into(),
+                hash: "b1b2c3d4e5f60718".into(),
+                engine: Some("native".into()),
+            },
+        )
+        .expect("valid motion clip");
+        let clip = project
+            .active()
+            .clip(&outcome.created_id.expect("new clip id"))
+            .expect("placed clip");
+        assert_eq!(clip.motion.as_ref().expect("motion").engine, "native");
+
+        // An engine the validator does not know is refused, the way a bad
+        // comp id is - not silently rewritten to the default.
+        let refused = apply(
+            &mut project,
+            &mut mint,
+            Command::AddMotionClip {
+                start: 0.0,
+                comp: "colour-card".into(),
+                hash: "c1b2c3d4e5f60718".into(),
+                engine: Some("flash".into()),
+            },
+        );
+        assert_eq!(refused, Err(CommandError::InvalidMotion));
     }
 }

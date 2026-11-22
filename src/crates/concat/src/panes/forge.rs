@@ -97,6 +97,10 @@ pub enum ForgeMsg {
     },
     /// Cancel: the child stops at its next line.
     Cancel,
+    /// The followed document changed on disk: the timeline re-reads it,
+    /// so the edit is watched as it lands. Only the pane's own watcher
+    /// sends this, and only while a run is going.
+    LiveDocument,
     /// One line the harness printed.
     Line(String),
     /// The run ended, by its exit code.
@@ -193,6 +197,10 @@ pub struct ForgePane {
     /// The voice-signal lab's standing: the catalogue, the chosen
     /// family, and the last reading a button took.
     pub signals: SignalsPane,
+    /// The live follow's watcher: the flag that stops the thread polling
+    /// the run's document. The follow itself lives on the studio; this is
+    /// only the pane's way of saying "look again" while the run writes.
+    live_kill: Option<Arc<AtomicBool>>,
 }
 
 /// The AUTO EDIT's standing on the page: the fields the progress pane
@@ -376,17 +384,25 @@ impl ForgePane {
             }
             ForgeMsg::Ended(code) => {
                 self.running = false;
+                self.live_follow_stop();
                 if self.kill.load(Ordering::Relaxed) {
                     self.set_status(t("forge.stopped"));
+                    // A stopped run keeps its sibling for the retry; the
+                    // window goes back to the project it held.
+                    studio.end_live_follow_back();
                 } else if code == 0 {
                     self.set_status(t("forge.done"));
                     // A voiceover run's whole point is the edit landing on
                     // the timeline the user is looking at: the run edited
-                    // a sibling project (the window holds this one, and an
-                    // agent cannot open what the window holds), so the
-                    // finished edit opens here, in the window, now. The
-                    // voiceover project itself is untouched on disk.
+                    // a sibling project through the server (whose claim on
+                    // it outlives the run), so the server lets it go and
+                    // the finished edit opens here, in the window, now -
+                    // from the live display straight to the real thing.
+                    // The voiceover project itself is untouched on disk.
                     if let Some(path) = self.result_path.take() {
+                        if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                            log::warn!("forge: the run's session did not release: {error}");
+                        }
                         match concat_host::projects::open(&path)
                             .and_then(|info| studio.open_project(info))
                         {
@@ -400,7 +416,11 @@ impl ForgePane {
                     }
                 } else {
                     self.set_status(tf("forge.exited", &[&code.to_string()]));
+                    studio.end_live_follow_back();
                 }
+            }
+            ForgeMsg::LiveDocument => {
+                studio.refresh_live_follow();
             }
             ForgeMsg::Connect => {
                 self.set_status(t("forge.connecting"));
@@ -654,7 +674,17 @@ impl ForgePane {
             .unwrap_or(NICHES[0]);
         let mood = MOODS.get(mood.max(0) as usize).copied().unwrap_or(MOODS[0]);
         self.result_path = voiceover.as_ref().map(|made| made.project.clone());
+        // The prompt is built while the window still holds the SOURCE
+        // project: its creative brief is the run's, and the follow below
+        // swaps the timeline to the sibling.
         let prompt = director_run_prompt(&script, voiceover.as_ref(), voice, niche, mood, studio);
+        // The window follows the edit live: the timeline becomes the
+        // sibling's while the director works on it, refreshed as the
+        // run's own autosaves land - the edit is watched as it happens,
+        // not discovered when it ends.
+        if let Some(made) = voiceover.as_ref() {
+            self.live_follow_start(&made.project, studio);
+        }
         self.kill = Arc::new(AtomicBool::new(false));
         let kill = Arc::clone(&self.kill);
         let mut command = Command::new("forge");
@@ -719,6 +749,10 @@ impl ForgePane {
                 self.connected = Some(false);
                 self.set_status(t("forge.notFound"));
                 studio.notify(&tf("forge.notFoundDetail", &[&error.to_string()]), true);
+                // A run that never started edits nothing: the follow it
+                // began goes back to the project the window held.
+                self.live_follow_stop();
+                studio.end_live_follow_back();
             }
         }
     }
@@ -810,6 +844,7 @@ impl ForgePane {
             self.auto.source = Some(source.clone());
             self.auto.kill = Some(Arc::clone(&kill));
             self.set_status(t("forge.autoEditDirectorStage"));
+            self.live_follow_start(&source.project, studio);
             launch_auto_director(studio, &source, kill);
             return;
         }
@@ -863,6 +898,7 @@ impl ForgePane {
             });
             let tool_cancel = Arc::new(AtomicBool::new(false));
             let project = source.project.clone();
+            let project_for_follow = project.clone();
             self.auto = AutoEditPane {
                 running: true,
                 checking: false,
@@ -880,6 +916,7 @@ impl ForgePane {
                 source: Some(source),
             };
             self.set_status(t("forge.autoEditRunning"));
+            self.live_follow_start(&project_for_follow, studio);
             run_auto_edit(runner, program, backend, tool_cancel);
             return;
         }
@@ -994,6 +1031,7 @@ impl ForgePane {
                     kill: Some(Arc::clone(&kill)),
                 };
                 self.set_status(t("forge.autoEditDirectorStage"));
+                self.live_follow_start(&auto.project, studio);
                 launch_auto_director(studio, &auto, kill);
                 true
             }
@@ -1023,6 +1061,7 @@ impl ForgePane {
         };
         let (runner, _events) = Runner::new(PathBuf::from(&auto.project));
         let tool_cancel = Arc::new(AtomicBool::new(false));
+        let follow = auto.project.clone();
         self.auto = AutoEditPane {
             running: true,
             checking: false,
@@ -1040,6 +1079,7 @@ impl ForgePane {
             kill: None,
         };
         self.set_status(t("forge.autoEditRunning"));
+        self.live_follow_start(&follow, studio);
         run_auto_edit(runner, program, backend, tool_cancel);
     }
 
@@ -1069,6 +1109,8 @@ impl ForgePane {
             self.auto.stage = t("forge.autoEditCancelledStage");
             self.set_status(t("forge.autoEditCancelledStage"));
             studio.notify(&t("forge.autoEditCancelled"), true);
+            self.live_follow_stop();
+            studio.end_live_follow_back();
             return;
         }
         if code == 0 {
@@ -1109,6 +1151,8 @@ impl ForgePane {
                     "the Director finished but the run has no project and export to check",
                     true,
                 );
+                self.live_follow_stop();
+                studio.end_live_follow_back();
                 return;
             };
             crate::host::spawn_detached(move || {
@@ -1156,6 +1200,8 @@ impl ForgePane {
             &tf("forge.autoEditDirectorFailed", &[&code.to_string()]),
             true,
         );
+        self.live_follow_stop();
+        studio.end_live_follow_back();
     }
 
     /// The measured check came back: the receipt decides whether the run
@@ -1192,8 +1238,16 @@ impl ForgePane {
             self.auto.outcome = 0;
             self.auto.stage = t("forge.autoEditDirectorDoneStage");
             self.set_status(t("forge.autoEditDirectorDoneStage"));
+            self.live_follow_stop();
             if let Some(path) = self.auto.project.clone() {
                 studio.notify(&tf("forge.autoEditDirectorDone", &[&path]), false);
+                // The server held the sibling for the run and the check;
+                // the window cannot open what it holds, so it lets go
+                // first - the edit itself is on disk, autosaved edit by
+                // autosaved edit.
+                if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                    log::warn!("forge: the run's session did not release: {error}");
+                }
                 match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
                 {
                     Ok(()) => {}
@@ -1208,6 +1262,8 @@ impl ForgePane {
             self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
             self.set_status(tf("forge.autoEditDirectorUnproven", &[&summary]));
             studio.notify(&tf("forge.autoEditDirectorUnproven", &[&summary]), true);
+            self.live_follow_stop();
+            studio.end_live_follow_back();
         }
     }
 
@@ -1225,6 +1281,51 @@ impl ForgePane {
             &format!("the edit could not be independently checked: {error}"),
             true,
         );
+        self.live_follow_stop();
+        studio.end_live_follow_back();
+    }
+
+    /// Begins following a run's edit live: the window's timeline becomes
+    /// the project the run edits, refreshed as the run's own autosaves
+    /// land - B-roll arriving, captions appearing, motion cards placed,
+    /// the bed ducking - read-only until the run ends and the edit opens
+    /// for real. Best-effort by design: a follow that cannot begin says
+    /// so and the run goes on, because the edit does not depend on being
+    /// watched.
+    fn live_follow_start(&mut self, project: &str, studio: &mut Studio) {
+        if let Err(error) = studio.begin_live_follow(project) {
+            log::warn!("forge: the live follow could not begin: {error}");
+            studio.notify(&tf("forge.liveFollowFailed", &[&error]), true);
+            return;
+        }
+        studio.notify(&t("forge.liveFollow"), false);
+        let kill = Arc::new(AtomicBool::new(false));
+        let watch = Arc::clone(&kill);
+        self.live_kill = Some(kill);
+        // The watcher only says "look again": the studio re-reads the
+        // document only when its fingerprint changed, so a quiet run
+        // costs a stat every half second and nothing else.
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(500));
+                if watch.load(Ordering::Relaxed) {
+                    return;
+                }
+                crate::host::on_ui(|studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::LiveDocument));
+                });
+            }
+        });
+    }
+
+    /// Stops the live follow's watcher. The follow itself is ended by the
+    /// landing (the open replaces the display) or by
+    /// [`Studio::end_live_follow_back`]; this only retires the thread
+    /// that kept saying "look again".
+    fn live_follow_stop(&mut self) {
+        if let Some(kill) = self.live_kill.take() {
+            kill.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -1256,6 +1357,7 @@ impl ForgePane {
     fn auto_edit_ended(&mut self, state: AutoEditState, studio: &mut Studio) {
         self.auto.running = false;
         self.auto.started = None;
+        self.live_follow_stop();
         // A retryable end keeps the runner and its source for the resume;
         // a completed or hard-failed run has nothing to pick up from.
         let keep_for_retry = matches!(
@@ -1294,9 +1396,14 @@ impl ForgePane {
                     studio.notify_warning(&tf("forge.autoEditWarned", &[&warnings.to_string()]));
                 }
                 // The finished edit opens here, in the window, now - the
-                // same landing a forge run's edit has. The voiceover
-                // source project itself stays untouched on disk.
+                // same landing a forge run's edit has, straight from the
+                // live display. The voiceover source project itself stays
+                // untouched on disk. The server held the sibling for the
+                // run; it lets go so the window's claim can stand.
                 if let Some(path) = self.auto.project.clone() {
+                    if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                        log::warn!("forge: the run's session did not release: {error}");
+                    }
                     match concat_host::projects::open(&path)
                         .and_then(|info| studio.open_project(info))
                     {
@@ -1315,6 +1422,7 @@ impl ForgePane {
                 self.auto.outcome = if error.retryable { 1 } else { 2 };
                 self.set_status(tf("forge.autoEditFailedStatus", &[&error.message]));
                 studio.notify(&tf("forge.autoEditFailed", &[&error.message]), true);
+                studio.end_live_follow_back();
             }
             AutoEditState::Cancelled { rolled_back, .. } => {
                 self.auto.stage = t("forge.autoEditCancelledStage");
@@ -1329,6 +1437,7 @@ impl ForgePane {
                     t("forge.autoEditCancelledPartial")
                 };
                 studio.notify(&note, false);
+                studio.end_live_follow_back();
             }
             // The run is still going, or never left idle: nothing ended.
             AutoEditState::Idle | AutoEditState::Running { .. } => return,

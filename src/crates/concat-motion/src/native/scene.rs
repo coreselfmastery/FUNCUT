@@ -35,7 +35,7 @@ use tiny_skia::{Pixmap, Transform};
 
 use crate::comp::{
     Blend, Comp, DepthOfField, Effect, Fit, Length, Mask, MaskShape, MatteMode, Node, NodeKind,
-    Paint, Point, Rgba,
+    Paint, Point, Rgba, TextNode,
 };
 use crate::native::images::Pictures;
 use crate::native::raster;
@@ -963,6 +963,12 @@ impl Scene<'_> {
                     | "path-offset"
                     | "target"
                     | "pole"
+                    | "fill"
+                    | "ink"
+                    | "plate"
+                    | "stroke-color"
+                    | "gradient-offset"
+                    | "size"
             );
             if known {
                 continue;
@@ -1077,12 +1083,20 @@ impl Scene<'_> {
                 radius,
             } => {
                 let (reference, _) = self.reference_of(node);
-                let w = shapes::resolve_px(*width, reference.0, self.scale, 0.0);
-                let h = shapes::resolve_px(*height, reference.1, self.scale, 0.0);
+                // A size track carries frame pixels the way a position
+                // track does, overriding the field's own length for as
+                // long as it runs - a bar growing to its number is a
+                // track, not a re-authored rectangle per frame.
+                let (w, h) = sized(node, at, self.comp.duration, || {
+                    (
+                        shapes::resolve_px(*width, reference.0, self.scale, 0.0),
+                        shapes::resolve_px(*height, reference.1, self.scale, 0.0),
+                    )
+                });
                 match shapes::rounded_rect(w, h, radius * self.scale) {
                     Some(path) => Content::Shape {
                         path,
-                        fill: fill.clone(),
+                        fill: self.paint_at(node, at, fill),
                         stroke: None,
                         ribbon: None,
                         default_fill: true,
@@ -1100,12 +1114,16 @@ impl Scene<'_> {
                 fill,
             } => {
                 let (reference, _) = self.reference_of(node);
-                let w = shapes::resolve_px(*width, reference.0, self.scale, 0.0);
-                let h = shapes::resolve_px(*height, reference.1, self.scale, 0.0);
+                let (w, h) = sized(node, at, self.comp.duration, || {
+                    (
+                        shapes::resolve_px(*width, reference.0, self.scale, 0.0),
+                        shapes::resolve_px(*height, reference.1, self.scale, 0.0),
+                    )
+                });
                 match shapes::oval(w, h) {
                     Some(path) => Content::Shape {
                         path,
-                        fill: fill.clone(),
+                        fill: self.paint_at(node, at, fill),
                         stroke: None,
                         ribbon: None,
                         default_fill: true,
@@ -1178,19 +1196,27 @@ impl Scene<'_> {
                                 taper,
                             )
                             .and_then(|commands| shapes::path_of(&commands))
-                            .map(|path| Box::new((path, stroke.color))),
+                            .map(|path| {
+                                let color =
+                                    stroked_colour(node, at, self.comp.duration, stroke.color);
+                                Box::new((path, color))
+                            }),
                             _ => None,
                         };
                         let stroked = if ribbon.is_some() {
                             None
                         } else {
                             stroke.as_ref().map(|stroke| {
-                                (stroke.color, stroke.width * self.scale, dashing.clone())
+                                (
+                                    stroked_colour(node, at, self.comp.duration, stroke.color),
+                                    stroke.width * self.scale,
+                                    dashing.clone(),
+                                )
                             })
                         };
                         Content::Shape {
                             path,
-                            fill: fill.clone(),
+                            fill: self.paint_at(node, at, fill),
                             stroke: stroked,
                             default_fill: false,
                             ribbon,
@@ -1206,7 +1232,12 @@ impl Scene<'_> {
                 }
             }
             NodeKind::Text(inner) => Content::Text(Box::new(text::passes(
-                node, inner, at, self.frame, self.scale, self.fonts,
+                node,
+                &inked(node, inner, at, self.comp.duration),
+                at,
+                self.frame,
+                self.scale,
+                self.fonts,
             ))),
             NodeKind::Image { asset, fit } => match self.picture_of(node, asset) {
                 Some(pixmap) => {
@@ -1779,6 +1810,170 @@ fn t_of(node: &Node, name: &str, at: f64, duration: f64) -> f64 {
         Value::Number { value } => value,
         _ => 0.0,
     }
+}
+
+/// A colour track's value at `at`, or the fallback the field holds.
+///
+/// A key of the wrong kind steps at halfway the way every mismatched
+/// track does - which the validator refuses before it ever gets here,
+/// so the fallback is only for a node with no track at all.
+fn colour_at(node: &Node, name: &str, at: f64, duration: f64, fallback: Rgba) -> Rgba {
+    match node.property(
+        name,
+        at,
+        duration,
+        Value::Color {
+            r: fallback.r,
+            g: fallback.g,
+            b: fallback.b,
+            a: fallback.a,
+        },
+    ) {
+        Value::Color { r, g, b, a } => Rgba { r, g, b, a },
+        _ => fallback,
+    }
+}
+
+/// A stroke's colour at `at`: the field's own, or the `stroke-color`
+/// track's.
+fn stroked_colour(node: &Node, at: f64, duration: f64, fallback: Rgba) -> Rgba {
+    colour_at(node, "stroke-color", at, duration, fallback)
+}
+
+/// The width and height a box draws at `at`: the fields' own resolution,
+/// or the `size` track's frame pixels. A track of the wrong kind falls
+/// back to the fields - again, the validator refuses that document
+/// before a render sees it.
+fn sized(node: &Node, at: f64, duration: f64, fields: impl FnOnce() -> (f64, f64)) -> (f64, f64) {
+    let (fallback_w, fallback_h) = fields();
+    if !node.tracks.contains_key("size") {
+        return (fallback_w, fallback_h);
+    }
+    match node.property(
+        "size",
+        at,
+        duration,
+        Value::Size {
+            width: fallback_w,
+            height: fallback_h,
+        },
+    ) {
+        Value::Size { width, height } => (width, height),
+        _ => (fallback_w, fallback_h),
+    }
+}
+
+/// A paint with this node's `fill` colour track and `gradient-offset`
+/// sweep applied, or the paint as authored when neither track rides it.
+///
+/// The colour track rewrites a solid paint and leaves a gradient drawn
+/// as authored - animating one stop of many is a different feature, and
+/// half of it silently would be the exact wrong this engine refuses
+/// everywhere else. The sweep moves a gradient's tile along its own
+/// angle by the track's fraction of the box, which is what a shine
+/// passing over a card is.
+fn paint_at(paint: &Paint, colour: Option<Rgba>, sweep: f64) -> Paint {
+    match paint {
+        Paint::Solid { color } => match colour {
+            Some(colour) => Paint::Solid { color: colour },
+            None => Paint::Solid { color: *color },
+        },
+        Paint::Gradient {
+            stops,
+            ramp,
+            angle,
+            from,
+            to,
+        } => Paint::Gradient {
+            stops: stops.clone(),
+            ramp: *ramp,
+            angle: *angle,
+            from: from + sweep,
+            to: to + sweep,
+        },
+    }
+}
+
+impl Scene<'_> {
+    /// A shape fill as it draws at `at`: the field's paint with the
+    /// node's `fill` and `gradient-offset` tracks applied. A `fill`
+    /// track on a node whose field is a gradient is a colour the
+    /// document could not express, so the gradient draws as authored -
+    /// the same line the validator draws for tracks of the wrong kind.
+    /// A `fill` track on a node with no paint of its own colours the
+    /// white a default fill draws, because a track is the opinion that
+    /// wins.
+    fn paint_at(&self, node: &Node, at: f64, paint: &Option<Paint>) -> Option<Paint> {
+        let fallback = paint.as_ref().and_then(|paint| match paint {
+            Paint::Solid { color } => Some(*color),
+            Paint::Gradient { .. } => None,
+        });
+        let colour = if node.tracks.contains_key("fill") {
+            Some(colour_at(
+                node,
+                "fill",
+                at,
+                self.comp.duration,
+                fallback.unwrap_or_else(|| Rgba::new(1.0, 1.0, 1.0, 1.0)),
+            ))
+        } else {
+            None
+        };
+        let sweep = if node.tracks.contains_key("gradient-offset") {
+            t_of(node, "gradient-offset", at, self.comp.duration)
+        } else {
+            0.0
+        };
+        if colour.is_none() && sweep == 0.0 {
+            return paint.clone();
+        }
+        match paint {
+            None => colour.map(|color| Paint::Solid { color }),
+            Some(paint) => Some(paint_at(paint, colour, sweep)),
+        }
+    }
+}
+
+/// A text node as it draws at `at`: the `ink` track re-colours the
+/// words (one opinion, the way the ink op is - a gradient over the
+/// glyphs steps aside for it), the `plate` track re-colours the plate,
+/// and a `gradient-offset` sweep moves a gradient ink along its angle.
+fn inked(node: &Node, inner: &TextNode, at: f64, duration: f64) -> TextNode {
+    let mut text = inner.clone();
+    if node.tracks.contains_key("ink") {
+        text.color = colour_at(node, "ink", at, duration, inner.color);
+        text.fill = None;
+    }
+    if node.tracks.contains_key("plate") {
+        text.background = colour_at(node, "plate", at, duration, inner.background);
+    }
+    if node.tracks.contains_key("gradient-offset")
+        && text
+            .fill
+            .as_ref()
+            .is_some_and(|paint| matches!(paint, Paint::Gradient { .. }))
+    {
+        let sweep = t_of(node, "gradient-offset", at, duration);
+        // `from` and `to` ride along in the same pattern that takes the
+        // paint, so nothing is borrowed out of `text.fill` when it goes.
+        if let Some(Paint::Gradient {
+            stops,
+            ramp,
+            angle,
+            from,
+            to,
+        }) = text.fill.take()
+        {
+            text.fill = Some(Paint::Gradient {
+                stops,
+                ramp,
+                angle,
+                from: from + sweep,
+                to: to + sweep,
+            });
+        }
+    }
+    text
 }
 
 /// The frame a percentage length resolves against, in comp pixels:

@@ -192,7 +192,9 @@ over real footage, documented with the perception tools below:
   no render, no write - the critique that happens before the pixels do.
 - `motion_frame` - one frame of a comp at a time in seconds, drawn in tens
   of milliseconds, returned as an **inline image** (and also written under
-  the project's `motion/`). Look at it before baking.
+  the project's `motion/`). Look at it before baking. The reply says which
+  engine drew (`engine`), and `engineNote` why it was chosen when the
+  choice is news.
 - `motion_preview` - the comp's motion watched: `frames` stills (1-12,
   six by default) spread evenly across the duration - never the dead last
   instant - drawn small (width 16-640, 480 by default) and returned as
@@ -203,7 +205,13 @@ over real footage, documented with the perception tools below:
   baked to PNG frames under `cache/comps/`, and with `encode: true`
   written as one video under `motion/` ready for `media_import` and
   `clip_add`. The encoded file is opaque - only the PNG sequence keeps a
-  transparent comp's alpha.
+  transparent comp's alpha (a `.mov` encode keeps it, on ProRes 4444).
+  The engine is chosen the way the compositor chooses for itself: markup
+  keeps Geneva, and a comp the sidecar would drop or approximate (an
+  animated colour, a gradient sweep, an animated size) - or a machine
+  without the sidecar - draws on the native engine, with `engine` and
+  `engineNote` in the reply saying so. The incremental seam inherits
+  only from a bake the same engine drew.
 - `captions_animate` - a measured word-timed transcript as one caption
   video: lines by the caption rules, each line a kinetic comp, baked and
   encoded in one call. This is the word-synced caption path; the

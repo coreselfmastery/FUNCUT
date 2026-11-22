@@ -1497,6 +1497,15 @@ impl Comp {
                         _ => "a 3D track",
                     });
                 }
+                if matches!(name.as_str(), "fill" | "ink" | "plate" | "stroke-color") {
+                    note("an animated colour");
+                }
+                if name == "gradient-offset" {
+                    note("a gradient sweep");
+                }
+                if name == "size" {
+                    note("an animated size");
+                }
             }
             if matches!(node.kind, NodeKind::Camera { .. }) {
                 note("a 3D camera");
@@ -2152,6 +2161,41 @@ impl Comp {
                             "keys are placed as fractions of the node's span, 0 to 1",
                         )
                         .with_help("a key at 1.5s of a 1s node is 1.5, not 1500"),
+                    );
+                }
+                // The colour and size tracks carry kinds the property
+                // names promise: a Number on an `ink` track would sample
+                // by stepping between kinds and draw the fallback ink,
+                // silently - the same silent half-right this validator
+                // exists to refuse.
+                if matches!(name.as_str(), "fill" | "ink" | "plate" | "stroke-color")
+                    && track
+                        .keys
+                        .iter()
+                        .any(|key| !matches!(key.value, crate::track::Value::Color { .. }))
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/tracks/{name}"),
+                            "a colour track carries colour keys",
+                        )
+                        .with_help(
+                            "set-track-colors writes them; #rrggbb or #rrggbbaa is the wire shape",
+                        ),
+                    );
+                }
+                if name == "size"
+                    && track
+                        .keys
+                        .iter()
+                        .any(|key| !matches!(key.value, crate::track::Value::Size { .. }))
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/tracks/{name}"),
+                            "a size track carries width/height keys",
+                        )
+                        .with_help("set-track-size writes them, as (at, width, height, curve)"),
                     );
                 }
             }

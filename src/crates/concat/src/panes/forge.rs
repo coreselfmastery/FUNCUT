@@ -1439,7 +1439,14 @@ impl ForgePane {
                     AutoEditState::CompletedWithWarnings { warnings, .. } => warnings.len(),
                     _ => 0,
                 };
-                let exported = export.display().to_string();
+                let exported = if export == std::path::Path::new("timeline") {
+                    self.auto
+                        .project
+                        .clone()
+                        .unwrap_or_else(|| "editable timeline".to_owned())
+                } else {
+                    export.display().to_string()
+                };
                 if warnings == 0 {
                     self.auto.stage = t("forge.autoEditDoneStage");
                     self.set_status(t("forge.autoEditDoneStage"));

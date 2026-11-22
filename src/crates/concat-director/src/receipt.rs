@@ -923,7 +923,9 @@ fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String
         {
             if let (Some(family), Some(confidence)) = (
                 row.get("signal").and_then(Value::as_str),
-                row.get("confidence").and_then(Value::as_f64),
+                row.get("confidence")
+                    .and_then(Value::as_f64)
+                    .filter(|value| (0.0..=1.0).contains(value)),
             ) {
                 measured
                     .entry(family)
@@ -1475,7 +1477,12 @@ mod tests {
         );
         assert_eq!(measured_voice_family("words"), Some("wordConfidence"));
         assert_eq!(measured_voice_family("sentence.type"), Some("sentenceType"));
+        assert_eq!(measured_voice_family("speechRatio"), Some("pauses"));
+        assert_eq!(measured_voice_family("loudness.truePeakDbfs"), Some("loudness"));
+        assert_eq!(measured_voice_family("prosody.emphasisWords"), Some("prosody"));
+        assert_eq!(measured_voice_family("forensic.formantsHz"), Some("formants"));
         assert_eq!(measured_voice_family("noiseFloor.snr_db"), Some("forensic"));
+        assert_eq!(measured_voice_family("speakerChanges"), Some("speaker"));
         assert_eq!(measured_voice_family("speechActs"), None);
     }
 

@@ -82,9 +82,14 @@ pub enum Stage {
     /// editing vocabulary is left to the report rather than papered over.
     /// It runs BEFORE the export so the corrected cut is what ships.
     Revise,
-    /// The export is certified: the words re-read from the render, the
-    /// loudness measured and asserted, the timeline checked for overlaps,
-    /// gaps and duplicates (the eighteenth and nineteenth steps).
+    /// The saved project is written and read back as the editable
+    /// deliverable; no encoded video is produced by the default AUTO EDIT.
+    TimelineReady,
+    /// The export is certified when a caller explicitly requests a render.
+    /// The default AUTO EDIT does not enter this optional stage.
+    Export,
+    /// The final saved timeline and its rendered preview are independently
+    /// checked before the run is accepted.
     Verify,
 }
 
@@ -93,7 +98,7 @@ impl Stage {
     /// register, read left to right. [`Runner::completed`](crate::Runner::completed)
     /// reports a resumed run in this order, so it must be the program's
     /// order and not the enum's.
-    pub const ALL: [Stage; 17] = [
+    pub const ALL: [Stage; 18] = [
         Stage::HandoffVoiceover,
         Stage::AudioRepair,
         Stage::Transcribe,
@@ -108,6 +113,7 @@ impl Stage {
         Stage::Sfx,
         Stage::Preview,
         Stage::Revise,
+        Stage::TimelineReady,
         Stage::Export,
         Stage::Verify,
         Stage::Watch,
@@ -130,6 +136,7 @@ impl Stage {
             Stage::Music => "music",
             Stage::Sfx => "sfx",
             Stage::Preview => "preview",
+            Stage::TimelineReady => "timeline-ready",
             Stage::Export => "export",
             Stage::Watch => "watch",
             Stage::Revise => "revise",
@@ -561,8 +568,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_register_holds_seventeen_stages_and_the_first_and_last_say_so() {
-        assert_eq!(Stage::ALL.len(), 17);
+    fn the_register_holds_all_possible_stages_and_the_first_and_last_say_so() {
+        assert_eq!(Stage::ALL.len(), 18);
         assert_eq!(Stage::ALL.first(), Some(&Stage::HandoffVoiceover));
         // The watch is last: it scores the file the export wrote, after
         // the revise has already corrected the timeline the export read.
@@ -571,8 +578,9 @@ mod tests {
         assert_eq!(Stage::ALL.last(), Some(&Stage::Watch));
         assert_eq!(Stage::ALL[12], Stage::Preview);
         assert_eq!(Stage::ALL[13], Stage::Revise);
-        assert_eq!(Stage::ALL[14], Stage::Export);
-        assert_eq!(Stage::ALL[15], Stage::Verify);
+        assert_eq!(Stage::ALL[14], Stage::TimelineReady);
+        assert_eq!(Stage::ALL[15], Stage::Export);
+        assert_eq!(Stage::ALL[16], Stage::Verify);
     }
 
     #[test]
@@ -586,6 +594,7 @@ mod tests {
     fn the_new_pair_labels_and_crosses_like_every_stage() {
         assert_eq!(Stage::Music.label(), "music");
         assert_eq!(Stage::Sfx.label(), "sfx");
+        assert_eq!(Stage::TimelineReady.label(), "timeline-ready");
         for stage in [Stage::Music, Stage::Sfx] {
             let word = serde_json::to_value(stage).expect("a stage is JSON");
             assert_eq!(word, serde_json::json!(stage.label()));

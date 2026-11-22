@@ -140,7 +140,7 @@ pub enum Capability {
     Grade,
     /// The review: the contact sheet, the craft score, the vision critic.
     Review,
-    /// The output: the export and its verification.
+    /// The output: the saved editable project, or an explicitly requested export.
     Delivery,
 }
 

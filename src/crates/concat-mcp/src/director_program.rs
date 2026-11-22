@@ -63,7 +63,7 @@ pub struct AutoEditProgramSource {
     /// One row per voiceover clip, in first-play order: the placement
     /// the verify's expected transcript falls back to (F-04).
     pub placements: Vec<TakePlacement>,
-    /// Where the export lands, inside the sibling's own export folder.
+    /// Suggested export destination for a later explicit render; AUTO EDIT itself leaves the timeline unrendered.
     pub export: String,
     /// The contact sheet's name, relative to the project: the window's
     /// server refuses absolute write paths, and the sheet is written

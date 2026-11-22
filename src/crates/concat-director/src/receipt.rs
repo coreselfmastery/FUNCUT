@@ -1213,11 +1213,9 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         true,
     ));
 
-    // The picture: the critic's own score against the bar. Only a
-    // critique of the RENDERED file counts - the last craft_critique
-    // after the last export_start. When the watch's own critique never
-    // answered, the preview's pre-export score must not stand in for it
-    // and pass a cut that was never judged as shipped.
+    // The picture: the final craft score after the last watch_render.
+    // In timeline mode this is the final editable-project preview; in an
+    // explicit render mode it is the post-export preview.
     let last_watch = observed
         .iter()
         .rposition(|(call, _)| call.tool == "watch_render");
@@ -1246,8 +1244,8 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         None => gates.push(GateRecord::new(
             "visual",
             GateStatus::Skipped,
-            "no craft score was taken of the rendered file",
-            false,
+            "no craft score was taken of the final timeline or export preview",
+            !has_export,
         )),
     }
 
@@ -1275,7 +1273,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
             "collisions",
             GateStatus::Skipped,
             "the run never checked the timeline for shared lanes",
-            false,
+            !has_export,
         )),
     }
 

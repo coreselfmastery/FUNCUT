@@ -1401,6 +1401,14 @@ impl ForgePane {
     /// shipped, the edit opened here on the timeline, which is the point
     /// of the run.
     fn auto_edit_ended(&mut self, state: AutoEditState, studio: &mut Studio) {
+        // Keep the source's provenance before terminal cleanup clears the
+        // retry state. The report must say whether the Director actually
+        // ran, not infer that from a source object already discarded.
+        let director_reason = self
+            .auto
+            .source
+            .as_ref()
+            .and_then(|source| source.director.clone());
         self.auto.running = false;
         self.auto.started = None;
         self.live_follow_stop();
@@ -1510,13 +1518,9 @@ impl ForgePane {
             // fallback's reason was only ever a toast the user could miss
             // - here it is the record's own first fact, beside the edit
             // it explains.
-            let director = match self.auto.source.as_ref() {
-                Some(source) => source.director.clone(),
-                None => None,
-            };
             report.insert(
                 "director".to_owned(),
-                match director {
+                match director_reason {
                     Some(why) => serde_json::json!({ "used": false, "why": why }),
                     None => serde_json::json!({ "used": true }),
                 },

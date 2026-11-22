@@ -4015,14 +4015,14 @@ mod tests {
         let text = root.join("not-a-video.mp4");
         std::fs::create_dir_all(&root).expect("the folder");
         std::fs::write(&text, b"this is not a video, and says so").expect("writes");
-        let wrong = verify_output(&text, 1.0).expect_err("a text file is not a video");
+        let wrong = verify_output(&text, 1.0, false).expect_err("a text file is not a video");
         assert!(
             wrong.contains("cannot be read back"),
             "the read-back failure is said: {wrong}"
         );
 
         // A file that is not there at all is the same refusal.
-        let missing = verify_output(&root.join("gone.mp4"), 1.0);
+        let missing = verify_output(&root.join("gone.mp4"), 1.0, false);
         assert!(missing.is_err(), "a missing file cannot be verified");
 
         let _ = std::fs::remove_dir_all(&root);

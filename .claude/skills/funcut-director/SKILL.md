@@ -56,9 +56,12 @@ reaches it.
   (`analyze_scenes`, `motion_frame`, `motion_reel`, the `motion` skill) and say
   so. A specialist run may serve the whole catalogue with
   `CONCAT_MCP_ALLOW=all`; never invent a tool that is not on the surface.
-- `prompts/power_moves.md` is the 50-move checklist across the 23 phases:
+- `prompts/power_moves.md` is the 100-move checklist across the 25 phases:
   thesis, hook, pacing, footage, motion, captions, sound, grade and timeline
   acceptance. Use the moves the story earns; record the ones you leave out.
+- `prompts/signal_matrix.md` names the decision every `voice_signals`
+  reading informs (25 families, 50+ readings). Spend the readings, not just
+  the family names; a reading that is absent is named unmeasured.
 - `creative_brief`, `watch_render`, `stock_contact_sheet`, `craft_critique`
   and `local_vlm` are part of the required pipeline, not optional extras.
   `local_vlm` with `action: "setup"` fetches a 0.5B local vision critic once
@@ -230,7 +233,12 @@ noise floor, music segments; transition: speaker change, topic,
 discourse). The Rust ears (prosody, forensics, speakers, NER) need the
 `voice-signals` binary built (`cargo build -p voice-signals`); without it
 the Python signals still answer and the reply says which ear was absent —
-never guess the missing ones. **This reading is what the edit cuts by:**
+never guess the missing ones. **Spend every reading, not just the family:**
+`prompts/signal_matrix.md` maps all 25 families and 50+ readings to the
+decision each one informs. Every family and every reading you spend must
+appear in the plan's `signalLog` with its confidence and one-sentence basis;
+a reading that was absent is named unmeasured, never cited at confidence 0.
+**This reading is what the edit cuts by:**
 Phase 2 cuts only the dead air and never a dramatic hold, Phase 3's pacing
 takes the cut style, Phase 5's SFX peaks land on the emphasis words and
 the BGM obeys the noise-floor decision, the captions drop or re-check the
@@ -266,6 +274,16 @@ boundaries and `suggest_cuts` for cut candidates; hold the map against
 and a real gap is not left uncovered. The map is an artifact, not a mood
 board: if a claim has no evidence, cut the claim or find the evidence before
 you write the plan. No edit tool is called in this phase.
+
+**Phase 1e — Scene, beat and transition map.** Turn the story map into a
+technical grid: `analyze_scenes` for real shot boundaries, `suggest_cuts`
+for voice/beat candidates, `analyze_silence` for the pauses that can carry a
+turn, and `emotion`/`analyze_beats` for the beat and energy curve. Mark
+where a cut, a transition, a reframe, a mask or a held shot belongs, and
+name the reason for each. A transition is a change of place, time or
+argument, not decoration. `scene_timeline` and `scene_analysis` are opt-in
+reads; if they are not served, use the served scene and cut tools and say
+so. No edit tool is called in this phase.
 
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c
@@ -373,6 +391,26 @@ For kinetic captions, write the word-timed `captions_animate` recipe; for
 external motion, `motion_import` the Lottie/GSAP source. Record the decision
 and its reason in the plan's `signalLog` (graphic decision) so the critic
 can see why the beat exists.
+
+**Phase 3d — Geneva deep design.** This is the comp engine, not a preset
+picker. Read `.claude/skills/motion/SKILL.md` and
+`prompts/motion_comps.md` whole. For every motion beat, author the actual
+Geneva document: `motion_presets` for the nearest starting point, then a
+full comp JSON or one validated `ops` batch that changes the nodes, slots,
+tracks, timing and easing to this film's numbers. Inspect with
+`motion_inspect` (slots, nodes, durations, safe area), prove with
+`motion_frame` at entrance, settled and exit, and bake at the cut's exact
+width/height/fps. Use `motion_reel` for a multi-scene storyboard,
+`motion_overlay` for a transparent comp, `motion_import` for a Lottie/GSAP
+source, and `motion_probe` on the baked asset. `motion_preview` and
+`geneva_explain` are opt-in; if they are not served, use `motion_frame` and
+the motion skill. Every number, percentage, comparison, ranking, trend or
+process gets a purpose-built comp; every section gets one designed beat or a
+stated reason it does not. Kinetic typography is a comp, not a caption
+preset: set the stressed word, the reading order and the exit. Record the
+comp id, preset, ops, slots, frame proof and the decision in the plan's
+`signalLog`; a comp that is not baked and placed is not an executed visual
+decision.
 
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
@@ -520,8 +558,8 @@ the refusal on a headless server costs one line, not the run.
 **Phase 5b — Motion design (use when the story calls for it).**
 A bespoke comp can make an edit clearer, more memorable, or more emotionally
 precise; it is not a mandatory quota. A film led entirely by strong footage,
-performance, typography, and sound can be complete without a motion comp. The motion layer is seven MCP
-tools: `motion_presets` (the library), `motion_inspect` (nodes, slots —
+performance, typography, and sound can be complete without a motion comp. The motion layer is
+the Geneva surface: `motion_presets` (the library), `motion_inspect` (nodes, slots —
 never guess), `motion_frame` (look before you bake — it now returns an inline
 image, so check legibility, contrast and safe margins with your eyes), `motion_bake`
 (encode a piece in one call), `captions_animate` (word-timed kinetic
@@ -529,7 +567,8 @@ captions from measured word times), `motion_reel` (a whole storyboard
 as one reel — scenes with MULTI-LAYER stacks: plates under the comp and
 grain, light leaks, vignettes and foreground cards over it, each on its own
 drift and clock; check one still with `frame: seconds` before rendering),
-and `motion_import` (motion made elsewhere: a designer's Lottie/bodymovin
+`motion_overlay` (transparent comps), `motion_probe` (the baked asset) and
+`motion_import` (motion made elsewhere: a designer's Lottie/bodymovin
 JSON become a comp, or a GSAP-style timeline applied to one — read the
 reply's `notes` aloud to the user, because a `skipped:` note means the comp
 draws less than the source did, and the user decides whether that is
@@ -570,6 +609,18 @@ word or cut, not merely near one; no machine-gun repetition; leave breath
 between accents. `sounds_add` and `clip_audio_levels_db` are the tools;
 If the user exports, `measure_loudness` on that export is the proof; on the timeline, `watch_render {project, audio: true}` gives the audio envelope. If the take already carries
 music, do not stack a bed; warn about the unknown licence in the report.
+
+**Full editor power.** The served surface is the whole 105-tool director
+catalogue; use it where the line earns it: `clip_mask` for a shape or face
+that must share the frame, `track_subject` when the mask or label follows a
+moving person, `template_instantiate` for a designed opener/lower third/end
+card, `tts_generate` only for a missing pickup, `clip_speed` for a designed
+retime, `clip_transform` for a deliberate push/reframe, `effect_layer_add`
+for a layer with a job, and `analyze_scenes` / `suggest_cuts` for measured
+boundaries. `scene_analysis`, `scene_timeline`, `motion_preview` and
+`geneva_explain` are opt-in; a specialist run may use `CONCAT_MCP_ALLOW=all`.
+None of this is decoration: every use answers a sentence, a claim or a beat,
+and the plan's `signalLog` records why it is there.
 
 **Phase 6 — Grade (required).** One consistent look per video. Either ONE
 effect layer spanning the whole runtime — `effect_layer_add {start: 0,
@@ -917,7 +968,8 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/review.md` | the Phase-7 checklist and the definition of done |
 | `prompts/creative_direction.md` | Phase 0: turning a topic into a sharp angle, arc and payoff |
 | `prompts/quality_loop.md` | watch_render -> craft_critique -> revise, and how to read the scores |
-| `prompts/power_moves.md` | the 50 concrete moves across the 23 phases, and where each belongs |
+| `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
+| `prompts/signal_matrix.md` | all 25 signal families and 50+ readings, and the decision each informs |
 | `prompts/tool_reference.md` | every tool's arguments, units, and gotchas |
 
 ## 6. The maestro shelf (judgment, when a phase wants taste)

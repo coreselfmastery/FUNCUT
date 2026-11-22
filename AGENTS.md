@@ -14,7 +14,7 @@ tuned for small low-memory Linux laptops and extended with:
 - a built-in **MCP server** (`concat --mcp`, 113 tools, 105 served to a
   director by default) that can edit whole projects end to end;
 - the **funcut-director** skill (`.claude/skills/funcut-director/`): a
-  12-phase measured pipeline that turns a script or a voiceover into a
+  25-phase measured pipeline that turns a script or a voiceover into a
   finished video;
 - **maestro** and **clip-skills** (`.claude/skills/{maestro,clip-skills}/`):
   read-only judgment shelves the director reads phase by phase;

@@ -28,7 +28,7 @@ composited, CapCut-class video editor for Linux) tuned for small machines,
 plus an agent stack bolted onto it — a built-in MCP server with **113 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
-that runs a 12-phase measured pipeline, and maestro, a vendored design and
+that runs a 25-phase measured pipeline, and maestro, a vendored design and
 film judgment library) — all drivable from a Forge page inside the editor
 with one click.
 

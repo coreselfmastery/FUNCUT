@@ -70,6 +70,7 @@ impl DirectorAcceptance {
 pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)> {
     match export {
         Some(export) => vec![
+            ("timeline_read", json!({ "path": project })),
             ("motion_probe", json!({ "path": export })),
             ("measure_loudness", json!({ "path": export })),
             (
@@ -192,6 +193,106 @@ fn timeline_takes(view: &Value, takes: &[String]) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// Validate the editable timeline against the editor's actual summary
+/// contract. A non-empty clips array is not enough: every clip must have a
+/// valid lane and time span, every file-backed clip must resolve to a media
+/// bin item, and every referenced source file must still exist on disk.
+fn timeline_integrity(view: &Value) -> Result<String, String> {
+    let clips = view
+        .pointer("/timeline/clips")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return timeline.clips".to_owned())?;
+    let tracks = view
+        .pointer("/timeline/tracks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return timeline.tracks".to_owned())?;
+    let media = view
+        .get("media")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return the media bin".to_owned())?;
+
+    if clips.is_empty() {
+        return Err("the saved timeline contains no clips".to_owned());
+    }
+
+    let track_ids: std::collections::HashSet<&str> = tracks
+        .iter()
+        .filter_map(|track| track.get("id").and_then(Value::as_str))
+        .collect();
+    let media_by_id: std::collections::HashMap<&str, &str> = media
+        .iter()
+        .filter_map(|item| Some((item.get("id")?.as_str()?, item.get("path")?.as_str()?)))
+        .collect();
+
+    let mut clip_ids = std::collections::HashSet::new();
+    let mut checked_sources = std::collections::HashSet::new();
+    let mut file_backed = 0usize;
+
+    for (index, clip) in clips.iter().enumerate() {
+        let label = format!("clip {}", index + 1);
+        let id = clip
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("{label} has no id"))?;
+        if !clip_ids.insert(id) {
+            return Err(format!("{label} duplicates clip id `{id}`"));
+        }
+
+        let track = clip
+            .get("track")
+            .and_then(Value::as_str)
+            .filter(|track| !track.trim().is_empty())
+            .ok_or_else(|| format!("clip `{id}` has no track id"))?;
+        if !track_ids.contains(track) {
+            return Err(format!("clip `{id}` references missing track `{track}`"));
+        }
+
+        let start = clip
+            .get("start")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("clip `{id}` has no numeric start"))?;
+        let duration = clip
+            .get("duration")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("clip `{id}` has no numeric duration"))?;
+        if !start.is_finite() || start < 0.0 {
+            return Err(format!("clip `{id}` has invalid start {start}"));
+        }
+        if !duration.is_finite() || duration <= 0.0 {
+            return Err(format!("clip `{id}` has invalid duration {duration}"));
+        }
+
+        let kind = clip.get("kind").and_then(Value::as_str).unwrap_or_default();
+        let media_id = clip.get("media").and_then(Value::as_str);
+        if matches!(kind, "video" | "audio" | "image") && media_id.is_none() {
+            return Err(format!("file-backed {kind} clip `{id}` has no media reference"));
+        }
+        if let Some(media_id) = media_id {
+            let source = media_by_id
+                .get(media_id)
+                .copied()
+                .ok_or_else(|| format!("clip `{id}` references missing media `{media_id}`"))?;
+            if source.trim().is_empty() {
+                return Err(format!("clip `{id}` media `{media_id}` has an empty source path"));
+            }
+            if checked_sources.insert(source) && !std::path::Path::new(source).is_file() {
+                return Err(format!(
+                    "clip `{id}` media `{media_id}` source file is missing: {source}"
+                ));
+            }
+            file_backed += 1;
+        }
+    }
+
+    Ok(format!(
+        "{} clips, {} tracks, {} file-backed clips; all referenced sources exist",
+        clips.len(),
+        tracks.len(),
+        file_backed
+    ))
 }
 
 /// Runs the check: every call, the replies it drew, and the receipt those
@@ -343,50 +444,46 @@ pub fn check(
             gate.required = false;
         }
     }
-    if check.export.is_none() {
-        let clips = observed
-            .iter()
-            .rev()
-            .find(|(call, _)| call.tool == "timeline_read")
-            .and_then(|(_, reply)| {
-                reply
-                    .pointer("/timeline/clips")
-                    .or_else(|| reply.get("clips"))
-            })
-            .and_then(Value::as_array)
-            .map(Vec::len);
-        gates.push(GateRecord::new(
-            "timeline",
-            match clips {
-                Some(0) => GateStatus::Fail,
-                Some(_) => GateStatus::Pass,
-                None => GateStatus::Skipped,
-            },
-            match clips {
-                Some(0) => "timeline_read returned no clips".to_owned(),
-                Some(clips) => format!("timeline_read returned {clips} clips"),
-                None => "the timeline was never read".to_owned(),
-            },
-            true,
-        ));
-    }
-    if let Some((_, reply)) = observed
+    let timeline = observed
+        .iter()
+        .rev()
+        .find(|(call, _)| call.tool == "timeline_read")
+        .map(|(_, reply)| reply);
+    let (timeline_status, timeline_evidence) = match timeline {
+        Some(view) => match timeline_integrity(view) {
+            Ok(evidence) => (GateStatus::Pass, evidence),
+            Err(error) => (GateStatus::Fail, error),
+        },
+        None => (
+            GateStatus::Skipped,
+            "timeline_read did not return evidence".to_owned(),
+        ),
+    };
+    gates.push(GateRecord::new(
+        "timeline-integrity",
+        timeline_status,
+        timeline_evidence,
+        true,
+    ));
+
+    let plan_validation = observed
         .iter()
         .rev()
         .find(|(call, _)| call.tool == "plan_validate")
-        && let Some(ready) = reply.get("creativeReady").and_then(Value::as_bool)
-    {
-        gates.push(GateRecord::new(
-            "creative",
-            if ready {
-                GateStatus::Pass
-            } else {
-                GateStatus::Fail
-            },
-            format!("the Director's plan reported creativeReady={ready}"),
-            true,
-        ));
-    }
+        .and_then(|(_, reply)| reply.get("creativeReady").and_then(Value::as_bool));
+    gates.push(GateRecord::new(
+        "creative",
+        match plan_validation {
+            Some(true) => GateStatus::Pass,
+            Some(false) => GateStatus::Fail,
+            None => GateStatus::Skipped,
+        },
+        match plan_validation {
+            Some(ready) => format!("the Director's plan reported creativeReady={ready}"),
+            None => "the saved plan was not independently validated as creativeReady".to_owned(),
+        },
+        true,
+    ));
     let verdict = verdict_of(&gates);
     let failure = gates
         .iter()
@@ -484,17 +581,19 @@ mod tests {
         assert_eq!(
             tools,
             [
+                "timeline_read",
                 "motion_probe",
                 "measure_loudness",
                 "watch_render",
                 "collision_check"
             ]
         );
-        assert_eq!(asked[0].1["path"], "/edits/Reel/export/reel.mp4");
+        assert_eq!(asked[0].1["path"], "/edits/Reel");
         assert_eq!(asked[1].1["path"], "/edits/Reel/export/reel.mp4");
         assert_eq!(asked[2].1["path"], "/edits/Reel/export/reel.mp4");
-        assert_eq!(asked[2].1["project"], "/edits/Reel");
-        assert_eq!(asked[3].1["path"], "/edits/Reel");
+        assert_eq!(asked[3].1["path"], "/edits/Reel/export/reel.mp4");
+        assert_eq!(asked[3].1["project"], "/edits/Reel");
+        assert_eq!(asked[4].1["path"], "/edits/Reel");
         assert_eq!(asked[2].1["audio"], true);
     }
 
@@ -508,6 +607,83 @@ mod tests {
         assert!(asked[1].1.get("path").is_none());
         assert_eq!(asked[1].1["audio"], true);
         assert_eq!(asked[2].1["path"], "/edits/Reel");
+    }
+
+    #[test]
+    fn timeline_integrity_accepts_valid_file_backed_and_title_clips() {
+        let dir = std::env::temp_dir().join(format!(
+            "funcut-acceptance-media-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.mp4");
+        std::fs::write(&source, b"fixture").unwrap();
+        let view = json!({
+            "timeline": {
+                "tracks": [{"id":"video-1"},{"id":"titles-1"}],
+                "clips": [
+                    {"id":"c1","kind":"video","track":"video-1","start":0.0,"duration":4.0,"media":"m1"},
+                    {"id":"c2","kind":"text","track":"titles-1","start":1.0,"duration":2.0}
+                ]
+            },
+            "media": [{"id":"m1","path":source.to_string_lossy()}]
+        });
+        let result = timeline_integrity(&view).unwrap();
+        assert!(result.contains("2 clips"));
+        assert!(result.contains("1 file-backed"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn timeline_integrity_rejects_missing_media_tracks_and_source_files() {
+        let missing_track = json!({
+            "timeline":{"tracks":[],"clips":[
+                {"id":"c1","kind":"text","track":"gone","start":0.0,"duration":1.0}
+            ]},
+            "media":[]
+        });
+        assert!(timeline_integrity(&missing_track)
+            .unwrap_err().contains("missing track"));
+
+        let missing_media = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":1.0,"media":"gone"}
+            ]},
+            "media":[]
+        });
+        assert!(timeline_integrity(&missing_media)
+            .unwrap_err().contains("missing media"));
+
+        let missing_file = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":1.0,"media":"m1"}
+            ]},
+            "media":[{"id":"m1","path":"/definitely/missing/funcut-source.mp4"}]
+        });
+        assert!(timeline_integrity(&missing_file)
+            .unwrap_err().contains("source file is missing"));
+    }
+
+    #[test]
+    fn timeline_integrity_rejects_invalid_clip_timing_and_duplicate_ids() {
+        let invalid_timing = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"text","track":"v1","start":-1.0,"duration":1.0}
+            ]},
+            "media":[]
+        });
+        assert!(timeline_integrity(&invalid_timing)
+            .unwrap_err().contains("invalid start"));
+
+        let duplicate = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"same","kind":"text","track":"v1","start":0.0,"duration":1.0},
+                {"id":"same","kind":"text","track":"v1","start":1.0,"duration":1.0}
+            ]},
+            "media":[]
+        });
+        assert!(timeline_integrity(&duplicate)
+            .unwrap_err().contains("duplicates clip id"));
     }
 
     #[test]

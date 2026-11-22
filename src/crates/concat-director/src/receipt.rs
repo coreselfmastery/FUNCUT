@@ -220,12 +220,8 @@ impl Capability {
             "sounds_search" | "sounds_add" => Capability::Sfx,
             "effects_list" | "effect_layer_add" | "effect_key_set" => Capability::Grade,
             "watch_render" | "craft_critique" | "local_vlm" | "preview_frame" => Capability::Review,
-            "export_start"
-            | "export_wait"
-            | "export_status"
-            | "collision_check"
-            | "project_save"
-            | "timeline_read" => Capability::Delivery,
+            "export_start" | "export_wait" | "export_status" | "collision_check"
+            | "project_save" | "timeline_read" => Capability::Delivery,
             _ => return None,
         })
     }
@@ -838,12 +834,11 @@ pub fn timeline_integrity(view: &Value) -> Result<String, String> {
                 .get("sourceStart")
                 .and_then(Value::as_f64)
                 .ok_or_else(|| format!("clip `{id}` has no numeric sourceStart"))?;
-            let speed = clip
-                .get("speed")
-                .and_then(Value::as_f64)
-                .unwrap_or(1.0);
+            let speed = clip.get("speed").and_then(Value::as_f64).unwrap_or(1.0);
             if !source_start.is_finite() || source_start < 0.0 {
-                return Err(format!("clip `{id}` has invalid sourceStart {source_start}"));
+                return Err(format!(
+                    "clip `{id}` has invalid sourceStart {source_start}"
+                ));
             }
             if !speed.is_finite() || speed <= 0.0 {
                 return Err(format!("clip `{id}` has invalid playback speed {speed}"));
@@ -955,7 +950,8 @@ fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String
             claimed.insert(family);
             match measured.get(family).copied().filter(|value| *value > 0.0) {
                 Some(actual) => {
-                    if confidence.is_some_and(|claimed_confidence| claimed_confidence > actual + 0.05)
+                    if confidence
+                        .is_some_and(|claimed_confidence| claimed_confidence > actual + 0.05)
                     {
                         failures.push(format!(
                             "entry {} claims confidence {:.2} above measured {} confidence {:.2}",
@@ -998,7 +994,6 @@ fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String
         ),
     )
 }
-
 
 pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     let last = |tool: &str| -> Option<&Value> {
@@ -1053,7 +1048,10 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     // requested; timeline integrity, lane cleanliness and a final preview
     // remain required in either mode.
     let has_export = observed.iter().any(|(call, _)| {
-        matches!(call.tool.as_str(), "export_start" | "motion_probe" | "measure_loudness")
+        matches!(
+            call.tool.as_str(),
+            "export_start" | "motion_probe" | "measure_loudness"
+        )
     });
 
     let plan = observed
@@ -1076,7 +1074,8 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         let (status, evidence) = if profiles.is_empty() || failed_profile {
             (
                 GateStatus::Skipped,
-                "one or more narration voice profiles could not be independently measured".to_owned(),
+                "one or more narration voice profiles could not be independently measured"
+                    .to_owned(),
             )
         } else if let Some(plan) = plan {
             signal_evidence_gate(plan, &profiles)
@@ -1470,7 +1469,10 @@ mod tests {
 
     #[test]
     fn signal_family_aliases_match_the_voice_profile_confidence_keys() {
-        assert_eq!(measured_voice_family("pause.class=dead_air"), Some("pauses"));
+        assert_eq!(
+            measured_voice_family("pause.class=dead_air"),
+            Some("pauses")
+        );
         assert_eq!(measured_voice_family("words"), Some("wordConfidence"));
         assert_eq!(measured_voice_family("sentence.type"), Some("sentenceType"));
         assert_eq!(measured_voice_family("noiseFloor.snr_db"), Some("forensic"));
@@ -1519,7 +1521,12 @@ mod tests {
         assert_eq!(receipt.verdict, Verdict::Accepted);
         for name in ["story", "timeline-integrity", "collisions", "visual"] {
             assert_eq!(
-                receipt.gates.iter().find(|gate| gate.gate == name).unwrap().status,
+                receipt
+                    .gates
+                    .iter()
+                    .find(|gate| gate.gate == name)
+                    .unwrap()
+                    .status,
                 GateStatus::Pass,
                 "{name} must pass for timeline delivery"
             );
@@ -1531,7 +1538,12 @@ mod tests {
                 "{name} is honestly skipped without an export"
             );
             assert!(
-                !receipt.gates.iter().find(|gate| gate.gate == name).unwrap().required
+                !receipt
+                    .gates
+                    .iter()
+                    .find(|gate| gate.gate == name)
+                    .unwrap()
+                    .required
             );
         }
     }
@@ -1612,12 +1624,10 @@ mod tests {
 
     #[test]
     fn saving_and_reading_the_project_consumes_delivery_capability() {
-        let stages = vec![
-            StageRecord::completed(
-                Stage::TimelineReady,
-                vec!["project_save".to_owned(), "timeline_read".to_owned()],
-            ),
-        ];
+        let stages = vec![StageRecord::completed(
+            Stage::TimelineReady,
+            vec!["project_save".to_owned(), "timeline_read".to_owned()],
+        )];
         let receipt = AcceptanceReceipt::new("/p", "timeline", stages, Vec::new(), Vec::new());
         let delivery = receipt
             .capabilities

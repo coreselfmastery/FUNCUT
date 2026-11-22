@@ -715,6 +715,36 @@ mod tests {
     }
 
     #[test]
+    fn timeline_integrity_rejects_duplicate_bin_ids_and_source_overruns() {
+        let duplicate_media = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":1.0,"media":"m1","sourceStart":0.0}
+            ]},
+            "media":[
+                {"id":"m1","path":"/tmp/a.mp4"},
+                {"id":"m1","path":"/tmp/b.mp4"}
+            ]
+        });
+        assert!(
+            timeline_integrity(&duplicate_media)
+                .unwrap_err()
+                .contains("duplicate media id")
+        );
+
+        let source_overrun = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":4.0,"speed":2.0,"media":"m1","sourceStart":2.0}
+            ]},
+            "media":[{"id":"m1","path":"/tmp/source.mp4","duration":8.0}]
+        });
+        assert!(
+            timeline_integrity(&source_overrun)
+                .unwrap_err()
+                .contains("reads past media")
+        );
+    }
+
+    #[test]
     fn timeline_integrity_rejects_invalid_clip_timing_and_duplicate_ids() {
         let invalid_timing = json!({
             "timeline":{"tracks":[{"id":"v1"}],"clips":[

@@ -83,7 +83,32 @@ the Director agent's prompt tells it to pass the script to every
 | `language` | Detected script + caller's hint, `fontHint`, `musicGenreHint` | Unicode script scan (Python) |
 | `directorHints` | cutStyle (fast/mixed/hold/building) + cutRule, captionGate, bgm decision + reason, speakerChanges, questions, emphasisWords, protectedPauses, font and genre | the wiring itself |
 
-Roughly **fifty named signals** (the catalogue inside the script counts
+**The motion-design family (20 readings, no extra pass):**
+
+| Signal | What it is | Motion choice it drives |
+| --- | --- | --- |
+| `motion.emphasisHits` | Stressed words with time, strength and scale pop | Kinetic word hits |
+| `motion.kineticScale` | Per-line scale travel from emphasis and pitch range | How far a card grows |
+| `motion.pitchDirection` | Rise, fall or flat, with the measured slope | Up-screen vs settling move |
+| `motion.pitchTravel` | Slope converted to bounded pixel travel | Keyframe distance |
+| `motion.rateTempo` | Words per minute as 0.6–1.6 speed | Animation speed |
+| `motion.pauseDwell` | Classified pauses with hold and frame dwell | Holds and next-hero entrances |
+| `motion.onsetSync` | Spectral-flux onsets mapped to lines | Hit and flash timing |
+| `motion.rhythmStagger` | Rhythm layers and their stagger | Multi-layer entrances |
+| `motion.sentenceEntry` | Sentence type mapped to an entry preset | Question / exclamation / fragment entry |
+| `motion.emotionEase` | Arc shape mapped to spring / emphasis / ease-out / linear | Easing curve |
+| `motion.arcTurn` | Where valence or arousal turns | Background and hero swap |
+| `motion.entityCard` | Timed entities and their card | Hero card timing |
+| `motion.topicChapter` | Scene-turn pauses as chapter entries | Chapter card entry |
+| `motion.motifReturn` | Repeated phrases and their returns | Callback visual |
+| `motion.speakerTurn` | Speaker changes mapped to lines | Lower-third flip |
+| `motion.confidenceGate` | Words under 0.5 confidence | No glitch or pop on a guess |
+| `motion.sibilanceTexture` | Sibilance ratio as shimmer | Shimmer intensity |
+| `motion.reverbSpace` | Reverb tail as background blur | Parallax depth |
+| `motion.noiseGrain` | Floor and flatness as grain | Texture match |
+| `motion.levelPulse` | Line lift as a scale pulse | Pulse strength |
+
+**Seventy named signals** (the catalogue inside the script counts
 them, and `action: "catalog"` answers the list), every one with its
 source named in
 `sources` — and every one optional: an ear that cannot run says so in

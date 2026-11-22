@@ -1,7 +1,7 @@
 # The signal matrix — spend every reading
 
 The runtime `voice_signals` catalogue is the source of truth: it currently
-contains **50 named readings across 13 families**. This matrix uses the
+contains **70 named readings across 14 families**. This matrix uses the
 catalogue's exact identifiers, not aliases or guessed field paths. Reading
 the profile is not spending it. The plan's `signalLog` must name the exact
 catalogue reading in its evidence note and use the accepted `signalLog`
@@ -61,6 +61,26 @@ not measured is named unmeasured; never cite a value that was not returned.
 | 48 | `speaker.utterances` | `speaker` | speaker-specific shot and caption segmentation |
 | 49 | `speaker.meanUtteranceSec` | `speaker` | speaker pacing and conversational shot duration |
 | 50 | `speaker.longestSilenceSec` | `speaker` | long-gap review: preserve intentional holds, investigate dead air |
+| 51 | `motion.emphasisHits` | `motion` | kinetic word hits: the exact stressed word and its scale pop |
+| 52 | `motion.kineticScale` | `motion` | how far a card or caption grows across its line |
+| 53 | `motion.pitchDirection` | `motion` | up-screen entry vs a settling move, from the measured slope |
+| 54 | `motion.pitchTravel` | `motion` | keyframe distance in bounded pixels |
+| 55 | `motion.rateTempo` | `motion` | animation speed and card hold from words per minute |
+| 56 | `motion.pauseDwell` | `motion` | holds, next-hero entrances and dwell frame counts |
+| 57 | `motion.onsetSync` | `motion` | hit and flash timing on spectral-flux onsets |
+| 58 | `motion.rhythmStagger` | `motion` | multi-layer entrance stagger from the rhythm grid |
+| 59 | `motion.sentenceEntry` | `motion` | question, exclamation and fragment entry presets |
+| 60 | `motion.emotionEase` | `motion` | spring, emphasis, ease-out or linear easing |
+| 61 | `motion.arcTurn` | `motion` | background and hero swap at an arc turn |
+| 62 | `motion.entityCard` | `motion` | hero-card timing for a named entity |
+| 63 | `motion.topicChapter` | `motion` | chapter-card entry at a topic change |
+| 64 | `motion.motifReturn` | `motion` | callback visual when a repeated phrase returns |
+| 65 | `motion.speakerTurn` | `motion` | lower-third flip at a speaker change |
+| 66 | `motion.confidenceGate` | `motion` | no glitch or pop on a low-confidence word |
+| 67 | `motion.sibilanceTexture` | `motion` | shimmer intensity from measured sibilance |
+| 68 | `motion.reverbSpace` | `motion` | background blur and parallax depth from the room tail |
+| 69 | `motion.noiseGrain` | `motion` | grain texture matched to floor and flatness |
+| 70 | `motion.levelPulse` | `motion` | scale-pulse strength from line lift |
 
 ## Consumption rules
 

@@ -1851,7 +1851,7 @@ fn sense_schema(name: &str) -> Option<Value> {
             "toleranceMs": { "type": "number", "default": 150, "minimum": 0, "description": "With action 'verify': how far a word may start from where the edit placed it." },
         }),
         "voice_signals" => json!({
-            "action": { "type": "string", "enum": ["extract", "catalog", "selftest"], "default": "extract", "description": "extract reads the whole profile; catalog answers the fifty-signal catalogue (names, families, what each reads, why the edit wants it); selftest proves the Python signals." },
+            "action": { "type": "string", "enum": ["extract", "catalog", "selftest"], "default": "extract", "description": "extract reads the whole profile; catalog answers the seventy-signal catalogue (names, families, what each reads, why the edit wants it); selftest proves the Python signals." },
             "audio": string("The voiceover file (any format ffmpeg reads): the take the transcript timed."),
             "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the per-line signals need." },
             "lines": { "type": "array", "description": "Lines as [{text, start, end, words}] when there is no transcript.", "items": { "type": ["object", "string"] } },
@@ -3644,6 +3644,7 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "rhythmLayers",
     "motifs",
     "words",
+    "wordConfidence",
     "language",
     "sentence",
     "entities",
@@ -3663,6 +3664,7 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "formants",
     "speaker",
     "noiseFloor",
+    "motion",
 ];
 
 /// Whether a signal name is one the `voice_signals` profile answers - the
@@ -3721,10 +3723,20 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             .unwrap_or_default();
         if !matches!(
             decision,
-            "cut" | "caption" | "graphic" | "bgm" | "transition" | "pacing"
+            "cut"
+                | "caption"
+                | "graphic"
+                | "bgm"
+                | "transition"
+                | "pacing"
+                | "repair"
+                | "mix"
+                | "grade"
+                | "sfx"
+                | "motion"
         ) {
             problems.push(format!(
-                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing"
+                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing, repair, mix, grade, sfx, motion"
             ));
             continue;
         }
@@ -3838,7 +3850,19 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         (logged_cuts as f64 / expected_cuts.max(1) as f64).min(1.0)
     };
     let mut per_decision = serde_json::Map::new();
-    for decision in ["cut", "caption", "graphic", "bgm", "transition", "pacing"] {
+    for decision in [
+        "cut",
+        "caption",
+        "graphic",
+        "bgm",
+        "transition",
+        "pacing",
+        "repair",
+        "mix",
+        "grade",
+        "sfx",
+        "motion",
+    ] {
         per_decision.insert(
             decision.to_owned(),
             json!(*counts.get(decision).unwrap_or(&0)),
@@ -7385,11 +7409,23 @@ mod tests {
             { "at": 4.0, "decision": "graphic", "signals": ["entities", "sentence.type"],
               "confidence": 0.8, "note": "the money line gets a stat card" },
             { "at": 8.0, "decision": "transition", "signals": ["speakerChanges", "topics"],
-              "confidence": 0.8, "note": "the speaker change earns the move" }
+              "confidence": 0.8, "note": "the speaker change earns the move" },
+            { "at": 0.0, "decision": "repair", "signals": ["forensic.noiseType"],
+              "confidence": 0.8, "note": "the hum gets its notch" },
+            { "at": 0.0, "decision": "mix", "signals": ["loudness.integratedLufs", "forensic.crest"],
+              "confidence": 0.8, "note": "the level follows the measured gain cap" },
+            { "at": 0.0, "decision": "grade", "signals": ["emotion", "forensic.spectralCentroidHz"],
+              "confidence": 0.8, "note": "the warm read and dull tone choose the look" },
+            { "at": 0.0, "decision": "sfx", "signals": ["emphasisWords", "prosody"],
+              "confidence": 0.8, "note": "the emphasis peaks carry the accents" }
         ]);
         let result = validate_edit_plan(&driven).expect("valid");
         assert_eq!(result["signalLog"]["driven"], json!(true), "{result}");
-        assert_eq!(result["signalLog"]["entries"], json!(9));
+        assert_eq!(result["signalLog"]["entries"], json!(13));
+        assert_eq!(result["signalLog"]["perDecision"]["repair"], json!(1));
+        assert_eq!(result["signalLog"]["perDecision"]["mix"], json!(1));
+        assert_eq!(result["signalLog"]["perDecision"]["grade"], json!(1));
+        assert_eq!(result["signalLog"]["perDecision"]["sfx"], json!(1));
         assert!(
             result["creativeBlockers"]
                 .as_array()

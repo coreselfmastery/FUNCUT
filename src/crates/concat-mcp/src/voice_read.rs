@@ -729,15 +729,14 @@ impl VoiceRead {
         (first > 0.0).then(|| 12.0 / std::f64::consts::LN_2 * (last / first).ln())
     }
 
-    /// Whether a phrase boundary opens within `window` of a file second:
-    /// the narration's own breath-group turned there, which is a seam the
-    /// picture can register even when no speaker changed and no question
-    /// was asked.
+    /// Whether a phrase boundary opens or closes within `window` of a
+    /// file second: the narration's own breath-group turned there, which
+    /// is a seam the picture can register even when no speaker changed
+    /// and no question was asked.
     pub fn phrase_seam(&self, moment: f64, window: f64) -> bool {
-        self.take_wide
-            .phrases
-            .iter()
-            .any(|phrase| (phrase.start - moment).abs() <= window)
+        self.take_wide.phrases.iter().any(|phrase| {
+            (phrase.start - moment).abs() <= window || (phrase.end - moment).abs() <= window
+        })
     }
 
     /// The take's normalized local energy at a file second, 0..1: where
@@ -793,6 +792,18 @@ impl VoiceRead {
             .take_wide
             .loudness_range_lu
             .is_some_and(|lra| lra < 4.0)
+        {
+            gain = gain.min(6.0);
+        }
+        // The other two compression readings say the same thing as the
+        // loudness range from different ears: a low crest or a narrow
+        // dynamic range is a take whose peaks were already squashed, so
+        // raising it lifts the squash with the voice.
+        if self.take_wide.crest.is_some_and(|crest| crest < 6.0)
+            || self
+                .take_wide
+                .dynamic_range_db
+                .is_some_and(|range| range < 8.0)
         {
             gain = gain.min(6.0);
         }

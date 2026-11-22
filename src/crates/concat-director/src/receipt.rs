@@ -900,6 +900,37 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
+    // The lanes: two clips may not share the same stretch of track. The
+    // check is optional here because the fixed spine and the Director are
+    // not the only callers of `derive_gates`; the Director's acceptance
+    // promotes it to required, because an edit the user cannot keep
+    // editing is not a finished edit.
+    match last("collision_check") {
+        Some(reply) => {
+            let clean = reply
+                .get("clean")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let count = reply.get("count").and_then(Value::as_u64).unwrap_or(0);
+            gates.push(GateRecord::new(
+                "collisions",
+                if clean {
+                    GateStatus::Pass
+                } else {
+                    GateStatus::Fail
+                },
+                format!("collision_check clean={clean} count={count}"),
+                false,
+            ));
+        }
+        None => gates.push(GateRecord::new(
+            "collisions",
+            GateStatus::Skipped,
+            "the run never checked the timeline for shared lanes",
+            false,
+        )),
+    }
+
     // The optional craft dimensions, answered only when the run made them.
     for (name, tool) in [("captions", "captions_add"), ("motion", "motion_bake")] {
         if observed.iter().any(|(call, _)| call.tool == tool) {

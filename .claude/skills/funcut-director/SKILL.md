@@ -254,7 +254,10 @@ Phase-0 brief in `plan.creativeBrief`. **The plan also carries the
 `signalLog` — the decision log**: one entry per cut, caption highlight,
 graphic, BGM choice and transition, naming the Phase-1c signals that drove
 it (`{"at": 4.2, "decision": "cut", "signals": ["pause.class=dead_air",
-"emphasisWords"], "note": "2.1s of dead air before the emphasis word"}`).
+"emphasisWords"], "confidence": 0.8, "note": "2.1s of dead air before the emphasis word"}`).
+Every entry carries the confidence the profile rated its signals at and a
+one-sentence basis; an entry with no note, no confidence, or confidence 0
+is a claim the validator refuses.
 The profile's `decisionPolicy` says which signals each decision reads; a
 plan with a voiceover and no signalLog is NOT creativeReady — the reading
 exists to be consumed, not admired. Before validation, persist the exact canonical plan object (not a wrapper) as `<project>/edit-plan.json`; the acceptance check re-reads and validates this artifact after the render, so a plan that exists only in chat is not verifiable. Then call `plan_validate` on the completed JSON;

@@ -57,7 +57,7 @@ impl DirectorAcceptance {
 
 /// The independent media checks, in dependency order. The contact
 /// sheet produced by watch_render is passed to craft_critique in check().
-pub fn checks(project: &str, export: &str) -> [(&'static str, Value); 3] {
+pub fn checks(project: &str, export: &str) -> [(&'static str, Value); 4] {
     [
         ("motion_probe", json!({ "path": export })),
         ("measure_loudness", json!({ "path": export })),
@@ -65,6 +65,7 @@ pub fn checks(project: &str, export: &str) -> [(&'static str, Value); 3] {
             "watch_render",
             json!({ "path": export, "project": project, "audio": true }),
         ),
+        ("collision_check", json!({ "path": project })),
     ]
 }
 
@@ -296,7 +297,34 @@ pub fn check(
         );
     }
 
-    let gates = derive_gates(&observed);
+    let mut gates = derive_gates(&observed);
+    // The Director is the creative path: its plan must reach creativeReady,
+    // its rendered picture must be judged, and the timeline it leaves must
+    // be free of shared lanes. The fixed spine cannot promise the first, so
+    // `derive_gates` leaves the picture and lane gates optional; here, where
+    // only the Director's run is checked, they are promoted to required.
+    for gate in &mut gates {
+        if gate.gate == "visual" || gate.gate == "collisions" {
+            gate.required = true;
+        }
+    }
+    if let Some((_, reply)) = observed
+        .iter()
+        .rev()
+        .find(|(call, _)| call.tool == "plan_validate")
+        && let Some(ready) = reply.get("creativeReady").and_then(Value::as_bool)
+    {
+        gates.push(GateRecord::new(
+            "creative",
+            if ready {
+                GateStatus::Pass
+            } else {
+                GateStatus::Fail
+            },
+            format!("the Director's plan reported creativeReady={ready}"),
+            true,
+        ));
+    }
     let verdict = verdict_of(&gates);
     let failure = gates
         .iter()
@@ -383,11 +411,20 @@ mod tests {
     fn media_checks_use_the_export_and_create_a_real_contact_sheet() {
         let asked = checks("/edits/Reel", "/edits/Reel/export/reel.mp4");
         let tools: Vec<&str> = asked.iter().map(|(tool, _)| *tool).collect();
-        assert_eq!(tools, ["motion_probe", "measure_loudness", "watch_render"]);
+        assert_eq!(
+            tools,
+            [
+                "motion_probe",
+                "measure_loudness",
+                "watch_render",
+                "collision_check"
+            ]
+        );
         assert_eq!(asked[0].1["path"], "/edits/Reel/export/reel.mp4");
         assert_eq!(asked[1].1["path"], "/edits/Reel/export/reel.mp4");
         assert_eq!(asked[2].1["path"], "/edits/Reel/export/reel.mp4");
         assert_eq!(asked[2].1["project"], "/edits/Reel");
+        assert_eq!(asked[3].1["path"], "/edits/Reel");
         assert_eq!(asked[2].1["audio"], true);
     }
 
@@ -464,6 +501,7 @@ mod tests {
             "watch_render",
             "craft_critique",
             "emotion",
+            "collision_check",
         ] {
             assert!(
                 crate::protocol::DIRECTOR_ALLOWLIST.contains(&tool),

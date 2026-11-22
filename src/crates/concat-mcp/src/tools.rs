@@ -3735,15 +3735,62 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
                 ));
             }
         }
+        // A decision without a stated confidence or a one-sentence basis
+        // is a claim, not a reading. The profile's signalConfidence is
+        // what makes the entry inspectable after the run.
+        match entry.get("confidence").and_then(Value::as_f64) {
+            Some(confidence) if (0.0..=1.0).contains(&confidence) && confidence > 0.0 => {}
+            Some(0.0) => problems.push(format!(
+                "entry {at}: confidence 0 - the signal was not measured; do not cite it"
+            )),
+            Some(confidence) => problems.push(format!(
+                "entry {at}: confidence {confidence} lies outside 0-1"
+            )),
+            None => problems.push(format!(
+                "entry {at}: confidence is absent - the run did not rate the signals behind this choice"
+            )),
+        }
+        if !entry
+            .get("note")
+            .and_then(Value::as_str)
+            .is_some_and(|note| !note.trim().is_empty())
+        {
+            problems.push(format!(
+                "entry {at}: no note - state the basis the signals gave this choice"
+            ));
+        }
         *counts.entry(decision).or_default() += 1;
     }
-    let driven = !entries.is_empty() && problems.is_empty();
+    let has_voiceover = plan
+        .pointer("/audio/voiceover")
+        .is_some_and(|voiceover| !voiceover.is_null());
+    let has_bgm = plan
+        .pointer("/audio/bgm")
+        .is_some_and(|bgm| !bgm.is_null());
     // The decisions a plan this size owes a log for: the cuts are the
-    // segment boundaries, and one BGM choice, one caption style and one
-    // grade are the video-wide minimum. Entries beyond the minimum are
-    // welcome; the coverage names how many there are.
+    // segment boundaries, and one BGM choice and one caption style are
+    // the video-wide minimum. Entries beyond the minimum are welcome;
+    // the coverage names how many cuts there are.
     let expected_cuts = segments.len().saturating_sub(1);
     let logged_cuts = *counts.get("cut").unwrap_or(&0);
+    if expected_cuts > 0 && logged_cuts < expected_cuts {
+        problems.push(format!(
+            "the signalLog logs {logged_cuts} of {expected_cuts} cuts - every segment boundary needs the signal that drove it"
+        ));
+    }
+    if has_voiceover && *counts.get("caption").unwrap_or(&0) == 0 {
+        problems.push(
+            "the plan has a voiceover but the signalLog names no caption choice - every spoken line is captioned"
+                .to_owned(),
+        );
+    }
+    if has_bgm && *counts.get("bgm").unwrap_or(&0) == 0 {
+        problems.push(
+            "the plan adds BGM but the signalLog names no bgm choice - the bed was not read"
+                .to_owned(),
+        );
+    }
+    let driven = !entries.is_empty() && problems.is_empty();
     let coverage = if entries.is_empty() {
         0.0
     } else {
@@ -3762,7 +3809,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         "coverage": (coverage * 100.0).round() / 100.0,
         "perDecision": per_decision,
         "problems": problems,
-        "how": "voice_signals (action extract) on the take, then record {at, decision, signals, note} for each choice; the profile's decisionPolicy names the signals each decision reads.",
+        "how": "voice_signals (action extract) on the take, then record {at, decision, signals, confidence, note} for each choice; the profile's decisionPolicy names the signals each decision reads and signalConfidence rates them.",
     })
 }
 
@@ -6990,17 +7037,23 @@ mod tests {
         let mut driven = base.clone();
         driven["signalLog"] = json!([
             { "at": 2.0, "decision": "cut", "signals": ["pause.class=dead_air", "emphasisWords"],
-              "note": "dead air before the emphasis word" },
-            { "at": 3.5, "decision": "cut", "signals": ["speechRate.pace"] },
-            { "at": 5.0, "decision": "cut", "signals": ["rhythmLayers"] },
-            { "at": 6.5, "decision": "cut", "signals": ["motifs"] },
-            { "at": 8.0, "decision": "cut", "signals": ["pause.class=dead_air"] },
+              "confidence": 0.8, "note": "dead air before the emphasis word" },
+            { "at": 3.5, "decision": "cut", "signals": ["speechRate.pace"],
+              "confidence": 0.8, "note": "the pace lifts into the next clause" },
+            { "at": 5.0, "decision": "cut", "signals": ["rhythmLayers"],
+              "confidence": 0.8, "note": "the rhythm layer changes here" },
+            { "at": 6.5, "decision": "cut", "signals": ["motifs"],
+              "confidence": 0.8, "note": "the motif closes the thought" },
+            { "at": 8.0, "decision": "cut", "signals": ["pause.class=dead_air"],
+              "confidence": 0.8, "note": "the pause before the call to action" },
             { "at": 0.0, "decision": "bgm", "signals": ["forensic.noiseFloorDbfs", "speechRatio"],
-              "note": "dry take: bed it" },
-            { "at": 2.0, "decision": "caption", "signals": ["emphasisWords", "words[].confidence"] },
+              "confidence": 0.8, "note": "dry take: bed it" },
+            { "at": 2.0, "decision": "caption", "signals": ["emphasisWords", "words[].confidence"],
+              "confidence": 0.8, "note": "the stressed word takes the accent" },
             { "at": 4.0, "decision": "graphic", "signals": ["entities", "sentence.type"],
-              "note": "the money line gets a stat card" },
-            { "at": 8.0, "decision": "transition", "signals": ["speakerChanges", "topics"] }
+              "confidence": 0.8, "note": "the money line gets a stat card" },
+            { "at": 8.0, "decision": "transition", "signals": ["speakerChanges", "topics"],
+              "confidence": 0.8, "note": "the speaker change earns the move" }
         ]);
         let result = validate_edit_plan(&driven).expect("valid");
         assert_eq!(result["signalLog"]["driven"], json!(true), "{result}");

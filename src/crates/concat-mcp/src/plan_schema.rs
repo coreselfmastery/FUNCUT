@@ -232,7 +232,7 @@ pub fn compact() -> Value {
         {
             signal_log.insert(
                 "description".to_owned(),
-                json!("The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition|pacing, signals: [names from the profile's decisionPolicy], note?}. A plan with a voiceover and no signalLog is not creativeReady."),
+                json!("The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition|pacing, signals: [names from the profile's decisionPolicy], confidence: 0-1, note: the basis}. An entry with no confidence, confidence 0, or no note is refused, and a plan with a voiceover and no signalLog is not creativeReady."),
             );
         }
     }

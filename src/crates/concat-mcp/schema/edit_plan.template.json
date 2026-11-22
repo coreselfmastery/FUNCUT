@@ -788,7 +788,7 @@
       "type": "array"
     },
     "signalLog": {
-      "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM and transition decision, naming the signals (from the profile's decisionPolicy) behind it. A plan with a voiceover and no signalLog is NOT creativeReady.",
+      "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM and transition decision, naming the signals (from the profile's decisionPolicy) behind it, with their confidence and a one-sentence basis. A plan with a voiceover and no signalLog is NOT creativeReady.",
       "items": {
         "additionalProperties": false,
         "properties": {
@@ -798,7 +798,7 @@
             "type": "number"
           },
           "confidence": {
-            "description": "How certain the profile was of the signals behind this choice, 0-1: the weakest family it names. Absent when the run could not rate them.",
+            "description": "How certain the profile was of the signals behind this choice, 0-1: the weakest family it names. Required by the signal gate; an entry without it, or with 0, is refused.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"
@@ -816,7 +816,7 @@
             "type": "string"
           },
           "note": {
-            "description": "One sentence a reviewer reads: why these signals drove this choice.",
+            "description": "One sentence a reviewer reads: why these signals drove this choice. Required by the signal gate.",
             "type": "string"
           },
           "signals": {

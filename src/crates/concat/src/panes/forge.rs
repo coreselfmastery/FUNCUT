@@ -845,6 +845,7 @@ impl ForgePane {
             self.auto.fraction = 0.0;
             self.auto.visible = true;
             self.auto.outcome = 0;
+            self.auto.check_cancel = None;
             self.auto.started = Some(Instant::now());
             self.auto.project = Some(source.project.clone());
             self.auto.source = Some(source.clone());
@@ -1290,6 +1291,16 @@ impl ForgePane {
             studio.notify(&tf("forge.autoEditDirectorUnproven", &[&summary]), true);
             self.live_follow_stop();
             studio.end_live_follow_back();
+            // The sibling stays and opens: the edit is real, it just is not
+            // proven. The user can inspect and keep editing it, and a
+            // second run resumes from it rather than rebuilding it.
+            if let Some(path) = self.auto.project.clone() {
+                match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
+                {
+                    Ok(()) => {}
+                    Err(error) => studio.notify(&error, true),
+                }
+            }
         }
     }
 
@@ -1309,6 +1320,13 @@ impl ForgePane {
         );
         self.live_follow_stop();
         studio.end_live_follow_back();
+        if let Some(path) = self.auto.project.clone() {
+            match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
+            {
+                Ok(()) => {}
+                Err(open) => studio.notify(&open, true),
+            }
+        }
     }
 
     /// Begins following a run's edit live: the window's timeline becomes
@@ -3068,7 +3086,8 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          placed; nothing has been MEASURED yet. The repair, the transcription, \
          voice_signals and emotion are YOURS to run on this sibling, in the skill's order - \
          do not skip them and do not assume them. Every creative decision must name the \
-         signal that drove it in the plan's signalLog - an edit that never read the voice is \
+         signal that drove it in the plan's signalLog, with the confidence the profile \
+         rated it at and a one-sentence basis - an edit that never read the voice is \
          an edit that guessed, and an unavailable signal must be reported as missing rather \
          than claimed.\n\n\
          READ THE PROFILE WHOLE, THEN SPEND IT. voice_signals returns more than highlights: \
@@ -3110,7 +3129,9 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          MANDATORY QUALITY LOOP: watch_render the OPEN timeline, craft_critique it, act on \
          at least one revision, watch_render AGAIN and compare the two craft scores, and \
          repeat until the overall score is >= 7 with no black frames, letterbox bars or long \
-         static runs. Only then export.\n\n\
+         static runs. Then collision_check the timeline and fix every shared lane, and \
+         project_save so the edit the acceptance opens is the edit you judged. Only then \
+         export.\n\n\
          PERSIST THE PLAN: write the exact canonical plan object you validated to \
          '{project}/edit-plan.json' before you export - the run's acceptance gate reads that \
          file as its story evidence, and an edit without it lands unproven whatever its \
@@ -3220,6 +3241,19 @@ fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<Atom
 /// kill flag the supervisor polls - because a Director run is the same
 /// kind of process.
 fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
+    // The handed-over run has no runner to post a tick. Without this
+    // clock the pane's elapsed field only moved when the harness printed
+    // a line, so a model thinking for minutes showed 0s and looked dead.
+    let tick_still = Arc::new(AtomicBool::new(true));
+    let tick_flag = Arc::clone(&tick_still);
+    std::thread::spawn(move || {
+        while tick_flag.load(Ordering::Relaxed) {
+            crate::host::on_ui(|studio, _, _| {
+                studio.handle(Msg::Forge(ForgeMsg::AutoEditTick));
+            });
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
     let out = child.stdout.take();
     let err = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
@@ -3269,6 +3303,7 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);
+        tick_still.store(false, Ordering::Relaxed);
         crate::host::on_ui(move |studio, _, _| {
             studio.handle(Msg::Forge(ForgeMsg::AutoDirectorEnded(code)));
         });

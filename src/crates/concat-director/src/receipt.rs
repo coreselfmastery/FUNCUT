@@ -1040,109 +1040,191 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
-    // The words: the export re-read and compared to the edit. `emotion`
-    // is also an analysis tool, so the gate reads the last reply that
-    // actually carries a verdict, not merely the last emotion call.
+    // The fixed AUTO EDIT delivers a saved, editable timeline by default.
+    // Encoded-file gates are required only when an export was explicitly
+    // requested; timeline integrity, lane cleanliness and a final preview
+    // remain required in either mode.
+    let has_export = observed.iter().any(|(call, _)| {
+        matches!(call.tool.as_str(), "export_start" | "motion_probe" | "measure_loudness")
+    });
+
+    let plan = observed
+        .iter()
+        .rev()
+        .find(|(call, _)| call.tool == "plan_validate")
+        .and_then(|(call, _)| call.arguments.get("plan"));
+    let voiceover_required = plan
+        .and_then(|plan| plan.pointer("/audio/voiceover"))
+        .is_some_and(|voiceover| !voiceover.is_null());
+    if voiceover_required {
+        let profiles: Vec<Value> = observed
+            .iter()
+            .filter(|(call, _)| call.tool == "voice_signals")
+            .map(|(_, reply)| reply.clone())
+            .collect();
+        let failed_profile = profiles
+            .iter()
+            .any(|profile| profile.get("ok").and_then(Value::as_bool) != Some(true));
+        let (status, evidence) = if profiles.is_empty() || failed_profile {
+            (
+                GateStatus::Skipped,
+                "one or more narration voice profiles could not be independently measured".to_owned(),
+            )
+        } else if let Some(plan) = plan {
+            signal_evidence_gate(plan, &profiles)
+        } else {
+            (
+                GateStatus::Skipped,
+                "the saved plan was not available for signal verification".to_owned(),
+            )
+        };
+        gates.push(GateRecord::new("signal-evidence", status, evidence, true));
+    }
+
+    // A rendered file can prove its words; a timeline-only deliverable
+    // cannot. Never turn the absence of a render into a false pass.
     let verification = observed
         .iter()
         .rev()
         .find(|(call, reply)| call.tool == "emotion" && reply.get("verdict").is_some())
         .map(|(_, reply)| reply);
-    match verification {
-        Some(reply) => {
-            let verdict = reply
-                .get("verdict")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            gates.push(GateRecord::new(
+    if has_export {
+        match verification {
+            Some(reply) => {
+                let verdict = reply
+                    .get("verdict")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                gates.push(GateRecord::new(
+                    "words",
+                    if verdict == "pass" {
+                        GateStatus::Pass
+                    } else {
+                        GateStatus::Fail
+                    },
+                    format!("the export's words read back as verdict={verdict}"),
+                    true,
+                ));
+            }
+            None => gates.push(GateRecord::new(
                 "words",
-                if verdict == "pass" {
-                    GateStatus::Pass
-                } else {
-                    GateStatus::Fail
-                },
-                format!("the export's words read back as verdict={verdict}"),
+                GateStatus::Skipped,
+                "the run never compared the export's words to the edit",
                 true,
-            ));
+            )),
         }
-        None => gates.push(GateRecord::new(
+    } else {
+        gates.push(GateRecord::new(
             "words",
             GateStatus::Skipped,
-            "the run never compared the export's words to the edit",
-            true,
-        )),
+            "no export was requested; the saved editable timeline is the deliverable",
+            false,
+        ));
     }
 
-    // The mix: the loudness reading against the platform target.
-    match last("measure_loudness") {
-        Some(reply) => {
-            let met = reply
-                .get("platformTargetMet")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let integrated = reply
-                .get("integratedLufs")
-                .and_then(Value::as_f64)
-                .map(|lufs| format!("{lufs:.1} LUFS"))
-                .unwrap_or_else(|| "unread".to_owned());
-            gates.push(GateRecord::new(
+    // The mix: only an encoded export can be measured against the final
+    // platform loudness target. The preview still receives an audio-aware
+    // craft review, but is not misreported as a final encode measurement.
+    if has_export {
+        match last("measure_loudness") {
+            Some(reply) => {
+                let met = reply
+                    .get("platformTargetMet")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let integrated = reply
+                    .get("integratedLufs")
+                    .and_then(Value::as_f64)
+                    .map(|lufs| format!("{lufs:.1} LUFS"))
+                    .unwrap_or_else(|| "unread".to_owned());
+                gates.push(GateRecord::new(
+                    "audio",
+                    if met {
+                        GateStatus::Pass
+                    } else {
+                        GateStatus::Fail
+                    },
+                    format!("the mix measured {integrated}, platformTargetMet={met}"),
+                    true,
+                ));
+            }
+            None => gates.push(GateRecord::new(
                 "audio",
-                if met {
-                    GateStatus::Pass
-                } else {
-                    GateStatus::Fail
-                },
-                format!("the mix measured {integrated}, platformTargetMet={met}"),
+                GateStatus::Skipped,
+                "the export mix was never measured",
                 true,
-            ));
+            )),
         }
-        None => gates.push(GateRecord::new(
+        match last("motion_probe") {
+            Some(reply) => {
+                let has_probe = reply.get("probe").is_some();
+                gates.push(GateRecord::new(
+                    "export-integrity",
+                    if has_probe {
+                        GateStatus::Pass
+                    } else {
+                        GateStatus::Fail
+                    },
+                    if has_probe {
+                        "the rendered file opened and reported its streams"
+                    } else {
+                        "the reader answered without a probe: the file is unreadable"
+                    },
+                    true,
+                ));
+            }
+            None => gates.push(GateRecord::new(
+                "export-integrity",
+                GateStatus::Skipped,
+                "the rendered file was never opened by the media reader",
+                true,
+            )),
+        }
+    } else {
+        gates.push(GateRecord::new(
             "audio",
             GateStatus::Skipped,
-            "the mix was never measured",
-            true,
-        )),
-    }
-
-    // The file: opened by the reader the renderer will use.
-    match last("motion_probe") {
-        Some(reply) => {
-            let has_probe = reply.get("probe").is_some();
-            gates.push(GateRecord::new(
-                "export-integrity",
-                if has_probe {
-                    GateStatus::Pass
-                } else {
-                    GateStatus::Fail
-                },
-                if has_probe {
-                    "the rendered file opened and reported its streams"
-                } else {
-                    "the reader answered without a probe: the file is unreadable"
-                },
-                true,
-            ));
-        }
-        None => gates.push(GateRecord::new(
+            "no export was requested; final encoded loudness is not yet measurable",
+            false,
+        ));
+        gates.push(GateRecord::new(
             "export-integrity",
             GateStatus::Skipped,
-            "the rendered file was never opened by the media reader",
-            true,
-        )),
+            "no export was requested; the saved timeline is the deliverable",
+            false,
+        ));
     }
+
+    let timeline_view = last("timeline_read");
+    let (timeline_status, timeline_evidence) = match timeline_view {
+        Some(view) => match timeline_integrity(view) {
+            Ok(evidence) => (GateStatus::Pass, evidence),
+            Err(error) => (GateStatus::Fail, error),
+        },
+        None => (
+            GateStatus::Skipped,
+            "the run never read the saved timeline".to_owned(),
+        ),
+    };
+    gates.push(GateRecord::new(
+        "timeline-integrity",
+        timeline_status,
+        timeline_evidence,
+        true,
+    ));
 
     // The picture: the critic's own score against the bar. Only a
     // critique of the RENDERED file counts - the last craft_critique
     // after the last export_start. When the watch's own critique never
     // answered, the preview's pre-export score must not stand in for it
     // and pass a cut that was never judged as shipped.
-    let export_at = observed
+    let last_watch = observed
         .iter()
-        .rposition(|(call, _)| call.tool == "export_start");
+        .rposition(|(call, _)| call.tool == "watch_render");
     let last_critique = observed
         .iter()
         .rposition(|(call, _)| call.tool == "craft_critique")
-        .filter(|at| Some(*at) > export_at);
+        .filter(|at| Some(*at) > last_watch);
     match last_critique.and_then(|at| observed[at].1.get("overall")) {
         Some(score) => {
             let overall = score.as_f64();
@@ -1186,7 +1268,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                     GateStatus::Fail
                 },
                 format!("collision_check clean={clean} count={count}"),
-                false,
+                !has_export,
             ));
         }
         None => gates.push(GateRecord::new(

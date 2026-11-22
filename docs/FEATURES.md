@@ -316,12 +316,15 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   adjustment layers, per-node multi-sample motion blur, glow and chromatic
   aberration among the per-node effects, path masks, and radial gradients)
   baked by the **Geneva** sidecar — a browserless HTML/CSS renderer — to an
-  RGBA PNG sequence, or drawn by the native engine with no sidecar. 18
+  RGBA PNG sequence, or drawn by the native engine with no sidecar. 32
   presets
   (glass and minimal lower thirds, kinetic caption, stat triptych, wordmark
   sting, pull quote, chapter chip, numbered chapter, agenda list, subscribe
   card, end card, terminal, code diff, bar chart, progress bar, split
   compare, counting number, mesh backdrop) with slots an agent fills;
+  every motion reply carries a **route** - the one Geneva surface, the
+  renderer that actually draws, the reason, and the native-only features a
+  comp delegates - so the one-engine contract is visible to the agent;
   24 editing ops, four of them data-driven and domain-neutral — `add-chart`
   (bar/line/area/donut/dot/compare/progress/candlestick/timeline/table from
   any domain's numbers, drawn

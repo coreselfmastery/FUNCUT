@@ -32,6 +32,47 @@ Version `1.6.0` is what this was written against - the Linux installer fetches e
 by checksum, into `~/.local/bin`. Another **major** version is reported as a risk by the probe and
 **refused at bake with the reason**, never silently used. Every bake records the version it used.
 
+### The one-engine surface
+
+The product has **one engine name**: Geneva. The other two are internal renderers, not choices a
+user or an agent has to make. `EnginePreference::route` answers two questions for every comp:
+
+- `surface` - the engine the product promises (Geneva);
+- `renderer` - the engine that will actually draw it.
+
+They differ when the Geneva surface **delegates** a comp the flattened timeline cannot draw:
+
+```json
+{
+  "surface": "geneva",
+  "renderer": "native",
+  "reason": "native-only",
+  "delegated": ["a vector path", "a track matte"],
+  "note": "Geneva's flattened timeline would drop or approximate a native-only feature; the one engine delegates this comp to the native rasterizer to preserve fidelity"
+}
+```
+
+The reasons are stable words: `simple`, `markup`, `markup-with-unsupported`, `native-only`,
+`lottie`, `sidecar-missing`, `sidecar-failing`, `requested`.
+
+- A **markup comp** stays on Geneva. Native cannot draw markup, so a missing sidecar is a refusal
+  with install instructions, never a silent wrong picture.
+- A comp with **paths, shape gradients, mattes, masks, adjustment layers, 3D transforms, cameras,
+  rigs, audio reactions or supported effects** delegates to the native rasterizer. It still bakes
+  under the one Geneva surface, and the reply says what was delegated.
+- A **Lottie comp** delegates to the native rasterizer's `rasterlottie` player. Geneva has no Lottie
+  player; the native engine draws the vector/solid subset and warns about the rest.
+- A **simple comp** with no sidecar installed falls back to native, and the route says
+  `sidecar-missing`.
+- A **markup comp with a native-only feature** is the honest refusal: Geneva cannot draw the
+  markup and the flattened timeline cannot draw the feature, so the bake refuses with both reasons
+  rather than silently dropping one.
+
+Every `motion_inspect`, `motion_frame`, `motion_preview`, `motion_bake` and `motion_presets` reply
+carries this `route`, so an agent can see the decision before paying for a bake. The one-engine
+surface is a contract about *what the caller chooses*, not a claim that one binary draws every
+pixel: the reply is always honest about the renderer underneath.
+
 ---
 
 ## The document

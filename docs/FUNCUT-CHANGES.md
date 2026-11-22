@@ -32,6 +32,26 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The one-engine motion surface (newest)
+
+- **One engine name, two internal renderers.** `EnginePreference::route` now
+  answers `surface` (Geneva, the product-facing engine) and `renderer` (what
+  will actually draw the comp), with a stable `reason` and the `delegated`
+  features. A comp with paths, mattes, 3D, rigs, adjustment layers or a
+  supported effect keeps the Geneva surface and delegates to the native
+  rasterizer instead of exposing a second engine choice.
+- **Lottie routes to the native rasterizer.** `Comp::needs_lottie()` walks
+  nested comps; a Lottie comp no longer falls through to Geneva's warn-and-drop
+  path. The native `rasterlottie` player draws the vector/solid subset and
+  warns about the rest.
+- **Every motion reply says the route.** `motion_inspect`, `motion_frame`,
+  `motion_preview`, `motion_bake` and `motion_presets` carry `route` (or a
+  per-preset route), so an agent sees the decision before paying for a bake.
+- **The tests hold the contract.** Markup stays on Geneva with a missing
+  sidecar; a simple comp falls back to native with `sidecar-missing`; a
+  native-only feature is delegated under the Geneva surface; a Lottie comp
+  routes to native; a requested native surface is reported as `requested`.
+
 ## 0. Latest director pass: one style bible, a retention contract and real generative media
 
 - The plan now carries a **`style` bible** (name, palette, grade, caption

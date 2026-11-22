@@ -34,7 +34,9 @@ use std::sync::OnceLock;
 
 use concat_motion::authoring::{self, CompSummary};
 use concat_motion::comp::{AssetKind, Comp, NodeKind, Paint, Rgba};
-use concat_motion::engine::{BakeRequest, CompEngine, EngineKind, EnginePreference, Sidecar};
+use concat_motion::engine::{
+    BakeRequest, CompEngine, EngineKind, EnginePreference, Route, Sidecar,
+};
 use concat_motion::geneva::{Breaker, Geneva};
 use concat_motion::native::Native;
 use concat_motion::presets;
@@ -116,25 +118,40 @@ impl Engine {
 /// not already cost, and the comps that only the native engine can
 /// honour (an animated colour, a gradient sweep, an animated size)
 /// render instead of meeting the sidecar's refusal.
-fn engine_for(comp: &Comp) -> Result<(Engine, Option<String>), ApiError> {
+fn engine_for(comp: &Comp) -> Result<(Engine, Route), ApiError> {
     let preference = EnginePreference::default();
-    let sidecar = match Geneva::discover(preference.geneva.as_deref()) {
+    let route = preference.route(comp, sidecar_state(&preference));
+    let engine = match route.renderer {
+        EngineKind::Native => Engine::Native(native()),
+        EngineKind::Geneva => Engine::Geneva(geneva()?),
+        EngineKind::Lottie => {
+            return Err(ApiError::failed(
+                "the Lottie engine is an importer, not a renderer: bake the imported comp, \
+                 which draws on the engine its tracks ask for"
+                    .to_owned(),
+            ));
+        }
+    };
+    Ok((engine, route))
+}
+
+/// The sidecar's state right now, for the one-engine route report.
+fn sidecar_state(preference: &EnginePreference) -> Sidecar {
+    match Geneva::discover(preference.geneva.as_deref()) {
         Some(engine) => match engine.breaker() {
             Breaker::Closed => Sidecar::Ready,
             Breaker::Open { failures } => Sidecar::Failing { failures },
         },
         None => Sidecar::Missing,
-    };
-    let choice = preference.choose(comp, sidecar);
-    match choice.engine {
-        EngineKind::Native => Ok((Engine::Native(native()), choice.note)),
-        EngineKind::Geneva => Ok((Engine::Geneva(geneva()?), choice.note)),
-        EngineKind::Lottie => Err(ApiError::failed(
-            "the Lottie engine is an importer, not a renderer: bake the imported comp, \
-             which draws on the engine its tracks ask for"
-                .to_owned(),
-        )),
     }
+}
+
+/// The route a comp would take without instantiating an engine. Used by
+/// inspection and the preset catalogue, so an agent can see the one-engine
+/// decision before paying for a bake.
+fn route_for(comp: &Comp) -> Route {
+    let preference = EnginePreference::default();
+    preference.route(comp, sidecar_state(&preference))
 }
 
 /// A project folder argument: present, a folder, and without `..` in it.
@@ -277,7 +294,15 @@ fn summary_of(comp: &Comp) -> Value {
 /// `motion_presets`: the library - every preset with its category, size,
 /// duration, slots and whether the sidecar is there to bake it.
 pub fn presets_list() -> Result<Outcome, ApiError> {
-    let engine = Geneva::discover(EnginePreference::default().geneva.as_deref());
+    let preference = EnginePreference::default();
+    let engine = Geneva::discover(preference.geneva.as_deref());
+    let sidecar = match &engine {
+        Some(geneva) => match geneva.breaker() {
+            Breaker::Closed => Sidecar::Ready,
+            Breaker::Open { failures } => Sidecar::Failing { failures },
+        },
+        None => Sidecar::Missing,
+    };
     let mut list = Vec::with_capacity(presets::ALL.len());
     for preset in presets::ALL {
         let Some(comp) = presets::build(preset.id) else {
@@ -289,6 +314,7 @@ pub fn presets_list() -> Result<Outcome, ApiError> {
             "name": preset.name,
             "category": preset.category.as_str(),
             "engine": preset.engine.as_str(),
+            "route": preference.route(&comp, sidecar),
             "width": summary.width,
             "height": summary.height,
             "duration": summary.duration,
@@ -303,6 +329,9 @@ pub fn presets_list() -> Result<Outcome, ApiError> {
     }
     Ok(Outcome::json(json!({
         "presets": list,
+        "surface": preference.default.as_str(),
+        "policy": "one engine surface; native-only comps are delegated to the native \
+                   rasterizer and the reply's route says why",
         "geneva": match &engine {
             Some(geneva) => {
                 let version = geneva.version().unwrap_or_default();
@@ -330,7 +359,10 @@ pub fn inspect(arguments: Value) -> Result<Outcome, ApiError> {
         }
     }
     let (comp, file) = resolve_comp(&fields)?;
-    let mut reply = json!({ "comp": summary_of(&comp) });
+    let mut reply = json!({
+        "comp": summary_of(&comp),
+        "route": route_for(&comp),
+    });
     if let Some(file) = file {
         reply["file"] = json!(file.display().to_string());
     }
@@ -770,7 +802,7 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
             ApiError::invalid("invalid arguments: `at` is a time in seconds, 0 or more")
         })?;
     let (comp, _) = resolve_comp(&fields)?;
-    let (engine, note) = engine_for(&comp)?;
+    let (engine, route) = engine_for(&comp)?;
     let width = fields
         .get("width")
         .and_then(Value::as_u64)
@@ -798,9 +830,10 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
         "width": width.unwrap_or(comp.width),
         "height": comp.height,
         "engine": engine.kind().as_str(),
+        "route": route,
         "note": "Look at this frame. Check legibility, contrast, safe margins and whether the motion is mid-entrance or settled before baking.",
     });
-    if let Some(note) = note {
+    if let Some(note) = &route.note {
         reading["engineNote"] = json!(note);
     }
     Ok(Outcome {
@@ -870,7 +903,7 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
             "invalid arguments: the comp has no duration to spread frames across",
         ));
     }
-    let (engine, note) = engine_for(&comp)?;
+    let (engine, route) = engine_for(&comp)?;
     std::fs::create_dir_all(motion_dir(&project))
         .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
 
@@ -917,12 +950,13 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
         "width": width,
         "height": comp.height,
         "engine": engine.kind().as_str(),
+        "route": route,
         "note": "Watch these in order: the entrance should land on its curve, the hold \
                  should breathe, the exit should leave. Compare the first against the \
                  last before motion_bake pays for the whole clip; motion_frame draws one \
                  exact time, scene_analysis reads the document with no engine at all.",
     });
-    if let Some(note) = note {
+    if let Some(note) = &route.note {
         reading["engineNote"] = json!(note);
     }
     content.push(json!({
@@ -1308,7 +1342,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         request.height(&comp),
         request.fps(&comp),
     ));
-    let (engine, engine_note) = engine_for(&comp)?;
+    let (engine, route) = engine_for(&comp)?;
     // The incremental seam: a fix patch changes the comp's hash, and the
     // whole bake re-rendered for it - even when the change was one node's
     // timing, and only the frames that node's window touches ever drew
@@ -1463,6 +1497,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         Some(&dir),
     );
 
+    let route_note = route.note.clone();
     let mut reply = json!({
         "frames": baked.frames,
         "width": baked.width,
@@ -1473,6 +1508,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         "dir": baked.dir.display().to_string(),
         "engine": baked.engine.as_str(),
         "engine_version": baked.engine_version,
+        "route": route,
         "cached": baked.cached,
     });
     if asked != (width, height) {
@@ -1482,7 +1518,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     if let Some(note) = inherited_note {
         reply["inherited"] = json!(note);
     }
-    if let Some(note) = engine_note {
+    if let Some(note) = route_note {
         reply["engineNote"] = json!(note);
     }
     // The sweep is said only when it did something: a sweep that freed

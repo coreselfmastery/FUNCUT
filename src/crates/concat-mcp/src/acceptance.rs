@@ -65,11 +65,7 @@ impl DirectorAcceptance {
 /// one - the default Director deliverable - they prove the timeline the
 /// user is about to customize: it reads, its composited picture is judged,
 /// and no two clips share a lane.
-fn record_signal_failure(
-    observed: &mut Vec<(ToolCall, Value)>,
-    arguments: Value,
-    message: String,
-) {
+fn record_signal_failure(observed: &mut Vec<(ToolCall, Value)>, arguments: Value, message: String) {
     observed.push((
         ToolCall {
             tool: "voice_signals".to_owned(),

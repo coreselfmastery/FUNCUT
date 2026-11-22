@@ -96,13 +96,15 @@ impl Provider {
     /// by the same rule, so a provider-host redirect cannot turn this fetch
     /// into a request to an unrelated or local service.
     pub fn validate_download_url(self, raw: &str) -> Result<Url, String> {
-        let parsed = Url::parse(raw)
-            .map_err(|error| format!("the clip URL does not parse: {error}"))?;
+        let parsed =
+            Url::parse(raw).map_err(|error| format!("the clip URL does not parse: {error}"))?;
         if parsed.scheme() != "https" {
             return Err("the clip URL must be https - the shelves serve no plain http".to_owned());
         }
         if !parsed.username().is_empty() || parsed.password().is_some() {
-            return Err("the clip URL must not contain username or password credentials".to_owned());
+            return Err(
+                "the clip URL must not contain username or password credentials".to_owned(),
+            );
         }
         if parsed.port().is_some_and(|port| port != 443) {
             return Err("the clip URL must use the standard https port".to_owned());
@@ -166,11 +168,17 @@ fn is_redirect(status: u16) -> bool {
 fn redirected_url(provider: Provider, current: &Url, location: &str) -> Result<Url, String> {
     let location = location.trim();
     if location.is_empty() {
-        return Err(format!("{} redirected the clip without a Location value", provider.name()));
+        return Err(format!(
+            "{} redirected the clip without a Location value",
+            provider.name()
+        ));
     }
-    let next = current
-        .join(location)
-        .map_err(|error| format!("{} returned an invalid redirect URL: {error}", provider.name()))?;
+    let next = current.join(location).map_err(|error| {
+        format!(
+            "{} returned an invalid redirect URL: {error}",
+            provider.name()
+        )
+    })?;
     provider.validate_download_url(next.as_str())
 }
 

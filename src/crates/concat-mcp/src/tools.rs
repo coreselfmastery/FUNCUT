@@ -3786,9 +3786,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
     let has_voiceover = plan
         .pointer("/audio/voiceover")
         .is_some_and(|voiceover| !voiceover.is_null());
-    let has_bgm = plan
-        .pointer("/audio/bgm")
-        .is_some_and(|bgm| !bgm.is_null());
+    let has_bgm = plan.pointer("/audio/bgm").is_some_and(|bgm| !bgm.is_null());
     // The decisions a plan this size owes a log for: the cuts are the
     // segment boundaries, and one BGM choice and one caption style are
     // the video-wide minimum. Entries beyond the minimum are welcome;
@@ -3943,9 +3941,11 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
                 score -= 0.5;
             } else if palette.is_some_and(|palette| {
                 palette.iter().any(|colour| {
-                    !colour
-                        .as_str()
-                        .is_some_and(|hex| hex.len() == 7 && hex.starts_with('#') && hex[1..].chars().all(|ch| ch.is_ascii_hexdigit()))
+                    !colour.as_str().is_some_and(|hex| {
+                        hex.len() == 7
+                            && hex.starts_with('#')
+                            && hex[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+                    })
                 })
             }) {
                 blockers.push("style.palette contains a colour that is not #rrggbb".to_owned());
@@ -3982,8 +3982,12 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
                 score -= 0.3;
             }
             if let (Some(caption_style), Some(plan_captions)) = (
-                captions.and_then(|captions| captions.get("emphasisColor")).and_then(Value::as_str),
-                object.pointer("/captions/emphasisColor").and_then(Value::as_str),
+                captions
+                    .and_then(|captions| captions.get("emphasisColor"))
+                    .and_then(Value::as_str),
+                object
+                    .pointer("/captions/emphasisColor")
+                    .and_then(Value::as_str),
             ) && caption_style != plan_captions
             {
                 blockers.push(format!(
@@ -4024,12 +4028,13 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
                         .is_none_or(|duck| !(-60.0..=0.0).contains(&duck))
             }) {
                 blockers.push(
-                    "style.sound needs one texture and a duckDb between -60 and 0"
-                        .to_owned(),
+                    "style.sound needs one texture and a duckDb between -60 and 0".to_owned(),
                 );
                 score -= 0.3;
             } else if let (Some(style_duck), Some(plan_duck)) = (
-                sound.and_then(|sound| sound.get("duckDb")).and_then(Value::as_f64),
+                sound
+                    .and_then(|sound| sound.get("duckDb"))
+                    .and_then(Value::as_f64),
                 object.pointer("/audio/bgm/duckDb").and_then(Value::as_f64),
             ) && (style_duck - plan_duck).abs() > 0.01
             {
@@ -4107,7 +4112,10 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
                 .and_then(Value::as_str)
                 .is_none_or(|hook| hook.trim().is_empty())
             {
-                blockers.push("retention.hook is missing: say what the first three seconds show and ask".to_owned());
+                blockers.push(
+                    "retention.hook is missing: say what the first three seconds show and ask"
+                        .to_owned(),
+                );
                 score -= 0.4;
             }
             let turn = retention.get("turnAt").and_then(Value::as_f64);
@@ -4146,7 +4154,10 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
                 .unwrap_or(0)
                 < 2
             {
-                blockers.push("retention.openLoops needs at least two questions the viewer wants answered".to_owned());
+                blockers.push(
+                    "retention.openLoops needs at least two questions the viewer wants answered"
+                        .to_owned(),
+                );
                 score -= 0.4;
             }
         }

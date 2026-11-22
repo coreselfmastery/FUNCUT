@@ -76,8 +76,12 @@ impl MotionPane {
             MotionMsg::Refresh => self.refresh(studio),
             MotionMsg::Add { hash, comp } => {
                 let start = f64::from(studio.playhead);
-                let created =
-                    studio.apply(concat_project::Command::AddMotionClip { start, comp, hash, engine: None });
+                let created = studio.apply(concat_project::Command::AddMotionClip {
+                    start,
+                    comp,
+                    hash,
+                    engine: None,
+                });
                 if let Some(id) = created {
                     studio.selection = vec![id];
                 }

@@ -80,10 +80,7 @@ pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)>
         ],
         None => vec![
             ("timeline_read", json!({ "path": project })),
-            (
-                "watch_render",
-                json!({ "project": project, "audio": true }),
-            ),
+            ("watch_render", json!({ "project": project, "audio": true })),
             ("collision_check", json!({ "path": project })),
         ],
     }
@@ -394,8 +391,7 @@ pub fn check(
     let failure = gates
         .iter()
         .filter(|gate| {
-            gate.status == GateStatus::Fail
-                || (gate.required && gate.status == GateStatus::Skipped)
+            gate.status == GateStatus::Fail || (gate.required && gate.status == GateStatus::Skipped)
         })
         .map(|gate| format!("{}: {}", gate.gate, gate.evidence))
         .collect::<Vec<_>>()

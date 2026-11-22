@@ -1324,8 +1324,7 @@ impl ForgePane {
         self.live_follow_stop();
         studio.end_live_follow_back();
         if let Some(path) = self.auto.project.clone() {
-            match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
-            {
+            match concat_host::projects::open(&path).and_then(|info| studio.open_project(info)) {
                 Ok(()) => {}
                 Err(open) => studio.notify(&open, true),
             }
@@ -3434,7 +3433,12 @@ const DIRECTOR_PHASES: [&[&str]; 25] = [
         "export_start",
         "export_wait",
     ],
-    &["final watch", "motion_probe", "measure_loudness", "timeline acceptance"],
+    &[
+        "final watch",
+        "motion_probe",
+        "measure_loudness",
+        "timeline acceptance",
+    ],
     &["delivery", "receipt", "wow bar"],
 ];
 
@@ -3960,7 +3964,8 @@ mod tests {
         let (ten, _) = director_phase("Phase 10 — Storyboard and shot list").expect("phase ten");
         assert_eq!(ten, 9);
         let (twenty, at_twenty) =
-            director_phase("Phase 25 — Delivery, customization and the wow bar").expect("phase twenty-five");
+            director_phase("Phase 25 — Delivery, customization and the wow bar")
+                .expect("phase twenty-five");
         assert_eq!(twenty, 24);
         assert!(at_twenty < 1.0 && at_twenty > 0.8);
         assert_eq!(director_phase("Phase 99 — not on the ladder"), None);
@@ -3987,7 +3992,8 @@ mod tests {
         // The final phase never completes the bar: 1.0 is the accepted
         // end's alone.
         let (save, at_save) =
-            director_phase("Phase 23 — Save and hand off the timeline (no export).").expect("phase twenty-three");
+            director_phase("Phase 23 — Save and hand off the timeline (no export).")
+                .expect("phase twenty-three");
         assert_eq!(save, 22);
         assert!(at_save < 1.0 && at_save > 0.8);
     }

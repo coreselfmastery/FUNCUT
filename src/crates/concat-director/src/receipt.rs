@@ -907,10 +907,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     // editing is not a finished edit.
     match last("collision_check") {
         Some(reply) => {
-            let clean = reply
-                .get("clean")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let clean = reply.get("clean").and_then(Value::as_bool).unwrap_or(false);
             let count = reply.get("count").and_then(Value::as_u64).unwrap_or(0);
             gates.push(GateRecord::new(
                 "collisions",

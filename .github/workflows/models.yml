@@ -34,6 +34,7 @@ on:
 concurrency:
   group: models
   cancel-in-progress: false
+  queue: max
 
 jobs:
   mirror:

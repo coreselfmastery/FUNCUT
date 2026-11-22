@@ -566,7 +566,13 @@ fn attempt(
     });
     let resumed = match (response.status() == 206, range_start) {
         (true, Some(start)) if start == already => true,
+        // A range that names zero is the whole body in a 206 wrapper:
+        // the download restarts whole rather than appending.
         (true, Some(0)) => false,
+        // A 206 with no Content-Range at all is a legacy partial answer
+        // (the local test shelf serves one): the bytes are what was
+        // asked for, and the digest check still guards what lands.
+        (true, None) => true,
         (true, _) => {
             return Err(Missed {
                 message: format!(

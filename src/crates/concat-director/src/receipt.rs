@@ -933,6 +933,12 @@ fn measured_voice_family(signal: &str) -> Option<&'static str> {
     }
     let family = signal.split(['.', '[', '=']).next()?;
     Some(match family {
+        // The arc is the one family not measured by the voice profile:
+        // the emotion extract's own reply is its evidence, and the gate
+        // reads it there. Without the arm the arc signal was skipped,
+        // the log cited no measurable family, and the gate could never
+        // pass no matter what the extract had measured.
+        "arc" => "arc",
         "pause" | "speechRatio" => "pauses",
         "emphasisWords" | "rhythmLayers" | "prosody" => "prosody",
         "speechRate" => "speechRate",

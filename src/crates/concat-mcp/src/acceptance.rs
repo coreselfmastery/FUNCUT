@@ -6,14 +6,12 @@
 //! The Director ends its turn and the harness exits zero. That says the
 //! agent stopped - not that the edit exists, plays, or carries the
 //! narration it was given. Until this module the pane believed the exit
-//! code, so a run that never exported still said the edit had shipped.
+//! code, so a run that never saved and verified its timeline still said the edit had shipped.
 //!
 //! The Director's deliverable is the editable timeline: the check reads the
 //! saved project, judges its composited picture and proves its lanes are
-//! clean. An export is optional and adds the encoded-file gates the fixed
-//! spine walks at the end of its own program ([`crate::director_program`]'s
-//! verify and watch stages): probe the file, measure the mix, re-read the
-//! words and score the picture. Both paths therefore answer to one receipt
+//! clean. An export is optional and adds the encoded-file gates an explicitly requested render adds the encoded-file gates: probe the file,
+//! measure the mix, re-read the words and score the picture. Both paths therefore answer to one receipt
 //! shape, but a timeline-ready run is not failed for not rendering.
 //!
 //! Every call goes through the pane's own [`Toolbox`] and [`Backend`], so

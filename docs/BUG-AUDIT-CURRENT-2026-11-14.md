@@ -7,7 +7,7 @@ Scope requested: functional correctness, feature wiring, incomplete implementati
 
 This report supplements `docs/BUG-AUDIT-FINAL.md`. That earlier report was written against `21d136c3972ad87033992968b987b3b0c6ebb5c7`; its statuses for PRs #130–#134 must not be read as current-main truth.
 
-## Current-main status update — 22 November 2026
+## Current-main status update — 23 November 2026
 
 This update supersedes the 17 November status block and the PR-status snapshot near the end of this file. Current `main` is `fa68c059945e0eef9151d0fd2010134f41620c05`.
 
@@ -23,7 +23,7 @@ This update supersedes the 17 November status block and the PR-status snapshot n
 
 **Historical PR status correction:** #130, #133, #134, #135, #136, #138 and #157 are merged. #132 and #137 are closed unmerged; the #132 worker-start behavior is nevertheless present in current main, and the #137 documentation snapshot is superseded by the current Geneva reconciliation PR #201.
 
-**Current validation:** exact-main CI [45047192734](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192734) passed all three jobs. Its engine log records 2,246 workspace tests passed, 13 skipped and one slow; the gRPC suite passed 30/30; Clippy, docs examples and generated-plan schema checks passed. Geneva [45047192665](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192665) passed 2/2 jobs. Build app [45047192666](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192666) passed Linux x86_64 and aarch64. Nix and RustSec have not run successfully on the current merge SHA. The latest successful runs are on `c8505e021f72824bfe5f6a08dda141522b2db690`, with 11 allowed RustSec maintenance/yank warnings; a fresh audit on PR #202 found `RUSTSEC-2026-0592` in `url 2.5.8`. PR #202 updates the lockfile to `url 2.5.9` and is rerunning Security, Nix, CI, Geneva and Build-app.
+**Current validation:** exact-main CI [45047192734](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192734) passed all three jobs. Its engine log records 2,246 workspace tests passed, 13 skipped and one slow; the gRPC suite passed 30/30; Clippy, docs examples and generated-plan schema checks passed. Geneva [45047192665](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192665) passed 2/2 jobs. Build app [45047192666](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192666) passed Linux x86_64 and aarch64. Nix and RustSec have not run on the current merge SHA. The latest successful Nix run is on `c8505e021f72824bfe5f6a08dda141522b2db690`; its RustSec audit had 11 allowed maintenance/yank warnings. The previous PR #202 head failed the fresh audit on `RUSTSEC-2026-0592` in `url 2.5.8`. Updated PR #202 head `53213b2dcec42ab323ef6f87ea14fab4aac36c71` upgrades `url` to `2.5.9` and `form_urlencoded` to `1.2.3`; its RustSec audit passes with 11 allowed warnings. CI format/locales/models and real-fixture analysis pass; engine tests, Nix, Geneva and Build-app remain in progress.
 
 **Repository controls:** the branch API reports `main` protected, but `required_status_checks.enforcement_level=off` and `contexts=[]`; direct protection details returned 403. PR #200 had no formal review submissions or inline review threads, although all seven PR-head check-runs passed. Current open PRs: #201 (documentation reconciliation) and #202 (Nix/RustSec release gates); no open issues were returned by the current API query.
 

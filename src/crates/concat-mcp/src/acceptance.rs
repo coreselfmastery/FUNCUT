@@ -65,6 +65,20 @@ impl DirectorAcceptance {
 /// one - the default Director deliverable - they prove the timeline the
 /// user is about to customize: it reads, its composited picture is judged,
 /// and no two clips share a lane.
+fn record_signal_failure(
+    observed: &mut Vec<(ToolCall, Value)>,
+    arguments: Value,
+    message: String,
+) {
+    observed.push((
+        ToolCall {
+            tool: "voice_signals".to_owned(),
+            arguments,
+        },
+        json!({ "ok": false, "error": message }),
+    ));
+}
+
 pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)> {
     match export {
         Some(export) => vec![
@@ -233,15 +247,6 @@ pub fn check(
     // when the plan's own structural validator accepts its vocabulary.
     let signal_required = plan.as_ref().is_some_and(plan_has_voiceover);
     if signal_required {
-        let mut record_signal_failure = |arguments: Value, message: String| {
-            observed.push((
-                ToolCall {
-                    tool: "voice_signals".to_owned(),
-                    arguments,
-                },
-                json!({ "ok": false, "error": message }),
-            ));
-        };
         match expected_takes(check.project) {
             Ok(mapping_rows) => {
                 let paths: std::collections::BTreeSet<String> = mapping_rows
@@ -261,6 +266,7 @@ pub fn check(
                         ));
                     } else {
                         record_signal_failure(
+                            &mut observed,
                             arguments,
                             "voice_signals could not independently read a narration take"
                                 .to_owned(),
@@ -269,12 +275,13 @@ pub fn check(
                 }
                 if mapping_rows.is_empty() {
                     record_signal_failure(
+                        &mut observed,
                         json!({}),
                         "voiceover mapping contains no distinct narration takes".to_owned(),
                     );
                 }
             }
-            Err(error) => record_signal_failure(json!({}), error),
+            Err(error) => record_signal_failure(&mut observed, json!({}), error),
         }
     }
 

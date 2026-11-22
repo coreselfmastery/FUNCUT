@@ -466,7 +466,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "stock_search",
             "Search live stock (Pexels, Pixabay)",
-            "Search the live rights-cleared shelves (Pexels, Pixabay) by words; every hit carries the licence commercial use stands on. This build's live shelves return VIDEO only: there is no stock-photo result - for a still, extract a frame with preview_frame or generate one. A missing key is a named refusal, not an empty page.",
+            "Search live rights-cleared stock (Pexels, Pixabay) by words; every hit carries its licence. Live shelves return VIDEO only; for a still use preview_frame. A missing key is a named refusal.",
             "stock.search",
             Raw,
         )
@@ -3721,17 +3721,17 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
                 "entry {at}: at {time} lies outside the plan's 0-{runtime} s"
             ));
         }
-        if decision == "cut" {
-            if let Some(time) = entry.get("at").and_then(Value::as_f64) {
-                match boundaries
-                    .iter()
-                    .position(|boundary| (*boundary - time).abs() <= 0.06)
-                {
-                    Some(boundary) => covered[boundary] = true,
-                    None => problems.push(format!(
-                        "entry {at}: cut at {time} s is not a segment boundary - the signal did not drive a cut"
-                    )),
-                }
+        if decision == "cut"
+            && let Some(time) = entry.get("at").and_then(Value::as_f64)
+        {
+            match boundaries
+                .iter()
+                .position(|boundary| (*boundary - time).abs() <= 0.06)
+            {
+                Some(boundary) => covered[boundary] = true,
+                None => problems.push(format!(
+                    "entry {at}: cut at {time} s is not a segment boundary - the signal did not drive a cut"
+                )),
             }
         }
         let signals = entry
@@ -3772,10 +3772,10 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
                 "entry {at}: confidence is absent - the run did not rate the signals behind this choice"
             )),
         }
-        if !entry
+        if entry
             .get("note")
             .and_then(Value::as_str)
-            .is_some_and(|note| !note.trim().is_empty())
+            .is_none_or(|note| note.trim().is_empty())
         {
             problems.push(format!(
                 "entry {at}: no note - state the basis the signals gave this choice"

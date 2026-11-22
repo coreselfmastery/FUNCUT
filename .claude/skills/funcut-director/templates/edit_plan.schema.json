@@ -342,168 +342,6 @@
       "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto.",
       "type": "string"
     },
-    "style": {
-      "description": "The style bible: the one look the whole film wears. Set it before the plan; every segment, caption, comp, grade and sound choice must conform. A plan without it is structurally valid but not creativeReady, because five good shots in five different styles read as five videos.",
-      "properties": {
-        "captions": {
-          "description": "The one caption system: family, weight, case, accent colour and placement. Per-segment captions may change presence, never the system.",
-          "properties": {
-            "emphasisColor": {
-              "description": "#rrggbb for the one accent word.",
-              "pattern": "^#[0-9a-fA-F]{6}$",
-              "type": "string"
-            },
-            "font": {
-              "description": "The caption face family, one for the whole film.",
-              "minLength": 1,
-              "type": "string"
-            },
-            "position": {
-              "description": "Where the caption block sits: lower-third, center or upper-third.",
-              "enum": [
-                "lower-third",
-                "center",
-                "upper-third"
-              ],
-              "type": "string"
-            },
-            "weight": {
-              "description": "One weight for the whole film.",
-              "maximum": 900,
-              "minimum": 100,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "font",
-            "weight",
-            "emphasisColor",
-            "position"
-          ],
-          "type": "object"
-        },
-        "continuityRules": {
-          "description": "The rules a reviewer can check: e.g. 'every shot is fill, never letterboxed', 'the accent appears once per section', 'no two consecutive shots share a camera height'. At least one.",
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "footage": {
-          "description": "How every picture is treated, so stock, A-roll and generated stills sit in one frame.",
-          "properties": {
-            "continuity": {
-              "description": "The continuity rule for the footage: camera height, movement, colour temperature and shot-size progression.",
-              "minLength": 1,
-              "type": "string"
-            },
-            "orientation": {
-              "description": "The frame the footage is shot for; must agree with the plan aspect.",
-              "enum": [
-                "vertical",
-                "horizontal",
-                "square"
-              ],
-              "type": "string"
-            },
-            "treatment": {
-              "description": "fill = cover and crop; blurPlate = a deliberate blurred plate behind a fitted subject.",
-              "enum": [
-                "fill",
-                "blurPlate"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "orientation",
-            "treatment",
-            "continuity"
-          ],
-          "type": "object"
-        },
-        "grade": {
-          "description": "The one grade filter the whole film wears; it must equal the plan's grade.filter.",
-          "minLength": 1,
-          "type": "string"
-        },
-        "motion": {
-          "description": "The one motion language: how things enter, how they ease, how hard they push. Comps and captions may vary the idea, never the hand.",
-          "properties": {
-            "easing": {
-              "description": "The curve family the whole film uses for entrances and exits.",
-              "minLength": 1,
-              "type": "string"
-            },
-            "intensity": {
-              "description": "How far the motion pushes, 0-1; the film keeps one register.",
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            "language": {
-              "description": "One sentence: what motion means in this film (measured push-ins, paper cuts, kinetic type, 3D camera).",
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          "required": [
-            "language",
-            "easing",
-            "intensity"
-          ],
-          "type": "object"
-        },
-        "name": {
-          "description": "A name for the look, short enough to say on set.",
-          "minLength": 1,
-          "type": "string"
-        },
-        "palette": {
-          "description": "The film's palette as #rrggbb values, in order of dominance. Every generated graphic, caption accent and grade tint draws from it.",
-          "items": {
-            "pattern": "^#[0-9a-fA-F]{6}$",
-            "type": "string"
-          },
-          "minItems": 2,
-          "type": "array"
-        },
-        "sound": {
-          "description": "The one sound world: the bed's duck depth and the texture that sits under the voice.",
-          "properties": {
-            "duckDb": {
-              "description": "The bed's duck depth; must equal audio.bgm.duckDb when a bed is present.",
-              "maximum": 0,
-              "minimum": -60,
-              "type": "number"
-            },
-            "texture": {
-              "description": "One sentence: the room, the air, the low end, the transition sound.",
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          "required": [
-            "duckDb",
-            "texture"
-          ],
-          "type": "object"
-        }
-      },
-      "required": [
-        "name",
-        "palette",
-        "grade",
-        "captions",
-        "motion",
-        "sound",
-        "footage",
-        "continuityRules"
-      ],
-      "type": "object"
-    },
     "retention": {
       "description": "The retention contract: what earns the first three seconds, where the turn lands, what pays it off, and the pattern breaks that keep a scroll from becoming a swipe. A plan without it is not creativeReady.",
       "properties": {
@@ -1337,6 +1175,168 @@
       },
       "maxItems": 60,
       "type": "array"
+    },
+    "style": {
+      "description": "The style bible: the one look the whole film wears. Set it before the plan; every segment, caption, comp, grade and sound choice must conform. A plan without it is structurally valid but not creativeReady, because five good shots in five different styles read as five videos.",
+      "properties": {
+        "captions": {
+          "description": "The one caption system: family, weight, case, accent colour and placement. Per-segment captions may change presence, never the system.",
+          "properties": {
+            "emphasisColor": {
+              "description": "#rrggbb for the one accent word.",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": "string"
+            },
+            "font": {
+              "description": "The caption face family, one for the whole film.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "position": {
+              "description": "Where the caption block sits: lower-third, center or upper-third.",
+              "enum": [
+                "lower-third",
+                "center",
+                "upper-third"
+              ],
+              "type": "string"
+            },
+            "weight": {
+              "description": "One weight for the whole film.",
+              "maximum": 900,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "font",
+            "weight",
+            "emphasisColor",
+            "position"
+          ],
+          "type": "object"
+        },
+        "continuityRules": {
+          "description": "The rules a reviewer can check: e.g. 'every shot is fill, never letterboxed', 'the accent appears once per section', 'no two consecutive shots share a camera height'. At least one.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "footage": {
+          "description": "How every picture is treated, so stock, A-roll and generated stills sit in one frame.",
+          "properties": {
+            "continuity": {
+              "description": "The continuity rule for the footage: camera height, movement, colour temperature and shot-size progression.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "orientation": {
+              "description": "The frame the footage is shot for; must agree with the plan aspect.",
+              "enum": [
+                "vertical",
+                "horizontal",
+                "square"
+              ],
+              "type": "string"
+            },
+            "treatment": {
+              "description": "fill = cover and crop; blurPlate = a deliberate blurred plate behind a fitted subject.",
+              "enum": [
+                "fill",
+                "blurPlate"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "orientation",
+            "treatment",
+            "continuity"
+          ],
+          "type": "object"
+        },
+        "grade": {
+          "description": "The one grade filter the whole film wears; it must equal the plan's grade.filter.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "motion": {
+          "description": "The one motion language: how things enter, how they ease, how hard they push. Comps and captions may vary the idea, never the hand.",
+          "properties": {
+            "easing": {
+              "description": "The curve family the whole film uses for entrances and exits.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "intensity": {
+              "description": "How far the motion pushes, 0-1; the film keeps one register.",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "language": {
+              "description": "One sentence: what motion means in this film (measured push-ins, paper cuts, kinetic type, 3D camera).",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "language",
+            "easing",
+            "intensity"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "A name for the look, short enough to say on set.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "palette": {
+          "description": "The film's palette as #rrggbb values, in order of dominance. Every generated graphic, caption accent and grade tint draws from it.",
+          "items": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "sound": {
+          "description": "The one sound world: the bed's duck depth and the texture that sits under the voice.",
+          "properties": {
+            "duckDb": {
+              "description": "The bed's duck depth; must equal audio.bgm.duckDb when a bed is present.",
+              "maximum": 0,
+              "minimum": -60,
+              "type": "number"
+            },
+            "texture": {
+              "description": "One sentence: the room, the air, the low end, the transition sound.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "duckDb",
+            "texture"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "palette",
+        "grade",
+        "captions",
+        "motion",
+        "sound",
+        "footage",
+        "continuityRules"
+      ],
+      "type": "object"
     },
     "text": {
       "description": "The one text system: tokens fixed here, zones in prompts/text_animation.md.",

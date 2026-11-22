@@ -680,10 +680,7 @@ impl SpeechPane {
         } else {
             let Some(voice) = self.offered().get(self.voice).map(|speaker| speaker.id) else {
                 self.message = if self.family == Family::Chatterbox {
-                    t(
-                        "Chatterbox has no voice of its own: turn on Use sample voice, or \
-                         download Pocket TTS for its two recordings",
-                    )
+                    t("speech.chatterboxHasNoVoice")
                 } else {
                     t("speech.noVoiceRead")
                 };

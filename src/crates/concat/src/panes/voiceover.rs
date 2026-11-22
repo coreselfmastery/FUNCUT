@@ -721,7 +721,17 @@ impl VoiceoverPane {
                 );
             }
             Err(error) => {
-                let _ = std::fs::remove_file(&take.path);
+                // A microphone that was lost mid-take still left the
+                // take's bytes on disk (the writer flushed as it went):
+                // the take is kept when it recorded anything, the way the
+                // panel's own close path keeps it - deleting it here threw
+                // away minutes of audio over a device the OS repossessed.
+                // A take that never began (nothing recorded) is still
+                // thrown away.
+                let seconds = take.rolled.elapsed().as_secs_f64();
+                if seconds <= 0.0 {
+                    let _ = std::fs::remove_file(&take.path);
+                }
                 studio.notify(&tf("voiceover.failed", &[&error]), true);
             }
         }

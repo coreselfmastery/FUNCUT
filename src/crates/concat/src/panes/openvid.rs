@@ -640,7 +640,10 @@ impl OpenvidPane {
             return;
         }
         self.fetching.insert(id.clone(), then.clone());
-        let cancel = AtomicBool::new(false);
+        // The pane's own flag, so a stop the person asked for (or the
+        // window closing) reaches the download instead of a private flag
+        // nothing could ever set.
+        let cancel = Arc::clone(&self.cancel);
         crate::host::spawn(
             move || library.fetch(number, &cancel),
             move |studio, _, _, result| {
@@ -697,7 +700,7 @@ impl OpenvidPane {
         // arrives after this frame is gone, so nothing the closure keeps
         // may point into it.
         let card_id = card_id.to_owned();
-        let cancel = AtomicBool::new(false);
+        let cancel = Arc::clone(&self.cancel);
         let url = hit.url.clone();
         let hit_id = hit.id.clone();
         crate::host::spawn(
@@ -886,6 +889,25 @@ impl Studio {
             .chars()
             .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
             .collect::<String>();
+        // The name is a provider's own title, not the id's guarded form:
+        // live cards carry slashes in their titles ("City/Skyline"), and a
+        // path joined on such a name cannot be created under the
+        // project's own folder - the clip could never be placed. The
+        // name is made a file name the way the BGM shelf makes its own.
+        let name: String = name
+            .chars()
+            .map(|ch| {
+                if ch.is_control()
+                    || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+                {
+                    '_'
+                } else {
+                    ch
+                }
+            })
+            .collect::<String>();
+        let name: &str = name.trim().trim_matches('.');
+        let name: &str = if name.is_empty() { "Clip" } else { name };
         let project = self
             .session
             .as_ref()

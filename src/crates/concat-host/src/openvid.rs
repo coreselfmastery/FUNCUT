@@ -1324,20 +1324,38 @@ impl Library {
             ));
         }
         let partial = target.with_extension("partial");
+        // The body streams straight into the part file through a bounded
+        // buffer with the cancel flag polled per chunk: a whole clip held
+        // in RAM could be half a gigabyte, and a cancel asked mid-download
+        // used to keep the single-flight slot busy until the body ended -
+        // minutes after the person asked to stop. Every failure removes
+        // the part, so nothing half-written is left behind.
         {
             use std::io::{Read, Write};
-            let mut body = Vec::with_capacity(size as usize);
-            response
-                .into_reader()
-                .take(size)
-                .read_to_end(&mut body)
-                .map_err(|error| format!("the clip did not arrive: {error}"))?;
-            if cancel.load(Ordering::Relaxed) {
-                return Err("cancelled".to_owned());
+            let streamed: Result<(), String> = (|| {
+                let mut file = std::fs::File::create(&partial)
+                    .map_err(|error| format!("could not write {}: {error}", partial.display()))?;
+                let mut reader = response.into_reader().take(size);
+                let mut buffer = [0u8; 64 * 1024];
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err("cancelled".to_owned());
+                    }
+                    let read = reader
+                        .read(&mut buffer)
+                        .map_err(|error| format!("the clip did not arrive: {error}"))?;
+                    if read == 0 {
+                        return Ok(());
+                    }
+                    file.write_all(&buffer[..read]).map_err(|error| {
+                        format!("could not write {}: {error}", partial.display())
+                    })?;
+                }
+            })();
+            if let Err(error) = streamed {
+                let _ = std::fs::remove_file(&partial);
+                return Err(error);
             }
-            std::fs::File::create(&partial)
-                .and_then(|mut file| file.write_all(&body))
-                .map_err(|error| format!("could not write {}: {error}", partial.display()))?;
         }
         if std::fs::metadata(&partial).map_or(true, |meta| meta.len() != size) {
             let _ = std::fs::remove_file(&partial);

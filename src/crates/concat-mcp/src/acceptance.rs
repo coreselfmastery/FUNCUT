@@ -354,12 +354,30 @@ pub fn check(
     }
 
     // craft_critique accepts a watch_render sheet, not an export path.
-    // Passing the actual sheet ensures the critic scores the rendered file.
+    // The critic is asked exactly as the program's own watch stage asks
+    // it: the sheet's own pngPath, the plan's own brief (the one the
+    // plan_validate judged, not a different file the critic would fall
+    // back to), and the VLM setup the local critic needs. An acceptance
+    // that asked with less was scored by the measured-pixel heuristic's
+    // own ceiling against the bar the gate reads, and could reject a
+    // run the program's own critique had passed.
     if let Some(sheet) = watch_sheet {
+        let png = sheet
+            .get("pngPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let brief = plan
+            .as_ref()
+            .and_then(|plan| plan.get("brief"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         let arguments = json!({
+            "pngPath": png,
             "sheet": sheet,
             "project": check.project,
-            "autoSetup": false,
+            "brief": brief,
+            "autoSetup": true,
         });
         if let Some(reply) = caller.ask("craft_critique", arguments.clone()) {
             answered.push("craft_critique".to_owned());
@@ -392,8 +410,22 @@ pub fn check(
                 // the dead air out moved every later word, and verifying
                 // those words against the pre-run mapping would fail a
                 // compliant edit.
-                let expected = caller
-                    .ask("timeline_read", json!({ "path": check.project }))
+                let view = caller.ask("timeline_read", json!({ "path": check.project }));
+                // The reading is evidence in its own right: the receipt
+                // reports every call the check actually made, and the
+                // timeline re-read the words gate leaned on used to
+                // vanish from it.
+                if let Some(view) = view.as_ref() {
+                    answered.push("timeline_read".to_owned());
+                    observed.push((
+                        ToolCall {
+                            tool: "timeline_read".to_owned(),
+                            arguments: json!({ "path": check.project }),
+                        },
+                        view.clone(),
+                    ));
+                }
+                let expected = view
                     .and_then(|view| {
                         let rows = timeline_takes(&view, &take_paths);
                         (!rows.is_empty()).then_some(rows)
@@ -580,7 +612,10 @@ mod tests {
         assert_eq!(asked[3].1["path"], "/edits/Reel/export/reel.mp4");
         assert_eq!(asked[3].1["project"], "/edits/Reel");
         assert_eq!(asked[4].1["path"], "/edits/Reel");
-        assert_eq!(asked[2].1["audio"], true);
+        // The audio flag rides the watch_render ask (index 3), not the
+        // loudness measurement (index 2) - measure_loudness carries only
+        // its path.
+        assert_eq!(asked[3].1["audio"], true);
     }
 
     #[test]

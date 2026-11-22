@@ -512,27 +512,37 @@ impl Library {
         use std::io::Read as _;
         use std::io::Write as _;
         let mut reader = response.into_reader();
-        loop {
+        // Every mid-transfer failure removes the part: the cancel, cap
+        // and empty-body paths already did, and a read or write error
+        // (the network dropping mid-answer, the disk filling under it)
+        // used to return with the partial still on disk - nothing sweeps
+        // `*.part` later, so each failed attempt left up to a cap-sized
+        // orphan behind.
+        let result: Result<(), String> = loop {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = std::fs::remove_file(&partial);
-                return Err("cancelled".to_owned());
+                break Err("cancelled".to_owned());
             }
-            let read = reader
-                .read(&mut buffer)
-                .map_err(|error| format!("the clip's bytes stopped: {error}"))?;
+            let read = match reader.read(&mut buffer) {
+                Ok(read) => read,
+                Err(error) => break Err(format!("the clip's bytes stopped: {error}")),
+            };
             if read == 0 {
-                break;
+                break Ok(());
             }
             written += read as u64;
             if written > MAX_CLIP_BYTES {
-                let _ = std::fs::remove_file(&partial);
-                return Err(format!(
+                break Err(format!(
                     "the clip passed the {} MB cap mid-answer",
                     MAX_CLIP_BYTES / 1_000_000
                 ));
             }
-            file.write_all(&buffer[..read])
-                .map_err(|error| format!("the clip's bytes could not be written: {error}"))?;
+            if let Err(error) = file.write_all(&buffer[..read]) {
+                break Err(format!("the clip's bytes could not be written: {error}"));
+            }
+        };
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&partial);
+            return Err(error);
         }
         if written == 0 {
             let _ = std::fs::remove_file(&partial);

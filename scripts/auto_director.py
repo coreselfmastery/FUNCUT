@@ -169,6 +169,17 @@ RETRYABLE_TOOLS = frozenset({
     "openvid_search", "openvid_search_batch", "openvid_rank_for_slot",
     "openvid_get", "openvid_status", "timeline_read", "collision_check",
     "effects_list", "stock_search",
+    # Kept word for word with the Rust runner's own list
+    # (concat-director/src/error.rs): a transient refusal the Rust side
+    # retries must not kill the Python watcher instead - the two sides
+    # of one seam. The music reads, the repair members behind
+    # sense_audio_repair, the sense doors, and the two calls that ride
+    # the most expensive moments (motion_probe after the render was
+    # paid for, export_wait under a long encode).
+    "detect_music_segments", "identify_music",
+    "enhance_speech", "remove_hiss_hum_rumble", "normalize_loudness",
+    "sense_discourse", "sense_voice_quality", "sense_prosody_style",
+    "sense_captions", "motion_probe", "export_wait",
 })
 
 _RETRYABLE_MARKERS = (

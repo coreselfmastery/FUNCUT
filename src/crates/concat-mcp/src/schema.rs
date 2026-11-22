@@ -622,9 +622,15 @@ mod tests {
         // measured; function, not prose, again.
         // 238,000 -> 246,000, at 113 on the surface: the live stock
         // trio rode the director's surface with the catalogue - the
-        // rights-cleared shelves shop beside the local one.
+        // rights-cleared shelves shop beside the local one. And
+        // 246,000 -> 247,000, at 105 on the director's surface: the
+        // creative contract the plan carries - `style` and `retention`
+        // in the edit-plan schema, the compact plan_validate projection
+        // that checks them, and the acceptance's creative gate - is the
+        // vocabulary a run that must reach creativeReady cannot spell
+        // without; 246,122 measured, function, not prose.
         assert!(
-            director < 246_000,
+            director < 247_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

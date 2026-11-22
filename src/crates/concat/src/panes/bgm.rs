@@ -465,7 +465,11 @@ impl MusicPane {
             return;
         }
         self.fetching.insert(id.clone(), then.clone());
-        let cancel = AtomicBool::new(false);
+        // The pane's own flag, not a private one nothing can ever set: a
+        // track the person asked to stop downloading (or a window
+        // closing) stops the fetch at its next chunk instead of running
+        // to the end of the file.
+        let cancel = Arc::clone(&self.cancel);
         // The worker takes its own copy of the id: the completion's copy
         // is the one the message carries.
         let fetching = id.clone();

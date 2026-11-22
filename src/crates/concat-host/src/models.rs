@@ -317,9 +317,24 @@ pub fn fetch(
     for url in sources(file, upstream) {
         match attempt(&url, partial, estimate, cancel, cancelled, progress) {
             Ok(totals) => {
-                verify(partial, sha256).inspect_err(|_| {
+                if let Err(error) = verify(partial, sha256) {
+                    // The partial is cleared and the next source tried:
+                    // a resumed attempt whose digest failed used to end
+                    // the whole fetch with an error that named the
+                    // mirror, when a clean restart on the next mirror
+                    // would have succeeded.
                     let _ = std::fs::remove_file(partial);
-                })?;
+                    log::warn!("models: {url} is not the file it should be: {error}");
+                    missed.push((
+                        url.clone(),
+                        Missed {
+                            message: format!("is not the file it should be: {error}"),
+                            cause: Some(Cause::Other),
+                            proxy: None,
+                        },
+                    ));
+                    continue;
+                }
                 return Ok(totals);
             }
             Err(miss) => {
@@ -537,7 +552,34 @@ fn attempt(
         }
     };
 
-    let resumed = response.status() == 206;
+    // A 206 is a resume only when its own Content-Range starts exactly
+    // where the partial ends. A proxy that answers 206 with a body that
+    // starts at zero is not resuming anything - the bytes would be
+    // appended to the partial, and the digest would fail in a way that
+    // blamed the mirror for the proxy's corruption. A range that names
+    // zero is the whole body (the download restarts whole); a range
+    // that names anything else is this source's own miss.
+    let range_start = response
+        .header("Content-Range")
+        .and_then(|range| {
+            let after = range.trim().strip_prefix("bytes")?.trim();
+            let first = after.split('-').next()?.trim();
+            first.parse::<u64>().ok()
+        });
+    let resumed = match (response.status() == 206, range_start) {
+        (true, Some(start)) if start == already => true,
+        (true, Some(0)) => false,
+        (true, _) => {
+            return Err(Missed {
+                message: format!(
+                    "{url} answered a range that is not the one this download asked for"
+                ),
+                cause: Some(Cause::Other),
+                proxy: None,
+            });
+        }
+        (false, _) => false,
+    };
     let remaining = response
         .header("Content-Length")
         .and_then(|value| value.parse::<u64>().ok());

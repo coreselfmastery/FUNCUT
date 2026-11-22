@@ -948,8 +948,27 @@ impl Speech {
                     return Err("the engine produced no audio for this text".to_owned());
                 }
                 let rate = crate::chatterbox::SAMPLE_RATE;
-                std::fs::write(&file, crate::chatterbox::wav_bytes(&spoken, rate))
-                    .map_err(|error| format!("could not write {}: {error}", file.display()))?;
+                // A take torn mid-write must never look usable: the WAV
+                // lands beside its final name and is renamed only whole,
+                // so a crash or a full disk leaves a `.part` a later
+                // import scan cannot mistake for a real take.
+                let part = file.with_extension("wav.part");
+                if let Err(error) =
+                    std::fs::write(&part, crate::chatterbox::wav_bytes(&spoken, rate))
+                {
+                    let _ = std::fs::remove_file(&part);
+                    return Err(format!(
+                        "could not write {}: {error}",
+                        part.display()
+                    ));
+                }
+                if let Err(error) = std::fs::rename(&part, &file) {
+                    let _ = std::fs::remove_file(&part);
+                    return Err(format!(
+                        "could not land {}: {error}",
+                        file.display()
+                    ));
+                }
                 let duration = spoken.len() as f64 / f64::from(rate);
                 log::info!(
                     "tts: wrote {} ({duration:.2}s) in {:.1}s",
@@ -1043,8 +1062,17 @@ impl Speech {
             return Err("the engine produced no audio for this text".to_owned());
         }
 
-        if !audio.save(&file.to_string_lossy()) {
-            return Err(format!("could not write {}", file.display()));
+        // Whole or not at all: the take is saved beside its final name
+        // and renamed only whole, so a torn save never sits in the audio
+        // folder as if it were a real take.
+        let part = file.with_extension("wav.part");
+        if !audio.save(&part.to_string_lossy()) {
+            let _ = std::fs::remove_file(&part);
+            return Err(format!("could not write {}", part.display()));
+        }
+        if let Err(error) = std::fs::rename(&part, &file) {
+            let _ = std::fs::remove_file(&part);
+            return Err(format!("could not land {}: {error}", file.display()));
         }
 
         let duration = audio.samples().len() as f64 / f64::from(audio.sample_rate().max(1));

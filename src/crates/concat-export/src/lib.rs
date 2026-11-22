@@ -1559,7 +1559,7 @@ pub fn render_on(
         // file itself is left in place for inspection.
         reporter.cancelled()?;
         reporter.emit(total_frames, total_frames, "verifying");
-        verify_output(&output, timeline_end.as_f64())
+        verify_output(&output, timeline_end.as_f64(), !sound.is_empty())
     })();
 
     // Every way out but success leaves nothing behind, and a panic
@@ -1580,7 +1580,7 @@ pub fn render_on(
 /// an encoder's last frame of padding are owed. Anything else is an
 /// error with both numbers in it, and the file is left where it is: a
 /// verification failure is a thing to look at, not a thing to delete.
-fn verify_output(output: &Path, expected: f64) -> Result<(), String> {
+fn verify_output(output: &Path, expected: f64, sound: bool) -> Result<(), String> {
     let info = concat_media::probe(output).map_err(|error| {
         format!(
             "the export wrote {} but it cannot be read back: {error}; \
@@ -1591,6 +1591,18 @@ fn verify_output(output: &Path, expected: f64) -> Result<(), String> {
     if info.video.is_none() {
         return Err(format!(
             "the export wrote {} without a video stream; \
+             the file was left in place for inspection",
+            output.display()
+        ));
+    }
+    // A timeline that carried sound must arrive carrying it: the
+    // container's own duration follows the longer stream, so a mux whose
+    // audio ended early - or lost the stream - still verified against
+    // the video's length alone, and a broken half of the export was
+    // reported done.
+    if sound && info.audio.is_none() {
+        return Err(format!(
+            "the export wrote {} without the audio stream its timeline mixed; \
              the file was left in place for inspection",
             output.display()
         ));
@@ -3987,10 +3999,10 @@ mod tests {
                 "the last stage is the read-back: {stages:?}"
             );
             // The helper agrees with itself on the file it just wrote.
-            verify_output(&out, 0.2).expect("the export's own output verifies");
+            verify_output(&out, 0.2, false).expect("the export's own output verifies");
             // And refuses a duration the file does not carry: the numbers
             // are the error's own words.
-            let wrong = verify_output(&out, 999.0).expect_err("a wrong timeline is refused");
+            let wrong = verify_output(&out, 999.0, false).expect_err("a wrong timeline is refused");
             assert!(
                 wrong.contains("999"),
                 "the expected number is said: {wrong}"

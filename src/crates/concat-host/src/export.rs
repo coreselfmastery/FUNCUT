@@ -343,6 +343,30 @@ impl ExportQueue {
         };
     }
 
+    /// Put a job that could not take the render slot back to the front
+    /// of the queue, with its request restored: the slot being busy is
+    /// not the job's failure - the API thread may hold it between the
+    /// pane's own `is_busy` check and `begin` - and failing the job (or
+    /// leaving it Running with no render behind it) would stop the
+    /// queue draining itself.
+    pub fn requeue_front(&mut self, id: u64, request: ExportRequest) -> bool {
+        let Some(job) = self.jobs.iter_mut().find(|job| job.id == id) else {
+            return false;
+        };
+        if !matches!(job.state, QueueState::Running { .. }) {
+            return false;
+        }
+        job.request = Some(request);
+        job.state = QueueState::Queued;
+        // The interrupted job goes back to the front: the queue's own
+        // order is preserved for everything behind it.
+        if let Some(index) = self.jobs.iter().position(|job| job.id == id) {
+            let job = self.jobs.remove(index);
+            self.jobs.insert(0, job);
+        }
+        true
+    }
+
     /// Whether any job is waiting for the slot.
     pub fn has_waiting(&self) -> bool {
         self.jobs.iter().any(|job| job.state == QueueState::Queued)

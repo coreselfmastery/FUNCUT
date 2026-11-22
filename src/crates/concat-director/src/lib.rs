@@ -5,8 +5,8 @@
 //! cancellation with rollback and the retry contract an unattended edit
 //! needs - the machinery the AUTO EDIT tool will stand on.
 //!
-//! A run is given to a [`Runner`] as an [`EditProgram`]: the export the
-//! plan promises, and the stages with the tool calls each one makes. The
+//! A run is given to a [`Runner`] as an [`EditProgram`]: the artifact the
+//! plan promises (an export path or a saved editable timeline), and the stages with the tool calls each one makes. The
 //! stages' names are the pipeline's own - the watcher's numbered phases
 //! (`scripts/auto_director.py`), gathered into the stops an unattended
 //! run reports. The runner walks the program and owns everything around

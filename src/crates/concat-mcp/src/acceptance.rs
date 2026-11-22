@@ -20,7 +20,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_director::{
-    AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall,
+    AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall, plan_has_voiceover,
     ToolCaller, ToolError, Verdict, derive_gates, timeline_integrity,
 };
 use serde_json::{Value, json};
@@ -231,10 +231,7 @@ pub fn check(
     // Re-read the voice profile for every distinct narration take. This
     // independent pass makes a fabricated signalLog confidence fail even
     // when the plan's own structural validator accepts its vocabulary.
-    let signal_required = plan.as_ref().is_some_and(|plan| {
-        plan.pointer("/audio/voiceover")
-            .is_some_and(|voiceover| !voiceover.is_null())
-    });
+    let signal_required = plan.as_ref().is_some_and(plan_has_voiceover);
     if signal_required {
         let mut record_signal_failure = |arguments: Value, message: String| {
             observed.push((

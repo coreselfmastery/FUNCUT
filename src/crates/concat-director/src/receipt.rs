@@ -1001,8 +1001,14 @@ fn signal_evidence_gate(
     // would carry if the arc were passed through at extract time.
     if emotion_arc.is_some_and(|reply| {
         reply.get("ok").and_then(Value::as_bool) == Some(true)
-            && reply.pointer("/arc/arcShape").and_then(Value::as_str).is_some()
-            && reply.pointer("/arc/arcScore").and_then(Value::as_f64).is_some()
+            && reply
+                .pointer("/arc/arcShape")
+                .and_then(Value::as_str)
+                .is_some()
+            && reply
+                .pointer("/arc/arcScore")
+                .and_then(Value::as_f64)
+                .is_some()
     }) {
         measured.insert("arc", 0.8);
     }
@@ -1156,7 +1162,10 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                 .find(|(call, reply)| {
                     call.tool == "emotion"
                         && reply.get("ok").and_then(Value::as_bool) == Some(true)
-                        && reply.pointer("/arc/arcShape").and_then(Value::as_str).is_some()
+                        && reply
+                            .pointer("/arc/arcShape")
+                            .and_then(Value::as_str)
+                            .is_some()
                 })
                 .map(|(_, reply)| reply);
             signal_evidence_gate(plan, &profiles, emotion_arc)

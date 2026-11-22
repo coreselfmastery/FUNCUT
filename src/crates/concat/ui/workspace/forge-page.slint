@@ -100,7 +100,7 @@ export global Forge {
     callback key-edited(provider: string, key: string);
     /// The AUTO EDIT button: run the unattended edit of the timeline's
     /// voiceover - or stop the run that is going.
-    callback auto-edit-start();
+    callback auto-edit-start(string);
     /// Stop the auto-edit at its next stage boundary; the edits it
     /// applied are rolled back.
     callback auto-edit-cancel();
@@ -397,7 +397,12 @@ export component ForgePage inherits VerticalLayout {
                 if (Forge.auto-edit-running) {
                     Forge.auto-edit-cancel();
                 } else {
-                    Forge.auto-edit-start();
+                    // The script box travels with the button: a run whose
+                    // voiceover was read from a script gets the script's
+                    // own wording aligned against the transcript, so the
+                    // captions show what was written, not what the
+                    // recogniser guessed.
+                    Forge.auto-edit-start(Forge.script);
                 }
             }
         }

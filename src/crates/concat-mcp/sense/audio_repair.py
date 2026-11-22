@@ -6,7 +6,7 @@ Pure Python standard library, same contract as the other sense scripts:
 stdin and prints one JSON object on stdout. The spec names the tool in
 `tool`.
 
-THE SIX TOOLS THIS MODULE SERVES
+THE EIGHT TOOLS THIS MODULE SERVES
 
   enhance_speech         the measured voice chain: highpass at the rumble,
                          de-esser, compressor, gate at the floor, limiter,
@@ -15,6 +15,16 @@ THE SIX TOOLS THIS MODULE SERVES
   remove_hiss_hum_rumble  find the hum (50/60 Hz + harmonics) and notch
                          it, cut the rumble, denoise the hiss - and prove
                          each removal with a before/after measurement
+  diagnose_take          the repair decision measured before it is made:
+                         floor, SNR, hum, hiss, rumble, DC offset,
+                         clipping, flatness, rolloff, sibilance, loudness
+                         - one read, and the ordered shopping list of
+                         repairs the numbers justify
+  repair_by_diagnosis    re-measure (never trust a stale diagnosis), then
+                         apply exactly the chain the measurements ordered
+                         - DC blocker, hum notches, rumble door, de-esser,
+                         presence lift or denoise, limiter - and decline
+                         when nothing fired
   normalize_loudness     two-pass ebur128 loudnorm to the platform target
                          (-14 streaming, -16 podcast, -23 broadcast), with
                          the honest before/after table
@@ -31,7 +41,7 @@ THE SIX TOOLS THIS MODULE SERVES
                          energy curve, the drops and the build - the map a
                          cut-to-music edit is drawn on
 
-The three writing tools never touch the input: the output lands in `out`
+The four writing tools never touch the input: the output lands in `out`
 (default: beside the input, with a suffix). Everything degrades loudly.
 """
 
@@ -190,28 +200,132 @@ def _output_path(spec, source, suffix):
     return str(p.with_name(p.stem + suffix + p.suffix)), False
 
 
+def _window_peaks(env):
+    """The 50 ms window maxima of the envelope, sorted quietest to
+    loudest: the one instrument every floor and speech-level read in
+    this module goes through. 50 ms because a 250 ms max-window cannot
+    see a gap shorter than itself, and a gated/TTS take's
+    tenth-of-a-second breaths measured its softest SPEECH as the floor -
+    the before/after tables were one instrument in name only until the
+    window shrank to what a breath actually is."""
+    win_frames = 5
+    peaks = []
+    for i in range(0, len(env) - win_frames, win_frames):
+        peaks.append(max(env[i:i + win_frames]))
+    peaks.sort()
+    return peaks
+
+
 def _measure_snr(spec, path):
     """Speech-ref minus floor, the same reading classify_recording_quality
     uses, so the before/after table is one instrument throughout."""
     samples, _ = _vq._pcm(spec, path)
     if samples is None or not len(samples):
         return None
-    env = _vq._envelope(samples)
-    # 50 ms windows, the same instrument classify_recording_quality
-    # measures its floor with: a 250 ms max-window cannot see a gap
-    # shorter than itself, and a gated/TTS take's tenth-of-a-second
-    # breaths measured its softest SPEECH as the floor - the before/
-    # after table was one instrument in name only.
-    win_frames = 5
-    windows = []
-    for i in range(0, len(env) - win_frames, win_frames):
-        windows.append(max(env[i:i + win_frames]))
-    windows.sort()
+    windows = _window_peaks(_vq._envelope(samples))
     if not windows:
         return None
     floor = _vq._db(windows[int(0.15 * len(windows))])
     speech = _vq._db(windows[int(0.9 * len(windows))] if len(windows) > 5 else windows[-1])
     return round(speech - floor, 1)
+
+
+# The three noise readings - hum, hiss, rumble - are one instrument
+# shared by the generic clean (section 2) and the diagnosis (section 3):
+# a repair decided from numbers the clean measured differently would be
+# two opinions wearing one name, and the caller could not tell which
+# one lied.
+
+
+def _quietest_windows(env):
+    """The frame indices of the quietest tenth of the 50 ms windows (at
+    least three): where the noise lives when the voice pauses. Frame
+    indices, not times, so a caller can aim a spectrum or a Goertzel
+    probe straight at the span."""
+    win_frames = 5
+    windows = []
+    for i in range(0, len(env) - win_frames, win_frames):
+        windows.append((max(env[i:i + win_frames]), i))
+    windows.sort(key=lambda w: w[0])
+    return [i for _, i in windows[:max(3, len(windows) // 10)]]
+
+
+def _hum_reading(samples, env):
+    """The mains hum, as the notch chain spends it: the base frequency
+    (50 or 60 Hz) and its harmonic peaks, or (None, []) when no family
+    earned its notches. A Goertzel pass at the exact mains candidates
+    over the quietest half-second windows; a tone 6 dB or more over its
+    guards counts, and a family needs two of its harmonics before it
+    earns its notch chain. The old bin-truncated FFT probe could not
+    resolve 50 from 60 Hz in a 64 ms window and never found a hum at
+    all - the notch chain it fed was dead code."""
+    hum_base = None
+    hum_peaks = []
+    for i in _quietest_windows(env)[:3]:
+        centre = i * _vq.HOP + _vq.WIN // 2 - _vq.HUM_WIN // 2
+        found_any = False
+        for base in (50.0, 60.0):
+            found = []
+            for harmonic in range(1, 5):
+                hz = base * harmonic
+                tone = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz)
+                low = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz - 12.0)
+                high = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz + 12.0)
+                if tone is None or low is None or high is None:
+                    continue
+                guard = (low + high) / 2.0 + 1e-12
+                # The probe answers POWER: 6 dB of power is a ratio of
+                # ~4.0, not 2.0 (a power ratio of 2 is 3 dB - the old
+                # threshold notched borderline tones at half the head
+                # the comment claimed).
+                if tone / guard > 4.0:
+                    found.append(round(hz))
+            if len(found) >= 2:
+                hum_base = base
+                hum_peaks = found
+                found_any = True
+                break
+        if found_any:
+            break
+    return hum_base, hum_peaks
+
+
+def _hiss_reading(samples, quietest_idx):
+    """The hiss: high-band energy (6-7.5 kHz) against the speech band
+    (0.3-3 kHz) in the quiet windows, in dB. A quiet window can be EXACT
+    digital silence (a gated TTS take, a paused recording): a zero
+    spectrum is a truthy list of zeros, so a plain emptiness test never
+    skips it, and a zero speech band turns the ratio into a
+    ZeroDivisionError that killed the repair stage it fed. Silence
+    carries no hiss evidence - skipped here, and never divided by
+    zero."""
+    highs, mids = [], []
+    for i in quietest_idx[:4]:
+        mags = _vq._spectrum(samples, i * _vq.HOP)
+        if not mags or sum(mags) < 1e-9:
+            continue
+        highs.append(_vq._band_energy(mags, 6000, 7500))
+        mids.append(_vq._band_energy(mags, 300, 3000))
+    if highs and mids and sum(mids) > 0:
+        return _vq._db(sum(highs) / sum(mids))
+    return None
+
+
+def _rumble_reading(samples, env):
+    """The rumble: sub-60 Hz energy against the whole band in the
+    LOUDEST windows, in dB - rumble is read where the take itself is
+    loud, because a quiet window's sub-bass is the room breathing, not
+    the recording's problem."""
+    low, all_e = [], []
+    for i in sorted(range(len(env)), key=lambda j: -env[j])[:4]:
+        mags = _vq._spectrum(samples, i * _vq.HOP)
+        if not mags or sum(mags) < 1e-9:
+            continue
+        low.append(_vq._band_energy(mags, 20, 60))
+        all_e.append(_vq._band_energy(mags, 20, 7500))
+    if low and all_e and sum(all_e) > 0:
+        return _vq._db(sum(low) / sum(all_e))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -242,11 +356,7 @@ def _enhance_speech(spec):
     # here put the gate threshold (floor + 8 dB) up at soft-speech
     # level on a gated take, and agate ate the quiet words the chain
     # was supposed to preserve.
-    win_frames = 5
-    windows = []
-    for i in range(0, len(env) - win_frames, win_frames):
-        windows.append(max(env[i:i + win_frames]))
-    windows.sort()
+    windows = _window_peaks(env)
     floor_db = _vq._db(windows[int(0.15 * len(windows))]) if windows else -60.0
     integrated, lra, tp = _vs._integrated(ff, audio)
 
@@ -321,76 +431,15 @@ def _remove_hiss_hum_rumble(spec):
 
     # Where the quiet lives: the windows to read the noise from, at
     # the same 50 ms granularity the classifier's floor uses.
-    win_frames = 5
-    windows = []
-    for i in range(0, len(env) - win_frames, win_frames):
-        windows.append((max(env[i:i + win_frames]), i))
-    windows.sort(key=lambda w: w[0])
-    quietest_idx = [i for _, i in windows[:max(3, len(windows) // 10)]]
+    quietest_idx = _quietest_windows(env)
 
-    # The hum: a Goertzel pass at the exact mains candidates over the
-    # quietest half-second; 50/60 Hz families. A tone 6 dB or more over
-    # its guards counts, and a family needs two of its harmonics before
-    # it earns its notch chain. The old bin-truncated FFT probe could
-    # not resolve 50 from 60 Hz in a 64 ms window and never found a hum
-    # at all - the notch chain below was dead code.
-    hum_base = None
-    hum_peaks = []
-    for i in quietest_idx[:3]:
-        centre = i * _vq.HOP + _vq.WIN // 2 - _vq.HUM_WIN // 2
-        found_any = False
-        for base in (50.0, 60.0):
-            found = []
-            for harmonic in range(1, 5):
-                hz = base * harmonic
-                tone = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz)
-                low = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz - 12.0)
-                high = _vq._goertzel_power(samples, centre, _vq.HUM_WIN, hz + 12.0)
-                if tone is None or low is None or high is None:
-                    continue
-                guard = (low + high) / 2.0 + 1e-12
-                # The probe answers POWER: 6 dB of power is a ratio of
-                # ~4.0, not 2.0 (a power ratio of 2 is 3 dB - the old
-                # threshold notched borderline tones at half the head
-                # the comment claimed).
-                if tone / guard > 4.0:
-                    found.append(round(hz))
-            if len(found) >= 2:
-                hum_base = base
-                hum_peaks = found
-                found_any = True
-                break
-        if found_any:
-            break
-
-    # The hiss: high-band energy in the quiet windows vs the speech band.
-    # A quiet window can be EXACT digital silence (a gated TTS take, a
-    # paused recording): a zero spectrum is a truthy list of zeros, so
-    # `if not mags` never skips it, and sum(mids) == 0 turned the ratio
-    # into a ZeroDivisionError that killed the repair stage. Silence
-    # carries no hiss evidence - skip it, and never divide by zero.
-    hiss_db = None
-    highs, mids = [], []
-    for i in quietest_idx[:4]:
-        mags = _vq._spectrum(samples, i * _vq.HOP)
-        if not mags or sum(mags) < 1e-9:
-            continue
-        highs.append(_vq._band_energy(mags, 6000, 7500))
-        mids.append(_vq._band_energy(mags, 300, 3000))
-    if highs and mids and sum(mids) > 0:
-        hiss_db = _vq._db(sum(highs) / sum(mids))
-
-    # The rumble: sub-60 Hz energy in the loudest windows.
-    rumble_db = None
-    low, all_e = [], []
-    for i in sorted(range(len(env)), key=lambda j: -env[j])[:4]:
-        mags = _vq._spectrum(samples, i * _vq.HOP)
-        if not mags or sum(mags) < 1e-9:
-            continue
-        low.append(_vq._band_energy(mags, 20, 60))
-        all_e.append(_vq._band_energy(mags, 20, 7500))
-    if low and all_e and sum(all_e) > 0:
-        rumble_db = _vq._db(sum(low) / sum(all_e))
+    # The three noise readings, each now the one shared instrument the
+    # diagnosis tools read too: a repair chain and a diagnosis that
+    # measured hum, hiss or rumble differently would be two opinions
+    # wearing one name, and the caller could not tell which one lied.
+    hum_base, hum_peaks = _hum_reading(samples, env)
+    hiss_db = _hiss_reading(samples, quietest_idx)
+    rumble_db = _rumble_reading(samples, env)
 
     filters = []
     findings = []
@@ -459,7 +508,377 @@ def _enhance_with(ff, spec, audio, filters, findings):
 
 
 # ---------------------------------------------------------------------------
-# 3. normalize_loudness
+# 3. diagnose_take
+# ---------------------------------------------------------------------------
+
+# The thresholds that turn a measurement into a repair. Each one is the
+# point where the symptom starts costing more than the cure: below it a
+# filter's own artefacts (notch ring, denoise swirl, a presence lift on
+# a take that already has presence) cost more than what they remove.
+# The selftest's justification gate reads the same constants, so a
+# threshold that drifts fails the gate instead of quietly notching
+# clean takes.
+_DC_TRIGGER = 0.02           # of full scale: tilts every floor after it
+_RUMBLE_TRIGGER_DB = -32.0   # dB of sub-60 Hz energy in the loudest windows
+_HISS_TRIGGER_DB = -18.0     # dB, high band over speech band, in the quiet
+_SIBILANCE_TRIGGER = 0.15    # of total energy in the 4-8 kHz band
+_ROLLOFF_TRIGGER_HZ = 5000.0  # Hz: under it (with low flatness) = muffled
+_FLATNESS_TRIGGER = 0.25     # above it a denoise fits; below, a notch does
+_CLIPPING_TRIGGER = 0.001    # of samples at the rail
+
+
+def _averaged_spectrum(samples, windows=8):
+    """One magnitude spectrum averaged over windows spread through the
+    file: the diagnosis's single view of the take's shape. Spread, not
+    stacked at the start - a take's first phrase is not the whole take,
+    and a diagnosis that only heard the intro would name the intro's
+    problems as the file's."""
+    if len(samples) < _vq.WIN:
+        return None
+    acc = None
+    used = 0
+    for k in range(windows):
+        centre = int((k + 0.5) * len(samples) / windows)
+        mags = _vq._spectrum(samples, centre - _vq.WIN // 2)
+        if not mags:
+            continue
+        if acc is None:
+            acc = [0.0] * len(mags)
+        if len(mags) != len(acc):
+            continue
+        used += 1
+        for j, m in enumerate(mags):
+            acc[j] += m
+    if not used:
+        return None
+    return [m / used for m in acc]
+
+
+def _take_diagnosis(spec, ff, audio):
+    """Every forensic number the repair decision spends, measured from
+    THIS take in one pass: (diagnosis, error). The values are rounded
+    before the plan reads them, so the reply a caller inspects is
+    exactly what the repairs were built from - a threshold shown as
+    passed never sits beside a repair list that disagrees with it."""
+    samples, _ = _vq._pcm(spec, audio)
+    if samples is None or not len(samples):
+        return None, f"could not decode {audio}"
+    env = _vq._envelope(samples)
+
+    # The floor: the 15th-percentile 50 ms window, the one instrument
+    # the gate threshold and the SNR table already read.
+    peaks = _window_peaks(env)
+    floor_db = _vq._db(peaks[int(0.15 * len(peaks))]) if peaks else -60.0
+
+    # The tone family and the two broadband noises, each read by the
+    # same helper the generic clean trusts - the diagnosis and the
+    # generic chain must agree on what hum, hiss and rumble ARE.
+    hum_base, hum_peaks = _hum_reading(samples, env)
+    hiss_db = _hiss_reading(samples, _quietest_windows(env))
+    rumble_db = _rumble_reading(samples, env)
+
+    # DC and clipping in one walk over the samples. The DC blocker sits
+    # FIRST in the repair order precisely because a bias tilts the floor
+    # every other reading here stands on.
+    clip_level = 0.999 * 32768.0
+    total = 0
+    clipped = 0
+    for s in samples:
+        total += s
+        if s >= clip_level or s <= -clip_level:
+            clipped += 1
+    n = max(1, len(samples))
+    dc_offset = abs(total) / n / 32768.0
+    clipping_ratio = clipped / n
+
+    # Flatness, rolloff and sibilance all read ONE averaged spectrum:
+    # three views of a single instrument, not three instruments that
+    # can disagree about the same take.
+    flatness = rolloff_hz = sibilance = None
+    avg = _averaged_spectrum(samples)
+    if avg:
+        # Flatness, 0..1: geometric mean over arithmetic mean. A pure
+        # tone reads ~0 (all its energy in a few bins), white noise
+        # approaches 1 - the number that says denoise (broadband) or
+        # notch (tonal). eps keeps one silent bin's log(0) from killing
+        # the reading.
+        eps = 1e-12
+        geo = math.exp(sum(math.log(m + eps) for m in avg) / len(avg))
+        flatness = geo / (sum(avg) / len(avg) + eps)
+        energy = [m * m for m in avg]
+        total_e = sum(energy)
+        if total_e > 0:
+            per_bin = RATE / _vq.WIN
+            # Rolloff at 85%, the same fraction the Rust forensic ear
+            # uses: 95% chases the noise floor past 10 kHz on every
+            # take and never separates a muffled voice from a bright
+            # one.
+            acc = 0.0
+            rolloff_hz = (len(energy) - 1) * per_bin
+            for k, e in enumerate(energy):
+                acc += e
+                if acc >= 0.85 * total_e:
+                    rolloff_hz = k * per_bin
+                    break
+            lo = int(4000.0 / per_bin)
+            hi = min(len(energy) - 1, int(8000.0 / per_bin))
+            sibilance = sum(energy[lo:hi + 1]) / total_e if hi > lo else 0.0
+
+    snr = _measure_snr(spec, audio)
+    integrated, _lra, tp = _vs._integrated(ff, audio)
+
+    return {
+        "noiseFloorDbfs": round(floor_db, 1),
+        "snrDb": snr,
+        "humHz": hum_base,
+        "humPeaks": hum_peaks,
+        "hissDb": round(hiss_db, 1) if hiss_db is not None else None,
+        "rumbleDb": round(rumble_db, 1) if rumble_db is not None else None,
+        "dcOffset": round(dc_offset, 5),
+        "clippingRatio": round(clipping_ratio, 6),
+        "spectralFlatness": (round(flatness, 4)
+                             if flatness is not None else None),
+        "spectralRolloffHz": (round(rolloff_hz, 1)
+                              if rolloff_hz is not None else None),
+        "sibilanceRatio": (round(sibilance, 4)
+                           if sibilance is not None else None),
+        "integratedLufs": integrated,
+        "truePeakDbfs": tp,
+    }, None
+
+
+def _repair_plan(diag):
+    """The ordered shopping list: every repair the measurements justify,
+    in the order the chain must apply them. The order is not cosmetic -
+    the DC blocker comes first because a biased take measures every
+    other arm against a tilted floor, the notches come before any
+    denoise because a spectral denoise smears the very tones a notch
+    takes cleanly, and the limiter comes last because it polices the
+    gain the stages before it added."""
+    plan = []
+    dc = diag.get("dcOffset")
+    if dc is not None and dc >= _DC_TRIGGER:
+        plan.append({
+            "found": "DC offset",
+            "fix": "highpass at 10 Hz (the DC blocker)",
+            "why": "a highpass has zero response at DC, and the bias "
+                   "tilts the floor every later stage measures against",
+            "measure": f"{dc:.4f} of full scale",
+            "filters": ["highpass=f=10"],
+        })
+    hum_hz = diag.get("humHz")
+    if hum_hz:
+        peaks = (diag.get("humPeaks") or [])[:4]
+        plan.append({
+            "found": f"hum at {hum_hz:.0f} Hz + harmonics",
+            "fix": "14 dB notches, Q 8",
+            "why": "mains tones standing 6 dB over their neighbourhood: "
+                   "a narrow notch takes the tone and leaves the voice "
+                   "around it",
+            "measure": f"{peaks} Hz standing 6 dB over their neighbourhood",
+            "filters": [f"equalizer=frequency={hz}:t=q:w=8:g=-14"
+                        for hz in peaks],
+        })
+    rumble = diag.get("rumbleDb")
+    if rumble is not None and rumble > _RUMBLE_TRIGGER_DB:
+        plan.append({
+            "found": "rumble",
+            "fix": "highpass at 70 Hz",
+            "why": "sub-60 Hz energy the voice does not live in; the "
+                   "door at 70 Hz keeps the chest out of the mud",
+            "measure": f"{rumble:.1f} dB of sub-60 Hz energy",
+            "filters": ["highpass=f=70"],
+        })
+    sib = diag.get("sibilanceRatio")
+    if sib is not None and sib > _SIBILANCE_TRIGGER:
+        plan.append({
+            "found": "sibilance",
+            "fix": "deesser",
+            "why": "a 4-8 kHz share this large rides over the "
+                   "consonants; taming it before any gain keeps the "
+                   "chain from pumping on it",
+            "measure": f"{sib:.2f} of the energy in 4-8 kHz",
+            "filters": ["deesser=i=0.5:m=0.5:f=0.55"],
+        })
+    rolloff = diag.get("spectralRolloffHz")
+    flat = diag.get("spectralFlatness")
+    muffled = (rolloff is not None and flat is not None
+               and rolloff < _ROLLOFF_TRIGGER_HZ and flat < _FLATNESS_TRIGGER)
+    if muffled:
+        plan.append({
+            "found": "a muffled take",
+            "fix": "presence lift at 3 kHz",
+            "why": "the rolloff never reached the presence band and the "
+                   "spectrum is tonal, not flat: this take is muffled, "
+                   "not noisy, and the clarity a presence lift restores "
+                   "is what a denoise would only deepen",
+            "measure": f"rolloff {rolloff:.0f} Hz, flatness {flat:.2f}",
+            "filters": ["equalizer=frequency=3000:t=q:w=2:g=3"],
+        })
+    hiss = diag.get("hissDb")
+    # The flatness gate IS the muffled skip: a muffled take is flatness
+    # under 0.25 by definition, so this arm cannot fire on one. It also
+    # refuses a tonal hiss (a narrow whistle) the way the Rust forensic
+    # ear does - afftdn would smear it, and the notch arm above is the
+    # tool for tones.
+    if (hiss is not None and hiss > _HISS_TRIGGER_DB
+            and flat is not None and flat >= _FLATNESS_TRIGGER):
+        strength = min(24, max(12, int(-hiss)))
+        plan.append({
+            "found": "hiss",
+            "fix": f"afftdn nr={strength}",
+            "why": "broadband high-band noise over the speech band, on "
+                   "a spectrum flat enough that a spectral denoise "
+                   "fits it",
+            "measure": f"high band {hiss:.1f} dB over the speech band in quiet",
+            "filters": [f"afftdn=nr={strength}:nf=-{max(30, int(-hiss) + 6)}"],
+        })
+    clip = diag.get("clippingRatio")
+    if clip is not None and clip > _CLIPPING_TRIGGER:
+        plan.append({
+            "found": "clipping",
+            "fix": "limiter at 0.989",
+            "why": "samples at the rail: the ceiling stops the gain the "
+                   "stages above added from re-clipping what was "
+                   "already clipped",
+            "measure": f"{clip:.4f} of samples at full scale",
+            "filters": ["alimiter=limit=0.989:level=false"],
+        })
+    return plan
+
+
+def _diagnose_take(spec):
+    audio = spec.get("audio") or spec.get("path")
+    if not audio or not Path(str(audio)).is_file():
+        return {"ok": False, "error": f"no such audio file: {audio}"}
+    ff, _ = _vs._ffmpeg(spec)
+    diag, err = _take_diagnosis(spec, ff, audio)
+    if err:
+        return {"ok": False, "error": err}
+    plan = _repair_plan(diag)
+    return _ok(
+        "diagnose_take",
+        audio=audio,
+        diagnosis=diag,
+        repairs=[{"fix": e["fix"], "why": e["why"], "measure": e["measure"]}
+                 for e in plan],
+        verdict="repair" if plan else "clean",
+        note=(None if diag.get("integratedLufs") is not None else
+              "loudness figures absent: no ffmpeg to run ebur128 - every "
+              "other number above is the decode's own"),
+        source="python (50 ms windows, Goertzel, FFT) + ffmpeg ebur128",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. repair_by_diagnosis
+# ---------------------------------------------------------------------------
+
+
+def _repair_by_diagnosis(spec):
+    audio = spec.get("audio") or spec.get("path")
+    if not audio or not Path(str(audio)).is_file():
+        return {"ok": False, "error": f"no such audio file: {audio}"}
+    if (refusal := _needs_ffmpeg(spec)):
+        return refusal
+    ff, _ = _vs._ffmpeg(spec)
+    # Re-measured, never trusted: a diagnosis carried across a re-encode
+    # or a retry names the last take's problems, and the chain would
+    # then repair what is no longer there. The numbers below are THIS
+    # decode's, measured in the same call that spends them.
+    diag, err = _take_diagnosis(spec, ff, audio)
+    if err:
+        return {"ok": False, "error": err}
+    plan = _repair_plan(diag)
+    if not plan:
+        # Nothing fired: no file, the same convention the generic clean
+        # keeps - a filter the take did not ask for costs artefacts it
+        # did not owe. force still writes the conservative door, because
+        # a caller who insists gets the one filter no voice misses.
+        if not spec.get("force"):
+            return _ok(
+                "repair_by_diagnosis",
+                file=None,
+                findings=_negative_findings(diag),
+                diagnosis=diag,
+                note="nothing worth repairing: every arm measured under "
+                     "its threshold, and a cure without a symptom costs "
+                     "artefacts. Pass force: true to clean anyway (the "
+                     "conservative 60 Hz highpass).",
+                forced=False,
+                source="python (50 ms windows, Goertzel, FFT) + ffmpeg (declined)",
+            )
+        filters = ["highpass=f=60"]
+        findings = _negative_findings(diag)
+    else:
+        # The chain in the order the shopping list says: DC blocker,
+        # notches, rumble door, de-esser, presence-or-denoise, limiter.
+        filters = [f for entry in plan for f in entry["filters"]]
+        findings = [{"found": e["found"], "measure": e["measure"],
+                     "fix": e["fix"]} for e in plan]
+    out_path, overwrite = _output_path(spec, audio, "_repaired")
+    if Path(out_path).exists() and not overwrite:
+        return {"ok": False, "error": f"{out_path} exists; pass overwrite: true or a new out"}
+    _, probe = _vs._ffmpeg(spec)
+    args = (["-i", str(audio)] + _encode_args(out_path, ",".join(filters))
+            + _source_rate_args(probe, audio))
+    good, why = _write_atomic(ff, args, out_path)
+    if not good:
+        return {"ok": False, "error": f"the repair chain failed: {why}"}
+    snr_before = _measure_snr(spec, audio)
+    snr_after = _measure_snr(spec, out_path)
+    return _ok(
+        "repair_by_diagnosis",
+        file=out_path,
+        findings=findings,
+        filterChain=filters,
+        before={"snrDb": snr_before},
+        after={"snrDb": snr_after},
+        diagnosis=diag,
+        note="the input file was not touched",
+        source="python (the re-measured diagnosis) + ffmpeg (the chain it ordered)",
+    )
+
+
+def _negative_findings(diag):
+    """The declined reply's evidence: one row per arm, every one under
+    its threshold, so the refusal is a measured fact and not a shrug -
+    the same convention the generic clean's declined reply keeps. The
+    rumble row names the conservative door force would open, which is
+    the only filter a clean take can be owed."""
+    rumble = diag.get("rumbleDb")
+    hiss = diag.get("hissDb")
+    rolloff = diag.get("spectralRolloffHz")
+    return [
+        {"found": "no DC offset",
+         "measure": f"{diag.get('dcOffset')} of full scale",
+         "fix": "nothing"},
+        {"found": "no hum",
+         "measure": "no mains family with two harmonics over its guards",
+         "fix": "nothing"},
+        {"found": "no significant rumble",
+         "measure": (f"{rumble} dB of sub-60 Hz energy"
+                     if rumble is not None else "n/a"),
+         "fix": "conservative 60 Hz highpass"},
+        {"found": "no sibilance problem",
+         "measure": f"{diag.get('sibilanceRatio')} of the energy in 4-8 kHz",
+         "fix": "nothing"},
+        {"found": "not muffled",
+         "measure": (f"rolloff {rolloff} Hz, flatness "
+                     f"{diag.get('spectralFlatness')}"
+                     if rolloff is not None else "n/a"),
+         "fix": "nothing"},
+        {"found": "no significant hiss",
+         "measure": f"{hiss} dB" if hiss is not None else "n/a",
+         "fix": "nothing"},
+        {"found": "no clipping",
+         "measure": f"{diag.get('clippingRatio')} of samples at the rail",
+         "fix": "nothing"},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 5. normalize_loudness
 # ---------------------------------------------------------------------------
 
 _PLATFORMS = {
@@ -639,7 +1058,7 @@ def _chroma_key(samples, env, frames=12):
 
 
 # ---------------------------------------------------------------------------
-# 4. detect_music_segments
+# 6. detect_music_segments
 # ---------------------------------------------------------------------------
 
 
@@ -774,7 +1193,7 @@ def _detect_music_segments(spec):
 
 
 # ---------------------------------------------------------------------------
-# 5. identify_music
+# 7. identify_music
 # ---------------------------------------------------------------------------
 
 
@@ -843,7 +1262,7 @@ def _identify_music(spec):
 
 
 # ---------------------------------------------------------------------------
-# 6. analyze_music_structure
+# 8. analyze_music_structure
 # ---------------------------------------------------------------------------
 
 
@@ -937,6 +1356,8 @@ def _analyze_music_structure(spec):
 TOOLS = {
     "enhance_speech": _enhance_speech,
     "remove_hiss_hum_rumble": _remove_hiss_hum_rumble,
+    "diagnose_take": _diagnose_take,
+    "repair_by_diagnosis": _repair_by_diagnosis,
     "normalize_loudness": _normalize_loudness,
     "detect_music_segments": _detect_music_segments,
     "identify_music": _identify_music,
@@ -1067,6 +1488,45 @@ def _synth_hum(path):
     return len(out) / rate
 
 
+def _filter_justified(f, diag):
+    """The selftest's own reading of the repair contract: every filter
+    in a repair_by_diagnosis chain must trace back to the measurement
+    that fired it. Deliberately written apart from _repair_plan (which
+    it must agree with), so a plan that drifts from the thresholds
+    fails here instead of agreeing with itself. The conservative 60 Hz
+    door is the one exception: by convention it rides only on a forced
+    clean, and no measurement fires it."""
+    flat = diag.get("spectralFlatness")
+    rolloff = diag.get("spectralRolloffHz")
+    muffled = (rolloff is not None and flat is not None
+               and rolloff < _ROLLOFF_TRIGGER_HZ and flat < _FLATNESS_TRIGGER)
+    if f == "highpass=f=10":
+        dc = diag.get("dcOffset")
+        return dc is not None and dc >= _DC_TRIGGER
+    if f.startswith("equalizer=frequency=") and f.endswith(":t=q:w=8:g=-14"):
+        hz = int(f.split("frequency=")[1].split(":")[0])
+        return bool(diag.get("humHz")) and hz in (diag.get("humPeaks") or [])
+    if f == "highpass=f=70":
+        rumble = diag.get("rumbleDb")
+        return rumble is not None and rumble > _RUMBLE_TRIGGER_DB
+    if f == "highpass=f=60":
+        # the conservative door, convention not measurement
+        return True
+    if f == "deesser=i=0.5:m=0.5:f=0.55":
+        sib = diag.get("sibilanceRatio")
+        return sib is not None and sib > _SIBILANCE_TRIGGER
+    if f == "equalizer=frequency=3000:t=q:w=2:g=3":
+        return muffled
+    if f.startswith("afftdn="):
+        hiss = diag.get("hissDb")
+        return (hiss is not None and hiss > _HISS_TRIGGER_DB
+                and flat is not None and flat >= _FLATNESS_TRIGGER)
+    if f == "alimiter=limit=0.989:level=false":
+        clip = diag.get("clippingRatio")
+        return clip is not None and clip > _CLIPPING_TRIGGER
+    return False
+
+
 def selftest(only=None):
     import tempfile
     checks = []
@@ -1080,17 +1540,21 @@ def selftest(only=None):
         plans = {
             "enhance_speech": {"audio": speech, "out": str(Path(tmp) / "enhanced.wav")},
             "remove_hiss_hum_rumble": {"audio": humming, "out": str(Path(tmp) / "clean.wav")},
+            "diagnose_take": {"audio": speech},
+            "repair_by_diagnosis": {"audio": speech,
+                                    "out": str(Path(tmp) / "repaired.wav")},
             "normalize_loudness": {"audio": speech, "out": str(Path(tmp) / "norm.wav"),
                                    "targetLufs": -18},
             "detect_music_segments": {"audio": music},
             "identify_music": {"audio": music},
             "analyze_music_structure": {"audio": music},
         }
-        # The three writers filter through ffmpeg; without a decoder they
+        # The four writers filter through ffmpeg; without a decoder they
         # must refuse cleanly, naming the way to one - that refusal is
         # what the selftest proves on a machine with no ffmpeg, beside
         # the music reads, which decode WAV natively and prove fully.
-        writers = ("enhance_speech", "remove_hiss_hum_rumble", "normalize_loudness")
+        writers = ("enhance_speech", "remove_hiss_hum_rumble",
+                   "repair_by_diagnosis", "normalize_loudness")
         no_ffmpeg = _needs_ffmpeg({}) is not None
         for name, handler in TOOLS.items():
             if only and name != only:
@@ -1148,6 +1612,94 @@ def selftest(only=None):
                 "extra": ("the mp3 container keeps an mp3 payload" if mp3_made
                           else ("libmp3lame absent here, skipped" if encoder_absent
                                 else "no file")),
+            })
+        # The signal-selected repair's own proof, beside the loop above.
+        # The diagnosis is the half the auto edit used to skip: it must
+        # read every key the decision spends, and its verdict must agree
+        # with its own shopping list - a "clean" that names repairs, or
+        # a "repair" that names none, is a decision the caller cannot
+        # trust. The humming fixture is the whole point of the exercise:
+        # the baked 50 Hz hum must be NAMED in the plan, instead of the
+        # generic chain running whether or not anything hummed. Both
+        # reads decode WAV natively, so they prove with or without a
+        # decoder - only the loudness keys ride ebur128.
+        diag_read = TOOLS["diagnose_take"]({"audio": speech})
+        diag = diag_read.get("diagnosis") or {}
+        repairs = diag_read.get("repairs") or []
+        verdict = diag_read.get("verdict")
+        keys = ("noiseFloorDbfs", "snrDb", "humHz", "humPeaks", "hissDb",
+                "rumbleDb", "dcOffset", "clippingRatio", "spectralFlatness",
+                "spectralRolloffHz", "sibilanceRatio", "integratedLufs",
+                "truePeakDbfs")
+        checks.append({
+            "tool": "diagnose_take (speech)",
+            "ok": (bool(diag_read.get("ok"))
+                   and all(k in diag for k in keys)
+                   and verdict in ("clean", "repair")
+                   and (verdict == "repair") == bool(repairs)),
+            "error": diag_read.get("error"),
+            "extra": (f"verdict={verdict}, "
+                      f"repairs={[r.get('fix') for r in repairs]}"),
+        })
+        hum_diag = TOOLS["diagnose_take"]({"audio": humming})
+        hd = hum_diag.get("diagnosis") or {}
+        hum_repairs = hum_diag.get("repairs") or []
+        checks.append({
+            "tool": "diagnose_take (hum fixture)",
+            "ok": (bool(hum_diag.get("ok"))
+                   and hd.get("humHz") == 50
+                   and any("notch" in str(r.get("fix") or "").lower()
+                           for r in hum_repairs)),
+            "error": hum_diag.get("error"),
+            "extra": (f"humHz={hd.get('humHz')}, peaks={hd.get('humPeaks')}, "
+                      f"repairs={[r.get('fix') for r in hum_repairs]}"),
+        })
+        # The writing half needs the decoder: the chain it writes must
+        # carry only stages the measurements fired (the whole contract
+        # of a signal-selected repair), the muffled lift and the denoise
+        # must never share a chain (a denoise deepens a muffled take),
+        # and the humming take's chain must carry the 50 Hz notch its
+        # diagnosis named.
+        if not no_ffmpeg:
+            rep_read = TOOLS["repair_by_diagnosis"](
+                {"audio": speech, "out": str(Path(tmp) / "repaired2.wav"),
+                 "overwrite": True})
+            chain = rep_read.get("filterChain") or []
+            if rep_read.get("ok") and rep_read.get("file"):
+                made = (Path(str(rep_read["file"])).is_file()
+                        and Path(str(rep_read["file"])).stat().st_size > 0)
+                justified = all(_filter_justified(
+                    f, rep_read.get("diagnosis") or {}) for f in chain)
+                exclusive = not ("equalizer=frequency=3000:t=q:w=2:g=3" in chain
+                                 and any(f.startswith("afftdn=") for f in chain))
+            elif rep_read.get("ok"):
+                # A clean take declines with no file: the honest reply.
+                made = justified = exclusive = True
+            else:
+                made = justified = exclusive = False
+            checks.append({
+                "tool": "repair_by_diagnosis (speech)",
+                "ok": (bool(rep_read.get("ok")) and made and justified
+                       and exclusive),
+                "error": rep_read.get("error"),
+                "extra": f"chain={chain}",
+            })
+            hum_rep = TOOLS["repair_by_diagnosis"](
+                {"audio": humming, "out": str(Path(tmp) / "hum-repaired.wav"),
+                 "overwrite": True})
+            hr_chain = hum_rep.get("filterChain") or []
+            hr_file = hum_rep.get("file")
+            checks.append({
+                "tool": "repair_by_diagnosis (hum fixture)",
+                "ok": (bool(hum_rep.get("ok"))
+                       and bool(hr_file) and Path(str(hr_file)).is_file()
+                       and any(f.startswith("equalizer=frequency=50:")
+                               for f in hr_chain)
+                       and all(_filter_justified(
+                           f, hum_rep.get("diagnosis") or {})
+                           for f in hr_chain)),
+                "error": hum_rep.get("error"),
+                "extra": f"chain={hr_chain}",
             })
         # The gate's two directions, proven beyond the loop above: a
         # dense-speech take (the gated-TTS pattern) must NOT gate as

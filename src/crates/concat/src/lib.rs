@@ -1725,8 +1725,10 @@ fn start(
         // voiceover. It hands the sibling to the same Forge Director the
         // Start button runs; only when the harness, the skill or a model
         // key is missing does it fall back to the deterministic spine.
-        forge.on_auto_edit_start(on_window!(|state| {
-            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditStart));
+        forge.on_auto_edit_start(on_window!(|state, script: slint::SharedString| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditStart(
+                script.to_string(),
+            )));
         }));
         forge.on_auto_edit_cancel(on_window!(|state| {
             state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditCancel));

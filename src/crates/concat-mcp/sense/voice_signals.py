@@ -56,6 +56,7 @@ its source, and an ear that could not run says why.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import math
 import os
@@ -200,7 +201,9 @@ SIGNAL_CATALOGUE = [
      "label": "Word confidence",
      "reads": "Each word's confidence - WhisperX alignment scores when "
               "installed, the measured gate (timing, silence overlap, "
-              "energy) otherwise.",
+              "energy) otherwise - floored at 0.85 for the words a script "
+              "confirmed, and carrying `corrected` on the ones whose "
+              "spelling the script replaced.",
      "why": "Words under 0.5 are gated from captions rather than guessed "
             "(decision: caption).",
      "where": ("line", "words"), "rust": False, "new": False},
@@ -224,11 +227,15 @@ SIGNAL_CATALOGUE = [
     {"name": "entities.cards", "family": "Entities",
      "label": "Entity cards",
      "reads": "Names, numbers, money, dates and places, with the card each "
-              "earns (stat, lower third, timeline) and whether the NER "
-              "measured it or the regex complement found it.",
+              "earns (stat, lower third, timeline), whether the NER "
+              "measured it or the regex complement found it, and - for the "
+              "numbers - the parsed value and unit ($10,450 is 10450 USD, "
+              "45% is 45 percent) with the char span the words occupy.",
      "why": "Money becomes a stat card, a name a lower third, a date a "
             "timeline (decision: graphic) - and an approximate reading "
-            "earns no card that claims exactness.",
+            "earns no card that claims exactness. The parsed value and "
+            "unit are what a chart or a stat card can plot, not only "
+            "quote.",
      "where": ("take", "entities"), "rust": False, "new": False},
     # The motifs family.
     {"name": "motifs.repeats", "family": "Motifs",
@@ -408,7 +415,7 @@ SIGNAL_CATALOGUE = [
      "where": ("take", "wholeTake.forensic.sibilanceRatio"), "rust": True, "new": True},
     {"name": "forensic.spectralRolloffHz", "family": "Forensics",
      "label": "Spectral rolloff",
-     "reads": "The frequency under which 95% of the take's energy sits, in "
+     "reads": "The frequency under which 85% of the take's energy sits, in "
               "Hz.",
      "why": "A low rolloff with a narrow band is a muffled take: a "
             "presence lift, not a denoise.",
@@ -650,6 +657,204 @@ def _words_of(line):
         if text:
             words.append({"text": text, "start": start, "end": end})
     return words
+
+
+# ---------------------------------------------------------------------------
+# The script↔transcript alignment: the script's wording over measured times
+# ---------------------------------------------------------------------------
+
+
+def _script_text(spec):
+    """The raw script string when the spec carries one, else None.
+
+    A transcript and a script are different artefacts: the transcript is
+    what was SAID (measured times, ASR-mangled wording), the script is
+    what was MEANT (clean wording, no times). When the caller gives both,
+    the script must not become the lines - its times are fiction - but
+    its wording is the authority the transcript's mishearings are
+    corrected against. This reader exists so `_collect_lines` can stay
+    exactly as it is: the transcript wins the lines, the script wins the
+    words.
+    """
+    script = spec.get("script")
+    if isinstance(script, str) and script.strip():
+        return script
+    return None
+
+
+def _norm_word(word):
+    """A word reduced to what a comparison should see: lowercase, letters
+    and digits only, punctuation gone. The character class keeps
+    everything from U+0080 up on purpose - an ASCII-only strip would
+    reduce every Bengali or Hindi word to the empty string, and a
+    non-Latin narration would align to nothing at all."""
+    return re.sub(r"[^a-z0-9\u0080-\uffff]+", "", str(word).lower())
+
+
+def _align_script(lines, script):
+    """Align the transcript's lines with the script's sentences, in place,
+    and return the summary the profile carries as scriptAlignment.
+
+    The rule the whole function serves: the transcript's TIMES are
+    measured and the script's WORDS are authored, so the alignment lets
+    the script's wording correct the transcript's while every start and
+    end survives untouched. Matching runs two levels, both monotonic -
+    a repeated phrase ("this is the first line" twice in a take) must
+    not pull every later line back onto the first sentence that fits:
+
+    - sentence level: each line picks the best-ratio script sentence
+      from a forward window of four (a line may skip short scripted
+      asides, never reach back), and a pair only counts at ratio 0.30.
+      At 0.50 the script sentence replaces the line's text outright -
+      below that the wording is too weakly paired to override what was
+      actually recorded, and the transcript text stays.
+    - word level: a difflib pass over the normalised words. `equal`
+      blocks are words the script confirms; a 1:1 `replace` is the ASR
+      mishearing shape ("maket" for "market") and the script word
+      replaces the transcript word's text, keeping its times; n:m
+      blocks are left alone - which side of a merge an author meant is
+      a guess, and this module does not guess. Words said but not
+      scripted (deletes) are kept and counted: they were spoken.
+      Script words never spoken (inserts) are the omissions.
+
+    The per-line bookkeeping lands on the line dict under a private
+    `_script` key (word indices the assembly reads and then strips);
+    nothing private is allowed to survive into a payload.
+    """
+    sentences = [piece.strip() for piece in
+                 re.split(r"(?<=[.!?])\s+|\n+", str(script).strip())
+                 if piece.strip()]
+    sentence_words = [sentence.split() for sentence in sentences]
+    sentence_norm = [[_norm_word(w) for w in words] for words in sentence_words]
+
+    matched = 0
+    corrected_words = 0
+    confirmed_words = 0
+    insertions = 0
+    omissions = 0
+    pairings = []
+    cursor = 0
+    for index, line in enumerate(lines):
+        text = str(line.get("text") or "")
+        # The word dicts `_words_of` will keep (dict, non-empty text,
+        # parseable times), so the indices recorded here are the same
+        # indices the per-line assembly iterates - an untimed word
+        # dropped by the one would otherwise shift every index recorded
+        # by the other. A line with no timed words still aligns, over
+        # its split text; it just has no words to annotate.
+        word_dicts = []
+        for word in line.get("words") or []:
+            if not isinstance(word, dict):
+                continue
+            word_text = str(word.get("text") or word.get("word") or "").strip()
+            try:
+                float(word.get("start"))
+                float(word.get("end"))
+            except (TypeError, ValueError):
+                continue
+            if word_text:
+                word_dicts.append(word)
+        if word_dicts:
+            t_words = [str(w.get("text") or w.get("word") or "").strip()
+                       for w in word_dicts]
+        else:
+            t_words = text.split()
+        t_norm = [_norm_word(w) for w in t_words]
+        t_joined = " ".join(w for w in t_norm if w)
+
+        # The sentence pick: best ratio over the forward window. Four is
+        # wide enough to step over a short scripted aside the speaker
+        # skipped, and narrow enough that a line cannot reach into a
+        # later section and steal its sentence.
+        best_j = None
+        best_ratio = 0.0
+        for j in range(cursor, min(cursor + 4, len(sentences))):
+            s_joined = " ".join(w for w in sentence_norm[j] if w)
+            ratio = difflib.SequenceMatcher(None, t_joined, s_joined).ratio()
+            if ratio > best_ratio:
+                best_ratio, best_j = ratio, j
+        if best_j is None or best_ratio < 0.30:
+            # No honest pairing: the line keeps its text, its words and
+            # its silence - an unpaired line is a fact about the take,
+            # not an error to paper over.
+            continue
+        matched += 1
+        cursor = best_j + 1
+        s_words = sentence_words[best_j]
+        s_norm = sentence_norm[best_j]
+
+        confirmed = []
+        corrected = []
+        differed = []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+                None, t_norm, s_norm).get_opcodes():
+            if tag == "equal":
+                confirmed.extend(range(i1, i2))
+            elif tag == "replace":
+                if i2 - i1 == 1 and j2 - j1 == 1 and s_norm[j1]:
+                    # One transcript word against one script word. The
+                    # design brief drew a 0.55 near-miss ratio here (the
+                    # "maket"/"market" ASR mishearing scores 0.91) to
+                    # split a mishearing from a rewrite - and then made
+                    # both arms replace anyway, because the script is
+                    # authoritative at any ratio. So no ratio gate: the
+                    # script word takes the transcript word's place and
+                    # its measured times, and the index is marked
+                    # corrected so the assembly floors the word's
+                    # confidence. Only a script word that normalises to
+                    # nothing (a bare dash the splitter made a word of)
+                    # is left alone.
+                    if word_dicts and i1 < len(word_dicts):
+                        word_dicts[i1]["text"] = s_words[j1]
+                    corrected.append(i1)
+                else:
+                    # n:m: a merge or a split no word-by-word pass can
+                    # apportion honestly. The transcript words stay as
+                    # spoken and are recorded as differed.
+                    differed.extend(range(i1, i2))
+            elif tag == "delete":
+                # Said but not scripted - keep the words (they were
+                # spoken) and count them so the summary can say it.
+                insertions += i2 - i1
+            elif tag == "insert":
+                # Scripted but never spoken.
+                omissions += j2 - j1
+
+        confirmed_words += len(confirmed)
+        corrected_words += len(corrected)
+        if best_ratio >= 0.50:
+            line["text"] = sentences[best_j]
+        if word_dicts:
+            line["_script"] = {"confirmed": confirmed, "corrected": corrected,
+                               "differed": differed}
+        pairings.append({"line": index, "sentence": best_j,
+                         "ratio": round(best_ratio, 3),
+                         "textReplaced": best_ratio >= 0.50})
+
+    total = len(lines)
+    coverage = round(matched / total, 3) if total else 0.0
+    if coverage >= 0.6:
+        verdict = "aligned"
+    elif coverage >= 0.2:
+        verdict = "partial"
+    else:
+        verdict = "unaligned"
+    return {
+        "matched": matched,
+        "unmatched": total - matched,
+        "correctedWords": corrected_words,
+        "confirmedWords": confirmed_words,
+        "insertions": insertions,
+        "omissions": omissions,
+        "scriptSentences": len(sentences),
+        "transcriptLines": total,
+        "coverage": coverage,
+        "verdict": verdict,
+        # The pairings, recorded whether the sentence's text replaced the
+        # line's or not: a director re-checking one line wants to see
+        # which script sentence it was held against, and at what ratio.
+        "pairings": pairings,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1110,6 +1315,110 @@ _MONEYISH = re.compile(r"\$?\b\d{1,3}(?:,\d{3})+|\$\d+(?:\.\d+)?(?:\s?(?:k|m|b|m
                        re.I)
 _PERCENT = re.compile(r"\b\d+(?:\.\d+)?\s?%\b")
 
+# The value/unit readers: what a MONEY or PERCENT entity is worth, as a
+# number a stat card can format. The raw text "$10,450" is a string every
+# UI would have to parse again, and every UI parses it differently - one
+# drops the commas, one keeps them, one treats "lakh" as a word. Here it
+# is parsed once, the same way, for the anno entities and the regex
+# complement alike.
+_CURRENCY_SYMBOLS = (("$", "USD"), ("£", "GBP"), ("€", "EUR"),
+                     ("৳", "BDT"), ("₹", "INR"), ("¥", "JPY"))
+_CURRENCY_WORDS = re.compile(
+    r"\b(dollars?|euros?|pounds?|rupees?|taka|yen|cents?)\b", re.I)
+# The multiplier rides the number: "3.5 million", "10k", "2 lakh". The
+# long words are tried before the single letters and the whole group sits
+# behind a word boundary, so the "b" of "10 bucks" is never read as
+# billions - the silent order bug a naive (k|m|b) alternation ships.
+_MONEY_NUMBER = re.compile(
+    r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*(million|billion|trillion|lakh|crore|k|m|b)?\b",
+    re.I)
+_MULTIPLIERS = {"k": 1e3, "m": 1e6, "b": 1e9, "million": 1e6,
+                "billion": 1e9, "trillion": 1e12, "lakh": 1e5, "crore": 1e7}
+
+
+def _entity_value_unit(text, entity_type):
+    """(value, unit) for an entity a stat card formats, (None, None) when
+    the text carries no number this reader trusts.
+
+    MONEY: a symbol names the currency ("$10,450" → 10450 USD, "৳500" →
+    500 BDT) and multiplies before it lands in the value ("€3.5 million"
+    → 3500000 EUR). Without a symbol a currency word names itself
+    ("10,450 dollars" → 10450 dollars) and a South-Asian multiplier
+    names itself too ("10 lakh" → 1000000 lakh; "₹2 crore" is 20000000
+    INR, the symbol wins and the multiplier still multiplies). PERCENT:
+    the number before the sign. DATE/CARDINAL/QUANTITY: a bare 1500-2100
+    integer is a year; any other number is a count. Everything else is
+    left as text for the UI to render - a value this reader guessed
+    would be worse than none.
+    """
+    text = str(text or "").strip()
+    if not text:
+        return None, None
+    kind = str(entity_type or "").strip().upper()
+
+    def number_of(raw):
+        try:
+            return float(str(raw).replace(",", ""))
+        except ValueError:
+            return None
+
+    def tidy(value):
+        # Integral floats become ints ("10450.0" reads as a bug in a
+        # card) and the multipliers' float noise is sanded off first.
+        value = round(value, 6)
+        if abs(value - round(value)) < 1e-6:
+            return int(round(value))
+        return round(value, 3)
+
+    if kind == "MONEY":
+        currency = next((code for symbol, code in _CURRENCY_SYMBOLS
+                         if symbol in text), None)
+        match = _MONEY_NUMBER.search(text)
+        if not match:
+            return None, None
+        value = number_of(match.group(1))
+        if value is None:
+            return None, None
+        multiplier = (match.group(2) or "").lower()
+        if multiplier:
+            value *= _MULTIPLIERS[multiplier]
+        if currency:
+            return tidy(value), currency
+        word = _CURRENCY_WORDS.search(text)
+        if word:
+            return tidy(value), word.group(0).lower()
+        if multiplier:
+            return tidy(value), multiplier
+        return tidy(value), None
+    if kind == "PERCENT":
+        match = re.search(r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*%", text)
+        if not match:
+            return None, None
+        value = number_of(match.group(1))
+        if value is None:
+            return None, None
+        return tidy(value), "percent"
+    if kind in ("DATE", "CARDINAL", "QUANTITY"):
+        # A bare four-digit 1500-2100 integer is a year whatever the NER
+        # labelled it - a "CARDINAL 2026" is still the year 2026 - and a
+        # year carries no count unit. Other dates ("March 4, 2026") are
+        # left alone: which number in a written date is THE value is a
+        # judgement this reader declines to make.
+        if re.fullmatch(r"[0-9]{4}", text):
+            year = int(text)
+            if 1500 <= year <= 2100:
+                return year, "year"
+        if kind == "DATE":
+            return None, None
+        match = re.search(r"[0-9][0-9,]*(?:\.[0-9]+)?", text)
+        if not match:
+            return None, None
+        value = number_of(match.group(0))
+        if value is None:
+            return None, None
+        return tidy(value), "count"
+    return None, None
+
 
 def _entity_complement(lines):
     """Bare years, big numbers, money and percentages: the pattern NER
@@ -1127,7 +1436,13 @@ def _entity_complement(lines):
                 span = match.span()
                 start = _char_time(span[0], text, line, words)
                 end = _char_time(span[1], text, line, words)
-                out.append({
+                # The span here is exact - the regex found the text
+                # itself, so the offsets are the match's own, not a
+                # search - and the value/unit ride the same helper the
+                # anno entities are enriched with, so the two sources of
+                # a MONEY agree on what it is worth.
+                value, unit = _entity_value_unit(match.group(0), kind)
+                entry = {
                     "lineIndex": i,
                     "text": match.group(0),
                     "entityType": kind,
@@ -1136,8 +1451,14 @@ def _entity_complement(lines):
                     "end": end,
                     "approximate": True,
                     "card": card,
+                    "span": [span[0], span[1]],
                     "source": "regex-complement",
-                })
+                }
+                if value is not None:
+                    entry["value"] = value
+                if unit is not None:
+                    entry["unit"] = unit
+                out.append(entry)
     return out
 
 
@@ -1155,6 +1476,42 @@ def _merge_entities(primary, complement):
         if not overlap:
             merged.append(extra)
     return merged
+
+
+def _enrich_entities(entities, lines):
+    """Give every entity the number it is worth and the span it sits at.
+
+    The value/unit parse turns "$10,450" into 10450 USD, a stat card
+    formats a number, and the regex complement already carries its own -
+    this pass is for the anno entities, which arrive as raw text. The
+    span is the entity's character offsets in its line's text (first
+    occurrence), the same coordinates the Rust ear's word mapping uses,
+    so a UI highlighting the line can lift the entity out without
+    re-finding it. Both are additive and never overwrite what an ear
+    measured itself; an entity whose text cannot be found in its line
+    (a drifted transcript) simply carries no span rather than a wrong
+    one.
+    """
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        if "value" not in entity or "unit" not in entity:
+            value, unit = _entity_value_unit(entity.get("text"),
+                                             entity.get("entityType"))
+            if value is not None and "value" not in entity:
+                entity["value"] = value
+            if unit is not None and "unit" not in entity:
+                entity["unit"] = unit
+        if "span" in entity:
+            continue
+        index = entity.get("lineIndex")
+        text = str(entity.get("text") or "")
+        if not text or not isinstance(index, int) or not 0 <= index < len(lines):
+            continue
+        at = str(lines[index].get("text") or "").find(text)
+        if at >= 0:
+            entity["span"] = [at, at + len(text)]
+    return entities
 
 
 # ---------------------------------------------------------------------------
@@ -1320,13 +1677,17 @@ def _whisperx_words(audio, lines, language):
 # ---------------------------------------------------------------------------
 
 
-def _signal_confidence(sources, audio, rust, wx_words, series, notes):
+def _signal_confidence(sources, audio, rust, wx_words, series, notes,
+                        script_alignment=None):
     """One confidence per signal family, with the basis a director can
     weigh: which ear answered, and what it was built on. A signal with a
     low confidence is not wrong - it is one the plan should lean on less,
     and the basis says why. Formants on a phone-band take, reverb from a
     single-channel envelope, emphasis without word timings: each is
-    honest about what it is."""
+    honest about what it is. The script alignment, when it ran, is part
+    of that honesty: a word stream whose wording the author verified is
+    a different footing than raw ASR output, and the wordConfidence row
+    says so in its basis."""
     rust_up = bool(rust)
     band = None
     # The source's own rate, probed where the audio exists: the ear's
@@ -1368,15 +1729,26 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
         entry("speechRate", 0.4, "no timings: estimated from the script at "
                                  "150 wpm")
 
-    # Word confidence: whisperx scores or the measured gate.
+    # Word confidence: whisperx scores or the measured gate - and the
+    # script alignment, when it held, is a footing worth naming: the
+    # basis says the confirmed words are floored at 0.85, and a verdict
+    # of "aligned" (most lines paired) lifts the row by a notch because
+    # most of the stream is author-verified. A "partial" verdict names
+    # the floor but earns no lift - half a verification is not one.
+    verdict = (script_alignment or {}).get("verdict")
+    script_basis = ("; script-confirmed words floored at 0.85"
+                    if verdict in ("aligned", "partial") else "")
+    script_lift = 0.05 if verdict == "aligned" else 0.0
     if str(sources.get("wordConfidence") or "").startswith("whisperx"):
-        entry("wordConfidence", 0.9, "whisperx alignment scores")
+        entry("wordConfidence", min(0.95, 0.9 + script_lift),
+              "whisperx alignment scores" + script_basis)
     elif sources.get("wordConfidence"):
-        entry("wordConfidence", 0.6,
+        entry("wordConfidence", min(0.95, 0.6 + script_lift),
               "measured gate (timing, silence overlap, energy) - a screen, "
-              "not a score")
+              "not a score" + script_basis)
     else:
-        entry("wordConfidence", 0.3, "no audio: word confidence is absent")
+        entry("wordConfidence", min(0.95, 0.3 + script_lift),
+              "no audio: word confidence is absent" + script_basis)
 
     # Text signals: regex and lexicons, language-dependent.
     entry("sentenceType", 0.8, "punctuation and cue patterns; cross-checked "
@@ -1543,6 +1915,18 @@ def extract(spec):
     audio = spec.get("audio") or spec.get("path")
     if audio and not os.path.isfile(audio):
         return {"ok": False, "error": f"no such audio file: {audio}"}
+    # The script↔transcript alignment: when the caller measured a take AND
+    # wrote what it was meant to say, the two are reconciled here - before
+    # any ear reads the lines, so every later pass (the language scan,
+    # whisperx, the Rust NER, the regex complement) sees the corrected
+    # wording and never the mishearing. It fires only when BOTH exist: a
+    # script alone still becomes the lines exactly as before
+    # (`_collect_lines` owns that path untouched), and a transcript alone
+    # is never second-guessed - there is nothing to correct it against.
+    script_alignment = None
+    script_raw = _script_text(spec)
+    if script_raw and any(isinstance(l.get("start"), (int, float)) for l in lines):
+        script_alignment = _align_script(lines, script_raw)
     # The `signals` filter: a manual extraction of named readings, not
     # the whole profile. Only the passes the asked-for signals need run -
     # a filler read costs no ffmpeg pass and no Rust ear - and the reply
@@ -1580,6 +1964,13 @@ def extract(spec):
         "entities": None,
         "alignment": "whisper token timestamps",
     }
+    # The alignment source, named when the script pass ran: the word
+    # stream the profile carries is now a hybrid (measured times,
+    # authored wording), and `sources` is where the profile says what
+    # every reading stands on.
+    if script_alignment is not None:
+        sources["alignment"] = ("script↔transcript word alignment (difflib); "
+                                "script wording is authoritative")
 
     ff, _ = _ffmpeg(spec)
     silence_spans = []
@@ -1616,7 +2007,16 @@ def extract(spec):
         if wx_note:
             notes.append(wx_note)
         else:
-            sources["alignment"] = "whisperx aligned words with scores"
+            # WhisperX would otherwise claim the alignment source alone;
+            # when the script pass also ran, the two are composed - the
+            # times are whisperx's, the wording the script's - because a
+            # source line that names one and silently drops the other is
+            # the same lie an absent ear tells.
+            sources["alignment"] = (
+                "whisperx aligned words + script confirmation "
+                "(script wording authoritative)"
+                if script_alignment is not None
+                else "whisperx aligned words with scores")
             sources["wordConfidence"] = "whisperx alignment scores"
 
     # The Rust ears (text-only when there is no audio: the NER ear answers
@@ -1660,6 +2060,27 @@ def extract(spec):
             else:
                 confidences = _word_confidences(words, silence_spans, series)
             words = confidences
+        # The script confirmation: the alignment marked which words the
+        # script verified (equal blocks) and which it corrected (1:1
+        # replaces). Both are script-verified, so both floor at 0.85 - a
+        # word the author wrote is not one the caption gate should drop
+        # - and the flag says which is which, confirmed or corrected. The
+        # indices address the line's own words; when whisperx replaced
+        # them the mapping is best-effort (whisperx re-aligned the
+        # corrected text, so the two word streams agree in order even
+        # where their counts drift), and an index past either list's end
+        # simply never fires.
+        script_meta = line.get("_script")
+        if script_meta and words:
+            confirmed = set(script_meta.get("confirmed") or [])
+            corrected = set(script_meta.get("corrected") or [])
+            for position, word in enumerate(words):
+                if position in corrected:
+                    word["confidence"] = round(max(word.get("confidence") or 0.0, 0.85), 3)
+                    word["corrected"] = True
+                elif position in confirmed:
+                    word["confidence"] = round(max(word.get("confidence") or 0.0, 0.85), 3)
+                    word["scriptConfirmed"] = True
         loudness = _line_loudness(series, line.get("start"), line.get("end"))
         if loudness and integrated is not None:
             loudness["relativeLu"] = round(loudness["meanLufsM"] - integrated, 2)
@@ -1684,10 +2105,24 @@ def extract(spec):
             "words": [
                 {"text": w["text"], "start": w["start"], "end": w["end"],
                  "confidence": w.get("confidence"),
-                 "syllables": _syllables(w["text"])}
+                 "syllables": _syllables(w["text"]),
+                 # The script flags only when true: a transcript-only
+                 # caller's words stay byte-for-byte the shape they
+                 # always were, and a script-confirmed word says so.
+                 **({"scriptConfirmed": True} if w.get("scriptConfirmed") else {}),
+                 **({"corrected": True} if w.get("corrected") else {})}
                 for w in words
             ],
         })
+
+    # Strip the alignment's private bookkeeping. The `_script` key is the
+    # alignment's scratch space between `_align_script` and the assembly
+    # above; the `lines` list is reused below (the motifs and the entity
+    # complement read it, both of which want the corrected `text` and
+    # the raw `words`), and nothing private may leak into a payload or
+    # surprise a later pass.
+    for line in lines:
+        line.pop("_script", None)
 
     # Entities: anno (Rust) plus the regex complement.
     entities = list((rust or {}).get("entities") or [])
@@ -1695,6 +2130,7 @@ def extract(spec):
         for entity in entities:
             entity["source"] = "anno"
     entities = _merge_entities(entities, _entity_complement(lines))
+    entities = _enrich_entities(entities, lines)
     # The complement ran on the text whenever there were lines, so the
     # entities reading is sourced even when the Rust ear never was: a
     # filtered entities ask answers from the complement and is not a
@@ -1729,7 +2165,8 @@ def extract(spec):
         notes.append(
             f"filtered to {len(wanted)} signal(s): the passes the ask does "
             "not need did not run")
-    confidence = _signal_confidence(sources, audio, rust, wx_words, series, notes)
+    confidence = _signal_confidence(sources, audio, rust, wx_words, series,
+                                    notes, script_alignment)
 
     # The honest headline the notes bury: which ears did not answer. The
     # same conditions that append a note name a degradation here, so a
@@ -1788,6 +2225,11 @@ def extract(spec):
         "entities": entities,
         "entitiesAvailable": entities_available,
         "arc": arc,
+        # The alignment block, only when the caller gave both a transcript
+        # and a script: omitted otherwise, so a transcript-only caller's
+        # payload keeps exactly the shape it has always carried.
+        **({"scriptAlignment": script_alignment}
+           if script_alignment is not None else {}),
         "speaker": (rust or {}).get("speaker"),
         "wholeTake": {
             "loudness": {"integratedLufs": integrated,
@@ -1898,6 +2340,16 @@ def selftest():
                      {"text": "2026.", "start": 7.95, "end": 8.10},
                  ]},
             ]},
+            # The intended narration, carried beside the transcript so the
+            # alignment pass has both: it matches the transcript word for
+            # word (the fourth sentence keeps the transcript's lowercase
+            # "it" - a capital would flip the 0.9 s hold before it from a
+            # dramatic mid-sentence hold to a scene turn and break the
+            # pause-class assertions below), so the honest reading of the
+            # exact-match case is every word confirmed, none corrected.
+            "script": "Um, so this is the first line? This is the first "
+                      "line again. The third line lands here. "
+                      "it earned $10,450 in 2026.",
             "language": "en",
             "whisperx": "off",
         }
@@ -1957,6 +2409,86 @@ def selftest():
         money = [e for e in result["entities"] if e["entityType"] == "MONEY"]
         if not money:
             failures.append("no MONEY entity from either ear")
+        # The script↔transcript alignment: the spec carries both, and the
+        # script matches the transcript word for word, so the honest
+        # reading is every word confirmed, none corrected, verdict
+        # aligned - and every output word floored at 0.85 carrying the
+        # flag that says why.
+        alignment = result.get("scriptAlignment") or {}
+        if alignment.get("verdict") != "aligned":
+            failures.append(
+                f"script alignment verdict {alignment.get('verdict')!r}, not 'aligned'")
+        if alignment.get("correctedWords") != 0:
+            failures.append(
+                f"an exact script corrected {alignment.get('correctedWords')} words")
+        if alignment.get("confirmedWords") != 23:
+            failures.append(
+                f"confirmed {alignment.get('confirmedWords')} words, not all 23")
+        if alignment.get("matched") != 4 or alignment.get("unmatched") != 0:
+            failures.append(f"the pairing counts drifted: {alignment}")
+        if not all(w.get("scriptConfirmed") and (w.get("confidence") or 0) >= 0.85
+                   for line in lines for w in line["words"]):
+            failures.append("a script-confirmed word lost its flag or its 0.85 floor")
+        if any(w.get("corrected") for line in lines for w in line["words"]):
+            failures.append("a word was marked corrected against an exact script")
+        if "script" not in str(result.get("sources", {}).get("alignment") or ""):
+            failures.append(f"the alignment source was not named: "
+                            f"{result.get('sources', {}).get('alignment')}")
+        # The mishearing correction, on a small direct case: the ASR heard
+        # "maket", the script wrote "market" - the word's text is
+        # corrected, its measured times are kept, the line takes the
+        # script's sentence, and the corrected index is recorded for the
+        # assembly to floor.
+        fake = [{"text": "the maket crashed today", "start": 0.0, "end": 1.5,
+                 "words": [{"text": "the", "start": 0.0, "end": 0.3},
+                           {"text": "maket", "start": 0.3, "end": 0.9},
+                           {"text": "crashed", "start": 0.9, "end": 1.2},
+                           {"text": "today", "start": 1.2, "end": 1.5}]}]
+        fixed = _align_script(fake, "the market crashed today.")
+        if fixed.get("correctedWords") != 1 or fixed.get("verdict") != "aligned":
+            failures.append(f"the mishearing case did not correct: {fixed}")
+        elif fake[0]["words"][1]["text"] != "market":
+            failures.append(
+                f"the misheard word reads {fake[0]['words'][1]['text']!r}, not 'market'")
+        elif fake[0]["words"][1].get("start") != 0.3 or \
+                fake[0]["words"][1].get("end") != 0.9:
+            failures.append("the correction moved the word's measured times")
+        elif fake[0]["text"] != "the market crashed today.":
+            failures.append(f"the line text reads {fake[0]['text']!r}")
+        elif fake[0].get("_script", {}).get("corrected") != [1]:
+            failures.append(
+                f"the corrected index was not recorded: {fake[0].get('_script')}")
+        # The value/unit reader: the shapes a stat card formats, currencies
+        # by symbol, the South-Asian multipliers, and the year rule.
+        for text, kind, want in (("$10,450", "MONEY", (10450, "USD")),
+                                 ("£2,000", "MONEY", (2000, "GBP")),
+                                 ("€3.5 million", "MONEY", (3500000, "EUR")),
+                                 ("৳500", "MONEY", (500, "BDT")),
+                                 ("₹1,000", "MONEY", (1000, "INR")),
+                                 ("¥1000", "MONEY", (1000, "JPY")),
+                                 ("10,450 dollars", "MONEY", (10450, "dollars")),
+                                 ("10 lakh", "MONEY", (1000000, "lakh")),
+                                 ("45%", "PERCENT", (45, "percent")),
+                                 ("12.5 %", "PERCENT", (12.5, "percent")),
+                                 ("2026", "DATE", (2026, "year")),
+                                 ("1972", "CARDINAL", (1972, "year")),
+                                 ("three", "CARDINAL", (None, None))):
+            got = _entity_value_unit(text, kind)
+            if got != want:
+                failures.append(
+                    f"_entity_value_unit({text!r}, {kind!r}) = {got}, not {want}")
+        # The enrichment: the money entity carries its value, its unit and
+        # its character span in the line ("it earned $10,450 in 2026." -
+        # the money sits at chars 10..17), whichever ear found it.
+        enriched = [e for e in result["entities"] if e.get("text") == "$10,450"]
+        if not enriched:
+            failures.append("no $10,450 entity to check the enrichment against")
+        else:
+            if enriched[0].get("value") != 10450 or enriched[0].get("unit") != "USD":
+                failures.append(f"the money entity was not enriched: {enriched[0]}")
+            if enriched[0].get("span") != [10, 17]:
+                failures.append(
+                    f"the money entity's span is {enriched[0].get('span')}, not [10, 17]")
         # DEG-01: without the Rust ears the NER is missing, and the reply
         # must say so - entities present from the complement alone do not
         # make the NER "run and found these".
@@ -2054,6 +2586,9 @@ def selftest():
         return {"ok": True, "selftest": "python signals answer",
                 "durationSec": round(duration, 3),
                 "pauseClasses": sorted(kinds),
+                "scriptAlignment": f"{alignment.get('verdict')}: "
+                                   f"{alignment.get('confirmedWords')} words confirmed, "
+                                   f"{alignment.get('correctedWords')} corrected",
                 "catalogue": f"{catalog['count']} signals, {catalog['new']} new",
                 "measured": "ffmpeg-backed signals proven" if measured
                             else "no ffmpeg: the text, timing and confidence signals proven, "

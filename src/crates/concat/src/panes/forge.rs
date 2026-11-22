@@ -125,8 +125,11 @@ pub enum ForgeMsg {
     /// to a measured, verified export, deterministically, with no agent.
     /// The runner (`concat-director`, through the
     /// `concat_mcp::director` seam) owns the stages, the progress, the
-    /// cancellation with rollback and the retries.
-    AutoEditStart,
+    /// cancellation with rollback and the retries. The string is the
+    /// script box's own text, when the page carried one: the run hands
+    /// it to the voice reading, which aligns the transcript against the
+    /// author's wording.
+    AutoEditStart(String),
     /// AUTO EDIT: stop at the next stage boundary; the edits the run
     /// applied are rolled back, one `edit_undo` each.
     AutoEditCancel,
@@ -480,7 +483,7 @@ impl ForgePane {
                 }
                 studio.prefs.save(&studio.host.dirs);
             }
-            ForgeMsg::AutoEditStart => self.auto_edit_start(studio),
+            ForgeMsg::AutoEditStart(script) => self.auto_edit_start(script, studio),
             ForgeMsg::AutoEditCancel => {
                 if self.auto.running {
                     if let Some(runner) = &self.auto.runner {
@@ -810,7 +813,7 @@ impl ForgePane {
     /// The plan's creative brief, the eye-picked stock and the baked motion
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
-    fn auto_edit_start(&mut self, studio: &mut Studio) {
+    fn auto_edit_start(&mut self, script: String, studio: &mut Studio) {
         if auto_edit_busy(self.auto.running, self.auto.checking) {
             studio.notify(
                 "AUTO EDIT is still running or checking its previous timeline",
@@ -915,6 +918,7 @@ impl ForgePane {
                     &studio.prefs.stock.pexels,
                     &studio.prefs.stock.pixabay,
                 ),
+                script: source.script.clone(),
             });
             let tool_cancel = Arc::new(AtomicBool::new(false));
             let project = source.project.clone();
@@ -953,9 +957,18 @@ impl ForgePane {
                 return;
             }
         };
-        let Some(auto) = auto else {
+        let Some(mut auto) = auto else {
             return;
         };
+        // The script the button carried is the run's own authority on
+        // wording: it travels with the source (the Director's prompt and
+        // the deterministic spine's voice reading both read it), so a
+        // run whose voiceover was read from a script shows the author's
+        // words, not the recogniser's guesses. An empty box leaves the
+        // transcript as it was transcribed.
+        if !script.trim().is_empty() {
+            auto.script = Some(script);
+        }
         // The keys the Forge page keeps are the environment of the
         // in-process tool calls too, not only the spawned harness: with a
         // hosted critic key saved here, the program's watch stage gets
@@ -1024,6 +1037,7 @@ impl ForgePane {
                 &studio.prefs.stock.pexels,
                 &studio.prefs.stock.pixabay,
             ),
+            script: auto.script.clone(),
         });
         // The Director gets the edit whenever the page has a model to run
         // it: AUTO EDIT is the one-click form of Start Forge, so the
@@ -1901,6 +1915,14 @@ struct AutoEditSource {
     /// the report beside the edit says it forever, so a run that shipped
     /// a lesser edit never gets mistaken for the Director's.
     director: Option<String>,
+    /// The script the button carried, when the Forge page's script box
+    /// had text: the authoritative wording the voiceover was read from.
+    /// The run hands it to the voice reading, which aligns the transcript
+    /// against it - misheard words corrected to the author's spelling,
+    /// measured timings kept - so the captions and the queries spend the
+    /// author's words. `None` when the box was empty: the transcript
+    /// then stands as it was transcribed.
+    script: Option<String>,
 }
 
 /// What the sibling build collected, as one unit: a copy that fails or
@@ -2798,6 +2820,10 @@ fn build_voiceover_sibling(
                         .into_owned(),
                     sheet: "auto-edit-sheet.png".to_owned(),
                     director: None,
+                    // The button's own script lands here after the sibling
+                    // is built (auto_edit_start knows it; the builder does
+                    // not), so the construction names the honest default.
+                    script: None,
                 })
             } else {
                 None
@@ -3206,6 +3232,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          low (see `signalConfidence`) is spent with less weight and its basis is named; a \
          family at confidence 0 was not measured, so say so and do not cite it. Never dump \
          the profile into a note: every signal you read must land on a choice.\n\n\
+         {script}\
          FIRST THE BRIEF: call creative_brief {{action:\"set\", path:'{project}', brief:...}} \
          before any planning tool; the plan carries that brief and a plan without one is not \
          creativeReady. Run a three-concept bake-off first: write three different films that could answer the brief, say what each would make the viewer feel, and choose one for a stated reason - then write the style bible (`style` in the plan: palette, grade, caption system, motion hand, sound world, footage treatment, continuity rules) and the retention contract (`retention`: hook, turnAt, payoffAt, patternBreaks, openLoops). Both are creativeReady blockers when absent. Then write the Phase 5 story map, not a shot list with no argument.\n\n\
@@ -3274,6 +3301,16 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          {stock}\n\n         GENERATIVE MEDIA: {generator}",
         project = source.project,
         critic = critic,
+        script = source.script.as_deref().map_or_else(String::new, |script| {
+            format!(
+                "THE SCRIPT (the author's own wording, authoritative): pass it as the \
+                 `script` argument of every voice_signals call. The reading aligns the \
+                 transcript against it - misheard words are corrected to this spelling \
+                 while the measured timings stay - and its reply carries a \
+                 `scriptAlignment` verdict. Captions, entity cards and B-roll queries \
+                 spend these words, never the recogniser's guesses. The script:\n{script}\n\n"
+            )
+        }),
         stock = if stock_shelves_ready(studio) {
             "The stock shelves are keyed (Settings > Stock APIs): shop them for B-roll.".to_owned()
         } else {
@@ -3953,6 +3990,7 @@ mod tests {
             export: export.join("auto-edit.mp4").to_string_lossy().into_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             director: None,
+            script: None,
         };
         assert!(director_retry_available(&source));
 

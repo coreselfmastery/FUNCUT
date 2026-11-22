@@ -219,8 +219,13 @@ taboo hit is a blocker — replace the query, never the taboo.
 
 **Phase 4 — Read what the voiceover IS (the acoustic score).**
 `voice_signals {audio: <the voiceover>, transcript: <the transcribe output>,
-emotion: <the Phase 3 extract>, language: <the hint used>}` — one call,
-the whole reading. Every line returns its **momentary loudness relative to
+script: <the author's text when a script exists>, emotion: <the Phase-1b
+extract>, language: <the hint used>}` — one call,
+the whole reading. The script, when there is one, is the wording's
+authority: the call aligns it against the transcript (misheard words
+corrected to the author's spelling, measured timings kept, a
+`scriptAlignment` verdict in the reply), so captions and queries quote
+the script, never the recogniser's guesses. Every line returns its **momentary loudness relative to
 the take** (a line 3 LU over the mean is a punch line; 3 LU under is a
 confession), its **speech rate** (words-per-minute and syllables-per-second
 with a pace class: punchy / conversational / editorial / slow), its

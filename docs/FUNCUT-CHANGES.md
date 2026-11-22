@@ -3162,3 +3162,74 @@ per-entity `confidence` nobody parsed; a 0.3-confidence MONEY read
 still earned the stat card that claims exactness. The confidence is
 parsed and spent: under 0.6 the stat and timeline cards step down
 with the approximate ones.
+
+## 75. The script aligned, the repair selected, the vetoes spent
+
+The catalogue described five shapes of signal use - direct action,
+veto, confidence modulator, repair selector, diagnostic - and the
+spine implemented one. This pass closes the four gaps that were
+left, and answers the question the script itself asked.
+
+**The script and the voice are not the same input.** The text
+signals (entities, sentence types, fillers, motifs, language) always
+shared one code path - `_collect_lines` reads a transcript or a
+script, never both - so a run that HAD the author's script threw it
+away the moment a transcript existed. `voice_signals` now aligns
+the two when both are given: monotonic sentence pairing, word-level
+difflib, shared words confirmed (confidence floored at 0.85),
+misheard words corrected to the script's spelling with the measured
+timing kept, insertions and omissions counted, and a
+`scriptAlignment` verdict in the reply. The corrected lines flow
+through every ear, and `transcripts_of` spends them downstream:
+the captions, the B-roll queries, the emotion read and the plan's
+spoken lines all quote the author, not the recogniser. The AUTO
+EDIT button carries the Forge page's script box (the Slint
+callback, the message, the source struct and the program source all
+grew the field), and the Director agent's prompt tells it to pass
+the script to every call.
+
+**The repair selector, closed.** The forensic signals that name the
+right repair were measured, turned into prose by
+`noise_character`, and then ignored: the spine ran
+`enhance_speech` and a FORCED generic `remove_hiss_hum_rumble` on
+every take. `audio_repair` grew `diagnose_take` (one pass: floor,
+SNR, hum, hiss, rumble, DC offset, clipping, flatness, rolloff at
+the same 85% the Rust ear uses, sibilance, loudness) and
+`repair_by_diagnosis` (the ordered chain the numbers asked for: DC
+blocker first, hum notches, the rumble door, the de-esser, a
+presence lift INSTEAD of the denoise when the take is muffled, the
+limiter when it clips). The AudioRepair lane now measures before
+it repairs, and the diagnosis reply sits in the log where the
+critic reads what the repair was chosen on.
+
+**The vetoes spent.** A reverberant take (tail over 0.4 s) no
+longer places tight-sync accents - the tail smears what the sync
+would mark (the reverb veto, catalogue #44). A take whose SNR sits
+under 15 dB lands its accents a fifth down (just under 2 dB), out
+of the mud its floor would make of them (the SNR modulator, #26).
+Both keep the honest `None` arm: unmeasured is not the same answer
+as reverberant or noisy.
+
+**The cut lands on the structure.** The coverage tiling snapped its
+bounds to pauses alone; the snap candidates now run speaker change
+(only when the shares say the take is a real conversation) over
+pause over flux onset - a tile bound lands on the scene change, the
+breath or the word's attack, never an arbitrary frame (#34, #46).
+And the drift's cut-style fallback learned the one input it never
+had: a take whose emotion arc climbs (last third over first by
+0.25, four lines at least) is a `building` cut even when no rate or
+flux reading said fast (#16, wired where the profile could not
+derive it because the unattended spine hands the emotion read
+late).
+
+**The extraction, completed.** Entities carried only their surface
+text; every entity now carries a parsed `value` and `unit`
+(`$10,450` is 10450 USD, `45%` is 45 percent, `10 lakh` is
+1000000, `₹2 crore` is 20000000 INR) and the char `span` the words
+occupy (the Rust ear emits its own offsets, the Python enrichment
+completes the rest) - the numbers a stat card or a chart can plot
+rather than quote (#13). The rolloff catalogue text claimed 95%
+where the code always computed 85%; the text now says what the
+instrument measures. The captions' weight-800 arm learned the
+catalogue's two-factor pairing: a line BOTH lifted and performed
+carries one more notch of size (#4 + #18).

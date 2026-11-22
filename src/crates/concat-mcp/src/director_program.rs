@@ -72,6 +72,15 @@ pub struct AutoEditProgramSource {
     /// The configured live stock shelf for B-roll. AUTO EDIT never imports
     /// OpenVid's research-only dataset because it has no per-clip licence.
     pub stock_provider: String,
+    /// The script the run was handed, when the Forge page carried one: the
+    /// authoritative wording the voiceover was read from. It travels to the
+    /// voice reading, which aligns the transcript against it - misheard
+    /// words corrected to the spelling the author wrote, measured timings
+    /// kept - so the captions, the B-roll queries and the emotion read
+    /// spend the author's words rather than the recogniser's guesses.
+    /// `None` when no script was given: the transcript then stands as it
+    /// was transcribed, exactly as it always did.
+    pub script: Option<String>,
 }
 
 /// The last timeline view the run read: the newest reply shaped like one,
@@ -566,8 +575,19 @@ fn next_played_peak(
 
 /// The transcript each take's wait left behind: the take file and the
 /// segments its words timed. A wait that never landed is not here.
+///
+/// The voice reading's own lines, when the stage ran, take precedence
+/// over the raw transcript: a run handed a script aligns the two inside
+/// `voice_signals` - misheard words corrected to the spelling the author
+/// wrote, measured timings kept - so every consumer downstream (the
+/// captions' text, the queries the B-roll shops with, the emotion read,
+/// the plan's own spoken lines) spends the author's words rather than the
+/// recogniser's guesses. A take with no voice reading keeps its transcript
+/// exactly as it was transcribed, and a voice reply whose lines carry no
+/// timings is passed over: it is a filtered lab read, not a replacement
+/// for the transcript the captions are timed from.
 fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>)> {
-    let mut found = Vec::new();
+    let mut found: Vec<(String, Vec<Value>)> = Vec::new();
     for reply in log {
         let Some(path) = reply["path"].as_str() else {
             continue;
@@ -585,6 +605,51 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
             continue;
         };
         found.push((path.to_owned(), segments.clone()));
+    }
+    // The overlay pass: the newest voice reading per take wins, because
+    // a reply can only be newer than the transcript it was read from -
+    // and a lab re-read of the same take carries the same corrections
+    // the profile did, so the last word is also the best one.
+    for reply in log {
+        let Some(voice) = VoiceRead::of(reply) else {
+            continue;
+        };
+        if !takes.iter().any(|take| take.take == voice.take) {
+            continue;
+        }
+        let Some(rows) = reply["lines"].as_array() else {
+            continue;
+        };
+        // Only a reading whose lines can stand in for a transcript may
+        // replace it: each line needs its span (the captions and the
+        // slots map every line onto the timeline through its start and
+        // end), its text (the queries shop with it) and its timed words
+        // (the captions are cut on them). A reply whose lines carry only
+        // the prosody - a lab fixture, a filtered read - is passed over:
+        // it is not a replacement for the transcript the words came from.
+        let timed: Vec<Value> = rows
+            .iter()
+            .filter(|line| {
+                line["start"].as_f64().is_some_and(|start| {
+                    start >= 0.0
+                        && line["end"].as_f64().is_some_and(|end| end > start)
+                        && line["text"]
+                            .as_str()
+                            .is_some_and(|text| !text.trim().is_empty())
+                        && line["words"]
+                            .as_array()
+                            .is_some_and(|words| !words.is_empty())
+                })
+            })
+            .cloned()
+            .collect();
+        if timed.is_empty() {
+            continue;
+        }
+        match found.iter_mut().find(|(path, _)| *path == voice.take) {
+            Some((_, segments)) => *segments = timed,
+            None => found.push((voice.take.clone(), timed)),
+        }
     }
     found
 }
@@ -1432,6 +1497,52 @@ fn planned_spans_overlap(log: &[Value], takes: &[TakePaths], tile: &BrollSlot) -
         })
 }
 
+/// The structural moments a take measured, that a coverage tile's bound
+/// may snap to: the pauses (where the speaker breathed), the speaker
+/// changes (where the voice itself changed - only populated when the
+/// take is a real conversation) and the flux onsets (the transients,
+/// a word's own attack). The order the snap spends them in is the
+/// order a human editor would: the scene change first, the breath
+/// second, the attack last.
+#[derive(Clone, Default)]
+struct SnapBounds {
+    /// Pause starts, in file seconds, sorted.
+    pauses: Vec<f64>,
+    /// Speaker-change times, in file seconds, sorted. Empty on a
+    /// single-voice take.
+    speaker_changes: Vec<f64>,
+    /// Spectral-flux onsets, in file seconds.
+    onsets: Vec<f64>,
+}
+
+impl SnapBounds {
+    /// The strongest structural moment near `target` that stays past
+    /// `floor` (the earliest bound a tile of honest length allows): a
+    /// speaker change inside the breath window first, then a pause, then
+    /// an onset inside the tighter transient window. `None` when no
+    /// measured moment is near enough - the bound then stays where the
+    /// cadence put it, which is an arbitrary frame but an honest one.
+    fn snap(&self, target: f64, floor: f64, window: f64, onset_window: f64) -> Option<f64> {
+        let nearest = |moments: &[f64], win: f64| {
+            moments
+                .iter()
+                .copied()
+                .filter(|at| (*at - target).abs() <= win && *at > floor)
+                .min_by(|left, right| (left - target).abs().total_cmp(&(right - target).abs()))
+        };
+        // A speaker change is the strongest boundary the take has: a new
+        // voice is a new scene, and the shot owes it a change of angle.
+        nearest(&self.speaker_changes, window)
+            // The breath: the shot changes where the speaker paused, and
+            // a bound that lands mid-word is the one thing the tiling
+            // must never do.
+            .or_else(|| nearest(&self.pauses, window))
+            // The transient: a cut that lands on an attack reads as
+            // intentional in a way a cut twenty frames later never does.
+            .or_else(|| nearest(&self.onsets, onset_window))
+    }
+}
+
 /// The coverage floor: contiguous slots tiling every second of every
 /// placed take that the sibling's own picture does not already show, at
 /// a cadence the runtime sets. The bounds are FILE seconds - the gather
@@ -1452,6 +1563,10 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     const MOST: usize = 40;
     const SHORTEST_TILE: f64 = 1.6;
     const SNAP_WINDOW: f64 = 0.8;
+    // The transient window is tighter than the breath window: an onset
+    // is a word's attack, so a bound snapped to one from further away
+    // would land inside the word the pause snap exists to protect.
+    const ONSET_WINDOW: f64 = 0.3;
     const QUERY_WORDS: usize = 6;
 
     let Some(view) = latest_view(log) else {
@@ -1460,17 +1575,31 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     let media = media_paths(view);
     let covered = visual_spans(view);
     let read = emotion_lines(log, takes);
-    // The pauses every take measured, for snapping tile bounds to the
-    // breath: a shot change lands at a pause, never mid-word.
-    let pauses: Vec<(String, Vec<f64>)> = voice_reads(log, takes)
+    // The structural moments every take measured, for snapping tile
+    // bounds: the breaths the pauses classified, the seams a speaker
+    // change opened (only when the shares say the take is a real
+    // conversation - a lone wobble in a single-voice take is not a
+    // scene change), and the transients the flux found. A tile bound is
+    // a cut, and the cut wants the strongest structural moment near it:
+    // who changed, then where the speaker breathed, then the nearest
+    // attack - an arbitrary frame is the last resort, never the choice.
+    let pauses: Vec<(String, SnapBounds)> = voice_reads(log, takes)
         .into_iter()
         .map(|voice| {
-            let starts: Vec<f64> = {
-                let mut starts: Vec<f64> = voice.pauses.iter().map(|pause| pause.start).collect();
-                starts.sort_by(|left, right| left.total_cmp(right));
-                starts
+            let mut bounds = SnapBounds {
+                pauses: voice.pauses.iter().map(|pause| pause.start).collect(),
+                speaker_changes: voice
+                    .conversation()
+                    .filter(|real| *real)
+                    .map(|_| voice.take_wide.speaker_changes.clone())
+                    .unwrap_or_default(),
+                onsets: voice.take_wide.flux_onsets.clone(),
             };
-            (voice.take, starts)
+            bounds.pauses.sort_by(|left, right| left.total_cmp(right));
+            bounds
+                .speaker_changes
+                .sort_by(|left, right| left.total_cmp(right));
+            (voice.take, bounds)
         })
         .collect();
 
@@ -1528,14 +1657,14 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     };
 
     // Second pass: tile each uncovered run at the cadence, snapping
-    // bounds to the nearest pause, and shop each tile with the words it
-    // carries.
+    // bounds to the strongest measured moment, and shop each tile with the
+    // words it carries.
     let mut slots: Vec<BrollSlot> = Vec::new();
     for (take, open) in &runs {
-        let pause_starts = pauses
+        let bounds = pauses
             .iter()
             .find(|(path, _)| path == take)
-            .map(|(_, starts)| starts)
+            .map(|(_, bounds)| bounds)
             .cloned()
             .unwrap_or_default();
         let spoken = transcripts_of(log, takes)
@@ -1563,18 +1692,13 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
             // uncovered second.
             while to - from > 0.5 && slots.len() < MOST {
                 let mut next = (from + target).min(to);
-                // Snap the bound to the nearest pause inside the window:
-                // the shot changes where the speaker breathes, and a
-                // bound that lands mid-word is the one thing the tiling
-                // must never do.
-                let snap = pause_starts
-                    .iter()
-                    .copied()
-                    .filter(|at| {
-                        (*at - next).abs() <= SNAP_WINDOW && *at > from + SHORTEST_TILE * 0.5
-                    })
-                    .min_by(|left, right| (left - next).abs().total_cmp(&(right - next).abs()));
-                if let Some(at) = snap {
+                // Snap the bound to the strongest measured moment near it:
+                // the shot changes where the structure is - a speaker
+                // change, a breath, a transient - and a bound that lands
+                // mid-word is the one thing the tiling must never do.
+                if let Some(at) =
+                    bounds.snap(next, from + SHORTEST_TILE * 0.5, SNAP_WINDOW, ONSET_WINDOW)
+                {
                     next = at;
                 }
                 // The last tile of a run takes the rest, however long -
@@ -2970,6 +3094,27 @@ fn look_for_temperature(temperature: &str) -> &'static str {
         // surprise profile itself asks for.
         _ => "concat.teal-orange",
     }
+}
+
+/// Whether the take's emotional arc rises: the mean intensity of the
+/// last third of its emotion lines at least 0.25 over the first third's,
+/// over at least four lines. The catalogue's `building` cut style -
+/// start held, accelerate into the climax - is the arc's own shape, and
+/// this is the reading that says the take has it. The profile can derive
+/// `building` itself only when the emotion read was handed to it, which
+/// the unattended spine never did; the arc it measured afterwards is the
+/// same evidence read one stage later, and this is where it is spent.
+fn arc_building(read: &[EmotionLine], take: &str) -> bool {
+    let mut lines: Vec<&EmotionLine> = read.iter().filter(|line| line.take == take).collect();
+    if lines.len() < 4 {
+        return false;
+    }
+    lines.sort_by(|left, right| left.start.total_cmp(&right.start));
+    let third = lines.len() / 3;
+    let mean = |rows: &[&EmotionLine]| {
+        rows.iter().map(|line| line.intensity).sum::<f64>() / rows.len().max(1) as f64
+    };
+    mean(&lines[lines.len() - third..]) - mean(&lines[..third]) >= 0.25
 }
 
 /// The sound queries an emotion's profile asks for, in the order the
@@ -5214,6 +5359,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         tool: tool.to_owned(),
         arguments,
     };
+    let script = source
+        .script
+        .clone()
+        .filter(|script| !script.trim().is_empty());
     let mut steps: Vec<ProgramStep> = Vec::new();
     // 1. The handoff, read back: the sibling is opened on the window's
     //    server - the same register a forge run's edit sits in - and the
@@ -5228,14 +5377,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         )
         .into(),
     );
-    // 2. The repair, per distinct take, on its own lane: the enhanced
-    //    chain lands on the take the timeline plays, so the export ships
-    //    the sound the repair made. One file's failure warns and skips
-    //    the rest - the take ships as recorded.
+    // 2. The repair, per distinct take, on its own lane: measured first,
+    //    then only the chain the measurements ordered. The old spine ran
+    //    the same generic clean on every take - a hum paid for a
+    //    broadband pass that barely touched it, a DC offset paid for a
+    //    denoise that cannot remove a bias, and a muffled take was
+    //    denoised into a deeper muffle. The diagnosis names the repair:
+    //    the mains hum gets its notch, the DC offset its blocker, the
+    //    muffled take a presence lift instead of the denoise. The
+    //    enhanced chain still lands on the take the timeline plays, so
+    //    the export ships the sound the repair made; one file's failure
+    //    warns and skips the rest - the take ships as recorded.
     let repair: Vec<Vec<ToolCall>> = takes
         .iter()
         .map(|take| {
             vec![
+                // The measurement is a call of its own so the reply - the
+                // hum frequency, the DC offset, the flatness, the rolloff
+                // - sits in the log where the critic and the signal brief
+                // can read what the repair was chosen on.
+                call(
+                    "sense_audio_repair",
+                    json!({
+                        "action": "diagnose_take",
+                        "audio": take.take,
+                    }),
+                ),
                 call(
                     "sense_audio_repair",
                     json!({
@@ -5248,18 +5415,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 call(
                     "sense_audio_repair",
                     json!({
-                        "action": "remove_hiss_hum_rumble",
+                        "action": "repair_by_diagnosis",
                         "audio": take.enhanced,
                         "out": take.take,
                         "overwrite": true,
-                        // A clean take is one the cleanup would decline
-                        // without force - and the declined reply writes
-                        // nothing, which would leave the timeline playing
-                        // the raw recording while the run believed it had
-                        // shipped the enhanced one. Forced, the chain
-                        // lands: the enhancement the first call made,
-                        // carried through the second call's conservative
-                        // highpass.
+                        // The same invariant the forced clean always kept:
+                        // a declined repair writes nothing, and the
+                        // timeline would go on playing the raw recording
+                        // while the run believed it had shipped the
+                        // enhanced one. Forced, the repair lands - and on
+                        // a clean take what lands is the conservative
+                        // 60 Hz door and nothing else, the diagnosis's
+                        // own word that the take is cleaner than the cure.
                         "force": true,
                     }),
                 ),
@@ -5304,10 +5471,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     );
     // 4. The delivery: pauses, emphasis, the read itself - one lane per
     //    take, each reply carrying its own audio path so the fan's
-    //    landing order is no one's guess.
+    //    landing order is no one's guess. The script, when the run was
+    //    handed one, rides along: the reading aligns the transcript to
+    //    the author's wording (misheard words corrected, timings kept)
+    //    and its reply carries the alignment verdict beside the words.
     let signals: Vec<Vec<ToolCall>> = takes
         .iter()
-        .map(|take| vec![call("voice_signals", json!({ "audio": take.take }))])
+        .map(|take| {
+            let mut arguments = json!({ "audio": take.take });
+            if let Some(script) = script.as_deref() {
+                arguments["script"] = json!(script);
+            }
+            vec![call("voice_signals", arguments)]
+        })
         .collect();
     steps.push(FanStep::fan(Stage::VoiceSignals, signals).into());
     // 5. The understanding: the music gate (a take that already carries
@@ -6534,6 +6710,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     {
                                         pending_style = "fast".to_owned();
                                     }
+                                    // The arc the emotion read measured is the
+                                    // one input the fallback never had: a
+                                    // take whose feeling climbs - the last
+                                    // third reading clearly over the first -
+                                    // is a building cut even when no rate,
+                                    // rhythm or flux reading said "fast".
+                                    // The drift already knows what building
+                                    // means; the profile just could not
+                                    // derive it without the emotion read the
+                                    // unattended spine hands it late.
+                                    if pending_style.is_empty()
+                                        && arc_building(
+                                            &emotion_lines(log, &gather_emotion),
+                                            &slot.take,
+                                        )
+                                    {
+                                        pending_style = "building".to_owned();
+                                    }
                                     pending_period = take_read
                                         .as_ref()
                                         // The period the pulse has
@@ -7024,6 +7218,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .and_then(|line| take_read.clean_voice(line))
                             });
                             if performed == Some(true) && !gated && steady != Some(false) {
+                                size += 0.003;
+                            }
+                            // Two-factor emphasis, the catalogue's own
+                            // pairing: a line BOTH lifted (its level over
+                            // the take's integrated one) and performed (a
+                            // six-semitone range) is the delivery's own
+                            // highlight - the voice raised it and performed
+                            // it, so the caption carries one more notch of
+                            // size. One factor alone keeps its single arm
+                            // above: a lifted line that reports and a
+                            // performed line that settles each stay at the
+                            // one-notch bump.
+                            if lifted && performed == Some(true) && !gated && steady != Some(false)
+                            {
                                 size += 0.003;
                             }
                             // The vertical band is narrower and sits higher
@@ -8013,8 +8221,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         Pick {
             /// The peak's timeline moment, already resolved.
             at: f64,
-            /// The peak's strength, for the gain its accent lands at.
-            strength: f64,
+            /// The level the accent lands at, in dB: the strength's own
+            /// bucket, already adjusted for the take's SNR - resolved
+            /// here because the take is in hand where the peak was
+            /// picked, not where the reply comes back.
+            gain_db: f64,
             /// The family the peak's emotion named, walked word by word.
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
@@ -8024,8 +8235,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         Gain {
             /// The sound's library id, spent for anti-repetition.
             id: String,
-            /// The peak's strength, for the gain.
-            strength: f64,
+            /// The level the accent lands at, in dB, carried from the
+            /// pick that earned it.
+            gain_db: f64,
         },
     }
     steps.push(
@@ -8033,6 +8245,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Stage::Sfx,
             Box::new({
                 let mut peaks: Option<Vec<(String, f64, f64)>> = None;
+                // The per-take accent attenuation, resolved once with the
+                // peaks: a take whose SNR sits under 15 dB is a take whose
+                // floor lives close under the voice, and an accent at its
+                // full bucket level over that floor is mud. The catalogue's
+                // own rule - low SNR down-weights the reading by a fifth -
+                // and a fifth in amplitude is just under 2 dB, spent as an
+                // attenuation and not as a multiplier on a negative gain
+                // (which would make the accent louder). A take with no SNR
+                // reading keeps the full level: unmeasured is not the same
+                // answer as noisy.
+                let mut accent_attenuation: Option<Vec<(String, f64)>> = None;
                 let mut placed = 0usize;
                 let mut pending: Option<SfxPending> = None;
                 // Every accent the run lands is spent: the same id twice
@@ -8102,11 +8325,38 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 })
                                 .is_none_or(|clean| clean)
                         });
+                        // A reverberant take smears anything tight-synced to
+                        // a word: the forensic ear's own tail estimate over
+                        // 0.4 s retires the peak, because an accent timed
+                        // to the sample under a room's tail is a smear, not
+                        // a hit - the accent the ear cannot hold is an
+                        // accent the mix must not place. A take with no
+                        // tail reading keeps its peaks: unmeasured is not
+                        // the same answer as reverberant.
+                        found.retain(|(take, _, _)| {
+                            voice_read_of(&voice, take)
+                                .and_then(|voice_read| voice_read.take_wide.reverb_tail_sec)
+                                .is_none_or(|tail| tail <= 0.4)
+                        });
                         // The strongest six, earliest first: the run's
                         // accent budget, spent where the read peaked.
                         found.sort_by(|left, right| right.2.total_cmp(&left.2));
                         found.truncate(6);
                         found.sort_by(|left, right| left.1.total_cmp(&right.1));
+                        // The attenuation lands beside the peaks it
+                        // softens, from the same readings, in the same
+                        // pass.
+                        let penalties = voice
+                            .iter()
+                            .map(|read| {
+                                let penalty = match read.take_wide.snr_db {
+                                    Some(snr) if snr < 15.0 => 1.94,
+                                    _ => 0.0,
+                                };
+                                (read.take.clone(), penalty)
+                            })
+                            .collect::<Vec<_>>();
+                        accent_attenuation.get_or_insert(penalties);
                         found
                     });
                     // A reply is waiting to be read: the pending state says
@@ -8114,7 +8364,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     match pending.take() {
                         Some(SfxPending::Pick {
                             at,
-                            strength,
+                            gain_db,
                             queries,
                             mut tried,
                         }) => {
@@ -8161,7 +8411,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .unwrap_or(0.0);
                                 pending = Some(SfxPending::Gain {
                                     id: id.clone(),
-                                    strength,
+                                    gain_db,
                                 });
                                 return Some(call(
                                     "sounds_add",
@@ -8181,7 +8431,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 let query = queries[(rotation + tried) % queries.len()];
                                 pending = Some(SfxPending::Pick {
                                     at,
-                                    strength,
+                                    gain_db,
                                     queries,
                                     tried,
                                 });
@@ -8198,7 +8448,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             placed += 1;
                             rotation = rotation.wrapping_add(1);
                         }
-                        Some(SfxPending::Gain { id, strength }) => {
+                        Some(SfxPending::Gain { id, gain_db }) => {
                             used.push(id);
                             placed += 1;
                             rotation = rotation.wrapping_add(1);
@@ -8217,7 +8467,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     json!({
                                         "path": sfx_project,
                                         "clipId": clip,
-                                        "baseDb": accent_gain_db(strength),
+                                        "baseDb": gain_db,
                                         "replaceAutomation": true,
                                     }),
                                 ));
@@ -8264,9 +8514,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         .get(placed)
                         .map(|(_, _, strength)| *strength)
                         .unwrap_or(0.5);
+                    // The level this accent lands at: the strength's own
+                    // bucket, attenuated by the take's own noise penalty -
+                    // a noisy take's accents sit a fifth down, out of the
+                    // mud its floor would make of them.
+                    let penalties = accent_attenuation.get_or_insert_with(Vec::new);
+                    let penalty = penalties
+                        .iter()
+                        .find(|(path, _)| *path == take)
+                        .map(|(_, penalty)| *penalty)
+                        .unwrap_or(0.0);
                     pending = Some(SfxPending::Pick {
                         at,
-                        strength,
+                        gain_db: accent_gain_db(strength) - penalty,
                         queries: queries.clone(),
                         tried: 0,
                     });
@@ -8613,6 +8873,7 @@ mod tests {
             export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let program = super::auto_edit_program(&source);
 
@@ -8693,27 +8954,39 @@ mod tests {
         );
 
         // The repair is fanned, one lane per take, and its chain lands on
-        // the take the editable timeline plays.
+        // the take the timeline plays: the export ships the repaired
+        // sound, the watcher's own promise. The lane measures before it
+        // repairs: diagnose_take first (its reply sits in the log where
+        // the critic reads what the repair was chosen on), the
+        // enhancement second, and only then the repair the diagnosis
+        // ordered - a hum gets its notch, a DC offset its blocker, a
+        // muffled take a presence lift instead of the denoise that
+        // would deepen it.
         let ProgramStep::Fanned(repair) = &program.steps[1] else {
             panic!("the repair is fanned");
         };
         assert_eq!(repair.groups.len(), 2, "one lane per take");
         assert_eq!(repair.groups[0][0].tool, "sense_audio_repair");
-        assert_eq!(repair.groups[0][0].arguments["action"], "enhance_speech");
+        assert_eq!(repair.groups[0][0].arguments["action"], "diagnose_take");
         assert_eq!(
-            repair.groups[0][0].arguments["out"],
-            source.takes[0].enhanced.as_str()
+            repair.groups[0][0].arguments["audio"],
+            source.takes[0].take.as_str()
         );
-        assert_eq!(
-            repair.groups[0][1].arguments["action"],
-            "remove_hiss_hum_rumble"
-        );
-        assert_eq!(
-            repair.groups[0][1].arguments["audio"],
-            source.takes[0].enhanced.as_str()
-        );
+        assert_eq!(repair.groups[0][1].arguments["action"], "enhance_speech");
         assert_eq!(
             repair.groups[0][1].arguments["out"],
+            source.takes[0].enhanced.as_str()
+        );
+        assert_eq!(
+            repair.groups[0][2].arguments["action"],
+            "repair_by_diagnosis"
+        );
+        assert_eq!(
+            repair.groups[0][2].arguments["audio"],
+            source.takes[0].enhanced.as_str()
+        );
+        assert_eq!(
+            repair.groups[0][2].arguments["out"],
             source.takes[0].take.as_str()
         );
 
@@ -8980,6 +9253,7 @@ mod tests {
                 export: "/t/out.mp4".to_owned(),
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
+                script: None,
             },
         )
         .expect("a plan from the read");
@@ -9059,6 +9333,7 @@ mod tests {
                 export: "/t/out.mp4".to_owned(),
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
+                script: None,
             },
         )
         .expect("a plan from the read");
@@ -9160,6 +9435,7 @@ mod tests {
                 export: "/t/out.mp4".to_owned(),
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
+                script: None,
             },
         )
         .expect("a plan from the read");
@@ -9231,6 +9507,7 @@ mod tests {
                 export: "/t/out.mp4".to_owned(),
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
+                script: None,
             },
         )
         .expect("a plan from the read");
@@ -10117,6 +10394,7 @@ mod tests {
             export: "/t/out.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let pacing = |log: &[Value]| {
             let plan = auto_plan(log, &takes, &source()).expect("a plan from the read");
@@ -10176,6 +10454,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         // The weight and the size, for a line whose pitch range was read
         // as `range`. `None` is a take whose prosody was never measured.
@@ -10275,6 +10554,7 @@ mod tests {
             export: "/t/out.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mix = |lufs: Option<f64>| {
             let read = match lufs {
@@ -10418,6 +10698,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let at = program
@@ -10469,6 +10750,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let program = auto_edit_program(&source);
         let order: Vec<&str> = program
@@ -10526,6 +10808,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let at = program
@@ -10667,6 +10950,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(timeline) = program
@@ -10734,6 +11018,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(timeline) = program
@@ -10793,6 +11078,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let bed_for = |floor_dbfs: f64| {
             let mut program = auto_edit_program(&source);
@@ -10838,6 +11124,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let bed_for = |decision: &str| {
             let mut program = auto_edit_program(&source);
@@ -10928,6 +11215,7 @@ mod tests {
                     export: "/t/out.mp4".to_owned(),
                     sheet: "sheet.png".to_owned(),
                     stock_provider: "pexels".to_owned(),
+                    script: None,
                 },
             )
             .expect("a plan from the read");
@@ -10963,6 +11251,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -11069,6 +11358,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = program
@@ -11167,6 +11457,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = program
@@ -11258,6 +11549,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let weight_for = |relative_lu: f64| {
             let mut program = auto_edit_program(&source);
@@ -11970,6 +12262,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -12174,6 +12467,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -12302,6 +12596,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -12506,6 +12801,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(understand) = &mut program.steps[4] else {
@@ -12999,6 +13295,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -13089,6 +13386,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -13235,6 +13533,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -13354,6 +13653,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -13404,6 +13704,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -13499,6 +13800,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -13585,6 +13887,7 @@ mod tests {
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
+            script: None,
         };
         let program = auto_edit_program(&source);
         // The program's own Verify stage is the timeline's: the lanes it

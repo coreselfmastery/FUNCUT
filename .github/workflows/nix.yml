@@ -27,10 +27,6 @@ on:
 
 # Only a pull request's run is superseded by the next push to it; a run on
 # main is the record of whether main builds.
-concurrency:
-  group: nix-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   build:
     name: nix build

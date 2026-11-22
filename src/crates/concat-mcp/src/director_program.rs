@@ -8352,10 +8352,7 @@ mod tests {
         // The register, in the run's own order: the fanned repair and
         // transcription, the derived tighten-then-grade, B-roll, captions,
         // title entrances, bed and accents, the preview, the revise,
-        // the static export, the derived verify-gates, and the watch.
-        // The creative layer's remaining stages (the plan's brief, the
-        // baked motion comps) are absent - the fraction the page shows
-        // counts only these.
+        // the saved timeline, the verify gates and the final watch.
         let order: Vec<&str> = program
             .steps
             .iter()
@@ -8429,8 +8426,7 @@ mod tests {
         );
 
         // The repair is fanned, one lane per take, and its chain lands on
-        // the take the timeline plays: the export ships the repaired
-        // sound, the watcher's own promise.
+        // the take the editable timeline plays.
         let ProgramStep::Fanned(repair) = &program.steps[1] else {
             panic!("the repair is fanned");
         };

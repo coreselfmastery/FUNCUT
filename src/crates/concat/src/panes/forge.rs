@@ -142,7 +142,7 @@ pub enum ForgeMsg {
     /// The check the pane runs on a finished Director run came back: the
     /// receipt is the verdict, and the exit code is not.
     DirectorChecked(Box<concat_mcp::acceptance::DirectorAcceptance>),
-    /// The post-export acceptance worker could not reach the editor's MCP backend.
+    /// The post-run acceptance worker could not reach the editor's MCP backend.
     DirectorCheckFailed(String),
     /// The signal catalogue came back: the families the lab's buttons are
     /// built from, or why the catalogue could not be read.
@@ -209,7 +209,7 @@ pub struct ForgePane {
 pub struct AutoEditPane {
     /// A run is going.
     pub running: bool,
-    /// A Director process has exited, but its export is still being independently checked.
+    /// A Director process has exited, but its timeline is still being independently checked.
     /// Keep both editing entry points locked until that check has a terminal result.
     pub checking: bool,
     /// The stage's own word, localized - or the terminal state's.
@@ -801,7 +801,7 @@ impl ForgePane {
     fn auto_edit_start(&mut self, studio: &mut Studio) {
         if auto_edit_busy(self.auto.running, self.auto.checking) {
             studio.notify(
-                "AUTO EDIT is still running or checking its previous export",
+                "AUTO EDIT is still running or checking its previous timeline",
                 true,
             );
             return;
@@ -1113,7 +1113,7 @@ impl ForgePane {
     /// The Director run's end. A zero exit is the harness saying the
     /// agent finished; the edit it made is opened here in the window, the
     /// same landing a Start Forge run has, and the pane reports the run
-    /// rather than a measured export - the Director's own craft_critique
+    /// rather than a measured timeline - the Director's own craft_critique
     /// and its final watch_render are what judged the file, and the pane
     /// does not invent a score of its own.
     fn auto_director_ended(&mut self, code: i32, studio: &mut Studio) {
@@ -1144,7 +1144,7 @@ impl ForgePane {
             // Keep the UI's running state during acceptance so the same
             // Stop button can cancel the remaining independent checks.
             self.auto.running = true;
-            // The agent has exited, but the export is not accepted yet. Keep
+            // The agent has exited, but the timeline is not accepted yet. Keep
             // the project locked while the independent checks run: otherwise
             // a second Start/AUTO EDIT can replace the active project and the
             // first run's receipt can be written beside the wrong project.
@@ -1153,21 +1153,16 @@ impl ForgePane {
             self.auto.check_cancel = Some(Arc::clone(&check_cancel));
             // The Director phases have ended, but independent acceptance is
             // still outstanding. Do not display 100% until every required
-            // export gate has actually passed.
+            // timeline gate has actually passed.
             self.auto.fraction = director_acceptance_fraction(false);
             // The harness exiting zero says the agent stopped, not that the
-            // edit exists. So the run is held to the same four questions the
-            // fixed spine asks of its own export - is the file readable, is
-            // the mix on target, what does the critic score it, does it say
-            // the words the edit placed - and only a receipt the gates
-            // accept is reported as a finished edit. The check runs on a
-            // worker: it probes and measures a real file.
+            // edit exists. The Director's deliverable is the saved timeline,
+            // not a render: the acceptance reads the open project, judges
+            // its composited picture and checks the lanes. An export is
+            // optional and only adds the encoded-file gates.
             self.auto.stage = t("forge.autoEditCheckingStage");
             self.set_status(t("forge.autoEditCheckingStage"));
-            let (Some(project), Some(export)) = (
-                self.auto.project.clone(),
-                self.auto.source.as_ref().map(|s| s.export.clone()),
-            ) else {
+            let Some(project) = self.auto.project.clone() else {
                 self.auto.checking = false;
                 self.auto.running = false;
                 self.auto.check_cancel = None;
@@ -1175,20 +1170,28 @@ impl ForgePane {
                 self.auto.stage = t("forge.autoEditDirectorFailedStage");
                 self.set_status(t("forge.autoEditDirectorFailedStage"));
                 studio.notify(
-                    "the Director finished but the run has no project and export to check",
+                    "the Director finished but the run has no project to check",
                     true,
                 );
                 self.live_follow_stop();
                 studio.end_live_follow_back();
                 return;
             };
+            let export = self
+                .auto
+                .source
+                .as_ref()
+                .map(|source| source.export.clone())
+                .filter(|export| {
+                    !export.trim().is_empty() && std::path::Path::new(export).is_file()
+                });
             crate::host::spawn_detached(move || {
                 let checked = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
                     Ok(mut backend) => {
                         let toolbox = concat_mcp::tools::Toolbox::new();
                         let check = concat_mcp::acceptance::DirectorCheck {
                             project: &project,
-                            export: &export,
+                            export: export.as_deref(),
                         };
                         concat_mcp::acceptance::check(
                             &check,
@@ -3076,13 +3079,13 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          READ THE DEEP PLAYBOOKS BEFORE YOU DECIDE: read .claude/skills/funcut-director/SKILL.md, \
          prompts/creative_direction.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
          and the example, prompts/motion_comps.md with .claude/skills/motion/SKILL.md, \
-         prompts/quality_loop.md and prompts/tool_reference.md. The skill is the pipeline; the \
-         playbooks are the craft. Do not plan from memory.\n\n\
+         prompts/quality_loop.md, prompts/power_moves.md and prompts/tool_reference.md. The \
+         skill is the pipeline; the playbooks are the craft. Do not plan from memory.\n\n\
          MULTI-AGENT, WHEN THE HARNESS EXPOSES IT: if spawn_agents or /workflow is available, \
          fan out the independent read-only work - one agent per stock slot, one per motion beat, \
          one for sound, one for the story map, and a fresh-context critic. Subagents return \
          JSON, paths and reasons, never edits. YOU are the only writer: only this thread calls \
-         edit_apply, project_save or export_start. If no subagent tool exists, parallelise \
+         edit_apply or project_save. If no subagent tool exists, parallelise \
          independent tool calls and keep every write sequential; do not pretend a fan-out.\n\n\
          THE PROJECT: open '{project}' (project_open). The narration is ALREADY on the \
          timeline, reconstructed clip for clip with its own starts, in/out points, speed, \
@@ -3155,8 +3158,8 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          at least one revision, watch_render AGAIN and compare the two craft scores, and \
          repeat until the overall score is >= 7 with no black frames, letterbox bars or long \
          static runs. Then collision_check the timeline and fix every shared lane, and \
-         project_save so the edit the acceptance opens is the edit you judged. Only then \
-         export.\n\n\
+         project_save so the edit the acceptance opens is the edit you judged. Then hand off the \
+         timeline; do not export it.\n\n\
          INDEPENDENT CRITIC: the editor who made the cut is the worst judge of it. If the \
          harness exposes subagents, send a fresh-context critic the rendered contact sheet, the \
          brief and the plan - not this conversation - and ask for findings, not a rubber stamp. \
@@ -3164,21 +3167,20 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          the highest-leverage finding, then watch_render the whole cut again. Below 7 is not \
          ready.\n\n\
          PERSIST THE PLAN: write the exact canonical plan object you validated to \
-         '{project}/edit-plan.json' before you export - the run's acceptance gate reads that \
+         '{project}/edit-plan.json' before you save - the run's acceptance gate reads that \
          file as its story evidence, and an edit without it lands unproven whatever its \
          craft score.\n\n\
-         THE EXPORT lands at '{export}'. FINAL PROOF, not a promise: motion_probe (the file \
-         opens and reports streams), measure_loudness (the mix meets the platform target), \
-         watch_render with audio:true (the whole encoded film), craft_critique (the rendered \
-         picture, not the timeline), emotion {{action:\"verify\"}} (the words survived the \
-         render), and collision_check (no shared lanes). Report each gate's measured answer; if \
-         the pane's independent acceptance rejects or cannot prove the run, say so rather than \
-         calling a red receipt a finished video. Then report the honest score and what you \
-         changed. Never claim success on an unmeasured render. A file PATH to a PNG is \
-         not a picture you can see: only inline image blocks are.\n\n\
+         THE DELIVERABLE IS THE TIMELINE, NOT A RENDER: do NOT call export_start or \
+         export_wait. The user wants a finished timeline they can customize. Finish with \
+         project_save, then prove the timeline: watch_render the OPEN project with audio:true, \
+         craft_critique its sheet, collision_check the project, plan_validate the saved plan, and \
+         timeline_read the project. The pane's independent acceptance runs the same timeline \
+         checks; a skipped words/LUFS/export gate is honest, not a pass. Report the measured \
+         craft score, the gates, and what you changed. Exporting is the user's next click, not \
+         yours; if you rendered by mistake, leave the timeline as the deliverable and say so. A \
+         file PATH to a PNG is not a picture you can see: only inline image blocks are.\n\n\
          {stock}",
         project = source.project,
-        export = source.export,
         critic = critic,
         stock = if stock_shelves_ready(studio) {
             "The stock shelves are keyed (Settings > Stock APIs): shop them for B-roll.".to_owned()
@@ -3378,7 +3380,13 @@ const DIRECTOR_PHASES: [&[&str]; 23] = [
     &["grade proof", "preview_frame"],
     &["watch_render", "craft_critique"],
     &["independent critique", "revise"],
-    &["export_start", "export_wait"],
+    &[
+        "project_save",
+        "timeline ready",
+        "hand off",
+        "export_start",
+        "export_wait",
+    ],
     &["final watch", "motion_probe", "measure_loudness"],
     &["delivery", "acceptance", "receipt"],
 ];
@@ -3933,7 +3941,7 @@ mod tests {
         // The final phase never completes the bar: 1.0 is the accepted
         // end's alone.
         let (export, at_export) =
-            director_phase("Phase 8 — Export, then watch the actual file.").expect("phase eight");
+            director_phase("Phase 8 — Save and hand off the timeline (no export).").expect("phase eight");
         assert_eq!(export, 20);
         assert!(at_export < 1.0 && at_export > 0.8);
 
@@ -3948,8 +3956,8 @@ mod tests {
             ("Phase 5d — Sound design", 15),
             ("Phase 6b — Grade proof", 17),
             ("Phase 7b — Independent critique and revision", 19),
-            ("Phase 8b — Final watch and acceptance", 21),
-            ("Phase 9 — Delivery and the wow bar", 22),
+            ("Phase 8b — Final timeline acceptance", 21),
+            ("Phase 9 — Delivery, customization and the wow bar", 22),
         ] {
             assert_eq!(
                 director_phase(heading).map(|(at, _)| at),

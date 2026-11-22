@@ -1099,7 +1099,6 @@ impl ForgePane {
         if handed_over {
             return;
         }
-        let mut auto = auto;
         auto.director = director_fallback;
         // The fixed spine runs the stages in this process, so it needs the
         // window's own server as its backend. The handover above does not:

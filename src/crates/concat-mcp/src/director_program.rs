@@ -8261,7 +8261,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .iter()
                             .rev()
                             .find(|reply| {
-                                reply.get("pngPath")
+                                reply
+                                    .get("pngPath")
                                     .and_then(Value::as_str)
                                     .is_some_and(|path| !path.trim().is_empty())
                             })

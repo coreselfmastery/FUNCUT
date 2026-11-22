@@ -794,7 +794,7 @@ impl ForgePane {
     /// and then the deterministic spine of the pipeline is run by the
     /// concat-director runner over the window's own server: the repair,
     /// readings, tighten, grade, licensed live-stock B-roll, captions,
-    /// title entrances, music, preview, revise, export, verify and watch.
+    /// title entrances, music, preview, revise, save the timeline, verify and watch.
     /// The plan's creative brief, the eye-picked stock and the baked motion
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
@@ -3831,6 +3831,7 @@ fn stage_label(stage: &Stage) -> String {
         Stage::Music => t("forge.stageMusic"),
         Stage::Sfx => t("forge.stageSfx"),
         Stage::Preview => t("forge.stagePreview"),
+        Stage::TimelineReady => t("forge.stageTimelineReady"),
         Stage::Export => t("forge.stageExport"),
         Stage::Watch => t("forge.stageWatch"),
         Stage::Revise => t("forge.stageRevise"),

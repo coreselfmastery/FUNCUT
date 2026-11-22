@@ -39,7 +39,7 @@ not measured is named unmeasured; never cite a value that was not returned.
 | 26 | `forensic.snrDb` | `forensic` | voice usability, repair strength and music ducking |
 | 27 | `forensic.noiseType` | `forensic` | choose the right noise-removal treatment |
 | 28 | `forensic.spectralFlatness` | `forensic` | distinguish broadband noise from tonal material |
-| 29 | `forensic.formantsHz` | `forensic` | voice identity and consistency checks; never infer identity beyond the audio task |
+| 29 | `forensic.formantsHz` | `formants` | voice identity and consistency checks; never infer identity beyond the audio task |
 | 30 | `forensic.hnrDb` | `forensic` | voice clarity and whether repair is needed |
 | 31 | `forensic.jitter` | `forensic` | vocal roughness diagnosis and conservative repair |
 | 32 | `forensic.shimmer` | `forensic` | amplitude instability diagnosis and conservative repair |

@@ -66,12 +66,6 @@ on:
         type: string
         default: ""
 
-# Keep every commit's build: one run per workflow/ref, with a FIFO queue.
-# queue: max retains up to 100 pending runs instead of replacing the older one.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-  queue: max
 # The bundles read the tree and fetch their pinned dependencies; the
 # token has nothing to write until the release workflow's own publish
 # job says otherwise.

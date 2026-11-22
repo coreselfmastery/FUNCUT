@@ -28,11 +28,6 @@ on:
     - cron: '17 7 * * 1'
   workflow_dispatch:
 
-# Preserve every run for this workflow/ref; pending runs are queued, not replaced.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-  queue: max
 
 permissions:
   contents: read

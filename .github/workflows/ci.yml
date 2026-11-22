@@ -23,12 +23,6 @@ on:
         type: string
         default: ""
 
-# Preserve every commit's checks in arrival order for this workflow/ref.
-# queue: max allows up to 100 pending runs; newer commits do not replace older ones.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
-  queue: max
 # The tests and lints read the tree and post their results; nothing a
 # green run needs the token to write.
 permissions:

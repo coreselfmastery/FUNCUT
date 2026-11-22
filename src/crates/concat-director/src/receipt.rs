@@ -954,7 +954,11 @@ fn measured_voice_family(signal: &str) -> Option<&'static str> {
 /// checks vocabulary and confidence shape; this independent gate checks
 /// the claims against fresh profile replies instead of trusting a number
 /// the Director wrote into its own signalLog.
-fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String) {
+fn signal_evidence_gate(
+    plan: &Value,
+    profiles: &[Value],
+    emotion_arc: Option<&Value>,
+) -> (GateStatus, String) {
     let entries = plan
         .get("signalLog")
         .and_then(Value::as_array)
@@ -990,6 +994,17 @@ fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String
                     .or_insert(confidence);
             }
         }
+    }
+
+    // The arc is measured by emotion.py, not inferred by the voice
+    // profile. Its own extract reply is the evidence the voice profile
+    // would carry if the arc were passed through at extract time.
+    if emotion_arc.is_some_and(|reply| {
+        reply.get("ok").and_then(Value::as_bool) == Some(true)
+            && reply.pointer("/arc/arcShape").and_then(Value::as_str).is_some()
+            && reply.pointer("/arc/arcScore").and_then(Value::as_f64).is_some()
+    }) {
+        measured.insert("arc", 0.8);
     }
 
     let mut claimed = std::collections::BTreeSet::new();
@@ -1135,7 +1150,16 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                     .to_owned(),
             )
         } else if let Some(plan) = plan {
-            signal_evidence_gate(plan, &profiles)
+            let emotion_arc = observed
+                .iter()
+                .rev()
+                .find(|(call, reply)| {
+                    call.tool == "emotion"
+                        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+                        && reply.pointer("/arc/arcShape").and_then(Value::as_str).is_some()
+                })
+                .map(|(_, reply)| reply);
+            signal_evidence_gate(plan, &profiles, emotion_arc)
         } else {
             (
                 GateStatus::Skipped,
@@ -1600,7 +1624,7 @@ mod tests {
                 ]
             }
         })];
-        let (status, evidence) = signal_evidence_gate(&plan, &profiles);
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
         assert_eq!(status, GateStatus::Pass);
         assert!(evidence.contains("2 claimed voice-signal families"));
     }
@@ -1620,7 +1644,7 @@ mod tests {
                 ]
             }
         })];
-        let (status, evidence) = signal_evidence_gate(&plan, &profiles);
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
         assert_eq!(status, GateStatus::Fail);
         assert!(evidence.contains("did not measure wordConfidence"));
         assert!(evidence.contains("above measured pauses confidence"));
@@ -1629,7 +1653,7 @@ mod tests {
     #[test]
     fn signal_evidence_gate_rejects_empty_logs_and_unrated_families() {
         let empty = json!({"signalLog":[]});
-        let (status, evidence) = signal_evidence_gate(&empty, &[]);
+        let (status, evidence) = signal_evidence_gate(&empty, &[], None);
         assert_eq!(status, GateStatus::Fail);
         assert!(evidence.contains("no signalLog entries"));
 

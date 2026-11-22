@@ -1549,6 +1549,22 @@ mod tests {
     }
 
     #[test]
+    fn plan_voiceover_detection_covers_generated_placed_and_logged_voice() {
+        assert!(plan_has_voiceover(&json!({
+            "audio":{"voiceover":{"source":"tts"}}
+        })));
+        assert!(plan_has_voiceover(&json!({"audioClipId":"voice-1"})));
+        assert!(plan_has_voiceover(&json!({
+            "signalLog":[{"signals":["pause"],"confidence":0.7}]
+        })));
+        assert!(!plan_has_voiceover(&json!({
+            "audio":{"voiceover":null},
+            "audioClipId":"",
+            "signalLog":[]
+        })));
+    }
+
+    #[test]
     fn voiceover_timeline_requires_both_audio_and_visual_content() {
         let complete = json!({
             "timeline": {"clips": [

@@ -7522,7 +7522,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         let read = emotion_lines(log, &caption_emotion);
                         let mut commands: Vec<Value> = Vec::new();
                         placed_groups.clear();
-                        for (at, to, group) in kept {
+                        let next_starts: Vec<f64> = kept.iter().map(|(at, _, _)| *at).collect();
+                        for (index, (at, to, group)) in kept.into_iter().enumerate() {
                             let take_of = group.take.clone();
                             // The line the group sits in: its read decides
                             // the group's look, exactly as it decided the
@@ -7671,6 +7672,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .and_then(|line| take_read.caption_hold(line))
                             }) {
                                 duration = duration.max(hold.min(duration + 0.4));
+                            }
+                            // Never run into the next caption: the hold's
+                            // extension is capped by the next group's own
+                            // start when one is already placed.
+                            if let Some(next_at) = next_starts.get(index + 1).copied()
+                                && next_at > to
+                            {
+                                duration = duration.min(next_at - at);
                             }
                             commands.push(json!({
                                 "op": "addTextClip",

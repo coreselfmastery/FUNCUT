@@ -3319,6 +3319,7 @@ card's job, and an entity the NER rated under 0.5 is not a subject.
 **Captions read the register and the rate.** A line whose
 `pitchMeanHz` sits two semitones over the take's register earns the
 same one-notch size bump as a level lift, and `caption_hold` now
-sets a floor on the caption's actual duration (capped at +0.4 s so
-it never runs into the next line), not only the signal log's
-prose.
+sets a floor on the caption's actual duration, not only the signal
+log's prose. The extension is capped at +0.4 s and again at the
+next caption's own start, so a long word never runs into the line
+that follows it.

@@ -225,7 +225,7 @@ impl Capability {
             | "export_status"
             | "collision_check"
             | "project_save"
-            | "timeline_read" => Capability::Delivery
+            | "timeline_read" => Capability::Delivery,
             _ => return None,
         })
     }

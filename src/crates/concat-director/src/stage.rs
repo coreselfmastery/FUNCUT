@@ -68,11 +68,9 @@ pub enum Stage {
     /// yet - and `craft_critique` scores the sheet, so the numbers the
     /// revise answers exist before the encode is spent.
     Preview,
-    /// The cut is rendered and waited on to a terminal job state (the
-    /// seventeenth step).
-    Export,
-    /// The actual output is inspected and scored: `watch_render`'s
-    /// contact sheet, `craft_critique`'s score (the twentieth step).
+    /// The final timeline preview (or an explicitly requested render) is
+    /// inspected and scored: `watch_render`'s contact sheet and
+    /// `craft_critique`'s measured score.
     Watch,
     /// The critic's measured faults are answered with targeted edits: a
     /// fill for letterbox bars, a bounded head trim for a black opening,
@@ -80,7 +78,7 @@ pub enum Stage {
     /// batch, then the same frames scored again. A cut that measured
     /// clean issues no edit at all, and a fault with no honest fix in the
     /// editing vocabulary is left to the report rather than papered over.
-    /// It runs BEFORE the export so the corrected cut is what ships.
+    /// It runs before the saved timeline is certified, so the user opens the corrected cut.
     Revise,
     /// The saved project is written and read back as the editable
     /// deliverable; no encoded video is produced by the default AUTO EDIT.

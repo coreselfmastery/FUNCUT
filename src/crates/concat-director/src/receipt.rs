@@ -1651,6 +1651,30 @@ mod tests {
     }
 
     #[test]
+    fn arc_signal_requires_the_independent_emotion_extract() {
+        let plan = json!({
+            "signalLog": [{"signals":["arc"],"confidence":0.7}]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [{"signal":"arc","confidence":0.0}]
+            }
+        })];
+        let emotion = json!({
+            "ok": true,
+            "arc": {"arcShape":"rise","arcScore":8.2}
+        });
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, Some(&emotion));
+        assert_eq!(status, GateStatus::Pass);
+        assert!(evidence.contains("arc"));
+
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("did not measure arc"));
+    }
+
+    #[test]
     fn signal_evidence_gate_rejects_empty_logs_and_unrated_families() {
         let empty = json!({"signalLog":[]});
         let (status, evidence) = signal_evidence_gate(&empty, &[], None);
@@ -1666,7 +1690,7 @@ mod tests {
                 "perSignal": [{"signal":"speaker","confidence":0.0}]
             }
         })];
-        let (status, evidence) = signal_evidence_gate(&plan, &profiles);
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
         assert_eq!(status, GateStatus::Fail);
         assert!(evidence.contains("did not measure speaker"));
     }

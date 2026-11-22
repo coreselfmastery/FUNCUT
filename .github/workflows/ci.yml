@@ -23,10 +23,9 @@ on:
         type: string
         default: ""
 
-# Keyed on what is tested, so a release testing its tag and a push to
-# main never cancel each other. Only a pull request's run is cancelled by
-# the next push to it: a run on main is the record of whether main is
-# green, and cancelling it leaves a gap where the answer should be.
+# Every event and commit gets its own run. Deliberately no workflow-level
+# concurrency group: a newer push must not cancel a running check or replace
+# an older pending check. GitHub schedules jobs as runner capacity is available.
 # The tests and lints read the tree and post their results; nothing a
 # green run needs the token to write.
 permissions:

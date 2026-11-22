@@ -20,8 +20,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_director::{
-    AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall, plan_has_voiceover,
-    ToolCaller, ToolError, Verdict, derive_gates, timeline_integrity,
+    AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall,
+    ToolCaller, ToolError, Verdict, derive_gates, plan_has_voiceover, timeline_integrity,
 };
 use serde_json::{Value, json};
 

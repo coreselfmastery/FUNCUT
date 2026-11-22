@@ -3283,3 +3283,42 @@ a pace class when a foreign reply omitted `speechRate.pace`.
 word end to cut against, and the second would shorten a breath the
 profile says to preserve. Those are named reasons, not silent
 drops.
+
+## 77. The remaining shapes: veto, arc and the picture's own subjects
+
+The fifty-signal guide names five use shapes. The program already
+spent most of them; this pass closes the consumers that were still
+only named in the log.
+
+**Motion obeys the line's vetoes.** A card is refused when the
+forensic ear called the voice unstable (`clean_voice == false`),
+when `voicedRatio` says the line is barely voiced, or when the
+confidence gate flagged two or more of its words. An unmeasured
+line is not vetoed: only a reading that says the transcript is not
+what was said refuses the card. The same gate now covers entity,
+motif, question and claim cards, not only emotion cards.
+
+**The arc and the pulse shape the hold.** `MotionSpec` carries the
+line's `intensity` and the take's `pulse_period`. An intense beat
+holds a little longer, a calm one lets go, and a pulsed take
+rounds the hold onto its own beat instead of the frame grid.
+
+**The cut lands on the stressed word.** The coverage snap's
+candidate list gained the prosody ear's emphasis times, after the
+phrase boundary and before the pause: a tile bound can now land on
+the word the delivery leaned on. A real conversation's turn edges
+join the speaker-change candidates even when the change detector
+missed the seam.
+
+**Stock shops the subject.** An entity inside a tile now supplies
+the query before the motif or the narration's words: an `ORG`
+shops its company footage, a `PER` a portrait, a `DATE` the era's
+archive, a `GPE`/`LOC`/`FAC` its location. A number stays a stat
+card's job, and an entity the NER rated under 0.5 is not a subject.
+
+**Captions read the register and the rate.** A line whose
+`pitchMeanHz` sits two semitones over the take's register earns the
+same one-notch size bump as a level lift, and `caption_hold` now
+sets a floor on the caption's actual duration (capped at +0.4 s so
+it never runs into the next line), not only the signal log's
+prose.

@@ -1785,21 +1785,23 @@ mod tests {
     /// class rather than only the keep flag.
     #[test]
     fn a_pause_carries_the_class_the_seam_spends() {
-        let mut read = VoiceRead::default();
-        read.pauses = vec![
-            Pause {
-                start: 2.0,
-                end: 3.2,
-                class: "scene_turn".to_owned(),
-                keep: true,
-            },
-            Pause {
-                start: 7.0,
-                end: 8.0,
-                class: "dramatic".to_owned(),
-                keep: true,
-            },
-        ];
+        let read = VoiceRead {
+            pauses: vec![
+                Pause {
+                    start: 2.0,
+                    end: 3.2,
+                    class: "scene_turn".to_owned(),
+                    keep: true,
+                },
+                Pause {
+                    start: 7.0,
+                    end: 8.0,
+                    class: "dramatic".to_owned(),
+                    keep: true,
+                },
+            ],
+            ..Default::default()
+        };
         assert_eq!(read.pause_class_at(2.05), Some("scene_turn"));
         assert_eq!(read.pause_class_at(7.0), Some("dramatic"));
         assert_eq!(read.pause_class_at(5.0), None);

@@ -1534,10 +1534,11 @@ fn planned_spans_overlap(log: &[Value], takes: &[TakePaths], tile: &BrollSlot) -
 /// may snap to: the pauses (where the speaker breathed), the speaker
 /// changes (where the voice itself changed - only populated when the
 /// take is a real conversation), the phrase boundaries (the narration's
-/// own breath-groups) and the flux onsets (the transients, a word's own
-/// attack). The order the snap spends them in is the order a human
-/// editor would: the scene change first, the phrase turn next, the
-/// breath after that, the attack last.
+/// own breath-groups), the stressed words (the delivery's own beats) and
+/// the flux onsets (the transients, a word's own attack). The order the
+/// snap spends them in is the order a human editor would: the scene
+/// change first, the phrase turn next, the stressed word, the breath,
+/// the attack last.
 #[derive(Clone, Default)]
 struct SnapBounds {
     /// Pause starts, in file seconds, sorted.
@@ -1549,6 +1550,9 @@ struct SnapBounds {
     /// own breath-groups, the seam a shot can register even where no
     /// pause was classified.
     phrases: Vec<f64>,
+    /// Stressed-word times, in file seconds, sorted: the delivery's own
+    /// beats, a place a cut can land where the voice itself leaned.
+    emphasis: Vec<f64>,
     /// Spectral-flux onsets, in file seconds.
     onsets: Vec<f64>,
 }
@@ -1557,10 +1561,10 @@ impl SnapBounds {
     /// The strongest structural moment near `target` that stays past
     /// `floor` (the earliest bound a tile of honest length allows): a
     /// speaker change inside the breath window first, then a phrase
-    /// boundary, then a pause, then an onset inside the tighter transient
-    /// window. `None` when no measured moment is near enough - the bound
-    /// then stays where the cadence put it, which is an arbitrary frame
-    /// but an honest one.
+    /// boundary, then a stressed word, then a pause, then an onset inside
+    /// the tighter transient window. `None` when no measured moment is
+    /// near enough - the bound then stays where the cadence put it, which
+    /// is an arbitrary frame but an honest one.
     fn snap(&self, target: f64, floor: f64, window: f64, onset_window: f64) -> Option<f64> {
         let nearest = |moments: &[f64], win: f64| {
             moments
@@ -1575,6 +1579,9 @@ impl SnapBounds {
             // The phrase boundary: the narration's own breath-group
             // turned, so the picture can turn with it.
             .or_else(|| nearest(&self.phrases, window))
+            // The stressed word: the delivery leaned here, so a cut that
+            // lands on it reads as the edit's own beat.
+            .or_else(|| nearest(&self.emphasis, window))
             // The breath: the shot changes where the speaker paused, and
             // a bound that lands mid-word is the one thing the tiling
             // must never do.
@@ -1629,18 +1636,33 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     let pauses: Vec<(String, SnapBounds)> = voice
         .iter()
         .map(|voice| {
+            let conversation = voice.conversation().filter(|real| *real);
+            let mut speaker_changes = conversation
+                .map(|_| voice.take_wide.speaker_changes.clone())
+                .unwrap_or_default();
+            if conversation.is_some() {
+                // A turn edge is the exchange's own seam even when the
+                // change detector missed it: the second speaker taking
+                // the floor is the scene change, whatever the clustering
+                // reported between the two.
+                for turn in &voice.take_wide.speaker_turns {
+                    speaker_changes.push(turn.start);
+                    speaker_changes.push(turn.end);
+                }
+            }
             let mut bounds = SnapBounds {
                 pauses: voice.pauses.iter().map(|pause| pause.start).collect(),
-                speaker_changes: voice
-                    .conversation()
-                    .filter(|real| *real)
-                    .map(|_| voice.take_wide.speaker_changes.clone())
-                    .unwrap_or_default(),
+                speaker_changes,
                 phrases: voice
                     .take_wide
                     .phrases
                     .iter()
                     .map(|phrase| phrase.start)
+                    .collect(),
+                emphasis: voice
+                    .lines
+                    .iter()
+                    .flat_map(|line| line.emphasis.iter().map(|word| word.at))
                     .collect(),
                 onsets: voice.take_wide.flux_onsets.clone(),
             };
@@ -1648,7 +1670,11 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
             bounds
                 .speaker_changes
                 .sort_by(|left, right| left.total_cmp(right));
+            bounds
+                .speaker_changes
+                .dedup_by(|left, right| (*left - *right).abs() < 1.0e-3);
             bounds.phrases.sort_by(|left, right| left.total_cmp(right));
+            bounds.emphasis.sort_by(|left, right| left.total_cmp(right));
             (voice.take.clone(), bounds)
         })
         .collect();
@@ -1778,6 +1804,17 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
                     });
                     if uncertain {
                         "cinematic establishing shot".to_owned()
+                    } else if let Some(query) = take_read.and_then(|read| {
+                        // A named organisation, person, date or place
+                        // is a stronger subject than the words around
+                        // it: the shot shows who or where the line is
+                        // about, not merely the sentence's verb.
+                        read.entities
+                            .iter()
+                            .filter(|entity| entity.at.is_some_and(|at| at >= from && at < next))
+                            .find_map(entity_stock_query)
+                    }) {
+                        query
                     } else if let Some(query) = take_read
                         .and_then(|read| {
                             // A repeated phrase returns with the visual it
@@ -2612,6 +2649,29 @@ fn bundled_font(hint: &str) -> &'static str {
     }
 }
 
+/// The stock query an entity earns: a named organisation wants its
+/// industry's footage, a person wants a portrait, a date wants the era's
+/// archive, a place wants its location. A number wants no footage - the
+/// stat card is its artefact - and a reading the NER was not sure of is
+/// not a subject to shop on.
+fn entity_stock_query(entity: &Entity) -> Option<String> {
+    if entity.confidence.is_some_and(|confidence| confidence < 0.5) {
+        return None;
+    }
+    let subject = card_words(&entity.text);
+    if subject.is_empty() {
+        return None;
+    }
+    let suffix = match entity.kind.as_str() {
+        "ORG" => "company",
+        "PER" => "portrait",
+        "DATE" => "archive",
+        "GPE" | "LOC" | "FAC" => "location",
+        _ => return None,
+    };
+    Some(format!("{subject} {suffix}"))
+}
+
 /// The preset an entity's kind asks for, and the words the card carries.
 ///
 /// The NER is the only reader that knows a line said a number, a date or a
@@ -2819,6 +2879,23 @@ fn emphasis_moment(voice: &[VoiceRead], take: &str, from: f64, to: f64) -> Optio
         .filter(|at| *at >= from && *at <= to)
 }
 
+/// Whether the line under a card is solid enough to carry one: the
+/// forensic ear did not call the voice unstable, the line has some voice
+/// under it, and the confidence gate did not flag most of its words. An
+/// unmeasured line is not a vetoed one - only a reading that says "this
+/// line is not what the transcript thinks" refuses the card.
+fn motion_line_reliable(voice: &[VoiceRead], take: &str, at: f64) -> bool {
+    let Some(read) = voice_read_of(voice, take) else {
+        return true;
+    };
+    let Some(line) = read.line_at(at) else {
+        return true;
+    };
+    read.clean_voice(line) != Some(false)
+        && line.voiced_ratio.is_none_or(|ratio| ratio >= 0.2)
+        && read.unsure_between(line.start, line.end).len() < 2
+}
+
 /// The line's register lift over the take's mean pitch, in semitones. A
 /// card on a lifted line holds a little longer: the delivery raised it.
 fn pitch_lift_at(voice: &[VoiceRead], take: &str, at: f64) -> Option<f64> {
@@ -2864,6 +2941,9 @@ fn motion_specs(
             let at = emphasis_moment(voice, &line.take, line.start, line.end)
                 .unwrap_or(line.start)
                 .clamp(line.start, (line.end - 0.2).max(line.start));
+            if !motion_line_reliable(voice, &line.take, at) {
+                return None;
+            }
             let line_read = voice_line_at(voice, &line.take, at);
             Some((
                 line.intensity,
@@ -2878,6 +2958,8 @@ fn motion_specs(
                     pitch_range: line_read.and_then(|line| line.pitch_range),
                     pitch_lift: pitch_lift_at(voice, &line.take, at),
                     earned_by: "emotion",
+                    intensity: line.intensity,
+                    pulse: voice_read_of(voice, &line.take).and_then(|read| read.pulse_period()),
                     chapter: false,
                     slot: None,
                     slots: Vec::new(),
@@ -2893,7 +2975,7 @@ fn motion_specs(
         let (Some(at), Some((preset, words))) = (entity.at, comp_for_entity(entity)) else {
             continue;
         };
-        if words.is_empty() {
+        if words.is_empty() || !motion_line_reliable(voice, &entity.take, at) {
             continue;
         }
         let line = lines.iter().find(|line| {
@@ -2935,6 +3017,8 @@ fn motion_specs(
                     .and_then(|line| line.pitch_range),
                 pitch_lift: pitch_lift_at(voice, &entity.take, at),
                 earned_by: "entities",
+                intensity: line.map(|line| line.intensity).unwrap_or(0.5),
+                pulse: voice_read_of(voice, &entity.take).and_then(|read| read.pulse_period()),
                 chapter: false,
                 slot: None,
                 slots,
@@ -2963,6 +3047,8 @@ fn motion_specs(
                 pitch_range: None,
                 pitch_lift: None,
                 earned_by: "topics",
+                intensity: 1.0,
+                pulse: None,
                 chapter: true,
                 slot: Some("Title"),
                 slots: vec![
@@ -2989,6 +3075,9 @@ fn motion_specs(
             let at = emphasis_moment(voice, &line.take, line.start, line.end)
                 .unwrap_or(line.start)
                 .clamp(line.start, (line.end - 0.2).max(line.start));
+            if !motion_line_reliable(voice, &line.take, at) {
+                continue;
+            }
             ranked.push((
                 line.intensity * 0.9,
                 MotionSpec {
@@ -3003,6 +3092,8 @@ fn motion_specs(
                         .and_then(|line| line.pitch_range),
                     pitch_lift: pitch_lift_at(voice, &line.take, at),
                     earned_by: "motifs",
+                    intensity: line.intensity,
+                    pulse: voice_read_of(voice, &line.take).and_then(|read| read.pulse_period()),
                     chapter: false,
                     slot: None,
                     slots: Vec::new(),
@@ -3022,6 +3113,9 @@ fn motion_specs(
         let at = emphasis_moment(voice, &question.take, question.start, question.end)
             .unwrap_or(question.start)
             .clamp(question.start, (question.end - 0.2).max(question.start));
+        if !motion_line_reliable(voice, &question.take, at) {
+            continue;
+        }
         ranked.push((
             0.85,
             MotionSpec {
@@ -3036,6 +3130,8 @@ fn motion_specs(
                     .and_then(|line| line.pitch_range),
                 pitch_lift: pitch_lift_at(voice, &question.take, at),
                 earned_by: "speechActs",
+                intensity: 0.85,
+                pulse: voice_read_of(voice, &question.take).and_then(|read| read.pulse_period()),
                 chapter: false,
                 slot: None,
                 slots: Vec::new(),
@@ -3055,6 +3151,9 @@ fn motion_specs(
         let at = emphasis_moment(voice, &claim.take, claim.start, claim.end)
             .unwrap_or(claim.start)
             .clamp(claim.start, (claim.end - 0.2).max(claim.start));
+        if !motion_line_reliable(voice, &claim.take, at) {
+            continue;
+        }
         ranked.push((
             0.8,
             MotionSpec {
@@ -3069,6 +3168,8 @@ fn motion_specs(
                     .and_then(|line| line.pitch_range),
                 pitch_lift: pitch_lift_at(voice, &claim.take, at),
                 earned_by: "claims",
+                intensity: 0.8,
+                pulse: voice_read_of(voice, &claim.take).and_then(|read| read.pulse_period()),
                 chapter: false,
                 slot: None,
                 slots: Vec::new(),
@@ -3144,6 +3245,13 @@ struct MotionSpec {
     /// narration named. The log cites this, so a stat card is never
     /// accounted for by an emotion that had nothing to do with it.
     earned_by: &'static str,
+    /// The emotional intensity of the line, 0..1. A high-intensity beat
+    /// holds its card a touch longer and a calm one lets it go.
+    intensity: f64,
+    /// The take's rhythm period, in seconds, when the prosody read found
+    /// one with strength behind it. A card whose hold lands on the
+    /// delivery's own beat reads as part of the edit rather than over it.
+    pulse: Option<f64>,
     /// How the card holds. A chapter card is a title over a topic change:
     /// it holds its own beat rather than the line's, and never longer.
     chapter: bool,
@@ -3187,6 +3295,18 @@ impl MotionSpec {
         let performed = self.pitch_range.is_some_and(|range| range >= 6.0);
         let lifted = self.pitch_lift.is_some_and(|lift| lift >= 2.0);
         let shaped = paced * if performed { 1.08 } else { 1.0 } * if lifted { 1.04 } else { 1.0 };
+        // The emotional read's own intensity is the card's last arm: a
+        // beat the read called intense holds a touch longer, a calm one
+        // lets the narration move on. It never breaks the editorial cap.
+        let arc = 0.9 + 0.2 * self.intensity.clamp(0.0, 1.0);
+        let shaped = shaped * arc;
+        // A strong pulse quantizes the hold to the delivery's own beat,
+        // inside the editorial bounds. A period with no strength behind
+        // it never reaches here: `pulse_period` already held it to 0.25.
+        let shaped = match self.pulse.filter(|period| (0.2..=2.0).contains(period)) {
+            Some(period) => (shaped / period).round() * period,
+            None => shaped,
+        };
         round3(shaped.clamp(1.2, 5.0))
     }
 }
@@ -7462,6 +7582,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .line_at(group.start)
                                     .and_then(|line| take_read.performs(line))
                             });
+                            // The pitch twin of the level lift: a line the
+                            // speaker raised over the take's own register
+                            // is a line the delivery performed, even when
+                            // the loudness meter saw no change.
+                            let register = take_read
+                                .and_then(|take_read| {
+                                    take_read
+                                        .line_at(group.start)
+                                        .and_then(|line| take_read.register_lift(line))
+                                })
+                                .is_some_and(|lift| lift >= 2.0);
                             // A fast line is read at a glance, so its
                             // caption is set a touch smaller; a slow line
                             // can carry a larger one.
@@ -7511,6 +7642,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             {
                                 size += 0.003;
                             }
+                            if register && !gated && steady != Some(false) {
+                                size += 0.002;
+                            }
                             // The vertical band is narrower and sits higher
                             // than the horizontal one: the words stay clear
                             // of the platform UI a reel carries at the
@@ -7526,12 +7660,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if at < 3.0 {
                                 size += 0.006;
                             }
+                            // The reading rate sets a floor on the hold:
+                            // a line of long words needs longer on screen
+                            // than its spoken span, but the extension is
+                            // capped so it never runs into the next line.
+                            let mut duration = to - at;
+                            if let Some(hold) = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(group.start)
+                                    .and_then(|line| take_read.caption_hold(line))
+                            }) {
+                                duration = duration.max(hold.min(duration + 0.4));
+                            }
                             commands.push(json!({
                                 "op": "addTextClip",
                                 "trackId": null,
                                 "above": true,
                                 "start": round3(at),
-                                "duration": round3(to - at),
+                                "duration": round3(duration),
                                 "style": {
                                     "fontFamily": font,
                                     "fontSize": round3(size),
@@ -13174,12 +13320,143 @@ mod tests {
             pitch_range: None,
             pitch_lift: None,
             earned_by: "emotion",
+            intensity: 0.5,
+            pulse: None,
             chapter: false,
             slot: None,
             slots: Vec::new(),
         };
         assert!(card("punchy").hold() < card("").hold());
         assert!(card("slow").hold() > card("").hold());
+    }
+
+    /// The emotional read's intensity and the take's pulse both shape a
+    /// card's hold: a hard beat stays longer, and a pulsed take rounds
+    /// the hold onto its own beat rather than the frame grid.
+    #[test]
+    fn the_arc_and_pulse_shape_a_cards_hold() {
+        let card = |intensity: f64, pulse: Option<f64>| MotionSpec {
+            take: "/t/a.wav".to_owned(),
+            at: 0.0,
+            end: 4.0,
+            preset: "kinetic.title",
+            words: "the wreck".to_owned(),
+            act: "reveal".to_owned(),
+            pace: String::new(),
+            pitch_range: None,
+            pitch_lift: None,
+            earned_by: "emotion",
+            intensity,
+            pulse,
+            chapter: false,
+            slot: None,
+            slots: Vec::new(),
+        };
+        assert!(
+            card(0.9, None).hold() > card(0.1, None).hold(),
+            "an intense beat holds longer than a calm one"
+        );
+        let pulsed = card(0.5, Some(0.5)).hold();
+        assert!(
+            (pulsed / 0.5).fract().abs() < 1.0e-6,
+            "a pulsed hold lands on the beat, got {pulsed}"
+        );
+    }
+
+    /// An entity is a stock subject only when it names something a camera
+    /// can show, and only when the NER was sure: a number is a stat
+    /// card's job, and a low-confidence reading is not a subject to shop.
+    #[test]
+    fn the_entity_stock_query_shops_names_not_numbers() {
+        let entity = |kind: &str, text: &str, confidence: Option<f64>| Entity {
+            take: "/t/a.wav".to_owned(),
+            kind: kind.to_owned(),
+            text: text.to_owned(),
+            card: String::new(),
+            at: Some(1.0),
+            approximate: false,
+            confidence,
+            value: None,
+            unit: None,
+        };
+        assert_eq!(
+            entity_stock_query(&entity("ORG", "Acme", Some(0.9))),
+            Some("Acme company".to_owned())
+        );
+        assert_eq!(
+            entity_stock_query(&entity("PER", "Ada Lovelace", Some(0.9))),
+            Some("Ada Lovelace portrait".to_owned())
+        );
+        assert_eq!(
+            entity_stock_query(&entity("DATE", "1972", Some(0.9))),
+            Some("1972 archive".to_owned())
+        );
+        assert_eq!(
+            entity_stock_query(&entity("MONEY", "$10,450", Some(0.9))),
+            None,
+            "a number is a stat card, not footage"
+        );
+        assert_eq!(
+            entity_stock_query(&entity("ORG", "Acme", Some(0.4))),
+            None,
+            "an unsure reading is not a subject"
+        );
+    }
+
+    /// A motion card is vetoed by the same readings that veto a caption:
+    /// a hoarse voice, a line with almost no voice under it, or a line
+    /// the confidence gate could not hear. An unmeasured line is not
+    /// vetoed - only a reading that says the line is not what the
+    /// transcript thinks refuses the card.
+    #[test]
+    fn a_motion_card_is_vetoed_by_an_unreliable_line() {
+        let read = |line: LineRead| VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            lines: vec![line],
+            ..Default::default()
+        };
+        let clean = LineRead {
+            start: 0.0,
+            end: 2.0,
+            hnr_db: Some(24.0),
+            jitter: Some(0.01),
+            shimmer: Some(0.01),
+            voiced_ratio: Some(0.9),
+            ..Default::default()
+        };
+        assert!(motion_line_reliable(&[read(clean)], "/t/a.wav", 1.0));
+        let hoarse = LineRead {
+            start: 0.0,
+            end: 2.0,
+            jitter: Some(0.12),
+            ..Default::default()
+        };
+        assert!(!motion_line_reliable(&[read(hoarse)], "/t/a.wav", 1.0));
+        let unvoiced = LineRead {
+            start: 0.0,
+            end: 2.0,
+            voiced_ratio: Some(0.05),
+            ..Default::default()
+        };
+        assert!(!motion_line_reliable(&[read(unvoiced)], "/t/a.wav", 1.0));
+        let unmeasured = LineRead {
+            start: 0.0,
+            end: 2.0,
+            ..Default::default()
+        };
+        assert!(motion_line_reliable(&[read(unmeasured)], "/t/a.wav", 1.0));
+    }
+
+    /// A coverage bound snaps to a stressed word when no stronger
+    /// structural moment is near: the delivery's own beat is a better cut
+    /// than the cadence's arbitrary frame.
+    #[test]
+    fn a_coverage_bound_snaps_to_a_stressed_word() {
+        let bounds = SnapBounds {
+            emphasis: vec![3.0],
+            ..Default::default()
+        };
+        assert_eq!(bounds.snap(3.1, 0.0, 0.8, 0.3), Some(3.0));
     }
 
     /// A card opens on the delivery's stressed word, not a fixed offset
@@ -13204,8 +13481,10 @@ mod tests {
             pace: "conversational".to_owned(),
             confidence: None,
         };
-        let mut read = VoiceRead::default();
-        read.take = "/t/a.wav".to_owned();
+        let mut read = VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            ..Default::default()
+        };
         read.take_wide.mean_f0_hz = Some(120.0);
         read.lines.push(LineRead {
             start: 0.0,
@@ -13386,8 +13665,10 @@ mod tests {
             to: 6.0,
             query: "city".into(),
         };
-        let mut read = VoiceRead::default();
-        read.take = "take.wav".into();
+        let mut read = VoiceRead {
+            take: "take.wav".into(),
+            ..Default::default()
+        };
         read.lines.push(LineRead {
             start: 4.0,
             end: 5.5,

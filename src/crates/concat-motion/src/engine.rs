@@ -955,6 +955,29 @@ mod tests {
     }
 
     #[test]
+    fn a_lottie_comp_uses_native_instead_of_dropping_the_animation() {
+        let comp = comp_with(NodeKind::Lottie {
+            asset: "animation".into(),
+            r#loop: false,
+        });
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Native
+        );
+    }
+
+    #[test]
+    fn a_scene3d_comp_uses_native() {
+        let comp = comp_with(NodeKind::Scene3D {
+            scene: crate::scene3d::Scene::showcase(1920, 1080),
+        });
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Native
+        );
+    }
+
+    #[test]
     fn a_scaled_or_rotated_group_uses_native_for_its_children() {
         let mut comp = comp_with(NodeKind::Group {
             children: vec!["child".into()],

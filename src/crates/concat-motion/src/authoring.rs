@@ -364,6 +364,34 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system: Option<crate::particles::ParticlePatch>,
     },
+    /// Add a CPU 3D scene: primitives, a camera, lights and a z-buffer,
+    /// drawn by the native engine as a full-frame layer. Either a named
+    /// preset (`showcase`, `product`) or a complete scene.
+    #[serde(rename = "add-scene3d")]
+    AddScene3D {
+        /// Its id.
+        id: String,
+        /// A named scene to start from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preset: Option<String>,
+        /// A complete scene; wins over `preset` when both are given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scene: Option<crate::scene3d::Scene>,
+        /// When it enters, in seconds.
+        #[serde(default)]
+        at: f64,
+        /// How long it runs; `0` runs to the end of the comp.
+        #[serde(default)]
+        duration: f64,
+    },
+    /// Replace the scene on an existing 3D node.
+    #[serde(rename = "set-scene3d")]
+    SetScene3D {
+        /// The node.
+        node: String,
+        /// The scene.
+        scene: crate::scene3d::Scene,
+    },
     /// Delete a node and every node whose parent it was.
     Delete {
         /// The node.
@@ -1128,6 +1156,82 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             comp.nodes.extend(nodes);
             Ok(comp)
         }
+        Op::AddScene3D {
+            id,
+            preset,
+            scene,
+            at,
+            duration,
+        } => {
+            reserve(&comp, id)?;
+            check_at(&comp, *at)?;
+            let scene = match (scene, preset) {
+                (Some(scene), _) => scene.clone(),
+                (None, Some(name)) => {
+                    crate::scene3d::Scene::preset_at(name, comp.width, comp.height).ok_or_else(
+                        || {
+                            fail(
+                                format!("the 3D preset '{name}' is not one the library names"),
+                                format!(
+                                    "the names are {}",
+                                    crate::scene3d::Scene::PRESET_NAMES.join(", ")
+                                ),
+                            )
+                        },
+                    )?
+                }
+                (None, None) => {
+                    return Err(fail(
+                        "add-scene3d needs a preset or a scene".into(),
+                        format!(
+                            "the presets are {}",
+                            crate::scene3d::Scene::PRESET_NAMES.join(", ")
+                        ),
+                    ));
+                }
+            };
+            scene.validate().map_err(|why| {
+                fail(
+                    format!("the 3D scene does not validate: {why}"),
+                    "check the objects, geometry and lights",
+                )
+            })?;
+            comp.nodes.push(Node {
+                id: id.clone(),
+                parent: None,
+                start: *at,
+                duration: (*duration).max(0.0),
+                transform: Transform::default(),
+                opacity: 1.0,
+                blend: Blend::Normal,
+                mask: None,
+                matte: None,
+                effects: Vec::new(),
+                motion_blur: None,
+                tracks: BTreeMap::new(),
+                kind: NodeKind::Scene3D { scene },
+            });
+            Ok(comp)
+        }
+        Op::SetScene3D { node, scene } => {
+            scene.validate().map_err(|why| {
+                fail(
+                    format!("the 3D scene does not validate: {why}"),
+                    "check the objects, geometry and lights",
+                )
+            })?;
+            let target = node_mut(&mut comp, node)?;
+            if !matches!(&target.kind, NodeKind::Scene3D { .. }) {
+                return Err(fail(
+                    format!("{node:?} is not a 3D scene node"),
+                    "set-scene3d changes the scene on a node add-scene3d made",
+                ));
+            }
+            target.kind = NodeKind::Scene3D {
+                scene: scene.clone(),
+            };
+            Ok(comp)
+        }
         Op::Delete { node } => {
             let mut doomed = vec![node.clone()];
             let mut index = 0;
@@ -1583,6 +1687,7 @@ impl CompSummary {
                         NodeKind::Lottie { .. } => ("lottie", None),
                         NodeKind::Composition { .. } => ("composition", None),
                         NodeKind::Camera { .. } => ("camera", None),
+                        NodeKind::Scene3D { .. } => ("scene3d", None),
                         NodeKind::Rig { .. } => ("rig", None),
                         NodeKind::Audio { .. } => ("audio", None),
                     };
@@ -2729,6 +2834,56 @@ mod tests {
             }],
         );
         assert!(position.is_err(), "position needs set-track-points");
+    }
+
+    #[test]
+    fn a_3d_scene_op_adds_and_replaces() {
+        let comp = presets::build("funcut.scene3d.showcase").expect("a preset");
+        let added = apply(
+            &comp,
+            &[Op::AddScene3D {
+                id: "scene2".into(),
+                preset: Some("product".into()),
+                scene: None,
+                at: 0.0,
+                duration: 2.0,
+            }],
+        )
+        .expect("the op applies");
+        assert!(added.validate().is_empty(), "{:?}", added.validate());
+        let replaced = apply(
+            &comp,
+            &[Op::SetScene3D {
+                node: "scene".into(),
+                scene: crate::scene3d::Scene::product(1920, 1080),
+            }],
+        )
+        .expect("the op applies");
+        assert!(replaced.validate().is_empty(), "{:?}", replaced.validate());
+    }
+
+    #[test]
+    fn the_3d_ops_and_node_spell_their_names_without_a_split_digit() {
+        let add = serde_json::to_value(Op::AddScene3D {
+            id: "scene".into(),
+            preset: Some("showcase".into()),
+            scene: None,
+            at: 0.0,
+            duration: 2.0,
+        })
+        .expect("the op serialises");
+        assert_eq!(add["op"], "add-scene3d");
+        let set = serde_json::to_value(Op::SetScene3D {
+            node: "scene".into(),
+            scene: crate::scene3d::Scene::showcase(1920, 1080),
+        })
+        .expect("the op serialises");
+        assert_eq!(set["op"], "set-scene3d");
+        let node = serde_json::to_value(NodeKind::Scene3D {
+            scene: crate::scene3d::Scene::showcase(1920, 1080),
+        })
+        .expect("the node serialises");
+        assert_eq!(node["kind"], "scene3d");
     }
 
     /// A generated family refuses an id already drawn, and a start outside

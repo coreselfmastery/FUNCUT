@@ -694,6 +694,21 @@ impl Camera3D {
         }
     }
 
+    /// The eye's position in comp space at `at`, the same point
+    /// [`view_projection`](Self::view_projection) photographs from.
+    pub fn eye(&self, at: f64, duration: f64, width: f64, height: f64) -> glam::DVec3 {
+        let fraction = if duration > 1e-9 {
+            (at / duration).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let resting_z = (height / 2.0) / (DEFAULT_FOV / 2.0).to_radians().tan();
+        let (px, py, pz) =
+            self.position_at(fraction)
+                .unwrap_or((width / 2.0, height / 2.0, resting_z));
+        glam::DVec3::new(px, py, pz)
+    }
+
     /// The view-projection at `at` seconds: a 4x4 that maps a comp
     /// point `(x, y, z, 1)` to output pixels `(X, Y, depth·W, W)`, with
     /// the perspective divide the caller applies. The frame's own

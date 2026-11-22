@@ -3394,3 +3394,39 @@ sets a floor on the caption's actual duration, not only the signal
 log's prose. The extension is capped at +0.4 s and again at the
 next caption's own start, so a long word never runs into the line
 that follows it.
+
+## 78. The 3D scene layer: primitives without a browser
+
+A comp can now carry a real 3D scene, drawn by the shipped native
+compositor. The shape is deliberately three.js-like without a JavaScript
+runtime: `NodeKind::Scene3D` holds a scene document of `box`, `plane`,
+`sphere`, `cylinder` and `torus` meshes, per-object position, rotation,
+scale, spin, colour, metalness, roughness and emissive, ambient,
+directional and point lights, and a perspective camera that reuses the
+comp's own `Camera3D` flight path (`at`, `x`, `y`, `z`, plus optional
+pitch, yaw, roll and fov stops). Colours read as `#rrggbb` /
+`#rrggbbaa` strings or as `{r,g,b,a}` objects.
+
+Two authoring ops open it: `add-scene3d` (a named `showcase` or
+`product` scene, or a complete scene) and `set-scene3d` (replace the
+scene on an existing node). The preset library grew from 32 to 33 with
+`funcut.scene3d.showcase`, and the authoring vocabulary from 28 to 30
+ops. `dump_presets` writes the new comp, and
+`examples/comps/funcut.scene3d.showcase.json` is checked in.
+
+The renderer is a CPU rasteriser with a z-buffer and per-pixel Phong
+shading; there is no GPU path and no browser. A triangle crossing the
+near plane is clipped in homogeneous space, so a camera inside a mesh
+does not fold the frame; point lights work at the origin; specular
+highlights use the actual eye, not a fixed +z. Semi-transparent objects
+are drawn in document order and do not write depth, which is the one
+place order matters. The cost is measured, not guessed: the four-object
+showcase renders a 1920x1080 frame in about 0.7 s on this CPU-only box,
+so an 8 s / 30 fps scene is roughly 2.8 minutes; `samples: 2` costs
+about four times that. Keep a scene to a few dozen objects at 1080p.
+
+Engine routing is explicit. A comp whose only engine-specific feature
+is a `scene3d` node resolves to native even when the Geneva sidecar is
+installed. A comp that also carries markup keeps Geneva, and the bake
+warns that Geneva cannot draw the scene rather than dropping it
+silently.

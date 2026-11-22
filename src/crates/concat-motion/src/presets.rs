@@ -109,7 +109,7 @@ impl Category {
 }
 
 /// Every preset, in library order.
-pub const ALL: [Preset; 32] = [
+pub const ALL: [Preset; 33] = [
     Preset {
         id: "funcut.lower-third.glass",
         name: "Glass lower third",
@@ -302,6 +302,12 @@ pub const ALL: [Preset; 32] = [
         category: Category::Diagram,
         engine: crate::engine::EngineKind::Geneva,
     },
+    Preset {
+        id: "funcut.scene3d.showcase",
+        name: "3D showcase",
+        category: Category::Backdrop,
+        engine: crate::engine::EngineKind::Native,
+    },
 ];
 
 /// Build a preset by id.
@@ -339,8 +345,35 @@ pub fn build(id: &str) -> Option<Comp> {
         "funcut.map.pin-route" => Some(pin_route()),
         "funcut.timeline.horizontal" => Some(horizontal_timeline()),
         "funcut.diagram.flowchart" => Some(flowchart()),
+        "funcut.scene3d.showcase" => Some(scene3d_showcase()),
         _ => None,
     }
+}
+
+/// A 3D showcase: a box, a sphere and a torus over a floor, with a slow
+/// camera move. The scene is drawn by the native engine, so the preset is
+/// the library's native example rather than a markup one.
+pub fn scene3d_showcase() -> Comp {
+    let mut comp = comp("funcut.scene3d.showcase", "3D showcase", 1920, 1080, 8.0);
+    comp.background = Rgba::hex("#070a0f");
+    comp.nodes.push(Node {
+        id: "scene".into(),
+        parent: None,
+        start: 0.0,
+        duration: 0.0,
+        transform: Transform::default(),
+        opacity: 1.0,
+        blend: crate::comp::Blend::Normal,
+        mask: None,
+        matte: None,
+        effects: Vec::new(),
+        motion_blur: None,
+        tracks: BTreeMap::new(),
+        kind: NodeKind::Scene3D {
+            scene: crate::scene3d::Scene::showcase(1920, 1080),
+        },
+    });
+    comp
 }
 
 // ------------------------------------------------------------------ helpers
@@ -3180,10 +3213,12 @@ mod tests {
             let problems = comp.validate();
             assert!(problems.is_empty(), "{}: {problems:?}", preset.id);
             assert_eq!(comp.id, preset.id);
-            // Every preset but the caption row is markup; the caption is a
-            // text node with word timing, which both engines draw.
-            if preset.category == Category::Captions {
-                assert!(!comp.needs_markup());
+            // Every Geneva preset is markup; the caption row is a text node
+            // with word timing, and the 3D showcase is native geometry.
+            if preset.category == Category::Captions
+                || preset.engine == crate::engine::EngineKind::Native
+            {
+                assert!(!comp.needs_markup(), "{} is native", preset.id);
             } else {
                 assert!(comp.needs_markup(), "{} carries markup", preset.id);
             }

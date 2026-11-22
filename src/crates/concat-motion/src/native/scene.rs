@@ -126,6 +126,8 @@ enum Content {
     },
     /// A sub-comp, rendered at its own frame.
     Composition(Pixmap),
+    /// A CPU 3D scene, rendered at the output frame.
+    Scene3D(Pixmap),
     /// Nothing of its own: a group, or a kind this engine declines.
     Nothing,
 }
@@ -706,6 +708,25 @@ impl Scene<'_> {
                 let (sub_w, sub_h) = (f64::from(rendered.width()), f64::from(rendered.height()));
                 let to_box = if sub_w > 0.0 && sub_h > 0.0 {
                     Transform::from_scale((box_size.0 / sub_w) as f32, (box_size.1 / sub_h) as f32)
+                } else {
+                    Transform::identity()
+                };
+                raster::blit(
+                    &mut layer,
+                    &rendered,
+                    world.pre_concat(to_box),
+                    Blend::Normal,
+                    1.0,
+                );
+            }
+            Content::Scene3D(rendered) => {
+                let (rendered_w, rendered_h) =
+                    (f64::from(rendered.width()), f64::from(rendered.height()));
+                let to_box = if rendered_w > 0.0 && rendered_h > 0.0 {
+                    Transform::from_scale(
+                        (box_size.0 / rendered_w) as f32,
+                        (box_size.1 / rendered_h) as f32,
+                    )
                 } else {
                     Transform::identity()
                 };
@@ -1305,6 +1326,13 @@ impl Scene<'_> {
                     }
                 }
             }
+            NodeKind::Scene3D { scene } => Content::Scene3D(scene.render(
+                self.frame.0 as u32,
+                self.frame.1 as u32,
+                at,
+                self.comp.duration,
+                self.scale,
+            )),
             NodeKind::Html { .. } => {
                 self.warnings.push(format!(
                     "node {:?}: markup is drawn by the Geneva engine; the native engine draws \
@@ -1378,6 +1406,7 @@ impl Scene<'_> {
             (NodeKind::Group { .. }, _)
             | (NodeKind::Adjustment, _)
             | (NodeKind::Camera { .. }, _) => ((0.0, 0.0), (0.0, 0.0)),
+            (NodeKind::Scene3D { .. }, _) => (self.frame, (0.0, 0.0)),
             (NodeKind::Rect { width, height, .. }, _)
             | (NodeKind::Ellipse { width, height, .. }, _) => {
                 let (reference, _) = self.reference_of(node);

@@ -524,6 +524,27 @@ mod tests {
     }
 
     #[test]
+    fn a_scene3d_node_bakes() {
+        let comp = comp_of(
+            "scene",
+            vec![node(
+                "scene",
+                NodeKind::Scene3D {
+                    scene: crate::scene3d::Scene::showcase(64, 48),
+                },
+            )],
+        );
+        let (baked, frame) = first_frame(&comp);
+        assert_eq!(baked.frames, 10);
+        let painted = frame
+            .data()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0)
+            .count();
+        assert!(painted > 100, "the 3D scene paints the frame");
+    }
+
+    #[test]
     fn an_offscreen_node_leaves_its_span_blank() {
         let mut late = node("late", rect(Rgba::new(1.0, 0.0, 0.0, 1.0)));
         late.start = 0.5;

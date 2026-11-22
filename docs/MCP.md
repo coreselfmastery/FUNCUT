@@ -165,12 +165,12 @@ storage, `motion_import` for motion made elsewhere (Lottie and GSAP), plus
 `motion_overlay`, the compositing path
 over real footage, documented with the perception tools below:
 
-- `motion_presets` - the thirty-two motion-graphics presets (lower thirds,
+- `motion_presets` - the thirty-three motion-graphics presets (lower thirds,
   kinetic captions, stat cards, wordmark stings, pull quotes, chapter
   chips and cards, agendas, subscribe cards and end cards, terminals and
   diffs, bar charts and progress bars, split compares, counting numbers,
-  mesh backdrops) with their slots, sizes and whether the Geneva engine
-  is on the machine.
+  mesh backdrops, 3D scenes) with their slots, sizes and whether the Geneva
+  engine is on the machine.
 - `motion_inspect` - what is in a comp before it is touched: nodes, spans,
   animated properties, slots, validation problems; an optional `ops` batch
   is applied first, so an edit can be checked before it bakes.

@@ -1,0 +1,282 @@
+{
+  "format": 1,
+  "id": "funcut.scene3d.showcase",
+  "name": "3D showcase",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 8.0,
+  "background": {
+    "r": 0.027450980392156862,
+    "g": 0.0392156862745098,
+    "b": 0.058823529411764705,
+    "a": 1.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "scene",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "scene3d",
+      "scene": {
+        "camera": {
+          "path": [
+            {
+              "at": 0.0,
+              "x": 960.0,
+              "y": 561.6,
+              "z": 938.6462330506594,
+              "curve": {
+                "kind": "bezier",
+                "x1": 0.42,
+                "y1": 0.0,
+                "x2": 0.58,
+                "y2": 1.0
+              }
+            },
+            {
+              "at": 0.5,
+              "x": 1113.6,
+              "y": 507.59999999999997,
+              "z": 808.2787006825122,
+              "curve": {
+                "kind": "bezier",
+                "x1": 0.42,
+                "y1": 0.0,
+                "x2": 0.58,
+                "y2": 1.0
+              }
+            },
+            {
+              "at": 1.0,
+              "x": 806.4,
+              "y": 594.0,
+              "z": 938.6462330506594
+            }
+          ],
+          "fov": [
+            {
+              "at": 0.0,
+              "value": 45.0
+            }
+          ]
+        },
+        "lights": [
+          {
+            "kind": "ambient",
+            "color": {
+              "r": 0.55,
+              "g": 0.62,
+              "b": 0.75,
+              "a": 1.0
+            },
+            "intensity": 0.35
+          },
+          {
+            "kind": "directional",
+            "direction": [
+              -0.45,
+              -0.8,
+              -0.6
+            ],
+            "color": {
+              "r": 1.0,
+              "g": 0.96,
+              "b": 0.9,
+              "a": 1.0
+            },
+            "intensity": 1.15
+          },
+          {
+            "kind": "point",
+            "position": [
+              345.59999999999997,
+              194.4,
+              620.0
+            ],
+            "color": {
+              "r": 0.3,
+              "g": 0.8,
+              "b": 1.0,
+              "a": 1.0
+            },
+            "intensity": 0.85,
+            "range": 1800.0
+          }
+        ],
+        "objects": [
+          {
+            "id": "floor",
+            "geometry": {
+              "kind": "plane",
+              "width": 1766.4,
+              "height": 604.8000000000001
+            },
+            "position": [
+              960.0,
+              788.4,
+              -140.0
+            ],
+            "rotation": [
+              90.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "spin": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "color": {
+              "r": 0.055,
+              "g": 0.07,
+              "b": 0.095,
+              "a": 1.0
+            },
+            "metalness": 0.0,
+            "roughness": 0.92,
+            "emissive": 0.0
+          },
+          {
+            "id": "box",
+            "geometry": {
+              "kind": "box",
+              "size": [
+                220.0,
+                220.0,
+                220.0
+              ]
+            },
+            "position": [
+              729.6,
+              594.0,
+              0.0
+            ],
+            "rotation": [
+              18.0,
+              -28.0,
+              12.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "spin": [
+              0.0,
+              22.0,
+              0.0
+            ],
+            "color": {
+              "r": 0.95,
+              "g": 0.32,
+              "b": 0.22,
+              "a": 1.0
+            },
+            "metalness": 0.25,
+            "roughness": 0.35,
+            "emissive": 0.0
+          },
+          {
+            "id": "sphere",
+            "geometry": {
+              "kind": "sphere",
+              "radius": 120.0,
+              "segments": 32,
+              "rings": 18
+            },
+            "position": [
+              1190.4,
+              540.0,
+              80.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "spin": [
+              0.0,
+              -18.0,
+              0.0
+            ],
+            "color": {
+              "r": 0.25,
+              "g": 0.72,
+              "b": 0.95,
+              "a": 1.0
+            },
+            "metalness": 0.1,
+            "roughness": 0.18,
+            "emissive": 0.0
+          },
+          {
+            "id": "torus",
+            "geometry": {
+              "kind": "torus",
+              "radius": 150.0,
+              "tube": 38.0,
+              "segments": 48,
+              "sides": 18
+            },
+            "position": [
+              960.0,
+              356.40000000000003,
+              -60.0
+            ],
+            "rotation": [
+              68.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "spin": [
+              0.0,
+              0.0,
+              35.0
+            ],
+            "color": {
+              "r": 0.98,
+              "g": 0.78,
+              "b": 0.25,
+              "a": 1.0
+            },
+            "metalness": 0.65,
+            "roughness": 0.2,
+            "emissive": 0.0
+          }
+        ],
+        "background": {
+          "r": 0.025,
+          "g": 0.035,
+          "b": 0.05,
+          "a": 1.0
+        },
+        "samples": 1
+      }
+    }
+  ],
+  "slots": []
+}

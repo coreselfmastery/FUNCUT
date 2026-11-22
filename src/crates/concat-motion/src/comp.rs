@@ -20,8 +20,10 @@
 //! instead of quietly drawing something else.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::curve::Curve;
 use crate::track::{Tracks, Value};
@@ -139,7 +141,7 @@ pub enum AssetKind {
 }
 
 /// A colour, straight sRGB with alpha.
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize)]
 pub struct Rgba {
     /// Red, 0 to 1.
     pub r: f64,
@@ -198,6 +200,65 @@ impl Rgba {
             b(self.b),
             b(self.a)
         )
+    }
+}
+
+impl<'de> Deserialize<'de> for Rgba {
+    fn deserialize<D>(deserializer: D) -> Result<Rgba, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ColourVisitor;
+
+        impl<'de> Visitor<'de> for ColourVisitor {
+            type Value = Rgba;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a #rrggbb/#rrggbbaa string or an r/g/b/a object")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Rgba, E>
+            where
+                E: de::Error,
+            {
+                let hex = value.trim_start_matches('#');
+                if (hex.len() == 6 || hex.len() == 8)
+                    && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    Ok(Rgba::hex(value))
+                } else {
+                    Err(E::custom(format!(
+                        "expected #rrggbb or #rrggbbaa, got {value:?}"
+                    )))
+                }
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Rgba, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let (mut r, mut g, mut b, mut a) = (None, None, None, None);
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "r" => r = Some(map.next_value()?),
+                        "g" => g = Some(map.next_value()?),
+                        "b" => b = Some(map.next_value()?),
+                        "a" => a = Some(map.next_value()?),
+                        _ => {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+                Ok(Rgba {
+                    r: r.ok_or_else(|| de::Error::missing_field("r"))?,
+                    g: g.ok_or_else(|| de::Error::missing_field("g"))?,
+                    b: b.ok_or_else(|| de::Error::missing_field("b"))?,
+                    a: a.ok_or_else(|| de::Error::missing_field("a"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(ColourVisitor)
     }
 }
 
@@ -683,6 +744,15 @@ pub enum NodeKind {
         /// from the focal plane.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dof: Option<DepthOfField>,
+    },
+    /// A CPU 3D scene: primitives, a perspective camera, lights and a
+    /// z-buffer, drawn by the native engine. The comp keeps its 2D nodes;
+    /// this node is a full-frame scene the other layers can sit over.
+    #[serde(rename = "scene3d")]
+    Scene3D {
+        /// The scene.
+        #[serde(default)]
+        scene: crate::scene3d::Scene,
     },
 }
 
@@ -1400,6 +1470,8 @@ impl Comp {
                 // its move (the audit's finding: the arm was missing and
                 // the comp passed `engine_for` unchecked).
                 NodeKind::Camera { .. } => note("a 3D camera"),
+                NodeKind::Scene3D { .. } => note("a 3D scene"),
+                NodeKind::Lottie { .. } => note("a Lottie animation"),
                 NodeKind::Rig { .. } => note("a bone rig"),
                 NodeKind::Audio { .. } => note("an audio reaction"),
                 NodeKind::Path { boolean, taper, .. } => {
@@ -1694,6 +1766,14 @@ impl Comp {
                     format!("/nodes/{i}/asset"),
                     format!("no asset called {asset:?}"),
                 ));
+            }
+            if let NodeKind::Scene3D { scene } = &node.kind
+                && let Err(why) = scene.validate()
+            {
+                found.push(
+                    Diagnostic::new(format!("/nodes/{i}/scene"), why)
+                        .with_help("a 3D scene needs objects and positive geometry"),
+                );
             }
             if let NodeKind::Text(inner) = &node.kind {
                 if inner
@@ -2639,6 +2719,16 @@ mod tests {
     fn an_open_ended_node_runs_to_the_end_of_the_comp() {
         let comp = rect_comp();
         assert_eq!(comp.nodes[0].end(7.0), 7.0);
+    }
+
+    #[test]
+    fn a_colour_reads_from_hex_or_its_channels() {
+        let hex: Rgba = serde_json::from_str("\"#22d3c5\"").expect("a hex colour");
+        assert_eq!(hex, Rgba::hex("#22d3c5"));
+        let object: Rgba =
+            serde_json::from_str(r#"{"r":0.1,"g":0.2,"b":0.3,"a":0.4}"#).expect("a colour object");
+        assert_eq!(object, Rgba::new(0.1, 0.2, 0.3, 0.4));
+        assert!(serde_json::from_str::<Rgba>("\"#zz\"").is_err());
     }
 
     #[test]

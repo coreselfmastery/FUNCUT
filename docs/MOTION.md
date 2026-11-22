@@ -15,7 +15,7 @@ tests on its own.
 | Engine | Draws | Needs |
 | --- | --- | --- |
 | `geneva` — **the default** | everything, markup included: flexbox, gradients, `backdrop-filter`, `box-shadow`, `background-clip: text`, CSS `@keyframes` | the pinned Geneva sidecar (one 17 MB binary, **no browser**) |
-| `native` | shapes, paths, text, images, nested comps | nothing (the shipped compositor) |
+| `native` | shapes, paths, text, images, nested comps, CPU 3D scenes | nothing (the shipped compositor) |
 | `lottie` | Lottie / dotLottie files | reserved; the player lands next |
 
 `EnginePreference::default()` is **Geneva**, and a motion clip records `engine: "geneva"` unless it says
@@ -231,7 +231,7 @@ on each side: the tool always promised "never above 4K for safety", and a
 
 ---
 
-## The library (`presets::ALL`, thirty-two comps)
+## The library (`presets::ALL`, thirty-three comps)
 
 | Id | Category | What it is |
 | --- | --- | --- |
@@ -252,12 +252,27 @@ on each side: the tool always promised "never above 4K for safety", and a
 | `funcut.code.terminal` | Code | terminal window, lines landing on `steps()` |
 | `funcut.code.diff` | Code | a code diff — a removed line in red, an added line in green, landing beat by beat |
 | `funcut.compare.split` | Before / after | split frame with a wipe and a knob |
+| `funcut.chart.line` | Charts | a line chart that draws on |
+| `funcut.chart.donut` | Charts | a donut chart whose segments fill in |
+| `funcut.chart.area` | Charts | an area chart that fills under its line |
+| `funcut.leaderboard.bar-race` | Leaderboards | ranked bars racing for position |
+| `funcut.table.comparison` | Tables | two products side by side, one verdict |
+| `funcut.social.quote` | Social | a quote on a platform-shaped card |
+| `funcut.social.stat` | Social | one stat on a platform-shaped card |
+| `funcut.news.headline-flash` | News | a headline band that flashes on |
+| `funcut.device.phone` | Devices | a phone frame with a screen |
+| `funcut.device.tablet` | Devices | a tablet frame with a screen |
+| `funcut.device.laptop` | Devices | a laptop frame with a screen |
+| `funcut.map.pin-route` | Maps | a route drawn between pins |
+| `funcut.timeline.horizontal` | Timelines | milestones along one rule |
+| `funcut.diagram.flowchart` | Diagrams | boxes and the lines that join them |
 | `funcut.backdrop.mesh` | Backdrops | mesh gradient + grid light + vignette (opaque) |
+| `funcut.scene3d.showcase` | Backdrops | a lit 3D scene — box, sphere and torus over a floor, orbited by the camera (native engine) |
 
 Each is an ordinary `Comp` with slots, so it is a template rather than a picture. `presets::build(id)`
-returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all thirty-two out as JSON -
-`examples/comps/` holds that output for all thirty-two, plus the two hand-authored `cypher` comps and the
-`showreel-v3` storyboard.
+returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all thirty-three out as JSON -
+`examples/comps/` holds that output for the presets checked in there, plus the two hand-authored `cypher`
+comps and the `showreel-v3` storyboard.
 
 ---
 
@@ -671,7 +686,7 @@ let report = critic::apply(&mut comp, &fixes);
 let after = critic::score(&comp);           // 10.0 - nothing left to name
 ```
 
-`examples/reel.rs` is a complete one: **nineteen scenes, all thirty-two presets, 66.1 s**, with plates, a
+`examples/reel.rs` is a complete one: **nineteen scenes, eighteen comps from the library, 66.1 s**, with plates, a
 curtain and a synthesised score.
 
 ```sh
@@ -1230,7 +1245,8 @@ Two honest notes on the engine. A line is a chain of thin rotated rectangles and
 them, because the Geneva sidecar draws no vector paths (`NodeKind::Path` is rendered by the shipped
 native compositor, not by Geneva) - approximated at a resolution the frame cannot tell from the curve,
 and said plainly here. The native compositor also handles shapes, text, still images, nested comps,
-masks, mattes and supported effects; it does not render HTML, Lottie or shader packages. And the caps
+3D scenes, masks, mattes and supported effects; it does not render HTML, Lottie or shader
+packages. And the caps
 are the document's health, not physics':
 at most 48 points, 12 slices, and a box at least 80×80, each refused with the fix in the message.
 
@@ -1332,6 +1348,56 @@ pushes over the first half and rests while the pan waits and then drifts. A wayp
 instead of stopping at every stop); the move's `curve` still shapes the pair form. Times run
 strictly uphill, the last waypoint is the move's own end, and a path beside any pair is refused
 outright - the pairs are the two-waypoint path, said once.
+
+### 3D scenes: primitives, a camera, lights
+
+A comp can carry a real 3D scene, drawn by the **native** engine with a CPU
+z-buffer and per-pixel lighting. It is deliberately three.js-shaped without a
+JavaScript runtime: a scene document names meshes, a camera path and lights, and
+the renderer does the rest.
+
+```json
+{ "op": "add-scene3d", "id": "product", "at": 0, "duration": 6,
+  "scene": {
+    "background": "#070a0f",
+    "objects": [
+      { "id": "floor", "geometry": { "kind": "plane", "width": 900, "height": 900 },
+        "rotation": [90, 0, 0], "color": "#1b2430", "roughness": 0.9 },
+      { "id": "box", "geometry": { "kind": "box", "size": [180, 180, 180] },
+        "position": [-220, -80, 0], "rotation": [18, 32, 0],
+        "color": "#ffb84d", "metalness": 0.35, "roughness": 0.28 },
+      { "id": "sphere", "geometry": { "kind": "sphere", "radius": 120 },
+        "position": [0, -40, 80], "color": "#48d7ff", "metalness": 0.7, "roughness": 0.18 },
+      { "id": "ring", "geometry": { "kind": "torus", "radius": 150, "tube": 38 },
+        "position": [240, -40, 0], "rotation": [62, 0, 0],
+        "color": "#ff5a8a", "metalness": 0.5, "roughness": 0.3, "spin": [0, 45, 0] }
+    ],
+    "lights": [
+      { "kind": "ambient", "color": "#4b5b78", "intensity": 0.6 },
+      { "kind": "directional", "direction": [-0.4, 0.8, -0.5], "intensity": 1.4 },
+      { "kind": "point", "position": [300, 260, 420], "color": "#ffd9a0", "intensity": 1.1 }
+    ],
+    "camera": { "path": [
+      { "at": 0, "x": 0, "y": -120, "z": 900 },
+      { "at": 1, "x": 180, "y": -60, "z": 700 }
+    ] }
+  } }
+```
+
+`set-scene3d` replaces the scene on a node `add-scene3d` made. Geometry is
+`box`, `plane`, `sphere`, `cylinder` or `torus`; objects carry position,
+rotation, scale, a per-axis `spin` in degrees a second, colour, metalness,
+roughness and emissive. Lights are `ambient`, `directional` or `point`; an empty
+list gets one ambient fill and one key. Camera stops are fractions of the
+comp's duration (`at`), in comp pixels with `z` toward the viewer, and may also
+key `pitch`, `yaw`, `roll` and `fov`.
+
+The engine is CPU-only and z-buffered, so keep a scene to a few dozen objects at
+1080p; `samples: 2` supersamples the edges at four times the cost. A comp whose
+only engine-specific feature is a `scene3d` node is routed to native
+automatically, including when a Geneva sidecar is installed. A comp that also
+carries markup keeps Geneva, and `motion_bake` warns that Geneva cannot draw the
+scene rather than dropping it silently.
 
 The example comps under `examples/comps/` carry all of it - `data.chart.bars`, `data.chart.line`,
 `data.chart.donut`, `data.chart.dot`, `data.chart.compare`, `data.chart.progress`,

@@ -2007,6 +2007,13 @@ fn source_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) 
             ));
             None
         }
+        NodeKind::Scene3D { .. } => {
+            warnings.push(format!(
+                "node {:?}: a 3D scene is drawn by the native engine only",
+                node.id
+            ));
+            None
+        }
         NodeKind::Composition { comp } => {
             Some(json!({ "kind": "composition", "composition": format!("{scope}{comp}") }))
         }
@@ -2765,6 +2772,9 @@ mod tests {
     #[test]
     fn every_preset_maps_onto_a_timeline_with_nothing_skipped() {
         for preset in crate::presets::ALL {
+            if preset.engine == crate::engine::EngineKind::Native {
+                continue;
+            }
             let comp = crate::presets::build(preset.id).expect("a preset");
             let (document, warnings) =
                 Geneva::at("geneva").timeline(&comp, &BakeRequest::default());

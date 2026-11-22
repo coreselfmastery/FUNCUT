@@ -103,6 +103,7 @@ pub mod pulse;
 pub mod reel;
 pub mod revision;
 pub mod route;
+pub mod scene3d;
 pub mod sequence;
 pub mod storyboard;
 pub mod style;
@@ -146,4 +147,4 @@ pub use transition::{Cut, Direction};
 
 /// The library version of the preset set, bumped when a preset changes shape
 /// so a project's saved copies can be offered an upgrade.
-pub const PRESETS_VERSION: u32 = 1;
+pub const PRESETS_VERSION: u32 = 2;

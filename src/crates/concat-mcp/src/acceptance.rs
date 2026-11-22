@@ -10,7 +10,7 @@
 //!
 //! The Director's deliverable is the editable timeline: the check reads the
 //! saved project, judges its composited picture and proves its lanes are
-//! clean. An export is optional and adds the encoded-file gates an explicitly requested render adds the encoded-file gates: probe the file,
+//! clean. An export is optional and adds the encoded-file gates: probe the file,
 //! measure the mix, re-read the words and score the picture. Both paths therefore answer to one receipt
 //! shape, but a timeline-ready run is not failed for not rendering.
 //!
@@ -265,7 +265,8 @@ pub fn check(
                     } else {
                         record_signal_failure(
                             arguments,
-                            "voice_signals could not independently read a narration take".to_owned(),
+                            "voice_signals could not independently read a narration take"
+                                .to_owned(),
                         );
                     }
                 }

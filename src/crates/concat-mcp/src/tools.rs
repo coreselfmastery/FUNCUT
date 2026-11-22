@@ -325,7 +325,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
-            description: "Validate schema, creative readiness and signalLog before edits; return blockers and craft score.",
+            description: "Validate schema, creative readiness and signalLog before edits; return blockers and craft score. A plan without a `style` bible or a `retention` contract is structurally valid but not creativeReady.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -466,7 +466,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "stock_search",
             "Search live stock (Pexels, Pixabay)",
-            "Search the live rights-cleared shelves (Pexels, Pixabay) by words; every hit carries the licence commercial use stands on. A missing key is a named refusal, not an empty page.",
+            "Search the live rights-cleared shelves (Pexels, Pixabay) by words; every hit carries the licence commercial use stands on. This build's live shelves return VIDEO only: there is no stock-photo result - for a still, extract a frame with preview_frame or generate one. A missing key is a named refusal, not an empty page.",
             "stock.search",
             Raw,
         )
@@ -3909,6 +3909,250 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         Some(_) => blockers.push("creativeBrief must be an object".to_owned()),
     }
 
+    // The style bible: five good shots in five different styles read as
+    // five videos. The plan names one look, and the grade, captions,
+    // footage treatment, motion hand and sound world have to agree with
+    // it. This is deliberately a creativeReady blocker, not a hard
+    // structural error: an old plan still validates, but it cannot pass
+    // as a finished Director cut.
+    match object.get("style") {
+        None => {
+            blockers.push(
+                "no style bible: set `style` with one name, palette, grade, caption system, motion hand, sound world and footage treatment before planning - otherwise the cut is five videos in one"
+                    .to_owned(),
+            );
+            score -= 1.5;
+        }
+        Some(Value::Object(style)) => {
+            let text = |key: &str| {
+                style
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            };
+            if text("name").is_none() {
+                blockers.push("style.name is missing: name the one look".to_owned());
+                score -= 0.3;
+            }
+            let palette = style.get("palette").and_then(Value::as_array);
+            if palette.is_none_or(|palette| palette.len() < 2) {
+                blockers.push(
+                    "style.palette needs at least two #rrggbb colours - the film's dominant colours"
+                        .to_owned(),
+                );
+                score -= 0.5;
+            } else if palette.is_some_and(|palette| {
+                palette.iter().any(|colour| {
+                    !colour
+                        .as_str()
+                        .is_some_and(|hex| hex.len() == 7 && hex.starts_with('#') && hex[1..].chars().all(|ch| ch.is_ascii_hexdigit()))
+                })
+            }) {
+                blockers.push("style.palette contains a colour that is not #rrggbb".to_owned());
+                score -= 0.3;
+            }
+            let grade = text("grade");
+            let plan_grade = object.pointer("/grade/filter").and_then(Value::as_str);
+            if grade.is_none() {
+                blockers.push("style.grade is missing: the film wears one grade".to_owned());
+                score -= 0.3;
+            } else if let (Some(style_grade), Some(plan_grade)) = (grade, plan_grade)
+                && style_grade != plan_grade
+            {
+                blockers.push(format!(
+                    "style.grade `{style_grade}` disagrees with grade.filter `{plan_grade}` - one film, one grade"
+                ));
+                score -= 0.4;
+            }
+            let captions = style.get("captions").and_then(Value::as_object);
+            if captions.is_none_or(|captions| {
+                captions
+                    .get("font")
+                    .and_then(Value::as_str)
+                    .is_none_or(|font| font.trim().is_empty())
+                    || captions
+                        .get("emphasisColor")
+                        .and_then(Value::as_str)
+                        .is_none()
+            }) {
+                blockers.push(
+                    "style.captions needs one font and one emphasisColor for the whole film"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            }
+            if let (Some(caption_style), Some(plan_captions)) = (
+                captions.and_then(|captions| captions.get("emphasisColor")).and_then(Value::as_str),
+                object.pointer("/captions/emphasisColor").and_then(Value::as_str),
+            ) && caption_style != plan_captions
+            {
+                blockers.push(format!(
+                    "style.captions.emphasisColor `{caption_style}` disagrees with captions.emphasisColor `{plan_captions}`"
+                ));
+                score -= 0.3;
+            }
+            let motion = style.get("motion").and_then(Value::as_object);
+            if motion.is_none_or(|motion| {
+                motion
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .is_none_or(|language| language.trim().is_empty())
+                    || motion
+                        .get("easing")
+                        .and_then(Value::as_str)
+                        .is_none_or(|easing| easing.trim().is_empty())
+                    || motion
+                        .get("intensity")
+                        .and_then(Value::as_f64)
+                        .is_none_or(|intensity| !(0.0..=1.0).contains(&intensity))
+            }) {
+                blockers.push(
+                    "style.motion needs one language, one easing family and an intensity in 0-1"
+                        .to_owned(),
+                );
+                score -= 0.4;
+            }
+            let sound = style.get("sound").and_then(Value::as_object);
+            if sound.is_none_or(|sound| {
+                sound
+                    .get("texture")
+                    .and_then(Value::as_str)
+                    .is_none_or(|texture| texture.trim().is_empty())
+                    || sound
+                        .get("duckDb")
+                        .and_then(Value::as_f64)
+                        .is_none_or(|duck| !(-60.0..=0.0).contains(&duck))
+            }) {
+                blockers.push(
+                    "style.sound needs one texture and a duckDb between -60 and 0"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            } else if let (Some(style_duck), Some(plan_duck)) = (
+                sound.and_then(|sound| sound.get("duckDb")).and_then(Value::as_f64),
+                object.pointer("/audio/bgm/duckDb").and_then(Value::as_f64),
+            ) && (style_duck - plan_duck).abs() > 0.01
+            {
+                blockers.push(format!(
+                    "style.sound.duckDb {style_duck} disagrees with audio.bgm.duckDb {plan_duck} - one bed, one duck"
+                ));
+                score -= 0.3;
+            }
+            let footage = style.get("footage").and_then(Value::as_object);
+            let expected_orientation = match object.get("aspect").and_then(Value::as_str) {
+                Some("9:16") | Some("4:5") => Some("vertical"),
+                Some("16:9") => Some("horizontal"),
+                Some("1:1") => Some("square"),
+                _ => None,
+            };
+            if footage.is_none_or(|footage| {
+                footage
+                    .get("treatment")
+                    .and_then(Value::as_str)
+                    .is_none_or(|treatment| !matches!(treatment, "fill" | "blurPlate"))
+                    || footage
+                        .get("continuity")
+                        .and_then(Value::as_str)
+                        .is_none_or(|continuity| continuity.trim().is_empty())
+            }) {
+                blockers.push(
+                    "style.footage needs a treatment (fill or blurPlate) and a continuity rule"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            }
+            if let (Some(expected), Some(actual)) = (
+                expected_orientation,
+                footage
+                    .and_then(|footage| footage.get("orientation"))
+                    .and_then(Value::as_str),
+            ) && expected != actual
+            {
+                blockers.push(format!(
+                    "style.footage.orientation `{actual}` disagrees with aspect `{}` - a vertical reel is not a horizontal cut",
+                    object.get("aspect").and_then(Value::as_str).unwrap_or("unknown")
+                ));
+                score -= 0.4;
+            }
+            if style
+                .get("continuityRules")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
+                blockers.push(
+                    "style.continuityRules needs at least one checkable rule (fill, no letterbox, one accent per section)"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            }
+        }
+        Some(_) => blockers.push("style must be an object".to_owned()),
+    }
+
+    // The retention contract: a clean cut can still be a scroll-past. The
+    // hook earns the first three seconds, the turn changes the question,
+    // the payoff answers it, and pattern breaks keep the eye from
+    // adapting. These are the checks a viewer makes before a critic does.
+    match object.get("retention") {
+        None => {
+            blockers.push(
+                "no retention contract: set `retention` with hook, turnAt, payoffAt, patternBreaks and openLoops - a technically clean cut is not a watched one"
+                    .to_owned(),
+            );
+            score -= 1.5;
+        }
+        Some(Value::Object(retention)) => {
+            if retention
+                .get("hook")
+                .and_then(Value::as_str)
+                .is_none_or(|hook| hook.trim().is_empty())
+            {
+                blockers.push("retention.hook is missing: say what the first three seconds show and ask".to_owned());
+                score -= 0.4;
+            }
+            let turn = retention.get("turnAt").and_then(Value::as_f64);
+            let payoff = retention.get("payoffAt").and_then(Value::as_f64);
+            if turn.is_none_or(|turn| !(runtime * 0.2..=runtime * 0.8).contains(&turn)) {
+                blockers.push(format!(
+                    "retention.turnAt must sit between {:.1}s and {:.1}s (20-80% of the cut)",
+                    runtime * 0.2,
+                    runtime * 0.8
+                ));
+                score -= 0.5;
+            }
+            if payoff.is_none_or(|payoff| !(runtime * 0.75..=runtime).contains(&payoff)) {
+                blockers.push(format!(
+                    "retention.payoffAt must sit between {:.1}s and the end - the promise has to be answered",
+                    runtime * 0.75
+                ));
+                score -= 0.5;
+            }
+            let breaks = retention
+                .get("patternBreaks")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
+            let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
+            if breaks < wanted_breaks {
+                blockers.push(format!(
+                    "retention.patternBreaks has {breaks} changes; a {runtime:.0}s cut needs at least {wanted_breaks} deliberate visual or sonic breaks"
+                ));
+                score -= 0.5;
+            }
+            if retention
+                .get("openLoops")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+                < 2
+            {
+                blockers.push("retention.openLoops needs at least two questions the viewer wants answered".to_owned());
+                score -= 0.4;
+            }
+        }
+        Some(_) => blockers.push("retention must be an object".to_owned()),
+    }
+
     // RISK-01/RISK-02: a monetized brief cannot stand on stock whose
     // licence does not permit commercial use. The plan is where the
     // intention is declared, so the gate fires here - before a single
@@ -6943,6 +7187,23 @@ mod tests {
                 "payoff": "The evidence reveals the cause",
                 "emotionalArc": ["curiosity", "tension", "clarity"]
             },
+            "style": {
+                "name": "one look",
+                "palette": ["#0b0d12", "#f2e9dc"],
+                "grade": "concat.teal-orange",
+                "captions": { "font": "Inter", "weight": 700, "emphasisColor": "#f2e9dc", "position": "lower-third" },
+                "motion": { "language": "measured push-ins", "easing": "spring-pop", "intensity": 0.6 },
+                "sound": { "duckDb": -12, "texture": "dry room, low pulse" },
+                "footage": { "orientation": "horizontal", "treatment": "fill", "continuity": "one camera height" },
+                "continuityRules": ["fill, never letterbox"]
+            },
+            "retention": {
+                "hook": "a question in the first two seconds",
+                "turnAt": 15.0,
+                "payoffAt": 27.0,
+                "patternBreaks": [8.0, 20.0],
+                "openLoops": ["what happened?", "why?"]
+            },
             "sections": [
                 { "role": "hook", "start": 0.0, "end": 3.0 },
                 { "role": "body", "start": 3.0, "end": 25.0 },
@@ -6978,6 +7239,23 @@ mod tests {
                 "curiosityGap": "What actually happened?",
                 "payoff": "The evidence reveals the cause",
                 "emotionalArc": ["curiosity", "tension", "clarity"]
+            },
+            "style": {
+                "name": "one look",
+                "palette": ["#0b0d12", "#f2e9dc"],
+                "grade": "concat.teal-orange",
+                "captions": { "font": "Inter", "weight": 700, "emphasisColor": "#f2e9dc", "position": "lower-third" },
+                "motion": { "language": "measured push-ins", "easing": "spring-pop", "intensity": 0.6 },
+                "sound": { "duckDb": -12, "texture": "dry room, low pulse" },
+                "footage": { "orientation": "horizontal", "treatment": "fill", "continuity": "one camera height" },
+                "continuityRules": ["fill, never letterbox"]
+            },
+            "retention": {
+                "hook": "a question in the first two seconds",
+                "turnAt": 5.0,
+                "payoffAt": 9.0,
+                "patternBreaks": [3.0, 7.0],
+                "openLoops": ["what happened?", "why?"]
             },
             "audio": { "bgm": { "trackId": "lofi-0123456789ab" } },
             "sections": [

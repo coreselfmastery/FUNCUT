@@ -119,6 +119,15 @@ is required, the fields live NESTED in the `brief` object (a top-level
 three DIFFERENT beats. Read `directorPrompt` from the reply and keep it in your
 working context — it is the intent every later decision is judged against.
 If the user gave a topic but no angle, invent a sharp one and state it.
+Before choosing one direction, run a three-concept bake-off: write three
+different films that could answer the brief (different subject, structure,
+visual language and sound), say in one sentence what each would make the
+viewer feel, and pick one for a stated reason. A single first idea is how
+every AI edit becomes the same edit. Then write the **style bible**
+(`prompts/style_bible.md`) and the **retention contract** (`retention` in
+the plan: hook, turnAt, payoffAt, patternBreaks, openLoops). Both are
+`creativeReady` blockers when absent, because a cut with no one look and no
+reason to keep watching is not a finished edit.
 Read `prompts/creative_visual_direction.md` before planning visuals. It is
 a decision framework, not a template: invent a film-specific visual language
 and choose footage, original motion, data graphics, typography, generated
@@ -341,7 +350,10 @@ colourTemp, duckDb** — copied from the extract's lines (the schema documents
 them, the example shows them); they are what Phases 13–19 answer to. Consult
 maestro's shot cards for scale, motion, and register. Pick the card that
 matches the beat's emotion and act. Put the
-Phase 1 brief in `plan.creativeBrief`. **The plan also carries the
+Phase 1 brief in `plan.creativeBrief`, the **style bible** in
+`plan.style` (palette, grade, caption system, motion hand, sound world,
+footage treatment, continuity rules) and the **retention contract** in
+`plan.retention` (hook, turnAt, payoffAt, patternBreaks, openLoops). **The plan also carries the
 `signalLog` — the decision log**: one entry per cut, caption highlight,
 graphic, BGM choice and transition, naming the Phase 4 signals that drove
 it (`{"at": 4.2, "decision": "cut", "signals": ["pause.class=dead_air",
@@ -982,6 +994,8 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/memory.md` | the editing journal: what to write, when to re-read |
 | `prompts/review.md` | the Phase 21 checklist and the definition of done |
 | `prompts/creative_direction.md` | Phase 1: turning a topic into a sharp angle, arc and payoff |
+| `prompts/style_bible.md` | the one look: palette, type, grade, motion hand, sound, footage, continuity and vertical rules |
+| `prompts/ai_media.md` | generative stills/video/3D/audio when a real generator is installed, and the honest fallback when none is |
 | `prompts/quality_loop.md` | watch_render -> craft_critique -> revise, and how to read the scores |
 | `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
 | `prompts/signal_matrix.md` | all 25 signal families and 50+ readings, and the decision each informs |

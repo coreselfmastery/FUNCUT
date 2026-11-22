@@ -29,6 +29,37 @@ working context and use it to judge every later decision. If the user gives
 only a topic, invent a sharp angle, state it plainly, and put it in the
 brief — do not ask for permission to have a point of view.
 
+## Run a three-concept bake-off before you commit
+
+The first idea is almost always the generic one. Write three complete
+films that could answer the brief, each in one paragraph:
+
+1. **The literal film** — shows the subject directly, the safest read.
+2. **The metaphor film** — makes the subject visible through one concrete
+   image or process; usually the most memorable.
+3. **The formal film** — the structure itself carries the idea (a countdown,
+   a split screen, a single unbroken move, a data build).
+
+For each, say what the viewer feels at 0 s, at the turn and at the payoff,
+and which one you would send to the person named in `audience`. Pick one
+for a stated reason; write the other two into the plan's notes as the
+roads not taken. A bake-off is not decoration: it is the difference between
+a video that could only be this film and one that could be any film.
+
+## The style bible and the retention contract
+
+Before the plan, write both:
+
+- **`style`** — one name, palette, grade, caption system, motion hand,
+  sound world, footage treatment and continuity rules. Every later choice
+  must conform. See `prompts/style_bible.md`.
+- **`retention`** — `hook` (what the first three seconds show and ask),
+  `turnAt`, `payoffAt`, `patternBreaks` and at least two `openLoops`. See
+  `prompts/edit_plan.md`.
+
+`plan_validate` blocks a plan without them (`creativeReady: false`). They
+are the difference between "technically valid" and "worth watching".
+
 ## Turn the angle into structure
 
 1. **The hook is the gap, not a greeting.** The first shot and first line

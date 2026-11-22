@@ -79,6 +79,11 @@ const COMPACT_DROPS: &[&str] = &[
     "maxSegmentSeconds",
     "text",
     "slots",
+    // The style bible and retention contract are validated at runtime and
+    // documented in the canonical schema; the compact plan_validate input
+    // schema keeps them accepted but does not spend client context on them.
+    "style",
+    "retention",
 ];
 
 /// What the compact projection keeps of a segment: the timeline facts

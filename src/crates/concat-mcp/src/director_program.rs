@@ -4044,6 +4044,81 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         .unwrap_or("concat.teal-orange");
     let (intensity_key, intensity) = grade_param(look);
     let mode = if runtime > 60.0 { "longform" } else { "reel" };
+    let aspect = aspect_of(view);
+    let orientation = match aspect {
+        "9:16" | "4:5" => "vertical",
+        "1:1" => "square",
+        _ => "horizontal",
+    };
+    let palette = match look {
+        "concat.cold" | "concat.blue" => ["#08111f", "#9fd3ff", "#f4f8ff"],
+        "concat.warm" | "concat.golden" => ["#1a0f08", "#f2c078", "#fff7e8"],
+        "concat.mono" | "concat.noir" => ["#0a0a0a", "#e8e8e8", "#8a8a8a"],
+        _ => ["#0b0d12", "#f2e9dc", "#c96a3a"],
+    };
+    // The one look the whole fixed edit wears. The Director writes a
+    // richer style bible; this is the floor the deterministic fallback
+    // can prove, so the same validator can judge both paths.
+    let style = json!({
+        "name": format!("{look} / {orientation}"),
+        "palette": palette,
+        "grade": look,
+        "captions": {
+            "font": "Inter",
+            "weight": 700,
+            "emphasisColor": palette[1],
+            "position": if orientation == "vertical" { "center" } else { "lower-third" },
+        },
+        "motion": {
+            "language": "measured push-ins, one accent and clean entrances",
+            "easing": "spring-pop",
+            "intensity": 0.6,
+        },
+        "sound": {
+            "duckDb": duck,
+            "texture": "dry room, low pulse, airy transitions",
+        },
+        "footage": {
+            "orientation": orientation,
+            "treatment": "fill",
+            "continuity": "one camera height, no letterbox, colour temperature follows the act",
+        },
+        "continuityRules": [
+            "fill every frame; never letterbox a vertical reel",
+            "one accent colour per section",
+            "no two consecutive shots share a camera height",
+        ],
+    });
+    // The retention contract: the hook is the first spoken line, the turn
+    // is the strongest measured act (or the middle of the cut), and the
+    // payoff is the last line. Pattern breaks are spread across the cut
+    // plus the turn, so a clean fallback still has a rhythm a viewer can
+    // feel - and a longform cut gets enough of them to pass its own gate.
+    let turn_at = segments
+        .iter()
+        .find(|segment| segment.get("act").and_then(Value::as_str) == Some("turn"))
+        .and_then(|segment| segment.get("start").and_then(Value::as_f64))
+        .unwrap_or(runtime * 0.55);
+    let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
+    let mut pattern_breaks: Vec<f64> = (1..=wanted_breaks)
+        .map(|index| round3(runtime * index as f64 / (wanted_breaks + 1) as f64))
+        .collect();
+    pattern_breaks.push(round3(turn_at));
+    pattern_breaks.sort_by(|left, right| left.total_cmp(right));
+    let hook = spoken
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "the opening claim and the question it plants".to_owned());
+    let retention = json!({
+        "hook": hook,
+        "turnAt": round3(turn_at.clamp(runtime * 0.2, runtime * 0.8)),
+        "payoffAt": round3(runtime * 0.9),
+        "patternBreaks": pattern_breaks,
+        "openLoops": [
+            brief.get("curiosityGap").and_then(Value::as_str).unwrap_or("what is the claim?"),
+            brief.get("payoff").and_then(Value::as_str).unwrap_or("what proves it?"),
+        ],
+    });
     Some(json!({
         "title": source
             .project
@@ -4069,6 +4144,8 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             "intensity": intensity,
             "apply": "layer",
         },
+        "style": style,
+        "retention": retention,
         "signalLog": signal_log,
         "export": {
             "output": source.export,

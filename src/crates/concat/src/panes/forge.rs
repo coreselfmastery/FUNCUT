@@ -3077,7 +3077,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
          creative decision yourself and record it.\n\n\
          READ THE DEEP PLAYBOOKS BEFORE YOU DECIDE: read .claude/skills/funcut-director/SKILL.md, \
-         prompts/creative_direction.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
+         prompts/creative_direction.md, prompts/style_bible.md, prompts/ai_media.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
          and the example, prompts/motion_comps.md with .claude/skills/motion/SKILL.md, \
          prompts/quality_loop.md, prompts/power_moves.md, prompts/signal_matrix.md, \
          prompts/signal_recipes.md, prompts/emotion_to_edit.md, prompts/token_budget.md \
@@ -3138,14 +3138,14 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          the profile into a note: every signal you read must land on a choice.\n\n\
          FIRST THE BRIEF: call creative_brief {{action:\"set\", path:'{project}', brief:...}} \
          before any planning tool; the plan carries that brief and a plan without one is not \
-         creativeReady. Then write the Phase 5 story map, not a shot list with no argument.\n\n\
+         creativeReady. Run a three-concept bake-off first: write three different films that could answer the brief, say what each would make the viewer feel, and choose one for a stated reason - then write the style bible (`style` in the plan: palette, grade, caption system, motion hand, sound world, footage treatment, continuity rules) and the retention contract (`retention`: hook, turnAt, payoffAt, patternBreaks, openLoops). Both are creativeReady blockers when absent. Then write the Phase 5 story map, not a shot list with no argument.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
          (plan_validate must return valid:true AND creativeReady:true), B-roll shopped on \
          the licensed live shelves (stock_search with the keys in your environment, \
          stock_fetch, then stock_contact_sheet with the fetched paths) and LOOKED AT \
          before choosing and gated with \
          footage_continuity before anything is imported (a flagged slot gets a different \
-         clip or holds), captions cut on the measured words in groups of two to four \
+         clip or holds). The live shelves in this build are VIDEO-ONLY: do not claim a stock still, and do not use a 16:9 clip unreframed in a 9:16 reel - fill and reframe it, or make a still from a clip with preview_frame, or use a generated image. If a real generator (the Higgsfield CLI) is installed, use prompts/ai_media.md: one nano_banana_2 style key first, then reference it for every still, then seedance_2_0/gemini_omni image-to-video for impossible shots; download into the project and media_import. If it is absent, say so and use footage, stills and Geneva comps - never fake a generated asset. captions cut on the measured words in groups of two to four \
          (punctuation, breath gaps and four words are the seams; the safe-remove fillers \
          never show; the delivery's stressed words take the accent through \
          title_style_words), Geneva motion comps for the beats that earn them \
@@ -3160,7 +3160,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          earn the strongest push-in, the loudest word and an entrance accent whatever the \
          mood. Fit the frame the project actually is - a vertical reel and a horizontal \
          cut are different edits. Use the editor's whole vocabulary; do not settle for a \
-         template. Use masks, subject tracking, template_instantiate, kinetic captions, motion reels and \
+         template. Use masks, subject tracking, 3D set-camera moves with depths, bone rigs, template_instantiate, kinetic captions, motion reels and \
          overlays, scene analysis, clip_speed and clip_transform for a designed retime or \
          reframe, tts_generate only for a missing pickup, and the full transition catalogue \
          where the story earns them - not as decoration.\n\n\
@@ -3201,7 +3201,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          craft score, the gates, and what you changed. Exporting is the user's next click, not \
          yours; if you rendered by mistake, leave the timeline as the deliverable and say so. A \
          file PATH to a PNG is not a picture you can see: only inline image blocks are.\n\n\
-         {stock}",
+         {stock}\n\n         GENERATIVE MEDIA: {generator}",
         project = source.project,
         critic = critic,
         stock = if stock_shelves_ready(studio) {
@@ -3210,6 +3210,17 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
             "NO stock key is saved (Settings > Stock APIs), so stock_search will refuse: \
              carry the picture with the project's own footage, Geneva motion comps and \
              typography over the narration instead - do not leave unpictured spans."
+                .to_owned()
+        },
+        generator = if ai_generator_ready() {
+            "A real generator is installed: the Higgsfield CLI answered. Read prompts/ai_media.md, \
+             generate one style key first, then reference it for every still and image-to-video, \
+             download into the project and media_import. Record model, prompt and licence."
+                .to_owned()
+        } else {
+            "NO generative media CLI is installed (higgsfield was not found). Do not invent a \
+             generated asset: use the project's footage, licensed video stock, stills from \
+             preview_frame, Geneva comps and typography, and say which one you used."
                 .to_owned()
         },
     )
@@ -3231,6 +3242,19 @@ fn stock_shelves_ready(studio: &Studio) -> bool {
     .any(|(field, name)| {
         !field.trim().is_empty() || std::env::var(name).is_ok_and(|set| !set.trim().is_empty())
     })
+}
+
+/// Whether a real generative-media CLI is installed. The Higgsfield shelf
+/// is the supported door (images, video, 3D, audio); the prompt reads this
+/// answer so an unattended run either uses a generator that exists or says
+/// plainly that none does, instead of pretending an asset was made.
+fn ai_generator_ready() -> bool {
+    Command::new("higgsfield")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Starts the Director over the AUTO EDIT's sibling: the same harness a

@@ -5015,7 +5015,6 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
 /// Director agent's.
 pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let project = source.project.clone();
-    let export = source.export.clone();
     let takes = source.takes.clone();
     let call = |tool: &str, arguments: Value| ToolCall {
         tool: tool.to_owned(),
@@ -8197,214 +8196,44 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 13. The render, waited on by its project folder: the job's name is
-    //     minted when the export starts, and a program written before that
-    //     moment asks for the work by what it was started on.
+    // 13. Save and read back the editable project. AUTO EDIT's default
+    //     deliverable is the timeline the user can continue editing, not
+    //     an MP4 the user did not ask to render.
+    let ready_project = source.project.clone();
     steps.push(
         StageStep::run(
-            Stage::Export,
+            Stage::TimelineReady,
             vec![
-                call(
-                    "export_start",
-                    json!({
-                        "path": project.clone(),
-                        "output": export.clone(),
-                        "crf": 20,
-                    }),
-                ),
-                call(
-                    "export_wait",
-                    json!({ "path": project.clone(), "timeoutSeconds": 590 }),
-                ),
-                call(
-                    "export_wait",
-                    json!({ "path": project, "timeoutSeconds": 590 }),
-                ),
+                call("project_save", json!({ "path": ready_project.clone() })),
+                call("timeline_read", json!({ "path": ready_project.clone() })),
             ],
         )
-        // The waits give up with "still running" rather than an error
-        // when their budget ends; without a gate the stage then
-        // "completes" over a live render and the run dies three stages
-        // later in Verify on a transcript of a file that is not there
-        // yet - an error that names the transcript, not the render. The
-        // gate names the render.
-        .gate(ReplyGate::Word {
-            field: "state",
-            equals: "done",
-            what: "the render was still running when its waits ran out",
-        })
         .into(),
     );
-    // 14. The verify: the sanity reads first - collisions, and the
-    //     timeline as the placements left it - then the words re-read
-    //     from the render, the loudness measured against the short-form
-    //     target, and the re-read words COMPARED with the words the edit
-    //     places now, each piece of the voiceover a take of its own
-    //     (F-04). The expected side is derived from the timeline the run
-    //     ended with, not the one it planned: a tighten that moved a word
-    //     is verified where the word is. This reply is the verification
-    //     the run's terminal states carry, and the gates are the
-    //     measurements' own word.
-    let verify_source = takes.clone();
-    let verify_export = source.export.clone();
-    let verify_placements = source.placements.clone();
-    let verify_project_path = source.project.clone();
+
+    // 14. Verify the saved timeline and its lanes. The independent
+    //     acceptance receipt checks every media reference and source path;
+    //     this stage's own gate refuses shared lanes before the user opens
+    //     the result.
+    let verify_project = source.project.clone();
     steps.push(
-        DerivedStep::react(
+        StageStep::run(
             Stage::Verify,
-            Box::new({
-                let mut phase = 0u8;
-                move |log| {
-                    if phase == 0 {
-                        phase = 1;
-                        return Some(call(
-                            "collision_check",
-                            json!({ "path": verify_project_path }),
-                        ));
-                    }
-                    if phase == 1 {
-                        phase = 2;
-                        return Some(call(
-                            "timeline_read",
-                            json!({ "path": verify_project_path }),
-                        ));
-                    }
-                    if phase == 2 {
-                        phase = 3;
-                        return Some(call("transcribe", json!({ "path": verify_export })));
-                    }
-                    if phase == 3 {
-                        phase = 4;
-                        return Some(call(
-                            "analysis_wait",
-                            json!({ "path": verify_export, "timeoutSeconds": 590 }),
-                        ));
-                    }
-                    if phase == 4 {
-                        phase = 5;
-                        return Some(call(
-                            "analysis_wait",
-                            json!({ "path": verify_export, "timeoutSeconds": 590 }),
-                        ));
-                    }
-                    if phase == 5 {
-                        phase = 6;
-                        return Some(call("measure_loudness", json!({ "path": verify_export })));
-                    }
-                    if phase == 6 {
-                        phase = 7;
-                        // The expected words: the timeline's own voiceover
-                        // pieces, each mapped as the take it plays - the
-                        // placements the run began with when nothing
-                        // moved them, the pieces the tighten left when it
-                        // did.
-                        let expected: Vec<Value> =
-                            match latest_view(log).map(|view| {
-                                let media = media_paths(view);
-                                view["timeline"]["clips"]
-                                    .as_array()
-                                    .into_iter()
-                                    .flatten()
-                                    .filter(|clip| {
-                                        clip["media"].as_str().is_some_and(|id| {
-                                            media.iter().any(|(mid, path)| {
-                                                mid == id
-                                                    && verify_source
-                                                        .iter()
-                                                        .any(|take| take.take == *path)
-                                            })
-                                        })
-                                    })
-                                    .map(|clip| {
-                                        let (source_in, source_out, speed) = clip_file_span(clip);
-                                        json!({
-                                            "path": media
-                                                .iter()
-                                                .find(|(mid, _)| Some(mid.as_str()) == clip["media"].as_str())
-                                                .map(|(_, path)| path.clone())
-                                                .unwrap_or_default(),
-                                            "start": clip["start"].as_f64().unwrap_or(0.0),
-                                            "sourceIn": source_in,
-                                            "sourceOut": source_out,
-                                            "speed": speed,
-                                        })
-                                    })
-                                    .collect::<Vec<_>>()
-                            }) {
-                                Some(rows) if !rows.is_empty() => rows,
-                                // No view the closure can read: the
-                                // placements the run was written from are
-                                // the expected side, as they always were.
-                                _ => verify_placements
-                                    .iter()
-                                    .map(|placed| {
-                                        json!({
-                                            "path": placed.take,
-                                            "start": placed.start,
-                                            "sourceIn": placed.source_in,
-                                            "sourceOut": placed.source_out,
-                                            "speed": placed.speed,
-                                        })
-                                    })
-                                    .collect(),
-                            };
-                        return Some(call(
-                            "emotion",
-                            json!({
-                                "action": "verify",
-                                "expectedTakes": expected,
-                                "actualPath": verify_export,
-                                "toleranceMs": 150,
-                            }),
-                        ));
-                    }
-                    if phase == 7 {
-                        phase = 8;
-                        // Transcript and loudness are not proof that the
-                        // rendered file is a usable video. Probe the actual
-                        // export as the final verification call: the media
-                        // reader reports its streams, duration, dimensions,
-                        // frame rate and codecs, and refuses a missing or
-                        // unreadable file.
-                        return Some(call(
-                            "motion_probe",
-                            json!({ "path": verify_export }),
-                        ));
-                    }
-                    None
-                }
-            }),
+            vec![
+                call("collision_check", json!({ "path": verify_project.clone() })),
+                call("timeline_read", json!({ "path": verify_project })),
+            ],
         )
         .gate(ReplyGate::True {
-            field: "platformTargetMet",
-            what: "the mix missed the platform loudness target",
-        })
-        .gate(ReplyGate::Word {
-            field: "verdict",
-            equals: "pass",
-            what: "the export's words are not the words the edit placed",
-        })
-        // The collision read the stage opened with is a gate, not
-        // decoration: a timeline whose clips share a lane is a damaged
-        // edit, whatever the transcript and the loudness say.
-        .gate(ReplyGate::True {
             field: "clean",
-            what: "clips share a lane on the timeline",
+            what: "clips share a lane on the saved timeline",
         })
         .into(),
     );
-    // 15. The watch, warn-policy: the whole cut as one contact sheet,
-    //     written beside the export, then read and scored. A score under
-    //     the bar is a flaw the edit ships with - recorded, yellow - not a
-    //     run thrown away after the render already landed. The gate is
-    //     the craft bar the headless runner ships on (7.0).
-    //
-    //     The final critique carries the same measured brief and the same
-    //     autoSetup the preview's did: the shipped file is judged against
-    //     the story its own voice measured, not the pictures alone, and a
-    //     machine with no vision model yet says so instead of answering
-    //     from pixels and calling it a critique.
-    let watch_export = source.export.clone();
+
+    // 15. Review the final timeline after revisions. watch_render renders
+    //     a preview/contact sheet from the open project, not an export;
+    //     the critic scores that sheet against the measured brief.
     let watch_project = source.project.clone();
     let watch_sheet = source.sheet.clone();
     steps.push(
@@ -8420,7 +8249,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return Some(call(
                             "watch_render",
                             json!({
-                                "path": watch_export,
                                 "project": watch_project,
                                 "out": watch_sheet,
                                 "audio": true,
@@ -8429,51 +8257,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     if phase == 1 {
                         phase = 2;
-                        // The sheet names where it kept its own pixels;
-                        // that is the path the critic reads. The joined
-                        // name is the fallback when the reply carried
-                        // none.
-                        let png = log
-                            .iter()
-                            .rev()
-                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .filter(|png| !png.trim().is_empty())
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| {
-                                std::path::Path::new(&watch_project)
-                                    .join(&watch_sheet)
-                                    .display()
-                                    .to_string()
-                            });
-                        let measured = signal_brief(log);
-                        let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
-                            measured
-                        } else {
-                            json!({})
-                        };
-                        // The watch's own sheet travels whole: its craft
-                        // (variety, black frames, letterboxing, static
-                        // cuts) and audio measurements are the critique's
-                        // evidence - pngPath alone answered a constant 6.7
-                        // and the 7.0 bar below could never pass.
                         let sheet = log
                             .iter()
                             .rev()
                             .find(|reply| {
-                                reply
-                                    .get("pngPath")
+                                reply.get("pngPath")
                                     .and_then(Value::as_str)
-                                    .is_some_and(|png| !png.trim().is_empty())
+                                    .is_some_and(|path| !path.trim().is_empty())
                             })
                             .cloned()
                             .unwrap_or_else(|| json!({}));
+                        let png_path = sheet
+                            .get("pngPath")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
                         return Some(call(
                             "craft_critique",
                             json!({
-                                "pngPath": png,
+                                "pngPath": png_path,
                                 "sheet": sheet,
                                 "project": watch_project,
-                                "brief": brief,
+                                "brief": signal_brief(log),
                                 "autoSetup": true,
                             }),
                         ));
@@ -8486,11 +8290,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .gate(ReplyGate::AtLeast {
             field: "overall",
             minimum: 7.0,
-            what: "the cut scored under the craft bar",
+            what: "the final timeline preview scored under the craft bar",
         })
         .into(),
     );
-    EditProgram::mixed(PathBuf::from(&source.export), steps).enforcing_acceptance()
+    EditProgram::mixed(PathBuf::from("timeline"), steps).enforcing_acceptance()
 }
 
 #[cfg(test)]

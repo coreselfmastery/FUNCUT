@@ -138,7 +138,7 @@ Areas mapped for the audit: UI, timeline/project model, media import/decode/prox
 
 The earlier `docs/BUG-AUDIT-FINAL.md` contains the detailed TIME / ENV / XSTAGE / LATENT / DEG / VERIFY ledger reconciliation. It identified a set of IDs that had no definition in the public repository, issues or PR history. Those remain **UNDEFINED** until the original definitions from the private session briefs are supplied; they must not be guessed or silently marked closed.
 
-The earlier audit's PR status snapshot is stale. At the current-main snapshot:
+The earlier audit's PR status snapshot is stale. At the 17 November 2026 snapshot (historical; superseded by the 22 November status update above):
 
 - PR #130 (SCH-02 schema generation): open, unmerged.
 - PR #131 (initial RES-03 gate): merged as the audited main commit.
@@ -147,7 +147,7 @@ The earlier audit's PR status snapshot is stale. At the current-main snapshot:
 - PR #133 (RISK-01/02 monetized licensing): open, licensing-specific and outside the code-defect count in this audit.
 - PR #135 (audit documentation): this report, current-main addendum and clean-clone documentation correction are in this PR.
 - PR #136 (P3-008 archive.org dependency): open; records an external environmental dependency, not a code defect.
-- PR #137 (Geneva master-list reconciliation): open; adds current-main Geneva and workflow evidence.
+- PR #137 (Geneva master-list reconciliation): closed unmerged; superseded by PR #201.
 - PR #138 (Director tracker reconciliation): open; corrects stale integration/revise-loop status.
 
 ## Next audit passes needed to finish the full repository audit

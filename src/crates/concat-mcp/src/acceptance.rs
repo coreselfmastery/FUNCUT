@@ -246,6 +246,20 @@ pub fn check(
     // independent pass makes a fabricated signalLog confidence fail even
     // when the plan's own structural validator accepts its vocabulary.
     let signal_required = plan.as_ref().is_some_and(plan_has_voiceover);
+    let arc_required = plan.as_ref().is_some_and(|plan| {
+        plan.get("signalLog")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry
+                        .get("signals")
+                        .and_then(Value::as_array)
+                        .is_some_and(|signals| {
+                            signals.iter().any(|signal| signal.as_str() == Some("arc"))
+                        })
+                })
+            })
+    });
     if signal_required {
         match expected_takes(check.project) {
             Ok(mapping_rows) => {
@@ -257,6 +271,7 @@ pub fn check(
                     let arguments = json!({ "audio": path });
                     if let Some(reply) = caller.ask("voice_signals", arguments.clone()) {
                         answered.push("voice_signals".to_owned());
+                        let lines = reply.get("lines").cloned();
                         observed.push((
                             ToolCall {
                                 tool: "voice_signals".to_owned(),
@@ -264,6 +279,36 @@ pub fn check(
                             },
                             reply,
                         ));
+                        if arc_required {
+                            let emotion_arguments = json!({
+                                "action": "extract",
+                                "lines": lines.clone().unwrap_or_else(|| json!([])),
+                                "project": check.project,
+                            });
+                            if let Some(emotion_reply) =
+                                caller.ask("emotion", emotion_arguments.clone())
+                            {
+                                answered.push("emotion".to_owned());
+                                observed.push((
+                                    ToolCall {
+                                        tool: "emotion".to_owned(),
+                                        arguments: emotion_arguments,
+                                    },
+                                    emotion_reply,
+                                ));
+                            } else {
+                                observed.push((
+                                    ToolCall {
+                                        tool: "emotion".to_owned(),
+                                        arguments: emotion_arguments,
+                                    },
+                                    json!({
+                                        "ok": false,
+                                        "error": "emotion extract could not independently measure the voiceover arc"
+                                    }),
+                                ));
+                            }
+                        }
                     } else {
                         record_signal_failure(
                             &mut observed,

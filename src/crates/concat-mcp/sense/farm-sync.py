@@ -261,6 +261,15 @@ class S3:
                 last = error
                 if attempt + 1 < attempts:
                     time.sleep(1.0 + attempt)
+        # A download that never succeeded leaves its `.part` behind:
+        # `_walk` keeps it from travelling, but a dead worker would leak
+        # one per object, so the part goes when the retries do.
+        if stream_to is not None:
+            part = stream_to.parent / (stream_to.name + ".part")
+            try:
+                part.unlink()
+            except OSError:
+                pass
         raise S3Error(f"{method} {key}: {last}")
 
     # ── The four verbs ────────────────────────────────────────────────
@@ -520,6 +529,13 @@ def cmd_pull(spec: dict) -> dict:
     remote = client.list(client.prefix)
     for key, size in remote:
         rel = key[len(client.prefix):]
+        # A farm bucket is shared with whoever can write to it, and a
+        # poisoned listing must not turn pull into an arbitrary write:
+        # a key that escapes the farm (an absolute path, a `..` hop, an
+        # empty name) is refused rather than joined.
+        parts = Path(rel).parts
+        if not rel or Path(rel).is_absolute() or ".." in parts:
+            continue
         if rel.startswith("staged/"):
             if staged is None:
                 continue

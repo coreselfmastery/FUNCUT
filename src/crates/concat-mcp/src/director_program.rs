@@ -135,7 +135,13 @@ fn timeline_at(view: &Value, media: &[(String, String)], take: &str, moment: f64
         }
         let (source_in, source_out, speed) = clip_file_span(clip);
         if (source_in..source_out).contains(&moment) {
-            let start = clip["start"].as_f64()?;
+            // A clip the summary cannot place (no start yet, a view the
+            // project has not finished writing) is one clip's gap, not a
+            // reason to abandon the whole scan: the same mercy the
+            // medialess clip two lines up already gets.
+            let Some(start) = clip["start"].as_f64() else {
+                continue;
+            };
             return Some(start + (moment - source_in) / speed);
         }
     }
@@ -292,10 +298,7 @@ fn dead_air_cuts(
     project: &str,
     emotion: &[EmotionLine],
 ) -> Vec<ToolCall> {
-    let Some(view) = log
-        .iter()
-        .find(|reply| reply.pointer("/timeline/clips").is_some())
-    else {
+    let Some(view) = latest_view(log) else {
         return Vec::new();
     };
     let media = media_paths(view);
@@ -1151,10 +1154,6 @@ fn seam_transition(
     }
 }
 
-/// The take whose own audio already carries music, if any. The music read
-/// does not echo the path it was asked about, so the replies that carry
-/// `musicPresent` are matched to the takes in the order the Understand
-/// stage issued them - one per take, in `takes` order.
 /// The timeline's extent over the narration's own clips - the number a
 /// bed must be trimmed to and a runtime read must not inflate. The bed
 /// itself (a clip whose media lives in the project's bgm/ folder) is
@@ -1209,10 +1208,40 @@ fn beats_in_take_clock(beats: &Value, source: &AutoEditProgramSource, take: &str
     Value::Array(translated)
 }
 
+/// The take whose own audio already carries music, if any. The music
+/// read echoes the path it was asked about, so a reply that carries
+/// `musicPresent` names its take directly - a call that failed leaves
+/// no reply behind, and pairing by the order the calls were issued in
+/// would then name the wrong take as the one that already carries
+/// music, with the bed decision for the real one wrong beside it. A
+/// reply with no echo (a sidecar older than the field) still pairs the
+/// way it always did: positionally, in `takes` order.
 fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
+    for reply in log {
+        let Some(path) = reply.get("audio").and_then(Value::as_str) else {
+            // An echo-less reply pairs positionally, below, the way it
+            // always did.
+            continue;
+        };
+        if reply
+            .get("musicPresent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && takes.iter().any(|take| take.take == path)
+        {
+            return Some(path.to_owned());
+        }
+    }
     let reads: Vec<bool> = log
         .iter()
-        .filter_map(|reply| reply.get("musicPresent").and_then(Value::as_bool))
+        .filter_map(|reply| {
+            if reply.get("audio").and_then(Value::as_str).is_some() {
+                // A keyed reply was already paired above; only the
+                // echo-less ones pair positionally.
+                return None;
+            }
+            reply.get("musicPresent").and_then(Value::as_bool)
+        })
         .collect();
     reads
         .iter()
@@ -2766,10 +2795,14 @@ fn card_words(text: &str) -> String {
 
 /// The transition an emotion earns on the cut into a B-roll shot: a
 /// speaker or mood change earns a visible one, a calm stretch earns a
-/// soft one. The ids are the catalogue's own transition packages.
+/// soft one. The ids are the catalogue's own transition packages - the
+/// transition-KIND ones, with a `[transition]` section the export
+/// resolver requires: an effect-kind id (the plain `concat.zoom-blur`
+/// family) falls through the resolver's catalogue arm and the cut
+/// renders plain, the very move the emotion asked for silently lost.
 fn transition_for_emotion(emotion: &str) -> &'static str {
     match emotion {
-        "joy" => "concat.zoom-blur-punch",
+        "joy" => "concat.zoom-blur-transition",
         "surprise" => "concat.hyper-zoom",
         "anger" => "concat.crash-zoom",
         "fear" => "concat.blur-dissolve",
@@ -2790,18 +2823,21 @@ fn alternate_transition(emotion: &str) -> &'static str {
         "surprise" => "concat.flash-social",
         "anger" => "concat.glitch-warp",
         "fear" => "concat.dissolve",
-        "sadness" => "concat.zoom-blur",
+        "sadness" => "concat.zoom-blur-transition",
         "disgust" => "concat.dissolve",
         _ => "concat.whip-pan",
     }
 }
 
-/// The emotional read the run made, in the order the takes were asked
-/// about. The emotion stage asks once per take that has timed words, in
-/// program order, so the `emotion` replies sit in the log in exactly
-/// that order - the invariant this reader stands on, and the reason the
-/// reader filters its takes with the same [`spoken_lines`] predicate the
-/// stage skips them with.
+/// The emotional read the run made, keyed by the take each reply
+/// answered. The extract echoes the `audio` it was handed, so the
+/// pairing is keyed on the answer itself: a call that failed leaves no
+/// reply behind, and the positional zip this replaced would then have
+/// read every later take under its neighbour's arc - the wrong words,
+/// acts, beds and B-roll queries, with no error anywhere. A reply with
+/// no echo (a sidecar older than the field) still pairs positionally
+/// with the unclaimed takes, in program order, which is what the stage's
+/// asking order makes right when every call answered.
 fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
     let replies: Vec<&Value> = log
         .iter()
@@ -2815,9 +2851,22 @@ fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
         .iter()
         .filter(|take| !spoken_lines(log, &take.take).is_empty())
         .collect();
-    asked
+    // The takes each reply is paired with: the echo names its own take
+    // when it carries one, and an echo-less reply takes the first
+    // unclaimed take in program order - never a take another reply has
+    // already answered.
+    let mut claimed = vec![false; asked.len()];
+    replies
         .iter()
-        .zip(replies)
+        .filter_map(|reply| {
+            let echoed = reply.get("audio").and_then(Value::as_str);
+            let at = match echoed {
+                Some(path) => asked.iter().position(|take| take.take == path),
+                None => claimed.iter().position(|free| !free),
+            }?;
+            claimed[at] = true;
+            Some((asked[at], *reply))
+        })
         .flat_map(|(take, reply)| {
             // The lines the stage sent this take's extract, in order: the
             // reply's rows answer them one for one, and the words the
@@ -2982,6 +3031,48 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
     }
 }
 
+/// The take a timeline moment sits on, and the file-second of the take it
+/// is playing: the inverse of `timeline_at`, asked by a clip that carries
+/// no media of its own (a caption, a title) whose delivery must be read
+/// from the voice that plays beneath it. Where two takes overlap (a
+/// collision the timeline check refuses), the later start wins.
+fn take_second_at(
+    view: &Value,
+    media: &[(String, String)],
+    takes: &[TakePaths],
+    moment: f64,
+) -> Option<(String, f64)> {
+    let mut best: Option<(f64, String, f64)> = None; // (start, take, file second)
+    for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
+        let Some(media_id) = clip["media"].as_str() else {
+            continue;
+        };
+        let Some(path) = media
+            .iter()
+            .find(|(id, _)| id == media_id)
+            .map(|(_, path)| path.as_str())
+        else {
+            continue;
+        };
+        if !takes.iter().any(|take| take.take == path) {
+            continue;
+        }
+        let (Some(start), Some(duration)) = (clip["start"].as_f64(), clip["duration"].as_f64())
+        else {
+            continue;
+        };
+        if !(moment >= start && moment < start + duration) {
+            continue;
+        }
+        let (source_in, _, speed) = clip_file_span(clip);
+        let file = source_in + (moment - start) * speed;
+        if best.as_ref().is_none_or(|(known, _, _)| start > *known) {
+            best = Some((start, path.to_owned(), file));
+        }
+    }
+    best.map(|(_, take, file)| (take, file))
+}
+
 /// The titles the entrance pass keys: every text clip the timeline now
 /// holds that is long enough to hold an entrance and is not already
 /// keyed. The captions stage places them a batch earlier, so they are
@@ -2992,8 +3083,10 @@ fn entrance_targets(log: &[Value], takes: &[TakePaths]) -> Vec<(String, f64, f64
         return Vec::new();
     };
     // The delivery's own curve, where a line was read: a tense line eases
-    // in, a warm one settles out (EMOTION.md's headline law, dead since
-    // the field was first emitted). The default is the settle every
+    // in, a warm one settles out (EMOTION.md's headline law). A caption
+    // has no media of its own, so the line is found through the timeline:
+    // the take playing under the caption's first second, at the
+    // file-second that moment plays. The default is the settle every
     // caption used to take regardless of what the voice did.
     let read = emotion_lines(log, takes);
     let media = media_paths(view);
@@ -3016,13 +3109,10 @@ fn entrance_targets(log: &[Value], takes: &[TakePaths]) -> Vec<(String, f64, f64
             // of the frame, so the rise is keyed around wherever the
             // caption actually sits.
             let offset_y = clip["offsetY"].as_f64().unwrap_or(0.0);
-            let ease = clip["media"]
-                .as_str()
-                .and_then(|mid| media.iter().find(|(id, _)| id == mid))
-                .and_then(|(_, path)| {
-                    let source = clip["sourceStart"].as_f64().unwrap_or(0.0);
-                    emotion_at(&read, path, source)
-                })
+            let ease = clip["start"]
+                .as_f64()
+                .and_then(|start| take_second_at(view, &media, takes, start))
+                .and_then(|(path, file)| emotion_at(&read, &path, file))
                 .map(|line| line.easing.clone())
                 .unwrap_or_else(default_ease);
             (duration >= 0.4).then_some((id, duration, offset_y, ease))
@@ -5152,11 +5242,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // Both are signals the vocabulary lists and
                             // nothing measured before this call, so the
                             // transition stage had to decide a seam on
-                            // the mood alone.
-                            calls.push(call(
-                                "sense_discourse",
-                                json!({ "action": "segment_topics", "lines": lines.clone() }),
-                            ));
+                            // the mood alone. The tiling needs at least
+                            // three lines to segment (a shorter take is
+                            // one topic by definition), and its refusal
+                            // would break the derive loop before the
+                            // take's own emotion read - so a take this
+                            // short simply skips the tiling, never the
+                            // reads after it.
+                            if lines.len() >= 3 {
+                                calls.push(call(
+                                    "sense_discourse",
+                                    json!({ "action": "segment_topics", "lines": lines.clone() }),
+                                ));
+                            }
                             calls.push(call(
                                 "sense_discourse",
                                 json!({ "action": "analyze_discourse", "lines": lines.clone() }),
@@ -5181,7 +5279,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             ));
                             calls.push(call(
                                 "emotion",
-                                json!({ "action": "extract", "lines": lines }),
+                                json!({ "action": "extract", "audio": take.take, "lines": lines }),
                             ));
                         }
                         calls
@@ -5315,50 +5413,64 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // next door; a chain with no doors left leaves the
                         // plan without a grid, and the music stage shops
                         // for itself later.
-                        let Some(tracks) = log
+                        let tracks = match log
                             .last()
                             .and_then(|reply| reply["tracks"].as_array().cloned())
-                        else {
-                            phase = 2;
-                            return None;
+                        {
+                            Some(tracks) => tracks,
+                            None => {
+                                // A reply that is not a search answer ends
+                                // the bed question the same way the missing
+                                // shelf did: the fall-through below plans
+                                // without a grid, in this same call - never
+                                // `return None`, which would end the STAGE
+                                // and take the planner and `plan_validate`
+                                // with it.
+                                phase = 2;
+                                Vec::new()
+                            }
                         };
-                        // (A reply that is not a search answer ends the
-                        // bed question: the fall-through below plans
-                        // without a grid.)
                         let runtime = narration_runtime(log);
                         let chosen = best_bed(&tracks, runtime)
                             .or_else(|| tracks.first().cloned())
                             .and_then(|track| track["id"].as_str().map(str::to_owned));
-                        let Some(id) = chosen else {
-                            query_cursor += 1;
-                            let chain = bed_query_chain(log, &plan_source);
-                            if query_cursor >= chain.len() {
+                        match chosen {
+                            Some(id) => {
+                                phase = 11;
+                                return Some(call(
+                                    "bgm_import",
+                                    json!({
+                                        "path": plan_project,
+                                        "ids": [id],
+                                        "start": 0.0,
+                                        "monetized": true,
+                                    }),
+                                ));
+                            }
+                            None => {
+                                query_cursor += 1;
+                                let chain = bed_query_chain(log, &plan_source);
+                                if query_cursor < chain.len() {
+                                    let query = chain.get(query_cursor).cloned().flatten();
+                                    let mut arguments = json!({
+                                        "source": "freepd",
+                                        "limit": 5,
+                                        "sort": "relevance",
+                                    });
+                                    if let Some(query) = query {
+                                        arguments["query"] = json!(query);
+                                    }
+                                    return Some(call("bgm_search", arguments));
+                                }
+                                // The chain's last door answered nothing:
+                                // the plan falls through below, without a
+                                // grid - never `return None`, which would
+                                // end the STAGE and silently drop the
+                                // planner's ranked B-roll and the
+                                // `plan_validate` gate with it.
                                 phase = 2;
-                                return None;
                             }
-                            // (The chain's last door answered nothing: the
-                            // plan falls through below, without a grid.)
-                            let query = chain.get(query_cursor).cloned().flatten();
-                            let mut arguments = json!({
-                                "source": "freepd",
-                                "limit": 5,
-                                "sort": "relevance",
-                            });
-                            if let Some(query) = query {
-                                arguments["query"] = json!(query);
-                            }
-                            return Some(call("bgm_search", arguments));
-                        };
-                        phase = 11;
-                        return Some(call(
-                            "bgm_import",
-                            json!({
-                                "path": plan_project,
-                                "ids": [id],
-                                "start": 0.0,
-                                "monetized": true,
-                            }),
-                        ));
+                        }
                     }
                     if phase == 11 {
                         // The import's reply: read the timeline back to
@@ -6640,9 +6752,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .unwrap_or_default();
                                 for mut group in caption_groups(&segment, &fillers) {
                                     group.take = take.clone();
+                                    // The opening bound must land inside a
+                                    // surviving piece (a caption whose
+                                    // first word was cut has no start to
+                                    // show at), but the closing bound is
+                                    // allowed to sit at the join the cut
+                                    // made: a group whose last word ends
+                                    // exactly at the piece's edge - a take
+                                    // trimmed to its last word, or a
+                                    // trailing pause the tighten took -
+                                    // still shows its words, so the bound
+                                    // maps to the nearest surviving second
+                                    // at or before it, the same mercy the
+                                    // B-roll slot bounds already get.
                                     let (Some(at), Some(to)) = (
                                         timeline_at(view, &media, &take, group.start),
-                                        timeline_at(view, &media, &take, group.end),
+                                        timeline_at_or_before(view, &media, &take, group.end),
                                     ) else {
                                         continue;
                                     };
@@ -7637,7 +7762,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // the trimmed duration from.
                         let bed_start = bed["start"].as_f64().unwrap_or(0.0);
                         let bed_duration = bed["duration"].as_f64().unwrap_or(0.0);
-                        let runtime = bed_runtime.unwrap_or(0.0);
+                        // A bed the plan landed (not this stage) has no
+                        // shopped runtime to trim to, and the tighten has
+                        // since shortened the cut under it: the trim is
+                        // sized by the narration the timeline actually
+                        // plays now - the latest view's own longest
+                        // non-bed end - never the pre-tighten length the
+                        // bed was first cut to, or the export ships the
+                        // bed's scored tail past the words' last second.
+                        let runtime = bed_runtime.unwrap_or_else(|| narration_runtime(log));
                         if runtime > 0.5 && bed_duration > runtime + 0.05 {
                             return Some(call(
                                 "edit_apply",
@@ -8489,7 +8622,7 @@ mod tests {
         assert_eq!(verify.calls[0].tool, "collision_check");
         assert_eq!(verify.calls[1].tool, "timeline_read");
         assert_eq!(
-            verify.gates(),
+            verify.gates,
             vec![ReplyGate::True {
                 field: "clean",
                 what: "clips share a lane on the saved timeline",
@@ -8501,7 +8634,7 @@ mod tests {
         // that never arrived, and every word-derived stage downstream
         // silently shipped defaults.
         assert_eq!(
-            program.steps[2].gates(),
+            program.steps[2].gates,
             vec![ReplyGate::Word {
                 field: "state",
                 equals: "done",
@@ -8509,7 +8642,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            program.steps[16].gates(),
+            program.steps[16].gates,
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -8519,7 +8652,7 @@ mod tests {
         // The plan's own gate: its structure is refused before a single
         // edit lands, not warned about after the fact.
         assert_eq!(
-            program.steps[5].gates(),
+            program.steps[5].gates,
             vec![ReplyGate::True {
                 field: "valid",
                 what: "the plan the run wrote did not validate",
@@ -8528,7 +8661,7 @@ mod tests {
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
             if at != 2 && at != 5 && at != 15 && at != 16 {
-                assert!(step.gates().is_empty(), "step {at} gates its replies");
+                assert!(step.gates.is_empty(), "step {at} gates its replies");
             }
         }
         // The fan compile-time proof the type system wanted: the repair
@@ -10256,7 +10389,7 @@ mod tests {
             .position(|step| step.stage() == Stage::Revise)
             .expect("the revise stage is in the program");
         assert!(
-            program.steps[at].gates().is_empty(),
+            program.steps[at].gates.is_empty(),
             "the revise gates nothing"
         );
         let ProgramStep::Derived(revise) = &mut program.steps[at] else {
@@ -12092,6 +12225,53 @@ mod tests {
             "only the picture-free title long enough to hold an entrance, on the settle a line was never read for"
         );
 
+        // A caption over a measured take reads the line that plays under
+        // it - through the timeline, not a media field a text clip has
+        // never carried. The take sits at 0.0 playing file seconds
+        // 4.0..8.0; a caption starting at timeline 1.5 lands on the tense
+        // line at file second 5.5 and takes ITS curve, never the default.
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "v1", "media": "m1", "start": 0.0, "duration": 6.0,
+                  "sourceStart": 4.0, "speed": 1.0 },
+                { "id": "c1", "kind": "text", "start": 1.5, "duration": 1.0 }
+            ]},
+            "media": [ { "id": "m1", "path": "/takes/a.wav" } ],
+        });
+        let mut row = emotion_row(4.0, 7.0, "tense", 0.8, "middle", "warm", "riser");
+        row["easing"] = json!({
+            "curve": { "kind": "bezier", "x1": 0.7, "y1": 0.0, "x2": 0.84, "y2": 0.0 }
+        });
+        let read = json!({ "audio": { "path": "/takes/a.wav" }, "lines": [row] });
+        // The transcript the emotion read answers: one timed line inside
+        // the take, so the take counts as asked and the reply zips to it.
+        let transcript = json!({
+            "path": "/takes/a.wav",
+            "output": serde_json::to_string(&json!({
+                "segments": [
+                    { "text": "you will not believe what happened next",
+                      "start": 4.0, "end": 7.0 }
+                ]
+            })).unwrap()
+        });
+        let log = vec![transcript, read, view];
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: String::new(),
+            aroll: None,
+        }];
+        let targets = entrance_targets(&log, &takes);
+        let ease = targets
+            .iter()
+            .find(|(id, _, _, _)| id == "c1")
+            .map(|(_, _, _, ease)| ease.clone())
+            .expect("the caption over the take is keyed");
+        assert_ne!(
+            ease,
+            default_ease(),
+            "a caption over a measured line takes the line's own curve"
+        );
+
         // Two seconds of title: the entrance settles within the first
         // 0.35 s, a fraction of the title's own span.
         let keys = entrance_keys("t1", 2.0, 0.0, &default_ease());
@@ -12329,11 +12509,16 @@ mod tests {
             let second = alternate_transition(mood);
             assert_ne!(first, second, "{mood} has a distinct alternate");
         }
-        assert_eq!(transition_for_emotion("joy"), "concat.zoom-blur-punch");
+        assert_eq!(transition_for_emotion("joy"), "concat.zoom-blur-transition");
         assert_eq!(alternate_transition("joy"), "concat.cross-pop");
         // Every transition the program can name is a package the effects
         // catalogue actually ships: a look-up id is a transition that
-        // silently never applies.
+        // silently never applies. And it must be a TRANSITION-kind
+        // package - the export resolver's catalogue arm requires a
+        // `[transition]` section, and an effect-kind id (the plain
+        // zoom-blur family) falls through to a plain cut, the move
+        // silently lost. This is the pin that keeps the joy and sadness
+        // seams from ever drifting back to the effect-kind neighbours.
         let catalogue =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../concat-effects/packages");
         for id in [
@@ -12362,6 +12547,18 @@ mod tests {
             assert!(
                 catalogue.join(id).is_dir(),
                 "the transition `{id}` is not a package the catalogue ships"
+            );
+            let manifest = std::fs::read_to_string(catalogue.join(id).join("effect.toml"))
+                .unwrap_or_else(|error| {
+                    panic!("the transition `{id}` has no effect.toml: {error}")
+                });
+            assert!(
+                manifest.contains("kind = \"transition\""),
+                "the transition `{id}` is not transition-kind: the export resolver falls it through to a plain cut"
+            );
+            assert!(
+                manifest.contains("[transition]"),
+                "the transition `{id}` carries no [transition] section: the resolver's catalogue arm requires one"
             );
         }
     }

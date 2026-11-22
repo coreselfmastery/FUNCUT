@@ -17,6 +17,10 @@ concat-media.workspace = true
 concat-render.workspace = true
 concat-project = { path = "../concat-project" }
 concat-effects.workspace = true
+# The comp document read back for a bake's assets fingerprint: the
+# manifest's `assets` key is the "changed logo, still the old logo"
+# guard, and the export is its biggest consumer.
+concat-motion.workspace = true
 # Masks for cutouts: read from the project's cache and applied to a decoded
 # frame before it is placed. Reading only; the host finds them.
 concat-vision.workspace = true

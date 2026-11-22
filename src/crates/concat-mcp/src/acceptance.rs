@@ -21,12 +21,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_director::{
     AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall,
-    ToolCaller, ToolError, Verdict, derive_gates, plan_has_voiceover, timeline_integrity,
+    ToolCaller, ToolError, Verdict, derive_gates, plan_has_voiceover,
 };
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
 use crate::tools::{Context, Toolbox};
+
+/// How far a word may start from where the edit placed it, in the
+/// acceptance's own `emotion` verify: the watcher's own line
+/// (`VERIFICATION_SYNC_TOLERANCE_MS`, 60 ms) is the tolerance the whole
+/// pipeline promises, and an acceptance 2.5x looser would pass exports
+/// the agent believed it was held to.
+pub const SYNC_TOLERANCE_MS: u64 = 60;
 
 /// What a finished Director run is asked to prove: the project it edited,
 /// and optionally the export it was told to land. The default Director
@@ -57,14 +64,9 @@ impl DirectorAcceptance {
     }
 }
 
-/// The independent media checks, in dependency order. The contact
-/// sheet produced by watch_render is passed to craft_critique in check().
-///
-/// With an export, the checks prove the encoded file: readable streams,
-/// platform loudness, the rendered picture, and lane collisions. Without
-/// one - the default Director deliverable - they prove the timeline the
-/// user is about to customize: it reads, its composited picture is judged,
-/// and no two clips share a lane.
+/// Record a narration signal profile that could not be measured: the
+/// failed profile is the evidence the signal-evidence gate will skip on,
+/// so the run is honestly incomplete rather than falsely passing.
 fn record_signal_failure(observed: &mut Vec<(ToolCall, Value)>, arguments: Value, message: String) {
     observed.push((
         ToolCall {
@@ -75,6 +77,14 @@ fn record_signal_failure(observed: &mut Vec<(ToolCall, Value)>, arguments: Value
     ));
 }
 
+/// The independent media checks, in dependency order. The contact
+/// sheet produced by watch_render is passed to craft_critique in check().
+///
+/// With an export, the checks prove the encoded file: readable streams,
+/// platform loudness, the rendered picture, and lane collisions. Without
+/// one - the default Director deliverable - they prove the timeline the
+/// user is about to customize: it reads, its composited picture is judged,
+/// and no two clips share a lane.
 pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)> {
     match export {
         Some(export) => vec![
@@ -393,7 +403,7 @@ pub fn check(
                     "action": "verify",
                     "expectedTakes": expected,
                     "actualPath": export,
-                    "toleranceMs": 150,
+                    "toleranceMs": SYNC_TOLERANCE_MS,
                 });
                 if let Some(reply) = caller.ask("emotion", arguments.clone()) {
                     answered.push("emotion".to_owned());
@@ -548,6 +558,7 @@ impl ToolCaller for CheckCaller<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concat_director::timeline_integrity;
 
     #[test]
     fn media_checks_use_the_export_and_create_a_real_contact_sheet() {

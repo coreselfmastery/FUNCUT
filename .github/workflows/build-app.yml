@@ -44,9 +44,14 @@ on:
   pull_request:
     paths:
       - ".github/workflows/build-app.yml"
+      - "packaging/**"
+      - "assets/**"
       - "scripts/ci/deps.lock"
       - "scripts/ci/fetch.sh"
       - "scripts/ci/apt-retry.sh"
+      - "scripts/ci/smoke-linux.sh"
+      - "scripts/ci/isa-scan.sh"
+      - "scripts/ci/isa-allow.txt"
       - "scripts/setup-build-env.sh"
       - "scripts/funcut-env.sh"
       - "install-linux.sh"
@@ -60,6 +65,12 @@ on:
         description: The ref to build, when it is not the one this runs on
         type: string
         default: ""
+
+# The bundles read the tree and fetch their pinned dependencies; the
+# token has nothing to write until the release workflow's own publish
+# job says otherwise.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always

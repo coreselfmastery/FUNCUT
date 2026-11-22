@@ -43,6 +43,19 @@ type DriveResult = (Option<(AutoEditError, u32)>, Vec<(ToolCall, Value)>);
 /// seconds, then four - the watcher's own cadence.
 const FIRST_PAUSE: Duration = Duration::from_secs(2);
 
+/// The longest a retry pause may run, whatever the error asked for. A
+/// tool's own `retry_after` is a hint from the far side, and a hint of
+/// hours is still just a hint: the runner waits it out capped, rather
+/// than wedging the run - and the runner's own cancel - behind an
+/// uninterruptible sleep on the strength of a number a backend sent.
+const MAX_RETRY_PAUSE: Duration = Duration::from_secs(30);
+
+/// The slice a capped pause sleeps at a time, so a cancel lands inside
+/// a pause instead of after it: the pause between retries was a plain
+/// `sleep`, which never wakes for anything, and a stop asked for during
+/// it was only ever seen by the next error - if there was one.
+const RETRY_PAUSE_SLICE: Duration = Duration::from_millis(100);
+
 /// The idempotency key an [`EDIT_APPLY`] call carries (IDEM): derived
 /// from the key epoch, the stage and the call's own arguments - the same
 /// edit, in a re-run of the same program under the same epoch, asks
@@ -291,6 +304,25 @@ impl Runner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         base * (1u32 << (attempt - 1).min(30))
+    }
+
+    /// The pause before a retry, waited out: capped at
+    /// [`MAX_RETRY_PAUSE`] whatever the error asked for, and slept a
+    /// [`RETRY_PAUSE_SLICE`] at a time so a cancel is seen inside it
+    /// rather than after it. Returns whether the whole pause was served -
+    /// `false` means the run was stopped while waiting, and the retry it
+    /// was pacing never happens.
+    fn wait_pause(&self, pause: Duration) -> bool {
+        let mut left = pause.min(MAX_RETRY_PAUSE);
+        while left > Duration::ZERO {
+            if self.cancelled() {
+                return false;
+            }
+            let slice = left.min(RETRY_PAUSE_SLICE);
+            std::thread::sleep(slice);
+            left -= slice;
+        }
+        !self.cancelled()
     }
 
     /// A panic in mid-edit leaves the history for a person to read.
@@ -1016,7 +1048,14 @@ impl Runner {
                         if error.retryable && attempt < ATTEMPTS {
                             let pause =
                                 error.retry_after.unwrap_or_else(|| self.pause_for(attempt));
-                            std::thread::sleep(pause);
+                            if !self.wait_pause(pause) {
+                                // A stop that landed inside the pause is the
+                                // stop arriving: the retry it was waiting for
+                                // never happens.
+                                failed_attempt = attempt;
+                                failure = Some(error);
+                                break 'calls;
+                            }
                             attempt += 1;
                             continue;
                         }
@@ -1124,7 +1163,14 @@ impl Runner {
                         if error.retryable && attempt < ATTEMPTS {
                             let pause =
                                 error.retry_after.unwrap_or_else(|| self.pause_for(attempt));
-                            std::thread::sleep(pause);
+                            if !self.wait_pause(pause) {
+                                // A stop that landed inside the pause is the
+                                // stop arriving: the retry it was waiting for
+                                // never happens.
+                                failed_attempt = attempt;
+                                failure = Some(error);
+                                break 'calls;
+                            }
                             attempt += 1;
                             continue;
                         }

@@ -560,7 +560,10 @@ def _emotion_api_key(spec):
 
 
 def _mask(key):
-    return key[:3] + "..." + key[-2:] if len(key) > 8 else "***"
+    # vlm.py's own shape: a real key is long, and a short one that still
+    # clears the bar must not give away half its characters - 9 characters
+    # used to show 5.
+    return key[:3] + "..." + key[-2:] if len(key) > 12 else "***"
 
 
 def _fold_model_scores(ranking):
@@ -1025,6 +1028,13 @@ def extract(spec):
                 + "); the hormone field is a creative shorthand for the viewer's "
                   "state, not physiology" + engine_note,
     }
+    # The take this extract was asked about, when the caller names one, so
+    # the reader that pairs these replies with takes keys the pairing on
+    # the answer itself: a call that failed leaves no reply behind, and a
+    # pairing by call order would then read every later take under its
+    # neighbour's emotional arc, acts and bed.
+    if spec.get("audio"):
+        result["audio"] = spec["audio"]
     if key:
         result["apiKey"] = _mask(key)
     if engine == "model+lexicon":
@@ -1423,6 +1433,15 @@ def selftest():
     assert lines[3]["emotion"] == "joy", lines[3]
     assert report["engine"] == "lexicon" and report["confidence"] == 0.55, report["engine"]
     out["emotions"] = "ok"
+
+    # The take the words were measured from, echoed back: the AUTO EDIT
+    # pairs each reply with its take by this key rather than by the order
+    # the calls were issued in, and a reply that stops carrying it must
+    # fail here rather than silently fall back to pairing positionally.
+    keyed = extract_lines("A calm, grateful morning with warm tea.", audio="/t/a.wav")
+    assert keyed.get("audio") == "/t/a.wav", keyed.get("audio")
+    assert "audio" not in extract_lines("The whole town came out to celebrate, and everyone was smiling.")
+    out["echo"] = "ok"
 
     # Intensity: caps and bangs beat a hedged, trailed-off read.
     loud = extract_lines("WOW, they actually did it!!")

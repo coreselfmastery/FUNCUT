@@ -730,6 +730,7 @@ impl AcceptanceReceipt {
 /// - **captions** and **motion** - optional, and answered only when the
 ///   run made them: a project with no graphics to bake has no motion to
 ///   prove.
+///
 /// Validate the editable timeline against the editor's actual summary
 /// contract. A non-empty clips array is not enough: every clip must have a
 /// valid lane and time span, every file-backed clip must resolve to a media
@@ -1075,6 +1076,12 @@ fn signal_evidence_gate(
     )
 }
 
+/// Derive the acceptance gates from the tool calls a run actually made,
+/// in the order the receipt lists them: the story plan's structure, the
+/// narration signal evidence, the encoded file when an export was
+/// requested, the saved timeline's integrity and content, and the final
+/// craft score. A gate whose call never happened is recorded as skipped,
+/// never silently passed, so an incomplete run stays visibly incomplete.
 pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     let last = |tool: &str| -> Option<&Value> {
         observed

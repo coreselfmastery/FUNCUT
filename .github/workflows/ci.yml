@@ -23,13 +23,10 @@ on:
         type: string
         default: ""
 
-# Keyed on what is tested, so a release testing its tag and a push to
-# main never cancel each other. Only a pull request's run is cancelled by
-# the next push to it: a run on main is the record of whether main is
-# green, and cancelling it leaves a gap where the answer should be.
-concurrency:
-  group: ci-${{ inputs.ref || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# The tests and lints read the tree and post their results; nothing a
+# green run needs the token to write.
+permissions:
+  contents: read
 
 jobs:
   # The checks that need no libraries, in a job of their own: a string

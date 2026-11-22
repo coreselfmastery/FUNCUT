@@ -397,7 +397,10 @@ def _seal_voice(spec):
         # status/verify then read broken JSON as its answer.
         target = Path(out_path)
         part = target.with_name(target.stem + ".part" + target.suffix)
-        part.write_text(json.dumps(seal, indent=1))
+        # UTF-8 by name: an attribution a policy spells with characters
+        # outside the console's codepage must not turn the seal write into
+        # an encoding error on the machines that default to one.
+        part.write_text(json.dumps(seal, indent=1), encoding="utf-8")
         import os as _os
         _os.replace(part, target)
         return _ok(

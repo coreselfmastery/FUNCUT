@@ -138,8 +138,11 @@ fn comp_row(project: &std::path::Path, file: &std::path::Path) -> Option<CompRow
         .filter(|name| !name.trim().is_empty())
         .unwrap_or(&id)
         .to_owned();
-    let width = document.get("width").and_then(Value::as_u64)? as u32;
-    let height = document.get("height").and_then(Value::as_u64)? as u32;
+    // A dimension the document cannot hold in a u32 is refused rather than
+    // wrapped: a comp wider than four billion pixels is a broken file, and
+    // a truncated width would list it as something it is not.
+    let width = u32::try_from(document.get("width").and_then(Value::as_u64)?).ok()?;
+    let height = u32::try_from(document.get("height").and_then(Value::as_u64)?).ok()?;
     let duration = document
         .get("duration")
         .and_then(Value::as_f64)

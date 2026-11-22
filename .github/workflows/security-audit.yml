@@ -28,12 +28,9 @@ on:
     - cron: '17 7 * * 1'
   workflow_dispatch:
 
+
 permissions:
   contents: read
-
-concurrency:
-  group: security-audit-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   cargo-audit:

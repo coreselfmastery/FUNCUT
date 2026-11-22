@@ -36,8 +36,19 @@ on:
         required: true
 
 concurrency:
-  group: release-${{ github.ref }}
+  # Keyed on the tag itself, whether the run came in by pushing the tag
+  # or by naming it to the dispatch form: two routes to one release are
+  # one queue, not two, so a dispatch and a push of the same tag cannot
+  # both build it and race the publish step.
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
+  queue: max
+
+# The tag's own build needs no more of the token than the read that
+# checks it out; the publish job widens this to `contents: write` at its
+# own level, which is the only job in the file that writes anything.
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -86,11 +97,13 @@ jobs:
           # v0.2.1-alpha.22 both produce Concat-0.2.1-* files.
           echo "version=$version" >> "$GITHUB_OUTPUT"
           # The fork's own tags - v0.2.8-funcut.5 - are re-cuts of a
-          # released version, not pre-releases: the installer and the
-          # updater both skip pre-releases, and the fork's only channel is
-          # its own tags. Every other suffix - alpha, beta, rc - still
-          # marks one, the way it always did.
-          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-funcut\.[0-9]+$ ]]; then
+          # released version, and a plain version tag - v0.3.0, no suffix
+          # at all - is a release the same way: neither is a pre-release,
+          # because the installer and the updater both skip pre-releases,
+          # and the fork's only channel is its own tags. Only a real
+          # suffix - alpha, beta, rc - still marks one, the way it
+          # always did.
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-funcut\.[0-9]+)?$ ]]; then
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -114,7 +127,9 @@ jobs:
     uses: ./.github/workflows/build-app.yml
     with:
       ref: ${{ needs.check.outputs.tag }}
-    secrets: inherit
+    # No `secrets: inherit`: nothing in build-app.yml reads a secret, and
+    # inheriting would only widen the release's secrets to a 700-line
+    # build job that never asked for them.
 
   publish:
     name: Publish release

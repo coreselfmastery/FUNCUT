@@ -94,7 +94,13 @@ expect_version() {
 
 host() {
   local sde="" dir
-  if [ "${1:-}" = "--sde" ]; then sde=$2; shift 2; fi
+  if [ "${1:-}" = "--sde" ]; then
+    # --sde names its value; an argumentless --sde is a usage error, and
+    # reading $2 without one would trip set -u before the usage could say so.
+    [ $# -ge 2 ] || { echo "usage: $0 [--sde SDE64] DIR" >&2; exit 2; }
+    sde=$2
+    shift 2
+  fi
   [ $# -eq 1 ] || { echo "usage: $0 [--sde SDE64] DIR" >&2; exit 2; }
   dir=$(cd "$1" && pwd)
   local bin="$dir/concat"

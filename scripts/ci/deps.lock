@@ -27,7 +27,7 @@ onnxruntime-linux-aarch64   https://sourceforge.net/projects/onnx-runtime.mirror
 sherpa-onnx-linux-x64-static-lib            https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-linux-x64-static-lib.tar.bz2            082743c80ec9d3fd739df174b9e46ab08ac77c9f57a1d2b09977a7fd5324727d
 sherpa-onnx-linux-aarch64-static-lib        https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-linux-aarch64-static-lib.tar.bz2        c2ff3464e4065b4e04a0cdbc00f43f4e44405d6c3ea4e4023f4a4e069645e3fb
 
-# The Linux packagers: nfpm (NFPM_VERSION in build-app.yml) for the .deb
+# The Linux packagers: nfpm, fetched by row name below, for the .deb
 # and .rpm, and appimagetool with the AppImage runtime it embeds, both a
 # named release rather than `continuous`. The runtime is handed to
 # appimagetool with --runtime-file, so it fetches nothing of its own.

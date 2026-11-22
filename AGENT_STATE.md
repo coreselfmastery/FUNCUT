@@ -168,6 +168,117 @@ consumer-guard's quoted-literal arm passes same-name strings
 re-walks the emphasis reply raw where a typed read exists; the brief
 reads crest and degradations raw beside the typed fields.
 
+## Session 10 log (2026-11-22) - the audit answered twice: the pipeline, the Forge pane, and the Geneva seams
+
+Base: main at `cdddade9` (PRs #199 and #198 merged, the #195 typed-read
+cherry-picks and the release-check residue landed). Every unit below is
+one commit on main, pushed as verified. Local gates: concat-mcp 177/177,
+concat-motion 613/613, concat-director 65/65, voice-signals 32/32,
+concat-export 48/48 (the 4 monitor tests need Vulkan, CI's), fmt clean,
+clippy clean on every non-GUI crate (the GUI crate OOMs this 4 GB box -
+`cargo check -p concat` passes, clippy is CI's).
+
+Two end-to-end audits (the auto-edit program read line by line; the
+Forge pane, the watcher contract, the motion engine and the Geneva
+adapter the same way) found twenty-five faults; the fixes:
+
+1. `fix(auto-edit)`: the plan-landed music bed was never re-trimmed
+   after the tighten - the Music stage's plan-bed path read
+   `bed_runtime.unwrap_or(0.0)`, so the trim guard never fired and every
+   plan-bed run shipped the bed's scored black tail. The runtime now
+   falls back to `narration_runtime(log)` - the latest view's own
+   longest non-bed end.
+2. `fix(auto-edit)`: one `segment_topics` refusal (its 3-line minimum)
+   aborted the Understand stage's whole queue, killing that take's and
+   every later take's `emotion` extract - the grade, bed words, caption
+   weight, B-roll register and motion cards all silently defaulted. A
+   take under three lines now skips the tiling, never the reads after it.
+3. `fix(auto-edit)`: the Plan stage ended ITSELF on an empty bed search
+   (`phase = 2; return None`), so the planner's ranked B-roll asks and
+   the `plan_validate` gate never ran on a cold shelf. Both paths now
+   fall through to the planner in the same call.
+4. `fix(auto-edit)`: the captions' closing bound used the exclusive
+   `timeline_at`, so a group whose last word ended exactly at a piece
+   edge (a trimmed take, a tightened pause) lost its WHOLE caption. The
+   closing bound now maps `timeline_at_or_before`, the mercy the B-roll
+   slot bounds already had.
+5. `fix(auto-edit)`: the emotion easing curve for caption entrances was
+   dead code - `entrance_targets` read `clip["media"]`, a field a text
+   clip has never carried, so every caption took the default settle
+   since the field was first emitted. The line is now found through the
+   TIMELINE: `take_second_at` (the inverse of `timeline_at`) reads the
+   take playing under the caption's first second, at the file-second
+   that moment plays, and the test pins a caption over a measured take
+   taking the line's own curve.
+6. `fix(auto-edit)`: `dead_air_cuts` read the OLDEST timeline view in
+   the log (a `find`, where every other consumer uses `latest_view`), a
+   latent mis-move for any visual clip added before the tighten; and
+   `timeline_at` aborted the whole scan on one clip without a `start` -
+   both now behave as the rest of the file does.
+7. `fix(motion)`: the joy and sadness seam transitions named
+   effect-kind packages (`concat.zoom-blur-punch`, `concat.zoom-blur`),
+   which the export resolver's catalogue arm silently falls through to a
+   plain cut - the very move the emotion asked for never rendered. Both
+   now name transition-kind packages, and the test asserts every id the
+   program can name is transition-kind with a `[transition]` section.
+8. `fix(motion)`: `diff()` compared only nodes, so an `ops:
+   set-background` / `set-duration` / curve-edit revision produced an
+   EMPTY diff and the bake inherited every frame from the predecessor
+   under a new hash - the new background never rendered. `Diff.document`
+   now flags comp-level changes and dirties every frame.
+9. `fix(motion)`: the dirty mask was computed at the comp documents'
+   fps but applied at the bake's own, so an explicit `fps` mis-scaled
+   every window (the second half of a retimed node at 60 over 30
+   inherited stale). `dirty_frames_at(fps)` computes mask AND windows at
+   the bake's rate.
+10. `fix(motion)`: `inherit_outside` skipped the donor's copy with a
+    half-open range, so the LAST dirty frame of every ranged incremental
+    bake was overwritten by the stale donor file - the skip is now the
+    closed range the engine actually renders. The inheritance is also
+    capped at the comp's own frame count (a longer donor no longer ships
+    its tail through the export's every-PNG listing).
+11. `fix(motion)`: the predecessor lookup matched `name.contains(suffix)`
+    (`-1920x1080@30` matched `@30.5`, `@24` matched `@240`) and never
+    compared the manifest's `assets` key - a bake could inherit frames a
+    different frame rate rendered, or drawn over a re-saved asset's old
+    pixels. `ends_with` + the assets fingerprint, the same strict
+    equality the cache hit uses.
+12. `fix(motion)`: the Geneva frame-pipe path wrote `frame_name(index)`
+    0-based, off by one from every other producer's 1-based
+    `0001.png` contract - pipe slot 0 now lands in 0001.png.
+13. `fix(comp)`: `inexpressible_in` had no `NodeKind::Camera` arm, so a
+    camera comp with the sidecar installed passed `engine_for` and baked
+    WITHOUT its camera move (Geneva's mapper cannot draw cameras at
+    all). The arm names it now.
+14. `fix(export)`: `motion_sequence` never compared the manifest's
+    `assets` key with the current bytes, so a re-saved logo exported the
+    old pixels until someone re-ran motion_bake - the export now refuses
+    a recorded key that contradicts (pre-field manifests keep exporting).
+15. `fix(schemas)`: `motion_bake` / `motion_inspect` / `scene_analysis`
+    / `motion_frame` / `motion_preview` advertised `required: []` while
+    the handler refuses a call naming neither `preset` nor `comp` - the
+    five doors now carry `anyOf: [{required: [preset]}, {required:
+    [comp]}]`.
+16. `fix(forge)`: a landed run left the finished edit READ-ONLY - the
+    landing's `open_project` hit the same-folder early return (the
+    live-follow display IS the sibling), skipping the claim and leaving
+    the follow's guard standing. `land_live_follow` ends the display
+    first, at all three landing paths.
+17. `fix(forge)`: the signals lab could brick itself busy forever - the
+    reading ran on `spawn_in_project`, whose epoch guard DROPS the reply
+    when the project changed mid-read, leaving `busy == true` for the
+    session. Plain `spawn`: the reading always arrives, the card names
+    its signal.
+18. `fix(forge)`: both run readers killed the process GROUP after the
+    leader was reaped - a recycled pid's group would take the SIGKILL.
+    The shared `supervise_forge_child` observes the exit WITHOUT
+    reaping (`waitpid` + `WNOWAIT`), cleans the group while the leader
+    still owns its pid, then reaps.
+19. `fix(acceptance)`: the pane's independent sync check asked
+    `toleranceMs: 150` where the watcher's own contract is 60 - one
+    shared `SYNC_TOLERANCE_MS` const now feeds both the acceptance and
+    the fixed spine's verify.
+
 ## Session 9 log (2026-11-21, later) - the timeline-live branch
 
 Branch `auto-edit/timeline-live-2026-11-21`, delivered as **PR #190**

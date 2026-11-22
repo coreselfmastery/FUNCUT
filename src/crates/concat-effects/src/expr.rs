@@ -365,7 +365,10 @@ impl Expr {
                 .cloned()
                 .ok_or_else(|| EvalError(format!("unknown name `{name}`"))),
             Expr::Neg(inner) => match inner.eval(env)? {
-                Value::Int(n) => Ok(Value::Int(-n)),
+                Value::Int(n) => n
+                    .checked_neg()
+                    .map(Value::Int)
+                    .ok_or_else(|| EvalError(format!("integer overflow in -{n}"))),
                 Value::Float(x) => Ok(Value::Float(-x)),
                 Value::Text(_) => Err(EvalError("cannot negate text".to_owned())),
             },
@@ -469,7 +472,18 @@ fn call(name: &str, args: &[Value]) -> Result<Value, EvalError> {
             _ => Value::Float(num(0)?.max(num(1)?)),
         },
         "abs" => match &args[0] {
-            Value::Int(n) => Value::Int(n.abs()),
+            Value::Int(n) => {
+                // i64::MIN's own absolute value does not fit: the binary
+                // operators answer an EvalError for overflow, and abs is
+                // the same answer, not a panic in a debug build or a wrap
+                // in a release one.
+                if *n == i64::MIN {
+                    return Err(EvalError(
+                        "integer overflow in abs(-9223372036854775808)".to_owned(),
+                    ));
+                }
+                Value::Int(n.abs())
+            }
             _ => Value::Float(num(0)?.abs()),
         },
         "floor" => Value::Int(num(0)?.floor() as i64),

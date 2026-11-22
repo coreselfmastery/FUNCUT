@@ -1833,6 +1833,7 @@ fn sense_schema(name: &str) -> Option<Value> {
         "emotion" => json!({
             "action": { "type": "string", "enum": ["extract", "brand", "gate", "verify", "template", "selftest"], "default": "extract" },
             "project": string("The project folder; its creative-brief.json supplies the brief (emotionalArc) and brandKit when not given directly."),
+            "audio": string("The take file the lines were measured from, so the extract echoes it back and the reader pairs replies with takes by it rather than by the order the calls were issued in."),
             "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]}." },
             "lines": { "type": "array", "description": "Lines as [{text, start, end}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } },
             "script": string("Raw narration text; split into sentences when no transcript or lines are given."),
@@ -1967,10 +1968,22 @@ fn motion_schema(name: &str) -> Option<Value> {
             "additionalProperties": false,
         })
     };
+    // The one-of door `resolve_comp` answers: preset or comp, never
+    // neither. The handler refuses a call that names neither, and a
+    // schema that stays silent about it sends a schema-following
+    // agent's minimal valid-looking call to that refusal - so the five
+    // tools that share the door advertise it.
+    let one_of_door = |mut schema: Value| {
+        schema["anyOf"] = json!([
+            { "required": ["preset"] },
+            { "required": ["comp"] },
+        ]);
+        schema
+    };
     let schema = match name {
         "motion_presets" => object(Map::new(), &[]),
-        "motion_inspect" => object(shared, &[]),
-        "scene_analysis" => object(shared, &[]),
+        "motion_inspect" => one_of_door(object(shared, &[])),
+        "scene_analysis" => one_of_door(object(shared, &[])),
         "motion_import" => {
             // The two doors share `project` and `name`; `file` is the
             // Lottie document, `timeline` the GSAP-style JSON. The
@@ -2026,7 +2039,7 @@ fn motion_schema(name: &str) -> Option<Value> {
             );
             object(properties, &["action", "project"])
         }
-        "motion_frame" => object(
+        "motion_frame" => one_of_door(object(
             with(
                 shared,
                 &[
@@ -2047,14 +2060,15 @@ fn motion_schema(name: &str) -> Option<Value> {
                 ],
             ),
             &["project", "at"],
-        ),
+        )),
         "motion_preview" => {
             // The handler takes preset/comp/project/ops/frames/width -
             // `vars` is not in its door, and a schema that offered it
-            // refused the very calls it advertised.
+            // refused the very calls it advertised. The door is one-of:
+            // preset or comp, as `resolve_comp` insists.
             let mut preview = shared.clone();
             preview.remove("vars");
-            object(
+            one_of_door(object(
                 with(
                     preview,
                     &[
@@ -2075,9 +2089,9 @@ fn motion_schema(name: &str) -> Option<Value> {
                     ],
                 ),
                 &["project"],
-            )
+            ))
         }
-        "motion_bake" => object(
+        "motion_bake" => one_of_door(object(
             with(
                 shared,
                 &[
@@ -2118,7 +2132,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                 ],
             ),
             &["project"],
-        ),
+        )),
         "captions_animate" => {
             // The handler's door is project/words/preset and the caption
             // parameters - comp/ops/vars are not in it, and the shared

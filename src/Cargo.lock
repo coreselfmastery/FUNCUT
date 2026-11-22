@@ -1250,6 +1250,7 @@ dependencies = [
  "concat-core",
  "concat-effects",
  "concat-media",
+ "concat-motion",
  "concat-project",
  "concat-render",
  "concat-vision",

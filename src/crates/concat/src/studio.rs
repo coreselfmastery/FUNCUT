@@ -9542,6 +9542,23 @@ impl Studio {
         self.release_project(false);
     }
 
+    /// The follow's end when the run LANDED: the display goes, and with
+    /// it everything that made the sibling read-only - but the parked
+    /// project does not come back, because the landing's next act is to
+    /// open the run's sibling for real. Without this, `open_project`'s
+    /// same-folder early return (the display session IS the sibling)
+    /// skipped the claim and left `live_follow` set, so the finished
+    /// edit sat in the window read-only with no way in but opening a
+    /// different project first.
+    pub fn land_live_follow(&mut self) {
+        if self.live_follow.is_none() {
+            return;
+        }
+        self.live_follow = None;
+        self.release_project(false);
+        self.session = None;
+    }
+
     /// The follow's end when the run did not land: the window goes back
     /// to the project it held before the run, saved as it was.
     pub fn end_live_follow_back(&mut self) {

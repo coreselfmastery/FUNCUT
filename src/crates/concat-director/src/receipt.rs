@@ -895,10 +895,7 @@ pub fn plan_has_voiceover(plan: &Value) -> bool {
 /// The deeper timeline-integrity gate separately verifies every media id,
 /// source path, trim and track reference.
 pub fn timeline_content_gate(view: &Value) -> (GateStatus, String) {
-    let Some(clips) = view
-        .pointer("/timeline/clips")
-        .and_then(Value::as_array)
-    else {
+    let Some(clips) = view.pointer("/timeline/clips").and_then(Value::as_array) else {
         return (
             GateStatus::Skipped,
             "timeline_read did not return clips for the voiceover/visual check".to_owned(),
@@ -1280,12 +1277,10 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         true,
     ));
     if voiceover_required {
-        let (status, evidence) = timeline_view
-            .map(timeline_content_gate)
-            .unwrap_or((
-                GateStatus::Skipped,
-                "the run never read the saved timeline's audio and visual clips".to_owned(),
-            ));
+        let (status, evidence) = timeline_view.map(timeline_content_gate).unwrap_or((
+            GateStatus::Skipped,
+            "the run never read the saved timeline's audio and visual clips".to_owned(),
+        ));
         gates.push(GateRecord::new(
             "content-completeness",
             status,

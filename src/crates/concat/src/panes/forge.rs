@@ -3082,11 +3082,11 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          prompts/signal_recipes.md, prompts/emotion_to_edit.md, prompts/token_budget.md \
          and prompts/tool_reference.md. The skill is the pipeline; the playbooks are the \
          craft. Do not plan from memory.\n\n\
-         ALL-SIGNAL CONTRACT: voice_signals answers 25 families and 50+ readings. Read \
-         prompts/signal_matrix.md and spend the readings, not just the family names: every \
-         family and every reading you use lands in signalLog with its confidence and a \
-         one-sentence basis; a reading that was absent is named unmeasured, never cited at \
-         confidence 0. A silent family is a broken promise, not a neutral choice. Then use \
+         ALL-SIGNAL CONTRACT: voice_signals exposes 50 named readings across 13 families. Read \
+         prompts/signal_matrix.md and spend the readings, not just the family names: use the \
+         accepted signalLog family alias from the matrix, name the exact catalogue reading in \
+         its evidence note, and record confidence plus the decision it changed; a reading that \
+         was absent is named unmeasured, never cited at confidence 0. A silent family is a broken promise, not a neutral choice. Then use \
          prompts/signal_recipes.md: score the seam, set the cut density, choose the cut type, \
          and fall back conservatively when confidence is low.\n\n\
          EMOTION IS A RECIPE: prompts/emotion_to_edit.md turns each of the seven labels and \

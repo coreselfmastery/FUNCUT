@@ -776,11 +776,17 @@ impl ForgePane {
         };
         let root = std::path::Path::new(session.path());
         let project = studio.project();
-        project
+        let clips: Vec<&concat_project::model::Clip> = project
             .active()
             .clips
             .iter()
-            .any(|clip| is_narration(clip, project, root))
+            .map(|clip| clip.as_ref())
+            .collect();
+        clips.iter().any(|clip| is_narration(clip, project, root))
+            || (clips.iter().all(|clip| !is_narration(clip, project, root))
+                && clips
+                    .iter()
+                    .any(|clip| is_talking_head(clip, project, root)))
     }
 
     /// Starts an AUTO EDIT: the sibling is built exactly as a forge run's
@@ -876,6 +882,7 @@ impl ForgePane {
                     .map(|take| concat_mcp::director::TakePaths {
                         take: take.take.clone(),
                         enhanced: take.enhanced.clone(),
+                        aroll: take.aroll.clone(),
                     })
                     .collect(),
                 placements: source
@@ -984,6 +991,7 @@ impl ForgePane {
                 .map(|take| concat_mcp::director::TakePaths {
                     take: take.take.clone(),
                     enhanced: take.enhanced.clone(),
+                    aroll: take.aroll.clone(),
                 })
                 .collect(),
             placements: auto
@@ -1011,6 +1019,19 @@ impl ForgePane {
         // is missing does the run fall back to the fixed spine - and the
         // pane says which one is missing, so a lesser edit is never
         // mistaken for the Director's.
+        // The stock preflight: a run with no live-shelf key would meet
+        // the refusal one refused search at a time, minutes in. Said
+        // here, before a single stage starts, the user can key the shelf
+        // and press again - or let the run fill the picture with the
+        // project's own footage and typography, which is what it will do.
+        if !stock_shelves_ready(studio) {
+            studio.notify_warning(
+                "no stock key is saved (Settings > Stock APIs), so the live shelves \
+                 cannot be shopped: the run carries the project's own footage and fills \
+                 the rest with typography over the narration",
+            );
+        }
+        let mut director_fallback: Option<String> = None;
         let handed_over = match director_ready(self.connected, self.installed, studio) {
             Ok(()) => {
                 let kill = Arc::new(AtomicBool::new(false));
@@ -1042,12 +1063,17 @@ impl ForgePane {
                     ),
                     true,
                 );
+                // The reason rides the source into the report: a missed
+                // toast is not a lost explanation.
+                director_fallback = Some(why.clone());
                 false
             }
         };
         if handed_over {
             return;
         }
+        let mut auto = auto;
+        auto.director = director_fallback;
         // The fixed spine runs the stages in this process, so it needs the
         // window's own server as its backend. The handover above does not:
         // the Director reaches the same server through the harness, which
@@ -1460,6 +1486,21 @@ impl ForgePane {
                     return;
                 }
             }
+            // Who made the edit, and why, if it was not the Director: the
+            // fallback's reason was only ever a toast the user could miss
+            // - here it is the record's own first fact, beside the edit
+            // it explains.
+            let director = match self.auto.source.as_ref() {
+                Some(source) => source.director.clone(),
+                None => None,
+            };
+            report.insert(
+                "director".to_owned(),
+                match director {
+                    Some(why) => serde_json::json!({ "used": false, "why": why }),
+                    None => serde_json::json!({ "used": true }),
+                },
+            );
             let path = std::path::Path::new(project).join("auto-edit-report.json");
             let bytes = match serde_json::to_vec_pretty(&report) {
                 Ok(bytes) => bytes,
@@ -1673,6 +1714,16 @@ fn voiceover_copy_name(index: usize, source: &std::path::Path) -> String {
     format!("voiceover-{index:03}-{name}")
 }
 
+/// A carried picture's copy, in the sibling's footage folder: the same
+/// no-overwrite spelling the voiceover copies use.
+fn footage_copy_name(index: usize, source: &std::path::Path) -> String {
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("footage.mp4");
+    format!("footage-{index:03}-{name}")
+}
+
 /// The same, in the AUTO EDIT's own spelling: the file the timeline's
 /// clips play is the TAKE, and the repair stage's clean pass lands on
 /// it, overwriting this pristine copy with the repaired chain, exactly
@@ -1710,6 +1761,11 @@ struct TakePaths {
     /// The enhanced intermediate: the repair's first pass writes it, its
     /// second reads it. A repair that fails leaves the take as recorded.
     enhanced: String,
+    /// The sibling path of the carried video whose audio the take was
+    /// extracted from, when the narration came out of a talking-head
+    /// video: the tighten cuts both in lockstep. `None` for a plain
+    /// audio take.
+    aroll: Option<String>,
 }
 
 /// One placement of a take on the sibling timeline: what the verify's
@@ -1749,6 +1805,11 @@ struct AutoEditSource {
     /// server refuses absolute write paths, and the sheet is written
     /// through it.
     sheet: String,
+    /// Why the Director did NOT take this edit, when the fixed spine ran
+    /// instead: `None` means the Director did. The toast says it once;
+    /// the report beside the edit says it forever, so a run that shipped
+    /// a lesser edit never gets mistaken for the Director's.
+    director: Option<String>,
 }
 
 /// What the sibling build collected, as one unit: a copy that fails or
@@ -1802,6 +1863,23 @@ fn is_narration(
         && project
             .media_by_id(&clip.media_id)
             .is_some_and(|item| !item.path.is_empty() && !is_bed(item, source_root))
+}
+
+/// A talking-head candidate: a video clip whose own file carries sound.
+/// A project with no narration audio and one of these still has a
+/// voiceover - it is just welded to a face - so the AUTO EDIT extracts
+/// the sound, places the video as A-roll, and edits that. The button
+/// enables for it instead of demanding the user detach the audio by
+/// hand.
+fn is_talking_head(
+    clip: &concat_project::model::Clip,
+    project: &concat_project::model::Project,
+    source_root: &std::path::Path,
+) -> bool {
+    clip.kind == concat_project::model::ClipKind::Video
+        && project.media_by_id(&clip.media_id).is_some_and(|item| {
+            !item.path.is_empty() && item.has_audio && !is_bed(item, source_root)
+        })
 }
 
 /// The open timeline's first narration file: the take the signal lab
@@ -2097,10 +2175,58 @@ fn build_voiceover_sibling(
             voiced.push((clip, item));
         }
     }
-    if voiced.is_empty() {
+    // The picture the source already owns: every visual clip - a video
+    // cut, a placed still - whose media is real, in first-play order.
+    // These are carried into the sibling as A-roll: the one-click edit
+    // edits the user's own footage instead of dropping it on the floor
+    // and shopping stock over the hole. The bed is never picture.
+    let mut visual: Vec<(
+        &concat_project::model::Clip,
+        &concat_project::model::MediaItem,
+    )> = Vec::new();
+    let mut visual_sorted: Vec<&concat_project::model::Clip> = timeline
+        .clips
+        .iter()
+        .map(|clip| clip.as_ref())
+        .filter(|clip| matches!(clip.kind, ClipKind::Video | ClipKind::Image))
+        .collect();
+    visual_sorted.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for clip in visual_sorted {
+        let Some(item) = source.media_by_id(&clip.media_id) else {
+            continue;
+        };
+        if !item.path.is_empty() && !is_bed(item, source_root) {
+            visual.push((clip, item));
+        }
+    }
+    // A project with no narration audio and one face that talks: the
+    // talking-head door. The video's own sound is the voiceover, so the
+    // sibling extracts it as the take, places the video as A-roll with
+    // its audio silenced (the take is the sound), and the tighten cuts
+    // picture and words in lockstep. Without this the button was greyed
+    // until the user detached the audio by hand - and the audit's very
+    // first finding was that the footage was then still dropped.
+    let talking_head: Option<(
+        &concat_project::model::Clip,
+        &concat_project::model::MediaItem,
+    )> = if voiced.is_empty() {
+        visual
+            .iter()
+            .find(|(clip, item)| clip.kind == ClipKind::Video && item.has_audio)
+            .map(|(clip, item)| (*clip, *item))
+    } else {
+        None
+    };
+    if voiced.is_empty() && talking_head.is_none() {
         return Err(t("forge.noVoiceover"));
     }
     // The distinct files, in first-play order - what gets copied in.
+    // A talking-head's narration is the extraction, not a copy: its
+    // "file" is created below, beside the copies.
     let mut files: Vec<&concat_project::model::MediaItem> = Vec::new();
     for (_, item) in &voiced {
         if !files.iter().any(|known| known.path == item.path) {
@@ -2159,11 +2285,19 @@ fn build_voiceover_sibling(
         // with the repaired chain the timeline then plays.
         let into = std::path::Path::new(&info.path).join("voiceover");
         std::fs::create_dir_all(&into).map_err(|error| error.to_string())?;
+        let roll_dir = std::path::Path::new(&info.path).join("footage");
         let mut mint = concat_project::commands::IdMint::default();
         let mut copied: Vec<String> = Vec::with_capacity(files.len());
         let mut takes: Vec<TakePaths> = Vec::with_capacity(files.len());
         let mut media_id_of: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
+        // The carried picture's own bookkeeping: which media copied to
+        // which sibling id, and the talking-head's video clip + measured
+        // span once its extraction lands.
+        let mut roll_media_of: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut roll_copied: Vec<String> = Vec::new();
+        let mut talking_segment: Option<(&concat_project::model::Clip, f64)> = None;
         // The sibling file each source take copied into - the take a
         // segment's clip plays, named where the mapping's reader wants it.
         let mut take_of: std::collections::HashMap<String, String> =
@@ -2188,6 +2322,7 @@ fn build_voiceover_sibling(
                         .join(enhanced_copy_name(copied.len(), source_file))
                         .to_string_lossy()
                         .into_owned(),
+                    aroll: None,
                 });
             }
             // The bin item carries the source's own probe metadata - the
@@ -2200,14 +2335,138 @@ fn build_voiceover_sibling(
             copied.push(path);
             sibling_media.push(entry);
         }
+        // The talking-head's extraction: the video's own sound, written
+        // as the take the whole pipeline reads. The mix engine decodes
+        // the file's first audio stream into a WAV of its whole length,
+        // so the take's file clock is the video's - the lockstep the
+        // tighten cuts both by. The extraction runs here, on the UI
+        // thread beside the copies: it is one decode of one file, the
+        // same order of work the copy loop already does.
+        let mut visual_files: Vec<&concat_project::model::MediaItem> = Vec::new();
+        for (_, item) in &visual {
+            if !visual_files.iter().any(|known| known.path == item.path) {
+                visual_files.push(item);
+            }
+        }
+        if let Some((clip, item)) = talking_head {
+            let source_file = std::path::Path::new(&item.path);
+            // The footage copy's index is the media's own position in
+            // the carried list, so the link below names the exact file
+            // the footage loop will copy.
+            let roll_index = visual_files
+                .iter()
+                .position(|known| known.path == item.path)
+                .unwrap_or(0);
+            let take_name = take_copy_name(0, source_file);
+            let take_target = into.join(&take_name);
+            let span = item
+                .duration
+                .filter(|duration| *duration > 0.5)
+                .unwrap_or_else(|| clip.source_start + clip.duration * clip.speed);
+            let mix = concat_media::audio::mix_to_file(
+                &[concat_media::audio::AudioClip {
+                    path: source_file.to_path_buf(),
+                    stream: None,
+                    start: 0.0,
+                    duration: span,
+                    source_start: 0.0,
+                    speed: 1.0,
+                    preserve_pitch: true,
+                    volume: 1.0,
+                    volume_curve: Default::default(),
+                    fade_in: 0.0,
+                    fade_out: 0.0,
+                    filter_chain: String::new(),
+                }],
+                span,
+                &take_target,
+                None,
+            );
+            mix.map_err(|error| {
+                format!(
+                    "could not extract the narration from {}: {error}",
+                    item.path
+                )
+            })?;
+            let take_path = take_target.to_string_lossy().into_owned();
+            // The footage copy is made below with the rest of the
+            // picture; the take's a-roll link is its sibling path, named
+            // the same way the footage loop names it.
+            let roll_name = footage_copy_name(roll_index, source_file);
+            let aroll_path = roll_dir.join(&roll_name).to_string_lossy().into_owned();
+            takes.push(TakePaths {
+                enhanced: into
+                    .join(enhanced_copy_name(0, source_file))
+                    .to_string_lossy()
+                    .into_owned(),
+                take: take_path.clone(),
+                aroll: Some(aroll_path),
+            });
+            let entry = concat_project::model::MediaItem {
+                id: mint.next("m"),
+                path: take_path,
+                name: take_name,
+                duration: Some(span),
+                kind: concat_project::model::MediaKind::Audio,
+                width: None,
+                height: None,
+                frame_rate: None,
+                frame_rate_fraction: None,
+                video_codec: None,
+                audio_codec: item.audio_codec.clone(),
+                has_audio: true,
+                audio_tracks: Vec::new(),
+                origin: concat_project::model::MediaOrigin::Processed,
+                placeholder: false,
+                color_range: None,
+                color_space: item.color_space,
+                extra: Default::default(),
+            };
+            sibling_media.push(entry);
+            talking_segment = Some((clip, span));
+        }
+        // The picture, carried: the source's own visual media, copied
+        // into the sibling's footage folder so the edit stands on its own
+        // and the source can move without breaking it. The talking-head's
+        // video is one of these - its lane clip is muted below, because
+        // the take is its sound now.
+        std::fs::create_dir_all(&roll_dir).map_err(|error| error.to_string())?;
+        for item in &visual_files {
+            let source_file = std::path::Path::new(&item.path);
+            let name = footage_copy_name(roll_copied.len(), source_file);
+            let target = roll_dir.join(&name);
+            std::fs::copy(&item.path, &target)
+                .map_err(|error| format!("could not copy footage {}: {error}", item.path))?;
+            let path = target.to_string_lossy().into_owned();
+            let mut entry = (*item).clone();
+            entry.id = mint.next("m");
+            entry.path = path.clone();
+            roll_media_of.insert(item.path.clone(), entry.id.clone());
+            roll_copied.push(path);
+            sibling_media.push(entry);
+        }
         // One sibling lane per source lane, at the bottom of the stack in
         // first-play order, so takes recorded across lanes keep their
         // arrangement - and their overlap, which a single lane cannot
-        // hold.
+        // hold. The picture's lanes sit above the voiceover's and below
+        // the stock the gather later places.
         let mut lanes: Vec<(String, String)> = Vec::new();
         for (clip, _) in &voiced {
             if !lanes.iter().any(|(from, _)| from == &clip.track_id) {
                 lanes.push((clip.track_id.clone(), mint.next("t")));
+            }
+        }
+        // A talking-head's take plays on the lane its video played on,
+        // so the words sit exactly where the face was.
+        if let Some((clip, _)) = talking_segment {
+            if !lanes.iter().any(|(from, _)| from == &clip.track_id) {
+                lanes.push((clip.track_id.clone(), mint.next("t")));
+            }
+        }
+        let mut roll_lanes: Vec<(String, String)> = Vec::new();
+        for (clip, _) in &visual {
+            if !roll_lanes.iter().any(|(from, _)| from == &clip.track_id) {
+                roll_lanes.push((clip.track_id.clone(), mint.next("t")));
             }
         }
         // The sibling document: the copied bin, the voiceover lanes, and
@@ -2220,6 +2479,7 @@ fn build_voiceover_sibling(
             0..0,
             lanes
                 .iter()
+                .chain(roll_lanes.iter())
                 .map(|(_, id)| concat_project::model::Track {
                     id: id.clone(),
                     ..Default::default()
@@ -2264,6 +2524,105 @@ fn build_voiceover_sibling(
                 source_track: clip.track_id.clone(),
                 track: lane.clone(),
             });
+        }
+        // The carried picture: each source visual clip restored on its
+        // own lane, at its own position, in-point, speed and look. The
+        // talking-head's video is silenced - the take is its sound now -
+        // and every other clip keeps the volume it played with.
+        for (clip, item) in &visual {
+            let Some((_, lane)) = roll_lanes.iter().find(|(from, _)| from == &clip.track_id) else {
+                continue;
+            };
+            let sibling_clip_id = mint.next("c");
+            let mut restored = concat_project::model::Clip::blank(
+                sibling_clip_id.clone(),
+                lane.clone(),
+                clip.kind,
+                clip.name.clone(),
+                clip.start,
+                clip.duration,
+            );
+            restored.media_id = roll_media_of[&item.path].clone();
+            restored.source_start = clip.source_start;
+            restored.speed = clip.speed;
+            restored.speed_curve = clip.speed_curve.clone();
+            restored.volume = clip.volume;
+            restored.fade_in = clip.fade_in;
+            restored.fade_out = clip.fade_out;
+            restored.opacity = clip.opacity;
+            restored.scale = clip.scale;
+            restored.offset_x = clip.offset_x;
+            restored.offset_y = clip.offset_y;
+            restored.rotation = clip.rotation;
+            restored.stretch_x = clip.stretch_x;
+            restored.stretch_y = clip.stretch_y;
+            restored.flip_h = clip.flip_h;
+            restored.flip_v = clip.flip_v;
+            restored.blend = clip.blend.clone();
+            restored.filters = clip.filters.clone();
+            restored.video_effects = clip.video_effects.clone();
+            restored.crop = clip.crop.clone();
+            restored.mask = clip.mask.clone();
+            restored.transition_in = clip.transition_in.clone();
+            // The talking-head's own video: the take clip (placed below)
+            // is its sound, so the picture plays muted beside it - the
+            // extraction IS this clip's audio, placed where it played.
+            if talking_head.is_some_and(|(spoken, _)| spoken.id == clip.id) {
+                restored.muted = Some(true);
+            }
+            sibling.active_mut().clips.push(Arc::new(restored));
+        }
+        // The talking-head's take clip, after its picture: the words
+        // under the face, on the face's own lane position, playing the
+        // extracted file from the face's own in-point.
+        if let Some((clip, span)) = talking_segment {
+            let take_clip_id = mint.next("c");
+            let lane = lanes
+                .iter()
+                .find(|(from, _)| from == &clip.track_id)
+                .map(|(_, lane)| lane.clone())
+                .unwrap_or_else(|| mint.next("t"));
+            let take_path = takes
+                .first()
+                .map(|take| take.take.clone())
+                .unwrap_or_default();
+            let take_media = sibling
+                .media
+                .iter()
+                .find(|item| item.path == take_path)
+                .map(|item| item.id.clone());
+            if let Some(take_media) = take_media {
+                let mut restored = concat_project::model::Clip::blank(
+                    take_clip_id.clone(),
+                    lane.clone(),
+                    ClipKind::Audio,
+                    clip.name.clone(),
+                    clip.start,
+                    clip.duration,
+                );
+                restored.media_id = take_media;
+                restored.source_start = clip.source_start;
+                restored.speed = clip.speed;
+                restored.speed_curve = clip.speed_curve.clone();
+                restored.volume = clip.volume;
+                restored.fade_in = clip.fade_in;
+                restored.fade_out = clip.fade_out;
+                restored.preserve_pitch = clip.preserve_pitch;
+                sibling.active_mut().clips.push(Arc::new(restored));
+                segments.push(VoiceoverSegment {
+                    source_clip_id: clip.id.clone(),
+                    sibling_clip_id: take_clip_id,
+                    take: take_path,
+                    start: clip.start,
+                    source_in: clip.source_start,
+                    source_out: (clip.source_start + clip.duration * clip.speed).min(span),
+                    speed: clip.speed,
+                    volume: clip.volume,
+                    fades: (clip.fade_in, clip.fade_out),
+                    source_track: clip.track_id.clone(),
+                    track: lane,
+                });
+            }
         }
         let settings = concat_project::doc::DocumentSettings {
             name: info.name.clone(),
@@ -2347,6 +2706,7 @@ fn build_voiceover_sibling(
                         .to_string_lossy()
                         .into_owned(),
                     sheet: "auto-edit-sheet.png".to_owned(),
+                    director: None,
                 })
             } else {
                 None
@@ -2674,7 +3034,23 @@ fn director_ready(
 /// done for it: the Director runs the reads itself, in the skill's order,
 /// and the prompt says so, so the pane never presents a read as already
 /// spent.
-fn auto_director_prompt(source: &AutoEditSource) -> String {
+fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
+    // The vision critic the quality loop stands on: the same readiness the
+    // Start prompt reads, so an AUTO EDIT's craft_critique is graded by a
+    // model that can see, and an unattended run is told to set one up
+    // rather than quietly grading its own pixels.
+    let critic = if hosted_critic_ready(studio) {
+        "A vision critic is configured. Prefer craft_critique with autoSetup:true \
+         so a model, not a heuristic, grades the frames.\n\n"
+            .to_owned()
+    } else {
+        "Before the quality loop, call local_vlm {action:\"setup\"} once (0.5B, \
+         ~546 MB, CPU-only, no system install) so craft_critique can SEE the frames \
+         rather than only measure pixels - or local_vlm {action:\"configure\"} with a \
+         free-tier provider (groq, gemini, zai, openrouter) for a stronger critic. \
+         A critique from a model that cannot see is a guess wearing a score.\n\n"
+            .to_owned()
+    };
     format!(
         "Use the funcut-director skill and follow its phases IN ORDER. This is an \
          UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
@@ -2682,7 +3058,12 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          THE PROJECT: open '{project}' (project_open). The narration is ALREADY on the \
          timeline, reconstructed clip for clip with its own starts, in/out points, speed, \
          volume and fades; voiceover-mapping.json maps each clip to its source. Do NOT \
-         re-import, re-place, retime or ripple the narration clips.\n\n\
+         re-import, re-place or otherwise retime the narration clips - with ONE \
+         exception: you MAY tighten measured dead air with removeSpans on the narration \
+         clips (ripple on), which the skill's own Phase 2 asks for. The WORDS must \
+         survive the tighten: never cut inside a word, and verify with emotion \
+         {{action:\"verify\"}} on the exported file before you claim success.\n\n\
+         {critic}\
          WHAT IS ALREADY DONE, AND WHAT IS NOT: the sibling exists and the narration is \
          placed; nothing has been MEASURED yet. The repair, the transcription, \
          voice_signals and emotion are YOURS to run on this sibling, in the skill's order - \
@@ -2737,10 +3118,38 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          THE EXPORT lands at '{export}'. Finish by calling watch_render on the exported file \
          with audio:true and craft_critique once more, then report the honest score and what \
          you changed. Never claim success on an unmeasured render. A file PATH to a PNG is \
-         not a picture you can see: only inline image blocks are.\n",
+         not a picture you can see: only inline image blocks are.\n\n\
+         {stock}",
         project = source.project,
         export = source.export,
+        critic = critic,
+        stock = if stock_shelves_ready(studio) {
+            "The stock shelves are keyed (Settings > Stock APIs): shop them for B-roll.".to_owned()
+        } else {
+            "NO stock key is saved (Settings > Stock APIs), so stock_search will refuse: \
+             carry the picture with the project's own footage, Geneva motion comps and \
+             typography over the narration instead - do not leave unpictured spans."
+                .to_owned()
+        },
     )
+}
+
+/// Whether a live stock shelf can be shopped at all: a Pexels or Pixabay
+/// key saved on the page or already in the environment. The AUTO EDIT's
+/// preflight says this to the user BEFORE the run spends minutes
+/// discovering it one refused search at a time, and the Director's prompt
+/// says it so the agent plans typography instead of begging a locked
+/// shelf.
+fn stock_shelves_ready(studio: &Studio) -> bool {
+    let stock = &studio.prefs.stock;
+    [
+        (&stock.pexels, "PEXELS_API_KEY"),
+        (&stock.pixabay, "PIXABAY_API_KEY"),
+    ]
+    .iter()
+    .any(|(field, name)| {
+        !field.trim().is_empty() || std::env::var(name).is_ok_and(|set| !set.trim().is_empty())
+    })
 }
 
 /// Starts the Director over the AUTO EDIT's sibling: the same harness a
@@ -2749,7 +3158,7 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
 /// run's end opens the finished edit in the window the way a Start Forge
 /// run does.
 fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<AtomicBool>) {
-    let prompt = auto_director_prompt(source);
+    let prompt = auto_director_prompt(source, studio);
     let mut command = Command::new("forge");
     command.arg("run");
     let model = std::env::var("FUNCUT_FORGE_MODEL")
@@ -3314,10 +3723,12 @@ mod tests {
                     .join("enhanced.wav")
                     .to_string_lossy()
                     .into_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: export.join("auto-edit.mp4").to_string_lossy().into_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
+            director: None,
         };
         assert!(director_retry_available(&source));
 

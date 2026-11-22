@@ -2966,7 +2966,7 @@ fn gain_from_db(decibels: f64) -> f64 {
 }
 
 /// `plan_validate`: validate the director's plan before tool-driven edits.
-fn validate_plan_tool(mut arguments: Value) -> Result<Value, ApiError> {
+pub(crate) fn validate_plan_tool(mut arguments: Value) -> Result<Value, ApiError> {
     let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
     let fields = arguments
         .as_object_mut()
@@ -3141,6 +3141,19 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 if !media && !clip && !file {
                     return Err(format!(
                         "segments[{index}] existing footage needs mediaId, clipId, or file"
+                    ));
+                }
+                // An existing visual whose own media kind is audio is a
+                // span the plan claims as footage while the media puts
+                // nothing on screen - the black-span defect, refused
+                // while the plan is still only a plan. The kind is the
+                // plan author's own statement about the media (the
+                // timeline's clip kinds, as the fixed program and the
+                // Director both read them); an author that states none
+                // is trusted to have looked.
+                if visual.get("kind").and_then(Value::as_str) == Some("audio") {
+                    return Err(format!(
+                        "segments[{index}] claims existing footage over audio media - an audio clip puts nothing on screen; plan the span as B-roll, a graphic, or a hold"
                     ));
                 }
             }
@@ -3840,11 +3853,16 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         }
         if segments.iter().any(|segment| {
             segment.pointer("/visual/type") == Some(&Value::String("broll".to_owned()))
+                && segment
+                    .pointer("/visual/provider")
+                    .and_then(Value::as_str)
+                    .is_none_or(|provider| provider.eq_ignore_ascii_case("openvid"))
         }) {
             blockers.push(
-                "the brief is monetized and a segment's B-roll is OpenVid stock: the index \
+                "the brief is monetized and a segment's B-roll names OpenVid stock (or no source at all): the index \
                  carries no per-clip licence record, so a monetized edit cannot import it - \
-                 use cleared footage as existing media or plan the edit non-monetized"
+                 name a licensed live shelf (pexels, pixabay) in visual.provider, use cleared \
+                 footage as existing media, or plan the edit non-monetized"
                     .to_owned(),
             );
             score -= 1.0;
@@ -5096,6 +5114,48 @@ mod tests {
                 }),
             ),
         ]
+    }
+
+    /// An `existing` visual over audio media is a span the plan claims as
+    /// footage while the media puts nothing on screen - the black-span
+    /// defect, refused while the plan is still only a plan. A real visual
+    /// clip's kind states itself and passes.
+    #[test]
+    fn existing_footage_over_audio_media_is_refused() {
+        let plan = json!({
+            "aspect": "16:9",
+            "mode": "longform",
+            "audio": {},
+            "grade": { "filter": "concat.teal-orange", "intensityKey": "amount", "intensity": 65 },
+            "sections": [
+                { "role": "hook", "start": 0.0, "end": 2.0 },
+                { "role": "body", "start": 2.0, "end": 4.0 }
+            ],
+            "segments": [
+                { "start": 0.0, "end": 2.0, "visual": { "type": "existing", "mediaId": "m1", "kind": "audio" } },
+                { "start": 2.0, "end": 4.0, "visual": { "type": "existing", "mediaId": "m2", "kind": "video" } }
+            ]
+        });
+        // A structural refusal is the validator's own error, said while
+        // the plan is still only a plan.
+        let refused = validate_plan_tool(json!({ "plan": plan }))
+            .expect_err("the audio claim is refused outright");
+        assert!(
+            refused.message.contains("audio media"),
+            "the refusal names the audio claim: {refused:?}"
+        );
+
+        // The honest shape: the span is planned as B-roll with a licensed
+        // provider, and the plan validates.
+        let mut honest = plan.clone();
+        honest["segments"][0]["visual"] = json!({
+            "type": "broll",
+            "provider": "pexels",
+            "query": "harbour wall at low tide",
+            "description": "a slow aerial drift along the harbour wall at low tide, crates stacked on the quay",
+        });
+        let checked = validate_plan_tool(json!({ "plan": honest })).expect("the validator answers");
+        assert_eq!(checked["valid"], json!(true), "{checked}");
     }
 
     #[test]

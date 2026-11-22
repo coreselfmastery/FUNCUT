@@ -27,6 +27,11 @@ pub struct TakePaths {
     /// The enhanced intermediate: the repair's first pass writes it, its
     /// second reads it. A repair that fails leaves the take as recorded.
     pub enhanced: String,
+    /// The sibling path of the carried video whose audio the take was
+    /// extracted from, when the narration came out of a talking-head
+    /// video: the tighten cuts the picture and the words in lockstep, so
+    /// they stay in sync. `None` when the take is a plain audio file.
+    pub aroll: Option<String>,
 }
 
 /// One placement of a take on the sibling timeline: the file the clip
@@ -137,6 +142,139 @@ fn timeline_at(view: &Value, media: &[(String, String)], take: &str, moment: f64
     None
 }
 
+/// The clip pieces of one take on the current view, as the coverage tiling
+/// reads them: `(file_from, file_to, speed, timeline_start)` per piece, in
+/// timeline order. A take the tighten split is several pieces; a take not
+/// placed is none.
+fn take_pieces(view: &Value, media: &[(String, String)], take: &str) -> Vec<(f64, f64, f64, f64)> {
+    let mut pieces: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
+        let Some(media_id) = clip["media"].as_str() else {
+            continue;
+        };
+        let Some(path) = media
+            .iter()
+            .find(|(id, _)| id == media_id)
+            .map(|(_, path)| path.as_str())
+        else {
+            continue;
+        };
+        if path != take {
+            continue;
+        }
+        let (source_in, source_out, speed) = clip_file_span(clip);
+        let Some(start) = clip["start"].as_f64() else {
+            continue;
+        };
+        if source_out > source_in {
+            pieces.push((source_in, source_out, speed, start));
+        }
+    }
+    pieces.sort_by(|left, right| left.3.total_cmp(&right.3));
+    pieces
+}
+
+/// Where the nearest file-second the timeline still plays sits at or
+/// before `moment`: the exact mapping when the moment survives, else the
+/// timeline end of the last piece that ends at or before it. The
+/// tighten's `removeSpans` deletes whole file spans, so a slot bound that
+/// lands inside a removed pause used to answer None and the shot was
+/// silently dropped - the gap the B-roll was planned for was the very
+/// span the cut took. Mapping to the surviving edge keeps the slot, at
+/// the join the cut made.
+fn timeline_at_or_before(
+    view: &Value,
+    media: &[(String, String)],
+    take: &str,
+    moment: f64,
+) -> Option<f64> {
+    if let Some(at) = timeline_at(view, media, take, moment) {
+        return Some(at);
+    }
+    let mut best: Option<(f64, f64)> = None; // (file_to, timeline_end)
+    for (source_in, source_out, speed, start) in take_pieces(view, media, take) {
+        if source_out <= moment {
+            let end = start + (source_out - source_in) / speed;
+            if best.is_none_or(|(known, _)| source_out > known) {
+                best = Some((source_out, end));
+            }
+        }
+    }
+    best.map(|(_, end)| end)
+}
+
+/// The mirror of `timeline_at_or_before` for a slot's opening bound: the
+/// nearest surviving file-second at or after `moment`, as the timeline
+/// start of the first piece that begins at or after it.
+fn timeline_at_or_after(
+    view: &Value,
+    media: &[(String, String)],
+    take: &str,
+    moment: f64,
+) -> Option<f64> {
+    if let Some(at) = timeline_at(view, media, take, moment) {
+        return Some(at);
+    }
+    let mut best: Option<(f64, f64)> = None; // (file_from, timeline_start)
+    for (source_in, _, _, start) in take_pieces(view, media, take) {
+        if source_in >= moment && best.is_none_or(|(known, _)| source_in < known) {
+            best = Some((source_in, start));
+        }
+    }
+    best.map(|(_, start)| start)
+}
+
+/// The timeline spans the sibling's own picture already covers: every
+/// clip whose kind puts pixels on screen - carried A-roll, a placed
+/// still, a baked motion card, a title - in timeline seconds. The
+/// coverage floor does not shop for what the edit already shows.
+fn visual_spans(view: &Value) -> Vec<(f64, f64)> {
+    view["timeline"]["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|clip| {
+            matches!(
+                clip["kind"].as_str(),
+                Some("video" | "image" | "motion" | "text" | "shape")
+            )
+        })
+        .filter_map(|clip| {
+            let start = clip["start"].as_f64()?;
+            let duration = clip["duration"].as_f64()?;
+            (duration > 0.05).then_some((start, start + duration))
+        })
+        .collect()
+}
+
+/// The spans of `[floor, ceiling)` the covered spans leave open, merged
+/// and in order: what a coverage slot may tile.
+fn uncovered_spans(covered: &[(f64, f64)], floor: f64, ceiling: f64) -> Vec<(f64, f64)> {
+    let mut open: Vec<(f64, f64)> = Vec::new();
+    let mut cursor = floor;
+    let mut sorted: Vec<(f64, f64)> = covered
+        .iter()
+        .copied()
+        .filter(|(start, end)| *end > *start)
+        .collect();
+    sorted.sort_by(|left, right| left.0.total_cmp(&right.0));
+    for (start, end) in sorted {
+        if start > cursor {
+            open.push((cursor, start.min(ceiling)));
+        }
+        cursor = cursor.max(end.min(ceiling));
+        if cursor >= ceiling {
+            break;
+        }
+    }
+    if cursor < ceiling {
+        open.push((cursor, ceiling));
+    }
+    open.into_iter()
+        .filter(|(start, end)| end - start > 0.3)
+        .collect()
+}
+
 /// The dead-air cuts the measured pauses ask for, as one `edit_apply`
 /// per clip: only the `dead_air` pauses the voiceSignals stage classified
 /// and marked not worth keeping, each shrunk 80 ms a side so the breath
@@ -205,7 +343,20 @@ fn dead_air_cuts(
             .collect();
         pauses.push((path.to_owned(), spans));
     }
+    // The cuts, in one pass over the clips: each take clip is cut where
+    // its own pauses measured, the A-ROLL a talking-head take was
+    // extracted from is cut in lockstep (the same file clock, mapped
+    // through the video clip's own span, so the picture and the words
+    // never drift), and every other visual clip is MOVED by the timeline
+    // time the cuts take before it - the lane ripple the take's own lane
+    // gets for free, given to the carried picture the same way.
     let mut cuts = Vec::new();
+    // The removed spans in TIMELINE seconds, gathered as take clips are
+    // cut, in the order the cuts land.
+    let mut removed: Vec<(f64, f64)> = Vec::new();
+    // The a-roll clips to cut in lockstep: (clip id, spans in the clip's
+    // own seconds).
+    let mut lockstep: Vec<(String, Vec<Value>)> = Vec::new();
     for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
         let Some(media_id) = clip["media"].as_str() else {
             continue;
@@ -217,11 +368,42 @@ fn dead_air_cuts(
         else {
             continue;
         };
+        // A talking-head's carried video: cut by the take it was
+        // extracted from, in the video's own span. The extraction is the
+        // whole file, so the take's file clock is the video's.
+        if let Some(aroll) = takes
+            .iter()
+            .find(|take| take.aroll.as_deref() == Some(path))
+            .map(|take| take.take.clone())
+        {
+            let clip_id = clip["id"].as_str().unwrap_or_default().to_owned();
+            let (source_in, source_out, speed) = clip_file_span(clip);
+            let start_at = clip["start"].as_f64().unwrap_or(0.0);
+            let mut spans: Vec<Value> = Vec::new();
+            for (take, rows) in &pauses {
+                if *take != aroll {
+                    continue;
+                }
+                for (start, end) in rows {
+                    let from = ((start - source_in) / speed).max(0.0);
+                    let to = ((end - source_in) / speed).min((source_out - source_in) / speed);
+                    if to > from + 0.05 {
+                        removed.push((start_at + from, start_at + to));
+                        spans.push(json!([round3(from), round3(to)]));
+                    }
+                }
+            }
+            if !spans.is_empty() {
+                lockstep.push((clip_id, spans));
+            }
+            continue;
+        }
         if !takes.iter().any(|take| take.take == path) {
             continue;
         }
         let (source_in, source_out, speed) = clip_file_span(clip);
         let clip_id = clip["id"].as_str().unwrap_or_default().to_owned();
+        let start_at = clip["start"].as_f64().unwrap_or(0.0);
         let mut spans: Vec<Value> = Vec::new();
         for (take, rows) in &pauses {
             if take != path {
@@ -233,6 +415,7 @@ fn dead_air_cuts(
                 let from = ((start - source_in) / speed).max(0.0);
                 let to = ((end - source_in) / speed).min((source_out - source_in) / speed);
                 if to > from + 0.05 {
+                    removed.push((start_at + from, start_at + to));
                     spans.push(json!([round3(from), round3(to)]));
                 }
             }
@@ -253,7 +436,97 @@ fn dead_air_cuts(
             }),
         });
     }
+    // The lockstep cuts ride behind the take's own: the same spans, on
+    // the video clip, so picture and words move together.
+    for (clip_id, spans) in lockstep {
+        cuts.push(ToolCall {
+            tool: "edit_apply".to_owned(),
+            arguments: json!({
+                "path": project,
+                "command": {
+                    "op": "removeSpans",
+                    "clipId": clip_id,
+                    "spans": spans,
+                    "ripple": true,
+                },
+            }),
+        });
+    }
+    // The carried picture that is not the a-roll - a cutaway, a still, a
+    // card - moves with the lanes: every removed timeline second before
+    // its start is a second it slides left, exactly the arithmetic the
+    // lane's own close_gaps applies.
+    if !removed.is_empty() {
+        let moves: Vec<Value> = view["timeline"]["clips"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|clip| {
+                matches!(
+                    clip["kind"].as_str(),
+                    Some("video" | "image" | "motion" | "text" | "shape")
+                ) && clip["media"]
+                    .as_str()
+                    .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                    .is_none_or(|(_, path)| {
+                        // Not a take, and not a take's a-roll: those are
+                        // cut, not moved.
+                        !takes.iter().any(|take| take.take == *path)
+                            && !takes
+                                .iter()
+                                .any(|take| take.aroll.as_deref() == Some(path.as_str()))
+                    })
+            })
+            .filter_map(|clip| {
+                let start = clip["start"].as_f64()?;
+                let shift = removed_before_span(&removed, start);
+                if shift < 0.05 {
+                    return None;
+                }
+                Some(json!({
+                    "clipId": clip["id"].as_str().unwrap_or_default(),
+                    "start": round3((start - shift).max(0.0)),
+                    "trackId": clip["track"].as_str().unwrap_or_default(),
+                }))
+            })
+            .collect();
+        if !moves.is_empty() {
+            cuts.push(ToolCall {
+                tool: "edit_apply".to_owned(),
+                arguments: json!({
+                    "path": project,
+                    "command": { "op": "moveClips", "moves": moves },
+                }),
+            });
+        }
+    }
     cuts
+}
+
+/// How much of the removed spans lies before `at`, counting what they
+/// share once - the lane-closing arithmetic, answered for one clip.
+fn removed_before_span(removed: &[(f64, f64)], at: f64) -> f64 {
+    let mut before: Vec<(f64, f64)> = removed
+        .iter()
+        .filter(|(start, _)| *start < at)
+        .map(|&(start, end)| (start, end.min(at)))
+        .collect();
+    if before.is_empty() {
+        return 0.0;
+    }
+    before.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut gap = 0.0;
+    let (mut from, mut to) = before[0];
+    for (start, end) in before.into_iter().skip(1) {
+        if start <= to {
+            to = to.max(end);
+        } else {
+            gap += to - from;
+            from = start;
+            to = end;
+        }
+    }
+    gap + (to - from)
 }
 
 /// Three decimals, the way the timeline's own numbers read.
@@ -882,6 +1155,60 @@ fn seam_transition(
 /// does not echo the path it was asked about, so the replies that carry
 /// `musicPresent` are matched to the takes in the order the Understand
 /// stage issued them - one per take, in `takes` order.
+/// The timeline's extent over the narration's own clips - the number a
+/// bed must be trimmed to and a runtime read must not inflate. The bed
+/// itself (a clip whose media lives in the project's bgm/ folder) is
+/// excluded, because the question is always "how long is the speech",
+/// asked both before and after a bed was placed.
+fn narration_runtime(log: &[Value]) -> f64 {
+    latest_view(log)
+        .and_then(|view| {
+            let media = media_paths(view);
+            view["timeline"]["clips"].as_array().map(|clips| {
+                clips
+                    .iter()
+                    .filter(|clip| {
+                        clip["media"]
+                            .as_str()
+                            .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                            .map(|(_, path)| !path.contains("/bgm/"))
+                            .unwrap_or(false)
+                    })
+                    .map(|clip| {
+                        clip["start"].as_f64().unwrap_or(0.0)
+                            + clip["duration"].as_f64().unwrap_or(0.0)
+                    })
+                    .fold(0.0_f64, f64::max)
+            })
+        })
+        .unwrap_or(0.0)
+}
+
+/// The bed's beats, translated from the timeline's clock (the bed plays
+/// from zero, so its file seconds are timeline seconds) into one take's
+/// own file seconds - the clock that take's transcript segments and
+/// planner suggestions are read in. A beat outside the take's placements
+/// is dropped: it belongs to another take or to silence.
+fn beats_in_take_clock(beats: &Value, source: &AutoEditProgramSource, take: &str) -> Value {
+    let rows = beats.as_array().cloned().unwrap_or_default();
+    let translated: Vec<Value> = rows
+        .iter()
+        .filter_map(|beat| {
+            let at = beat["seconds"].as_f64()?;
+            let strength = beat["strength"].as_f64().unwrap_or(0.5);
+            let placement = source.placements.iter().find(|placed| {
+                placed.take == take && {
+                    let duration = (placed.source_out - placed.source_in) / placed.speed;
+                    (placed.start..placed.start + duration).contains(&at)
+                }
+            })?;
+            let in_take = (at - placement.start) * placement.speed + placement.source_in;
+            Some(json!({ "seconds": round3(in_take), "strength": strength }))
+        })
+        .collect();
+    Value::Array(translated)
+}
+
 fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
     let reads: Vec<bool> = log
         .iter()
@@ -974,32 +1301,319 @@ fn tail_words(text: &str, n: usize) -> String {
     words[from..].join(" ")
 }
 
-/// The B-roll slots a run should fill: the spoken spans read from the
-/// transcripts, the gaps between them long enough to hold a shot and
-/// short enough to be one, each carrying the tail of the words before it
-/// as the query its search is shopped with. A narration with no such gap
-/// has no slots, and the picture stage has nothing to add.
+/// The B-roll slots a run should fill: a coverage floor first, the
+/// planner's asks on top of it.
 ///
-/// The planner's own read wins when the run asked for one. `slots_from_plan`
-/// reads `footage_plan_suggest`'s suggestions - dialogue gaps AND monotony
-/// runs, each carrying the priority the planner scored it at. The plain gap
-/// scan is a fallback only when the planner returned no suggestions (or
-/// could not run); an explicit `needBRoll: false` is not overruled by a
-/// second, less-informed scan.
+/// The floor is structural, not creative: a voiceover-only sibling has
+/// no picture of its own, so every second the timeline does not already
+/// show a visual clip is a second that would render as the project
+/// background - the black-span defect the one-click edit shipped for
+/// years. `coverage_slots` tiles those seconds at a shot-change cadence
+/// the runtime sets, skipping what the sibling's own A-roll, cards and
+/// titles already cover, so carried footage is never re-shopped and the
+/// planner's refusals stand wherever a visual actually plays.
+///
+/// The planner's own read wins where it asked: `slots_from_plan` reads
+/// `footage_plan_suggest`'s suggestions - dialogue gaps AND monotony
+/// runs, each carrying the priority the planner scored it at - and a
+/// planned slot replaces the floor's tile over the same span. An
+/// explicit `needBRoll: false` still means no planned slot; the floor
+/// only spends where the timeline shows nothing, which is a question
+/// the planner was never asked.
+///
+/// The plain gap scan remains as the last resort: a run whose planner
+/// never answered and whose view carries no take pieces (a transcript
+/// with no timeline behind it) still fills its measured gaps.
 fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
+    let floor = coverage_slots(log, takes);
     let planned = slots_from_plan(log, takes);
-    let planner_has_suggestions = log.iter().any(|reply| {
+    // The gap scan runs only when the planner never answered AND the view
+    // carries no take pieces to tile: an explicit `needBRoll: false` is
+    // the planner's own answer, and a second, less-informed scan never
+    // overrules it.
+    let planner_answered = log.iter().any(|reply| {
         reply.get("take").and_then(Value::as_str).is_some()
             && reply
                 .get("suggestions")
                 .and_then(Value::as_array)
                 .is_some_and(|suggestions| !suggestions.is_empty())
     });
-    if planner_has_suggestions {
-        planned
-    } else {
-        broll_slots_from_gaps(log, takes)
+    if !planner_answered && floor.is_empty() && planned.is_empty() {
+        return broll_slots_from_gaps(log, takes);
     }
+    // The planner's asks replace the floor's tiles over the same span;
+    // the floor keeps tiling everywhere else. A floor tile that overlaps
+    // any planned slot by more than a beat is dropped, so one span is
+    // never shopped twice.
+    let merged: Vec<BrollSlot> = planned
+        .into_iter()
+        .chain(
+            floor
+                .into_iter()
+                .filter(|tile| !planned_spans_overlap(log, takes, tile)),
+        )
+        .collect();
+    if merged.is_empty() {
+        return merged;
+    }
+    // Play order across takes, first-play order of takes, then local
+    // time within each take - the order the gather walks them in.
+    let take_order: Vec<&str> = takes.iter().map(|take| take.take.as_str()).collect();
+    let mut ordered = merged;
+    ordered.sort_by(|left, right| {
+        let rank = |slot: &BrollSlot| {
+            take_order
+                .iter()
+                .position(|take| *take == slot.take.as_str())
+                .unwrap_or(usize::MAX)
+        };
+        rank(left)
+            .cmp(&rank(right))
+            .then(left.from.total_cmp(&right.from))
+    });
+    ordered
+}
+
+/// Whether any planner suggestion covers this floor tile: a span the
+/// planner already scored is its business, not the floor's.
+fn planned_spans_overlap(log: &[Value], takes: &[TakePaths], tile: &BrollSlot) -> bool {
+    const OVERLAP: f64 = 0.35;
+    log.iter()
+        .filter(|reply| {
+            reply.get("take").and_then(Value::as_str).is_some()
+                && reply.get("suggestions").and_then(Value::as_array).is_some()
+        })
+        .any(|plan| {
+            let take = plan["take"].as_str().unwrap_or_default();
+            if !takes.iter().any(|known| known.take == take) || take != tile.take {
+                return false;
+            }
+            plan["suggestions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|suggestion| {
+                    suggestion.get("needBRoll").and_then(Value::as_bool) != Some(false)
+                })
+                .any(|suggestion| {
+                    let from = suggestion["startS"].as_f64().unwrap_or(f64::MAX);
+                    let to = suggestion["endS"].as_f64().unwrap_or(f64::MIN);
+                    to > tile.from + OVERLAP && from < tile.to - OVERLAP
+                })
+        })
+}
+
+/// The coverage floor: contiguous slots tiling every second of every
+/// placed take that the sibling's own picture does not already show, at
+/// a cadence the runtime sets. The bounds are FILE seconds - the gather
+/// maps them onto the timeline the same way it maps the planner's - and
+/// the tiling is built on the CURRENT view, so the tighten's cuts are
+/// already taken: a dead-air span the tighten removed is not a span at
+/// all, and the tiles close over the join.
+///
+/// Cadence: a reel cuts every three seconds; a piece longer than two
+/// minutes widens the target up to a 6.5-second documentary pace, and
+/// the tiling never passes forty shots - a run stays a run, not a
+/// stock-shelf crawl. A piece the cadence tiles into fewer shots than
+/// that simply is that short: no floor forces machine-gun cuts onto a
+/// ten-second hook.
+fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
+    const CADENCE: f64 = 3.0;
+    const CADENCE_CEILING: f64 = 6.5;
+    const MOST: usize = 40;
+    const SHORTEST_TILE: f64 = 1.6;
+    const SNAP_WINDOW: f64 = 0.8;
+    const QUERY_WORDS: usize = 6;
+
+    let Some(view) = latest_view(log) else {
+        return Vec::new();
+    };
+    let media = media_paths(view);
+    let covered = visual_spans(view);
+    let read = emotion_lines(log, takes);
+    // The pauses every take measured, for snapping tile bounds to the
+    // breath: a shot change lands at a pause, never mid-word.
+    let pauses: Vec<(String, Vec<f64>)> = voice_reads(log, takes)
+        .into_iter()
+        .map(|voice| {
+            let starts: Vec<f64> = {
+                let mut starts: Vec<f64> = voice.pauses.iter().map(|pause| pause.start).collect();
+                starts.sort_by(|left, right| left.total_cmp(right));
+                starts
+            };
+            (voice.take, starts)
+        })
+        .collect();
+
+    // First pass: the uncovered file spans of every take piece, and the
+    // total uncovered runtime they carry - the number the cadence and
+    // the budget are set from.
+    let mut runs: Vec<(String, Vec<(f64, f64)>)> = Vec::new();
+    let mut uncovered_total = 0.0_f64;
+    for take in takes {
+        let pieces = take_pieces(view, &media, &take.take);
+        if pieces.is_empty() {
+            continue;
+        }
+        let mut open: Vec<(f64, f64)> = Vec::new();
+        for (source_in, source_out, speed, start) in pieces {
+            // The piece's timeline span: what the covered spans are
+            // read against, then mapped back into this piece's file
+            // seconds.
+            let timeline_from = start;
+            let timeline_to = start + (source_out - source_in) / speed;
+            let piece_open = uncovered_spans(&covered, timeline_from, timeline_to);
+            for (open_from, open_to) in piece_open {
+                let file_from = source_in + (open_from - timeline_from) * speed;
+                let file_to = source_in + (open_to - timeline_from) * speed;
+                open.push((file_from, file_to));
+            }
+        }
+        // Merge across the pieces of one take: two pieces abut when the
+        // tighten took nothing between them, and a tile may span the
+        // join.
+        open.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (from, to) in open {
+            match merged.last_mut() {
+                Some(last) if from <= last.1 + 1e-6 => last.1 = last.1.max(to),
+                _ => merged.push((from, to)),
+            }
+        }
+        uncovered_total += merged.iter().map(|(from, to)| to - from).sum::<f64>();
+        if !merged.is_empty() {
+            runs.push((take.take.clone(), merged));
+        }
+    }
+    if runs.is_empty() {
+        return Vec::new();
+    }
+    // The cadence: a reel cuts every three seconds; a piece longer than
+    // two minutes cannot afford forty shots at that pace, so the target
+    // widens with the runtime up to a documentary 6.5 s, and the shot
+    // count the tiling implies never passes forty.
+    let target = if uncovered_total <= CADENCE * MOST as f64 {
+        CADENCE
+    } else {
+        (uncovered_total / MOST as f64).min(CADENCE_CEILING)
+    };
+
+    // Second pass: tile each uncovered run at the cadence, snapping
+    // bounds to the nearest pause, and shop each tile with the words it
+    // carries.
+    let mut slots: Vec<BrollSlot> = Vec::new();
+    for (take, open) in &runs {
+        let pause_starts = pauses
+            .iter()
+            .find(|(path, _)| path == take)
+            .map(|(_, starts)| starts)
+            .cloned()
+            .unwrap_or_default();
+        let spoken = transcripts_of(log, takes)
+            .into_iter()
+            .find(|(path, _)| path == take)
+            .map(|(_, segments)| {
+                let mut spans: Vec<(f64, f64, String)> = segments
+                    .iter()
+                    .filter_map(|segment| {
+                        let start = segment["start"].as_f64()?;
+                        let end = segment["end"].as_f64()?;
+                        let text = segment["text"].as_str().unwrap_or_default().trim();
+                        (end > start && !text.is_empty()).then(|| (start, end, text.to_owned()))
+                    })
+                    .collect();
+                spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+                spans
+            })
+            .unwrap_or_default();
+        for (from, to) in open.iter().copied() {
+            let mut from = from;
+            // A run's tail is never left as a hole: the last tile absorbs
+            // whatever is shorter than a shot of its own, and a run too
+            // short to split at all is one short tile rather than an
+            // uncovered second.
+            while to - from > 0.5 && slots.len() < MOST {
+                let mut next = (from + target).min(to);
+                // Snap the bound to the nearest pause inside the window:
+                // the shot changes where the speaker breathes, and a
+                // bound that lands mid-word is the one thing the tiling
+                // must never do.
+                let snap = pause_starts
+                    .iter()
+                    .copied()
+                    .filter(|at| {
+                        (*at - next).abs() <= SNAP_WINDOW && *at > from + SHORTEST_TILE * 0.5
+                    })
+                    .min_by(|left, right| (left - next).abs().total_cmp(&(right - next).abs()));
+                if let Some(at) = snap {
+                    next = at;
+                }
+                // The last tile of a run takes the rest, however long -
+                // the alternative is a hole, and a hole is the defect
+                // this function exists to end.
+                if to - next < SHORTEST_TILE {
+                    next = to;
+                }
+                if next <= from + 1e-6 {
+                    break;
+                }
+                let query = {
+                    // The emotional read's own vocabulary for the line
+                    // the tile sits in - the register x act shot the
+                    // extract computed is the query candidates arrive
+                    // pre-matched by.
+                    let register = read
+                        .iter()
+                        .filter(|line| line.take == *take && line.end > from && line.start < next)
+                        .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
+                        .and_then(|line| line.queries.first().cloned())
+                        .unwrap_or_default();
+                    if !register.trim().is_empty() {
+                        register
+                    } else {
+                        // The tile's own words: what the narration says
+                        // while this shot plays is what the shot should
+                        // show.
+                        let mut words: Vec<&str> = spoken
+                            .iter()
+                            .filter(|(_, end, _)| *end > from)
+                            .take_while(|(start, _, _)| *start < next)
+                            .flat_map(|(_, _, text)| text.split_whitespace())
+                            .collect();
+                        words.truncate(QUERY_WORDS);
+                        let joined = words.join(" ");
+                        if !joined.is_empty() {
+                            joined
+                        } else {
+                            // A silent tile with no words behind it: the
+                            // words that led into it, the way the gap
+                            // scan always shopped.
+                            spoken
+                                .iter()
+                                .rev()
+                                .find(|(_, end, _)| *end <= from + 1e-6)
+                                .map(|(_, _, text)| tail_words(text, QUERY_WORDS))
+                                .filter(|tail| !tail.trim().is_empty())
+                                .unwrap_or_else(|| {
+                                    // Nothing measured anything here; a
+                                    // neutral establishing shot is the
+                                    // honest last resort.
+                                    "cinematic establishing shot".to_owned()
+                                })
+                        }
+                    }
+                };
+                slots.push(BrollSlot {
+                    take: take.clone(),
+                    from: round3(from),
+                    to: round3(next),
+                    query,
+                });
+                from = next;
+            }
+        }
+    }
+    slots
 }
 
 /// The slots the footage planner asked for, in the order it ranked them.
@@ -1008,9 +1622,28 @@ fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
 /// scores each span, so the strongest asks are filled first and a run
 /// that can only afford a few fills spends them where the plan says.
 fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
-    const MOST: usize = 6;
+    const LEAST: usize = 6;
+    const MOST: usize = 40;
+    const CADENCE: f64 = 3.0;
     const SHORTEST: f64 = 1.2;
     const LONGEST: f64 = 8.0;
+    // The budget scales with the runtime the view carries, by the same
+    // law the coverage floor tiles at: a six-shot cap on a two-minute
+    // reel starves the picture, and an unbounded one is a shelf crawl.
+    let budget = latest_view(log)
+        .and_then(|view| {
+            view["timeline"]["clips"].as_array().map(|clips| {
+                clips
+                    .iter()
+                    .map(|clip| {
+                        clip["start"].as_f64().unwrap_or(0.0)
+                            + clip["duration"].as_f64().unwrap_or(0.0)
+                    })
+                    .fold(0.0_f64, f64::max)
+            })
+        })
+        .map(|runtime| ((runtime / CADENCE).ceil() as usize).clamp(LEAST, MOST))
+        .unwrap_or(LEAST);
 
     // Each planner reply names the take whose independent file clock it
     // read. Never match a suggestion against another take merely because
@@ -1126,8 +1759,8 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
         }
     }
 
-    // Spend the six-shot budget on the planner's strongest asks, then
-    // restore first-play take order and local time within each take.
+    // Spend the runtime-scaled budget on the planner's strongest asks,
+    // then restore first-play take order and local time within each take.
     ranked.sort_by(|left, right| {
         right
             .0
@@ -1135,7 +1768,7 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
             .then(left.1.cmp(&right.1))
             .then(left.2.from.total_cmp(&right.2.from))
     });
-    ranked.truncate(MOST);
+    ranked.truncate(budget);
     ranked.sort_by(|left, right| {
         left.1
             .cmp(&right.1)
@@ -1200,6 +1833,7 @@ fn segments_of(log: &[Value], take: &str) -> Vec<Value> {
     let takes = [TakePaths {
         take: take.to_owned(),
         enhanced: String::new(),
+        aroll: None,
     }];
     transcripts_of(log, &takes)
         .into_iter()
@@ -2556,23 +3190,22 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         return None;
     }
     let read = emotion_lines(log, takes);
-    // The segments are the spine as the handoff left it: one per picture
-    // clip, in order, each naming the media it plays.
+    // The segments are the spine as the handoff left it: one per placed
+    // clip, in order. An audio clip is not a picture - claiming its span
+    // as `existing` footage was the plan's own black-span defect, the
+    // validator refusing exactly that claim - so a narration clip's span
+    // is planned as the B-roll the gather will place, shopped with the
+    // words the span plays, and only a clip that really puts pixels on
+    // screen is `existing` (with its kind stated, so the claim can be
+    // checked).
     let segments: Vec<Value> = clips
         .iter()
         .enumerate()
         .map(|(index, clip)| {
             let start = clip["start"].as_f64().unwrap_or(0.0);
             let end = start + clip["duration"].as_f64().unwrap_or(0.0);
-            let mut segment = json!({
-                "start": round3(start),
-                "end": round3(end),
-                "visual": {
-                    "type": "existing",
-                    "mediaId": clip["media"].as_str().unwrap_or_default(),
-                    "category": "voiceover",
-                },
-            });
+            let kind = clip["kind"].as_str().unwrap_or("audio");
+            let is_visual = matches!(kind, "video" | "image" | "motion" | "text" | "shape");
             // The read's own act and temperature for the moment the
             // segment opens, where the read reached it: the clip's first
             // file second is the moment its line begins.
@@ -2583,6 +3216,80 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                     let (source_in, _, _) = clip_file_span(clip);
                     emotion_at(&read, path, source_in).cloned()
                 });
+            let mut segment = if is_visual {
+                json!({
+                    "start": round3(start),
+                    "end": round3(end),
+                    "visual": {
+                        "type": "existing",
+                        "mediaId": clip["media"].as_str().unwrap_or_default(),
+                        "kind": kind,
+                    },
+                })
+            } else {
+                // The span's own words, both as the shopping query and as
+                // the semantic description the shelf ranks against: what
+                // the narration says while the shot plays is what the
+                // shot should show. A span too short to carry the
+                // description floor states the measured arc it sits in
+                // instead - never a padded fake.
+                let (source_in, source_out, _) = clip_file_span(clip);
+                let clip_path = clip["media"].as_str().and_then(|id| {
+                    media
+                        .iter()
+                        .find(|(mid, _)| mid == id)
+                        .map(|(_, path)| path.clone())
+                });
+                let spoken: String = transcripts_of(log, takes)
+                    .into_iter()
+                    .find(|(take_path, _)| clip_path.as_deref() == Some(take_path.as_str()))
+                    .map(|(_, segments)| {
+                        segments
+                            .iter()
+                            .filter_map(|row| {
+                                let from = row["start"].as_f64()?;
+                                let to = row["end"].as_f64()?;
+                                (to > source_in && from < source_out)
+                                    .then(|| row["text"].as_str().unwrap_or_default().trim())
+                            })
+                            .collect::<Vec<&str>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                let query = if spoken.is_empty() {
+                    mood.as_ref()
+                        .and_then(|line| line.queries.first().cloned())
+                        .unwrap_or_else(|| "cinematic establishing shot".to_owned())
+                } else {
+                    spoken.clone()
+                };
+                let description = if spoken.chars().count() >= 40 {
+                    spoken.clone()
+                } else {
+                    // The measured facts the run can stand behind: the
+                    // act, the register and the span's own subject, stated
+                    // as the description - padded with facts, never with
+                    // filler.
+                    let line = mood.as_ref();
+                    format!(
+                        "the narration's {} {} over {}, a {:.0} second piece",
+                        line.map(|line| line.act.as_str()).unwrap_or("body"),
+                        line.map(|line| line.emotion.as_str()).unwrap_or("neutral"),
+                        query,
+                        (end - start).max(1.0)
+                    )
+                };
+                json!({
+                    "start": round3(start),
+                    "end": round3(end),
+                    "visual": {
+                        "type": "broll",
+                        "provider": source.stock_provider,
+                        "query": query,
+                        "description": description,
+                    },
+                })
+            };
             // Every clip enters on purpose (floor M): the opening pops,
             // a reveal or a turn punches, tension whips, the landing
             // dissolves, and the calm middle alternates slide and
@@ -2627,9 +3334,40 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     };
     // The brief, only where the narration answers it: the opening line is
     // the claim, the closing line its payoff, the ordered emotions the
-    // arc. Audience and goal are not in a transcript, so they stay absent
-    // and the gate names them.
+    // arc. The GOAL is the button's own - a one-click edit is a retention
+    // edit, and saying so is honest. The AUDIENCE is stated only when the
+    // run's own measurements name a subject; a transcript that never says
+    // what it is about leaves the field absent and the gate names it,
+    // which is worth more than an audience invented to pass.
     let mut brief = serde_json::Map::new();
+    brief.insert("goal".to_owned(), json!("watch to the end"));
+    // The audience, only when the run's own reading names a subject: the
+    // strongest entities the NER timed are what the piece is about, and a
+    // transcript about nothing in particular leaves the field absent for
+    // the gate to name - an honest blocker, not an invented viewer.
+    let subjects: Vec<String> = {
+        let mut named: Vec<String> = voice_reads(log, takes)
+            .iter()
+            .flat_map(|voice| voice.entities.iter())
+            .filter(|entity| {
+                matches!(
+                    entity.kind.as_str(),
+                    "ORG" | "PERSON" | "GPE" | "LOC" | "FAC" | "WORK_OF_ART" | "PRODUCT"
+                )
+            })
+            .map(|entity| entity.text.clone())
+            .collect();
+        named.sort_by_key(|text| std::cmp::Reverse(text.len()));
+        named.dedup();
+        named.truncate(2);
+        named
+    };
+    if !subjects.is_empty() {
+        brief.insert(
+            "audience".to_owned(),
+            json!(format!("viewers interested in {}", subjects.join(" and "))),
+        );
+    }
     let spoken: Vec<String> = takes
         .iter()
         .flat_map(|take| spoken_lines(log, &take.take))
@@ -4381,6 +5119,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     earn.
     let plan_source = takes.clone();
     let plan_settings = source.clone();
+    let plan_project = project.clone();
     steps.push(
         DerivedStep::react(
             Stage::Plan,
@@ -4388,27 +5127,230 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The beat analysis must finish BEFORE the planner call is
                 // built: constructing both calls in one queue used to bake
                 // an empty beat list into the planner request.
+                //
+                // The grid's source is whichever music the cut will
+                // actually carry: a take that already holds its own music
+                // is analyzed as it stands, and a dry voiceover gets the
+                // BED this run will ship - shopped, imported and trimmed
+                // here, before the tighten and the grade read a runtime
+                // the bed would otherwise inflate. A cold shelf (missing,
+                // still loading, failed) is not waited on here: the music
+                // stage owns the shelf's preparation, and a run on a cold
+                // machine plans without a grid - the coverage floor still
+                // tiles the picture, only the beat-snapping goes without.
                 let mut phase = 0u8;
                 let mut queue: Vec<ToolCall> = Vec::new();
+                // The bed shopping's own cursor and findings: which door
+                // of the query chain is open, and the bed file the import
+                // landed (the beats' clock).
+                let mut query_cursor = 0usize;
+                let mut shelf_polls = 0usize;
+                let mut bed_path: Option<String> = None;
                 move |log| {
                     if phase == 0 {
                         phase = 1;
                         if let Some(music) = musical_take(log, &plan_source) {
                             return Some(call("analyze_beats", json!({ "path": music })));
                         }
+                        // A dry voiceover: the bed is the beat source, so
+                        // the shelf's state is the first question.
+                        return Some(call("bgm_status", json!({})));
                     }
                     if phase == 1 {
-                        phase = 2;
-                        // The beat analysis is a job: its first reply only
-                        // says it started, and the grid itself lands when
-                        // the wait returns - a planner built without the
-                        // wait was built before a single beat was measured.
+                        // A take that carries its own music: the analysis
+                        // is a job, and the grid lands when the wait
+                        // returns.
                         if let Some(music) = musical_take(log, &plan_source) {
+                            phase = 2;
                             return Some(call(
                                 "analysis_wait",
                                 json!({ "path": music, "timeoutSeconds": 590 }),
                             ));
                         }
+                        // The bed question's answer: only a ready shelf is
+                        // shopped here. A loading one is given a few short
+                        // looks (a warm shelf that is finishing its fetch
+                        // should not cost the run its grid), and anything
+                        // else - missing, failed - moves the plan on.
+                        let state = log.last().and_then(|reply| {
+                            reply
+                                .get("freepd")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        });
+                        match state.as_deref() {
+                            Some("ready") => {
+                                phase = 10;
+                                let query = bed_query_chain(log, &plan_source)
+                                    .get(query_cursor)
+                                    .cloned()
+                                    .flatten();
+                                let mut arguments = json!({
+                                    "source": "freepd",
+                                    "limit": 5,
+                                    "sort": "relevance",
+                                });
+                                if let Some(query) = query {
+                                    arguments["query"] = json!(query);
+                                }
+                                return Some(call("bgm_search", arguments));
+                            }
+                            Some(word) if word.starts_with("loading") => {
+                                shelf_polls += 1;
+                                if shelf_polls > 4 {
+                                    // A cold shelf is the music stage's to
+                                    // warm: the plan moves on without a
+                                    // grid, falling through to the
+                                    // planner below in this same call.
+                                    phase = 2;
+                                } else {
+                                    std::thread::sleep(Duration::from_millis(3000));
+                                    return Some(call("bgm_status", json!({})));
+                                }
+                            }
+                            _ => {
+                                // Missing or failed: the same fall-through,
+                                // in the same call.
+                                phase = 2;
+                            }
+                        }
+                    }
+                    if phase == 10 {
+                        // The search's answer: the bed is the track that
+                        // fits the cut. An empty page walks the chain's
+                        // next door; a chain with no doors left leaves the
+                        // plan without a grid, and the music stage shops
+                        // for itself later.
+                        let Some(tracks) = log
+                            .last()
+                            .and_then(|reply| reply["tracks"].as_array().cloned())
+                        else {
+                            phase = 2;
+                            return None;
+                        };
+                        // (A reply that is not a search answer ends the
+                        // bed question: the fall-through below plans
+                        // without a grid.)
+                        let runtime = narration_runtime(log);
+                        let chosen = best_bed(&tracks, runtime)
+                            .or_else(|| tracks.first().cloned())
+                            .and_then(|track| track["id"].as_str().map(str::to_owned));
+                        let Some(id) = chosen else {
+                            query_cursor += 1;
+                            let chain = bed_query_chain(log, &plan_source);
+                            if query_cursor >= chain.len() {
+                                phase = 2;
+                                return None;
+                            }
+                            // (The chain's last door answered nothing: the
+                            // plan falls through below, without a grid.)
+                            let query = chain.get(query_cursor).cloned().flatten();
+                            let mut arguments = json!({
+                                "source": "freepd",
+                                "limit": 5,
+                                "sort": "relevance",
+                            });
+                            if let Some(query) = query {
+                                arguments["query"] = json!(query);
+                            }
+                            return Some(call("bgm_search", arguments));
+                        };
+                        phase = 11;
+                        return Some(call(
+                            "bgm_import",
+                            json!({
+                                "path": plan_project,
+                                "ids": [id],
+                                "start": 0.0,
+                                "monetized": true,
+                            }),
+                        ));
+                    }
+                    if phase == 11 {
+                        // The import's reply: read the timeline back to
+                        // find the bed clip the import placed.
+                        phase = 12;
+                        return Some(call("timeline_read", json!({ "path": plan_project })));
+                    }
+                    if phase == 12 {
+                        // The bed clip, found by its folder: trimmed to
+                        // the narration's own extent so no later runtime
+                        // read is inflated by a three-minute bed under a
+                        // thirty-second cut, then analyzed for its beats.
+                        let view = latest_view(log);
+                        let media = view.map(media_paths);
+                        let bed = view.and_then(|view| {
+                            view["timeline"]["clips"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .find(|clip| {
+                                    clip["media"].as_str().is_some_and(|id| {
+                                        media.as_ref().is_some_and(|media| {
+                                            media
+                                                .iter()
+                                                .find(|(mid, _)| mid == id)
+                                                .is_some_and(|(_, path)| path.contains("/bgm/"))
+                                        })
+                                    })
+                                })
+                                .cloned()
+                        });
+                        if let Some(bed) = bed {
+                            let bed_file = bed["media"].as_str().and_then(|id| {
+                                media
+                                    .as_ref()
+                                    .and_then(|media| media.iter().find(|(mid, _)| mid == id))
+                                    .map(|(_, path)| path.clone())
+                            });
+                            bed_path = bed_file;
+                            let runtime = narration_runtime(log);
+                            let duration = bed["duration"].as_f64().unwrap_or(0.0);
+                            if runtime > 0.5 && duration > runtime + 0.05 {
+                                phase = 13;
+                                return Some(call(
+                                    "edit_apply",
+                                    json!({
+                                        "path": plan_project,
+                                        "command": {
+                                            "op": "trimClip",
+                                            "clipId": bed["id"],
+                                            "edge": "end",
+                                            "delta": round3(runtime - duration),
+                                        },
+                                    }),
+                                ));
+                            }
+                            // Already the right length: the analysis is
+                            // the next question, in this same call.
+                            phase = 13;
+                        } else {
+                            // The import landed no bed clip: no grid, and
+                            // the fall-through plans on.
+                            phase = 2;
+                        }
+                    }
+                    if phase == 13 {
+                        // The trim's own reply, or the fall-through from a
+                        // bed already the right length: analyze the bed
+                        // file the import landed.
+                        if let Some(bed) = bed_path.clone() {
+                            phase = 14;
+                            return Some(call("analyze_beats", json!({ "path": bed })));
+                        }
+                        // No bed file to analyze: the fall-through plans
+                        // on without a grid.
+                        phase = 2;
+                    }
+                    if phase == 14 {
+                        if let Some(bed) = bed_path.clone() {
+                            phase = 2;
+                            return Some(call(
+                                "analysis_wait",
+                                json!({ "path": bed, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                        phase = 2;
                     }
                     if phase == 2 {
                         phase = 3;
@@ -4426,10 +5368,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "take": take.take,
                                 "segments": segments,
                             });
-                            if music.as_deref() == Some(take.take.as_str())
-                                && let Some(beats) = beats.clone()
-                            {
-                                spec["beats"] = beats;
+                            if let Some(beats) = beats.clone() {
+                                if music.as_deref() == Some(take.take.as_str()) {
+                                    // The take's own music: its beats are
+                                    // already in this take's clock.
+                                    spec["beats"] = beats;
+                                } else if bed_path.is_some() {
+                                    // The bed's beats are in the timeline's
+                                    // clock (the bed plays from zero):
+                                    // translated into this take's own file
+                                    // seconds, the clock its segments are
+                                    // read in.
+                                    spec["beats"] =
+                                        beats_in_take_clock(&beats, &plan_settings, &take.take);
+                                }
                             }
                             queue.push(call("footage_plan_suggest", spec));
                         }
@@ -4447,6 +5399,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             }),
         )
         .warn()
+        // The plan's STRUCTURE is a hard gate, not a warning: a plan the
+        // validator refuses is an edit that cannot run - sections that do
+        // not cover the runtime, segments claiming footage over audio, a
+        // signalLog that names nothing. The creative gate stays a
+        // warning: an audience the transcript never named is a real
+        // limitation the run reports, not one it hides or invents
+        // around. plan_validate runs in-process, so the gate cannot
+        // fail on an environment.
+        .gate(concat_director::ReplyGate::True {
+            field: "valid",
+            what: "the plan the run wrote did not validate",
+        })
         .into(),
     );
     // 6. The timeline, in one stage and one step: the tighten, then the
@@ -5177,13 +6141,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .and_then(|id| id.as_str())
                                 .map(str::to_owned);
                             let slot = shopped[placing].slot.clone();
+                            // The bounds map through the SURVIVING pieces:
+                            // a bound that lands inside a span the tighten
+                            // removed maps to the join the cut made, so a
+                            // slot planned over a dead-air gap is placed
+                            // at the seam instead of being silently
+                            // dropped - the shot survives the cut that
+                            // took its span.
                             let at = latest_view(log).and_then(|view| {
                                 let media = media_paths(view);
-                                timeline_at(view, &media, &slot.take, slot.from)
+                                timeline_at_or_after(view, &media, &slot.take, slot.from)
                             });
                             let to = latest_view(log).and_then(|view| {
                                 let media = media_paths(view);
-                                timeline_at(view, &media, &slot.take, slot.to)
+                                timeline_at_or_before(view, &media, &slot.take, slot.to)
                             });
                             match (media_id, at, to) {
                                 (Some(media_id), Some(at), Some(to)) if to - at > 0.4 => {
@@ -6379,6 +7350,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     let base = *base.get_or_insert(log.len());
                     if log.len() == base {
+                        // A bed the plan stage already landed - shopped
+                        // early so its beats could drive the planner - is
+                        // this stage's bed: no second search, no second
+                        // import. The timeline is read back and the
+                        // existing-bed path below trims and ducks it.
+                        let bed_already = log.iter().any(|reply| {
+                            reply.pointer("/timeline/clips").is_some_and(|clips| {
+                                let media = media_paths(reply);
+                                clips.as_array().is_some_and(|rows| {
+                                    rows.iter().any(|clip| {
+                                        clip["media"]
+                                            .as_str()
+                                            .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                                            .is_some_and(|(_, path)| path.contains("/bgm/"))
+                                    })
+                                })
+                            })
+                        });
+                        if bed_already {
+                            return Some(call("timeline_read", json!({ "path": music_project })));
+                        }
                         // The stage's own first call: the shelf's state.
                         return Some(call("bgm_status", json!({})));
                     }
@@ -7451,10 +8443,12 @@ mod tests {
                 TakePaths {
                     take: "/edits/Reel edit/voiceover/take-000-a.wav".to_owned(),
                     enhanced: "/edits/Reel edit/voiceover/enhanced-000-a.wav".to_owned(),
+                    aroll: None,
                 },
                 TakePaths {
                     take: "/edits/Reel edit/voiceover/take-001-b.wav".to_owned(),
                     enhanced: "/edits/Reel edit/voiceover/enhanced-001-b.wav".to_owned(),
+                    aroll: None,
                 },
             ],
             placements: vec![
@@ -7678,9 +8672,18 @@ mod tests {
                 what: "the cut scored under the craft bar",
             }]
         );
+        // The plan's own gate: its structure is refused before a single
+        // edit lands, not warned about after the fact.
+        assert_eq!(
+            program.steps[5].gates(),
+            vec![ReplyGate::True {
+                field: "valid",
+                what: "the plan the run wrote did not validate",
+            }]
+        );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 2 && at != 14 && at != 15 && at != 16 {
+            if at != 2 && at != 5 && at != 14 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -7699,6 +8702,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let log = vec![json!({ "audio": { "path": "/takes/a.wav" },
             "lines": [{
@@ -7735,6 +8739,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -7782,6 +8787,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -7831,6 +8837,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -7889,6 +8896,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -7995,6 +9003,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8069,6 +9078,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -8385,6 +9395,7 @@ mod tests {
         let take = TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         };
         let view = json!({
             "timeline": { "clips": [
@@ -8568,6 +9579,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let log = vec![
             json!({ "lines": [
@@ -8948,6 +9960,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [{ "start": 0.0, "end": 3.0, "text": "we found the wreck" }],
@@ -9022,6 +10035,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9109,6 +10123,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let view = json!({
             "project": { "name": "Cut", "width": 1920.0, "height": 1080.0 },
@@ -9500,6 +10515,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9566,6 +10582,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9624,6 +10641,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9668,6 +10686,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9724,6 +10743,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -9791,6 +10811,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9896,6 +10917,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -9993,6 +11015,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10083,6 +11106,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10154,6 +11178,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: "/takes/a-enhanced.wav".to_owned(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10184,6 +11209,213 @@ mod tests {
         assert!(broll_slots(&log, &takes).is_empty());
     }
 
+    /// Whether the slots tile every surviving piece of the take with at
+    /// most a seam uncovered per piece: the removed dead air between two
+    /// pieces is the tighten's business, not a hole.
+    fn slot_spans_tile(slots: &[super::BrollSlot], pieces: &[(f64, f64, f64, f64)]) -> bool {
+        let sorted: Vec<(f64, f64)> = slots.iter().map(|slot| (slot.from, slot.to)).collect();
+        pieces.iter().all(|(piece_from, piece_to, _, _)| {
+            let mut cursor = *piece_from;
+            for (from, to) in sorted
+                .iter()
+                .filter(|(from, to)| *to > *piece_from && *from < *piece_to)
+            {
+                if *from > cursor + 0.35 {
+                    return false;
+                }
+                cursor = cursor.max(*to);
+            }
+            cursor >= piece_to - 0.35
+        })
+    }
+
+    /// The audit's first smoking gun, answered: a voiceover-only sibling
+    /// gets picture over its SPEECH, not only over its gaps. Two spoken
+    /// spans and a tightened gap between them - the exact shape the old
+    /// gap-only scan left black - tile end to end with slots over the
+    /// words themselves.
+    #[test]
+    fn the_picture_floor_tiles_the_speech_itself() {
+        let take = "/takes/a.wav";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+            aroll: None,
+        }];
+        // The tighten already ran: the dead-air gap 2.0-4.0 is gone, and
+        // the two speech pieces sit 0.0-2.0 and 2.0-4.0 on the timeline.
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "p1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "p2", "media": "m1", "start": 2.0, "duration": 2.0,
+                  "sourceStart": 4.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "we found the city" },
+                { "start": 4.0, "end": 6.0, "text": "the crowds were crossing" },
+            ],
+        });
+        let log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+        let slots = broll_slots(&log, &takes);
+        assert!(
+            !slots.is_empty(),
+            "speech spans earn pictures even with no gap to fill"
+        );
+        // The tiles cover the whole SURVIVING take: no second the
+        // timeline still plays is left black. (The removed dead air is
+        // not a span to cover - the tighten took it.)
+        let surviving: f64 = take_pieces(&log[0], &media_paths(&log[0]), take)
+            .iter()
+            .map(|(from, to, _, _)| to - from)
+            .sum();
+        let covered: f64 = slots.iter().map(|slot| slot.to - slot.from).sum();
+        assert!(
+            slot_spans_tile(&slots, &take_pieces(&log[0], &media_paths(&log[0]), take)),
+            "the tiles cover the surviving take, not pockets of it: {covered} of {surviving}"
+        );
+        assert!(
+            covered >= surviving - 0.35,
+            "at most a seam is lost: {covered} of {surviving}"
+        );
+        // The words the first shot plays under are the words it shops
+        // with - not the tail of a line that has not happened yet.
+        assert_eq!(slots[0].query, "we found the city");
+    }
+
+    /// The audit's second smoking gun, answered: a slot bound that lands
+    /// inside a span the tighten removed maps to the join the cut made,
+    /// so the shot survives instead of being silently dropped.
+    #[test]
+    fn a_slot_bound_inside_a_removed_span_maps_to_the_join() {
+        let take = "/takes/a.wav";
+        // One piece survived: file 0.0-2.0 at timeline 0.0-2.0. The file
+        // seconds 2.0-4.0 were cut away.
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "p1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let media = media_paths(&view);
+        // A bound inside the removed span: the exact mapping is gone, and
+        // the surviving edge answers.
+        assert_eq!(timeline_at(&view, &media, take, 3.0), None);
+        assert_eq!(
+            timeline_at_or_before(&view, &media, take, 3.0),
+            Some(2.0),
+            "a closing bound in the cut maps to the join"
+        );
+        assert_eq!(
+            timeline_at_or_after(&view, &media, take, 3.0),
+            None,
+            "no later piece exists to open at"
+        );
+        // A bound before the cut maps exactly, as it always did.
+        assert_eq!(timeline_at_or_before(&view, &media, take, 1.0), Some(1.0));
+        assert_eq!(timeline_at_or_after(&view, &media, take, 1.0), Some(1.0));
+    }
+
+    /// The floor does not shop for what the edit already shows: a span
+    /// the sibling's own A-roll covers is not tiled, and the carried
+    /// footage keeps its place.
+    #[test]
+    fn the_floor_skips_spans_the_sibling_already_pictures() {
+        let take = "/takes/a.wav";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+            aroll: None,
+        }];
+        // A talking-head video beside the narration: the whole span but
+        // the last second already has a picture.
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "roll", "kind": "video", "media": "m2", "start": 0.0,
+                  "duration": 9.0 }
+            ]},
+            "media": [
+                { "id": "m1", "path": take },
+                { "id": "m2", "path": "/takes/talking-head.mp4" }
+            ],
+        });
+        let transcript = json!({
+            "segments": [{ "start": 0.0, "end": 9.5, "text": "we talk for a while here" }],
+        });
+        let log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+        let slots = broll_slots(&log, &takes);
+        assert!(
+            slots.iter().all(|slot| slot.from >= 8.9),
+            "only the unpictured second earns a shot, not the carried A-roll"
+        );
+    }
+
+    /// The budget scales with the runtime: a two-minute reel's planner
+    /// asks are not truncated at six, and a short piece's are not
+    /// inflated to forty.
+    #[test]
+    fn the_planner_budget_scales_with_the_runtime() {
+        let take = "/takes/a.wav";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+            aroll: None,
+        }];
+        let mut suggestions: Vec<Value> = Vec::new();
+        for index in 0..12 {
+            let from = index as f64 * 10.0;
+            suggestions.push(json!({
+                "kind": "dialogue_gap",
+                "needBRoll": true,
+                "startS": from,
+                "endS": from + 6.0,
+                "priority": 1.0 - index as f64 * 0.01,
+                "topicTags": ["city skyline"],
+            }));
+        }
+        let long_view = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "media": "m1", "start": 0.0, "duration": 130.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 8.0, "text": "we found the city at dusk" },
+                { "start": 10.0, "end": 18.0, "text": "the crowds were crossing" },
+            ],
+        });
+        let log = vec![
+            long_view,
+            json!({ "path": take, "output": transcript.to_string() }),
+            json!({
+                "take": take,
+                "beatGridMeasured": false,
+                "gapCount": 12,
+                "suggestions": suggestions,
+            }),
+        ];
+        let planned = slots_from_plan(&log, &takes);
+        assert_eq!(
+            planned.len(),
+            12,
+            "a 130 s runtime earns a 43-shot budget: all twelve asks fit"
+        );
+    }
+
     /// The planner's own read wins over the plain gap scan: its
     /// suggestions are ranked by the priority it scored them at, and the
     /// gather stage shops where the plan says coverage is wanted. A plan
@@ -10194,6 +11426,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: "/takes/a-enhanced.wav".to_owned(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10241,10 +11474,12 @@ mod tests {
             TakePaths {
                 take: take_a.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             },
             TakePaths {
                 take: take_b.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             },
         ];
         let log = vec![
@@ -10292,6 +11527,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: take.to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10331,6 +11567,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/takes/a.wav".to_owned(),
             enhanced: "/takes/a-enhanced.wav".to_owned(),
+            aroll: None,
         }];
         let transcript = json!({
             "segments": [
@@ -10581,6 +11818,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10604,7 +11842,7 @@ mod tests {
                     "id": "voice",
                     "media": "voice-media",
                     "start": 0.0,
-                    "duration": 10.0,
+                    "duration": 4.0,
                     "sourceStart": 0.0,
                     "speed": 1.0
                 }
@@ -10622,10 +11860,15 @@ mod tests {
             json!({ "path": take, "output": transcript.to_string() }),
         ];
 
-        let search = (gather.next)(&log).expect("the gap is searched");
+        // The coverage floor tiles the whole four-second take as one
+        // shot - the words it plays under are the words it shops with.
+        let search = (gather.next)(&log).expect("the span is searched");
         assert_eq!(search.tool, "stock_search");
         assert_eq!(search.arguments["provider"], "pexels");
-        assert_eq!(search.arguments["query"], "city skyline at dusk tonight");
+        assert_eq!(
+            search.arguments["query"],
+            "the city skyline at dusk tonight"
+        );
         assert_eq!(
             search.arguments["orientation"], "vertical",
             "the shelf is shopped for the frame the project actually is"
@@ -10723,7 +11966,10 @@ mod tests {
         assert_eq!(place.arguments["command"]["op"], "addClip");
         assert_eq!(place.arguments["command"]["mediaId"], "stock-media");
         assert_eq!(place.arguments["command"]["trackId"], "t-broll");
-        assert_eq!(place.arguments["command"]["start"], 2.0);
+        assert_eq!(
+            place.arguments["command"]["start"], 0.0,
+            "the coverage tile opens at the take's start"
+        );
 
         log.push(json!({
             "timeline": { "clips": [
@@ -10731,15 +11977,15 @@ mod tests {
                     "id": "voice",
                     "media": "voice-media",
                     "start": 0.0,
-                    "duration": 10.0,
+                    "duration": 4.0,
                     "sourceStart": 0.0,
                     "speed": 1.0
                 },
                 {
                     "id": "stock-clip",
                     "media": "stock-media",
-                    "start": 2.0,
-                    "duration": 8.0
+                    "start": 0.0,
+                    "duration": 10.0
                 }
             ]},
             "media": [
@@ -10755,7 +12001,10 @@ mod tests {
         assert!(commands.iter().any(|command| command["op"] == "trimClip"));
         assert!(commands.iter().any(|command| command["op"] == "frameClip"));
         assert!(commands.iter().any(|command| command["op"] == "updateClip"));
-        assert!((gather.next)(&log).is_none(), "one gap is placed only once");
+        assert!(
+            (gather.next)(&log).is_none(),
+            "one span is placed only once"
+        );
     }
 
     /// The gate's two failure shapes behave differently: an ANSWERED
@@ -10773,6 +12022,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10792,7 +12042,7 @@ mod tests {
             "project": { "name": "Reel", "width": 1080, "height": 1920 },
             "timeline": { "clips": [{
                 "id": "voice", "media": "voice-media",
-                "start": 0.0, "duration": 10.0,
+                "start": 0.0, "duration": 4.0,
                 "sourceStart": 0.0, "speed": 1.0,
             }]},
             "media": [{ "id": "voice-media", "path": take }],
@@ -10851,8 +12101,8 @@ mod tests {
             };
 
         // An answered gate that rejected every candidate: the beat is
-        // dropped, nothing is imported for it, and - this transcript
-        // opens exactly one shop-able gap - the stage ends.
+        // dropped, nothing is imported for it, and - this take tiles
+        // into exactly one coverage shot - the stage ends.
         let mut log = base(vec![]);
         let step = gather;
         {
@@ -10900,6 +12150,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -10920,7 +12171,7 @@ mod tests {
                 "id": "voice",
                 "media": "voice-media",
                 "start": 0.0,
-                "duration": 10.0,
+                "duration": 4.0,
                 "sourceStart": 0.0,
                 "speed": 1.0
             }]},
@@ -10936,7 +12187,7 @@ mod tests {
             view,
             json!({ "path": take, "output": transcript.to_string() }),
         ];
-        let search = (gather.next)(&log).expect("the gap is searched");
+        let search = (gather.next)(&log).expect("the span is searched");
         assert_eq!(search.tool, "stock_search");
         log.push(json!({
             "hits": [{
@@ -11050,10 +12301,12 @@ mod tests {
                 TakePaths {
                     take: "/edits/Reel/voiceover/a.wav".to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
                 TakePaths {
                     take: "/edits/Reel/voiceover/b.wav".to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
             ],
             placements: Vec::new(),
@@ -11384,6 +12637,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let hard = log(0.9, "tension");
         let read = emotion_lines(&hard, &takes);
@@ -11400,6 +12654,72 @@ mod tests {
         );
     }
 
+    /// A talking-head's carried A-roll is cut in lockstep with the take
+    /// its audio was extracted from, and the carried cutaways move with
+    /// the lanes: the tighten ripples only the lane it cuts, so without
+    /// this the picture would drift right of the words by every removed
+    /// pause.
+    #[test]
+    fn the_tighten_cuts_the_a_roll_in_lockstep_and_moves_the_cutaways() {
+        let take = "/edits/Reel edit/voiceover/take-000-head.wav";
+        let aroll = "/edits/Reel edit/footage/footage-000-head.mp4";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+            aroll: Some(aroll.to_owned()),
+        }];
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "words", "kind": "audio", "media": "m-take", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "face", "kind": "video", "media": "m-roll", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "cutaway", "kind": "image", "media": "m-still", "start": 8.0,
+                  "duration": 2.0 },
+            ]},
+            "media": [
+                { "id": "m-take", "path": take },
+                { "id": "m-roll", "path": aroll },
+                { "id": "m-still", "path": "/edits/Reel edit/footage/footage-001-still.png" },
+            ],
+        });
+        let log = vec![
+            view,
+            json!({
+                "audio": { "path": take },
+                "pauses": [{ "start": 4.0, "end": 5.5, "class": "dead_air" }],
+                "lines": [],
+            }),
+            json!({
+                "lines": [emotion_row(0.0, 3.5, "neutral", 0.2, "setup", "balanced", "")],
+            }),
+        ];
+        let cuts = dead_air_cuts(&log, &takes, "/edits/Reel edit", &[]);
+        // Three edits: the words cut, the face cut in lockstep, the
+        // cutaway moved.
+        assert_eq!(cuts.len(), 3, "{cuts:#?}");
+        assert_eq!(cuts[0].arguments["command"]["op"], json!("removeSpans"));
+        assert_eq!(cuts[0].arguments["command"]["clipId"], json!("words"));
+        assert_eq!(
+            cuts[0].arguments["command"]["spans"],
+            json!([[4.08, 5.42]]),
+            "the pause, padded the breath rule's 80 ms a side"
+        );
+        // The A-roll takes the SAME spans: the same file clock, mapped
+        // through its own span.
+        assert_eq!(cuts[1].arguments["command"]["op"], json!("removeSpans"));
+        assert_eq!(cuts[1].arguments["command"]["clipId"], json!("face"));
+        assert_eq!(cuts[1].arguments["command"]["spans"], json!([[4.08, 5.42]]));
+        // The cutaway slides left by the removed 1.34 s.
+        assert_eq!(cuts[2].arguments["command"]["op"], json!("moveClips"));
+        let moves = cuts[2].arguments["command"]["moves"]
+            .as_array()
+            .expect("the move list");
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0]["clipId"], json!("cutaway"));
+        assert!((moves[0]["start"].as_f64().unwrap() - (8.0 - 1.34)).abs() < 0.011);
+    }
+
     /// The bed is shopped by the read's own words and ducked to the level
     /// its act profile sets - not to a fixed -20 dB.
     #[test]
@@ -11407,6 +12727,7 @@ mod tests {
         let takes = vec![TakePaths {
             take: "/t/a.wav".to_owned(),
             enhanced: String::new(),
+            aroll: None,
         }];
         let log = vec![
             json!({
@@ -11439,6 +12760,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -11528,6 +12850,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: take.to_owned(),
                 enhanced: String::new(),
+                aroll: None,
             }],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
@@ -11572,10 +12895,18 @@ mod tests {
                 ],
             }),
         ];
+        // A dry voiceover asks the bed question first - the bed is the
+        // beat source - and a cold shelf (missing) is answered by moving
+        // straight on: the planner runs without a grid.
+        let bed = (plan.next)(&log).expect("the bed question is asked");
+        assert_eq!(bed.tool, "bgm_status");
+        let mut dry = log.clone();
+        dry.push(json!({ "freepd": "missing" }));
+
         // The footage shopping list is planned first: the planner reads the
         // transcript and says where coverage is wanted, before the plan
         // that names the signals is validated.
-        let first = (plan.next)(&log).expect("the footage plan is asked for");
+        let first = (plan.next)(&dry).expect("the footage plan is asked for");
         assert_eq!(first.tool, "footage_plan_suggest");
         assert!(
             !first.arguments["segments"]
@@ -11584,21 +12915,39 @@ mod tests {
                 .is_empty(),
             "the planner reads the narration's own spans: {first:?}"
         );
-        let ask = (plan.next)(&log).expect("the plan is validated");
+        let ask = (plan.next)(&dry).expect("the plan is validated");
         assert_eq!(ask.tool, "plan_validate");
         let plan = &ask.arguments["plan"];
         // The frame the project is: a 1080x1920 project is a vertical reel.
         assert_eq!(plan["aspect"], "9:16");
         assert_eq!(plan["mode"], "reel");
-        // The narration answered the thesis and the payoff; audience and
-        // goal are not in a transcript, so they stay absent and the gate
-        // is what names them.
+        // The narration answered the thesis and the payoff. The goal is
+        // the button's own - a one-click edit is a retention edit - and
+        // the audience stays absent here because this transcript named no
+        // entity: the gate names it, which is the honest answer.
         assert_eq!(plan["creativeBrief"]["thesis"], "we found the wreck");
         assert_eq!(plan["creativeBrief"]["payoff"], "and then it moved");
+        assert_eq!(plan["creativeBrief"]["goal"], "watch to the end");
         assert!(
             plan["creativeBrief"].get("audience").is_none(),
-            "an audience is not measured from a transcript"
+            "an audience is not measured from a transcript that names nothing"
         );
+        // The narration's own spans are planned as the B-roll the gather
+        // places - never as existing footage over audio media - and the
+        // plan carries the live shelf it will be shopped from.
+        for segment in plan["segments"].as_array().expect("segments") {
+            assert_eq!(
+                segment["visual"]["type"], "broll",
+                "an audio clip's span is never claimed as existing footage"
+            );
+            assert_eq!(segment["visual"]["provider"], "pexels");
+            assert!(
+                segment["visual"]["description"]
+                    .as_str()
+                    .is_some_and(|description| description.chars().count() >= 40),
+                "the semantic description clears the shelf's ranking floor"
+            );
+        }
         // The grade is the read's temperature, with the package's own
         // intensity parameter - the pair the plan validates.
         assert_eq!(plan["grade"]["filter"], "concat.cool-blue");
@@ -11625,6 +12974,272 @@ mod tests {
             }
         }
     }
+    /// The audit's Q9, answered: a dry voiceover's cuts land on the BED's
+    /// beats, not only on a take that already carried music. The plan
+    /// stage shops the bed early (search, import, trim to the
+    /// narration's own extent), analyzes it, and hands the planner the
+    /// grid translated into the take's own file clock.
+    #[test]
+    fn the_bed_s_beats_drive_the_planner_on_a_dry_voiceover() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let bed = "/edits/Reel/bgm/warm-piano.mp3";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: vec![TakePlacement {
+                take: take.to_owned(),
+                start: 0.0,
+                source_in: 0.0,
+                source_out: 10.0,
+                speed: 1.0,
+            }],
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(plan) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "plan")
+            .expect("the program has a plan stage")
+        else {
+            panic!("the plan stage is derived");
+        };
+        let view = json!({
+            "settings": { "width": 1080, "height": 1920 },
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 4.0, "text": "we found the wreck below the harbour wall" },
+                { "start": 6.0, "end": 9.0, "text": "and it was not empty" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+
+        // The bed question, answered ready: the shelf is shopped.
+        let status = (plan.next)(&log).expect("the bed question is asked");
+        assert_eq!(status.tool, "bgm_status");
+        log.push(json!({ "freepd": "ready" }));
+        let search = (plan.next)(&log).expect("the shelf is shopped");
+        assert_eq!(search.tool, "bgm_search");
+        assert_eq!(search.arguments["source"], "freepd");
+        log.push(json!({
+            "tracks": [
+                { "id": "warm-piano", "title": "Warm Piano Nocturne", "seconds": 200.0 }
+            ],
+        }));
+        let import = (plan.next)(&log).expect("the bed is imported");
+        assert_eq!(import.tool, "bgm_import");
+        assert_eq!(import.arguments["ids"], json!(["warm-piano"]));
+        assert_eq!(import.arguments["monetized"], json!(true));
+        log.push(json!({ "mediaIds": ["m-bed"] }));
+
+        // The timeline is read back for the placed bed.
+        let read = (plan.next)(&log).expect("the timeline is read for the bed");
+        assert_eq!(read.tool, "timeline_read");
+        let placed = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 10.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "bed", "kind": "audio", "media": "m-bed", "start": 0.0,
+                  "duration": 200.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m1", "path": take },
+                { "id": "m-bed", "path": bed },
+            ],
+        });
+        log.push(placed);
+
+        // A three-minute bed under a ten-second cut is trimmed, so no
+        // later runtime read is inflated by the bed.
+        let trim = (plan.next)(&log).expect("the bed is trimmed to the cut");
+        assert_eq!(trim.tool, "edit_apply");
+        assert_eq!(trim.arguments["command"]["op"], "trimClip");
+        assert_eq!(trim.arguments["command"]["clipId"], "bed");
+        assert_eq!(trim.arguments["command"]["delta"], json!(-190.0));
+        log.push(json!({ "applied": true }));
+
+        // The trimmed bed is analyzed, and the grid is waited on.
+        let analyze = (plan.next)(&log).expect("the bed is analyzed");
+        assert_eq!(analyze.tool, "analyze_beats");
+        assert_eq!(analyze.arguments["path"], bed);
+        log.push(json!({ "job": "analysis-9", "path": bed, "output": "" }));
+        let wait = (plan.next)(&log).expect("the grid is waited on");
+        assert_eq!(wait.tool, "analysis_wait");
+        assert_eq!(wait.arguments["path"], bed);
+        log.push(json!({
+            "path": bed,
+            "output": json!({ "beatsMs": [2000.0, 5000.0], "bpm": 90.0 }).to_string(),
+        }));
+
+        // The planner is handed the grid, in the take's own file clock.
+        let spec = (plan.next)(&log).expect("the planner is asked");
+        assert_eq!(spec.tool, "footage_plan_suggest");
+        assert_eq!(
+            spec.arguments["beats"],
+            json!([
+                { "seconds": 2.0, "strength": 0.5 },
+                { "seconds": 5.0, "strength": 0.5 },
+            ]),
+            "the bed's timeline-clock beats are translated into the take's file clock"
+        );
+    }
+
+    /// The music stage does not shop twice: a bed the plan stage landed so
+    /// its beats could drive the planner is trimmed and ducked where it
+    /// lies, and the stage's first call reads the timeline instead of the
+    /// shelf's state.
+    #[test]
+    fn the_music_stage_reuses_the_bed_the_plan_landed() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "music")
+            .expect("the program has a music stage")
+        else {
+            panic!("the music stage is derived");
+        };
+        let log = vec![json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "media": "m1", "start": 0.0,
+                  "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "bed", "kind": "audio", "media": "m-bed", "start": 0.0,
+                  "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m1", "path": take },
+                { "id": "m-bed", "path": "/edits/Reel/bgm/warm-piano.mp3" },
+            ],
+        })];
+        let first = (music.next)(&log).expect("the stage starts");
+        assert_eq!(
+            first.tool, "timeline_read",
+            "an existing bed is read back, not re-shopped"
+        );
+    }
+
+    /// The plan the run writes VALIDATES: the stage's hard gate on
+    /// `valid` is only honest if the fixed program's own plan clears it.
+    /// The audience blocker may stand (a transcript that names nothing),
+    /// but the structure - sections, segments, the signalLog, the
+    /// B-roll claims with their licensed provider - must pass.
+    #[test]
+    fn the_plan_the_run_writes_validates() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(plan) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "plan")
+            .expect("the program has a plan stage")
+        else {
+            panic!("the plan stage is derived");
+        };
+        let log = vec![
+            json!({
+                "settings": { "width": 1920, "height": 1080 },
+                "timeline": { "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 18.0,
+                      "sourceStart": 0.0, "speed": 1.0 },
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found the wreck below the old harbour wall" },
+                        { "start": 5.0, "end": 9.0, "text": "it was not empty, the hold still carried crates" },
+                        { "start": 12.0, "end": 16.0, "text": "and then the crane lifted it all away" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "surprise", 0.6, "hook", "cold", ""),
+                    emotion_row(5.0, 9.0, "fear", 0.8, "tension", "cold", "impact-heavy"),
+                    emotion_row(12.0, 16.0, "reveal", 0.9, "cold", "", "stinger"),
+                ],
+            }),
+        ];
+        // Walk to the plan_validate call and run it through the real
+        // validator: the same function the tool serves.
+        let mut ask = (plan.next)(&log).expect("the planner is asked");
+        while ask.tool != "plan_validate" {
+            ask = (plan.next)(&log).expect("the stage keeps going");
+        }
+        assert_eq!(ask.tool, "plan_validate");
+        let checked =
+            crate::tools::validate_plan_tool(ask.arguments.clone()).expect("the plan validates");
+        assert_eq!(
+            checked["valid"],
+            json!(true),
+            "the fixed program's own plan passes its own hard gate: {checked}"
+        );
+        // The audience blocker is the honest remainder: this transcript
+        // names no entity, so no audience is invented to pass the
+        // creative gate.
+        assert_eq!(checked["creativeReady"], json!(false));
+        assert!(
+            checked["creativeBlockers"]
+                .as_array()
+                .is_some_and(|blockers| {
+                    blockers.iter().any(|blocker| {
+                        blocker
+                            .as_str()
+                            .is_some_and(|text| text.contains("audience"))
+                    })
+                }),
+            "the audience is named as the blocker it honestly is"
+        );
+    }
+
     /// The measured beat grid is returned before the planner requests are
     /// constructed, and every take gets its own transcript clock.
     #[test]
@@ -11639,10 +13254,12 @@ mod tests {
                 TakePaths {
                     take: take_a.to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
                 TakePaths {
                     take: take_b.to_owned(),
                     enhanced: String::new(),
+                    aroll: None,
                 },
             ],
             placements: Vec::new(),
@@ -11723,6 +13340,7 @@ mod tests {
             takes: vec![TakePaths {
                 take: "/edits/Reel/voiceover/take.wav".to_owned(),
                 enhanced: "/edits/Reel/voiceover/enhanced.wav".to_owned(),
+                aroll: None,
             }],
             placements: vec![TakePlacement {
                 take: "/edits/Reel/voiceover/take.wav".to_owned(),

@@ -35,6 +35,12 @@ on:
 
 # The render lane reads the tree, downloads its pinned sidecar and writes
 # its artifacts; the token itself has nothing to write.
+# Preserve every run for this workflow/ref; pending runs are queued, not replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

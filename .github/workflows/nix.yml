@@ -25,8 +25,12 @@ on:
       - .github/workflows/nix.yml
   workflow_dispatch:
 
-# Every qualifying event gets its own run. Deliberately no concurrency
-# group: newer commits must not cancel or replace an earlier Nix build.
+# Keep each qualifying Nix run for this workflow/ref in FIFO order.
+# queue: max retains up to 100 pending runs rather than replacing an older build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
 jobs:
   build:
     name: nix build

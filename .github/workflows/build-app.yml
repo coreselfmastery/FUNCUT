@@ -66,10 +66,12 @@ on:
         type: string
         default: ""
 
-# Every event and commit gets its own build. There is deliberately no
-# workflow-level concurrency group: a newer commit must not cancel a running
-# build or replace an older pending build. GitHub schedules jobs as capacity
-# becomes available; the matrix keeps one architecture's failure independent.
+# Keep every commit's build: one run per workflow/ref, with a FIFO queue.
+# queue: max retains up to 100 pending runs instead of replacing the older one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
 # The bundles read the tree and fetch their pinned dependencies; the
 # token has nothing to write until the release workflow's own publish
 # job says otherwise.

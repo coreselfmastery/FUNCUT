@@ -701,9 +701,10 @@ fn default_config() -> oximedia_audio_analysis::AnalysisConfig {
     // and every decision downstream of them never fired. 4096 points
     // give the loop half a window of overlap; the lag range still
     // covers 7.8 Hz (16 kHz) to 23 Hz (48 kHz), far under any voice.
-    let mut config = oximedia_audio_analysis::AnalysisConfig::default();
-    config.fft_size = 4096;
-    config
+    oximedia_audio_analysis::AnalysisConfig {
+        fft_size: 4096,
+        ..Default::default()
+    }
 }
 
 /// Round to three decimals.

@@ -220,9 +220,12 @@ impl Capability {
             "sounds_search" | "sounds_add" => Capability::Sfx,
             "effects_list" | "effect_layer_add" | "effect_key_set" => Capability::Grade,
             "watch_render" | "craft_critique" | "local_vlm" | "preview_frame" => Capability::Review,
-            "export_start" | "export_wait" | "export_status" | "collision_check" => {
-                Capability::Delivery
-            }
+            "export_start"
+            | "export_wait"
+            | "export_status"
+            | "collision_check"
+            | "project_save"
+            | "timeline_read" => Capability::Delivery
             _ => return None,
         })
     }
@@ -1600,6 +1603,25 @@ mod tests {
                 Capability::Delivery,
             ]
         );
+    }
+
+    #[test]
+    fn saving_and_reading_the_project_consumes_delivery_capability() {
+        let stages = vec![
+            StageRecord::completed(
+                Stage::TimelineReady,
+                vec!["project_save".to_owned(), "timeline_read".to_owned()],
+            ),
+        ];
+        let receipt = AcceptanceReceipt::new("/p", "timeline", stages, Vec::new(), Vec::new());
+        let delivery = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Delivery)
+            .expect("delivery capability is listed");
+        assert!(delivery.consumed);
+        assert!(delivery.tools.contains(&"project_save".to_owned()));
+        assert!(delivery.tools.contains(&"timeline_read".to_owned()));
     }
 
     #[test]

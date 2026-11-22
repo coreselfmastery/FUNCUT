@@ -873,6 +873,11 @@ pub fn timeline_integrity(view: &Value) -> Result<String, String> {
 /// family the voice profile actually returns. Discourse and emotion signals
 /// are measured by their own tools and are deliberately not guessed here.
 fn measured_voice_family(signal: &str) -> Option<&'static str> {
+    // Formants are a distinct confidence family even though the catalogue
+    // reading lives under the forensic namespace.
+    if signal == "forensic.formantsHz" {
+        return Some("formants");
+    }
     let family = signal.split(['.', '[', '=']).next()?;
     Some(match family {
         "pause" | "speechRatio" => "pauses",

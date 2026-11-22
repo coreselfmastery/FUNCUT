@@ -1640,6 +1640,51 @@ mod tests {
     }
 
     #[test]
+    fn caption_stage_edits_are_counted_even_when_they_use_edit_apply() {
+        let call = |tool: &str, arguments: Value| ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let observed = vec![
+            (
+                call(
+                    "plan_validate",
+                    json!({
+                        "plan": {
+                            "audio": {"voiceover": true},
+                            "signalLog": [{"signals":["pause"],"confidence":0.5}]
+                        }
+                    }),
+                ),
+                json!({"valid":true,"creativeReady":true}),
+            ),
+            (
+                call("voice_signals", json!({"audio":"/voice.wav"})),
+                json!({
+                    "ok":true,
+                    "signalConfidence":{"perSignal":[
+                        {"signal":"pauses","confidence":0.7}
+                    ]}
+                }),
+            ),
+        ];
+        let completed = [StageRecord::completed(
+            Stage::Captions,
+            vec!["edit_apply".to_owned()],
+        )];
+        let gates = derive_gates_with_stages(&observed, &completed);
+        let captions = gates.iter().find(|gate| gate.gate == "captions").unwrap();
+        assert_eq!(captions.status, GateStatus::Pass);
+        assert!(captions.required);
+
+        let empty = [StageRecord::completed(Stage::Captions, Vec::new())];
+        let gates = derive_gates_with_stages(&observed, &empty);
+        let captions = gates.iter().find(|gate| gate.gate == "captions").unwrap();
+        assert_eq!(captions.status, GateStatus::Fail);
+        assert!(captions.required);
+    }
+
+    #[test]
     fn a_timeline_ready_run_can_be_accepted_without_an_export() {
         let call = |tool: &str, arguments: Value| ToolCall {
             tool: tool.to_owned(),

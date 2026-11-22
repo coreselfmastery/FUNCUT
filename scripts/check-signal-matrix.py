@@ -22,13 +22,33 @@ def main() -> int:
         print(f"signal catalogue missing or invalid: {CATALOGUE}", file=sys.stderr)
         return 1
 
-    expected = [entry.get("name") for entry in catalogue if isinstance(entry, dict)]
+    entries = [entry for entry in catalogue if isinstance(entry, dict)]
+    expected = [entry.get("name") for entry in entries]
     expected_set = set(expected)
-    families = {
-        entry.get("family")
-        for entry in catalogue
-        if isinstance(entry, dict) and isinstance(entry.get("family"), str)
+    family_alias = {
+        "Loudness": "loudness",
+        "Pauses": "pause",
+        "Speech rate": "speechRate",
+        "Words": "words",
+        "Language": "language",
+        "Sentence": "sentence",
+        "Entities": "entities",
+        "Motifs": "motifs",
+        "Fillers": "fillers",
+        "Arc": "arc",
+        "Prosody": "prosody",
+        "Forensics": "forensic",
+        "Speakers": "speaker",
     }
+    expected_aliases = {
+        entry["name"]: (
+            "formants"
+            if entry.get("name") == "forensic.formantsHz"
+            else family_alias.get(entry.get("family"))
+        )
+        for entry in entries
+    }
+    families = {entry.get("family") for entry in entries if isinstance(entry.get("family"), str)}
     matrix_text = MATRIX.read_text(encoding="utf-8")
     rows = re.findall(
         r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
@@ -45,6 +65,7 @@ def main() -> int:
     )
     vocabulary = set(re.findall(r"\"([^\"]+)\"", vocabulary_match.group(1))) if vocabulary_match else set()
     aliases = {alias for _, alias in rows}
+    actual_aliases = dict(rows)
 
     errors: list[str] = []
     if len(expected) != len(expected_set):
@@ -57,6 +78,13 @@ def main() -> int:
         errors.append("missing from matrix: " + ", ".join(missing))
     if stale:
         errors.append("not in runtime catalogue: " + ", ".join(stale))
+    wrong_aliases = sorted(
+        f"{reading}: expected {expected_aliases.get(reading)!r}, got {alias!r}"
+        for reading, alias in actual_aliases.items()
+        if alias != expected_aliases.get(reading)
+    )
+    if wrong_aliases:
+        errors.append("wrong signalLog family aliases: " + "; ".join(wrong_aliases))
     if not vocabulary_match:
         errors.append("Rust SIGNAL_VOCABULARY could not be read")
     rejected_aliases = sorted(aliases - vocabulary)

@@ -1332,16 +1332,87 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
-    // The optional craft dimensions, answered only when the run made them.
-    for (name, tool) in [("captions", "captions_add"), ("motion", "motion_bake")] {
-        if observed.iter().any(|(call, _)| call.tool == tool) {
-            gates.push(GateRecord::new(
-                name,
+    // The named caption tool is the Director's normal route. The
+    // deterministic runner's custom caption composer is certified from
+    // its StageRecord by derive_gates_with_stages below.
+    if observed.iter().any(|(call, _)| call.tool == "captions_add") {
+        gates.push(GateRecord::new(
+            "captions",
+            GateStatus::Pass,
+            "captions_add answered",
+            voiceover_required,
+        ));
+    } else if voiceover_required {
+        gates.push(GateRecord::new(
+            "captions",
+            GateStatus::Skipped,
+            "the Director plan requires captions but no captions_add call answered",
+            true,
+        ));
+    }
+    if observed.iter().any(|(call, _)| call.tool == "motion_bake") {
+        gates.push(GateRecord::new(
+            "motion",
+            GateStatus::Pass,
+            "motion_bake answered",
+            false,
+        ));
+    }
+    gates
+}
+
+/// Add evidence from the runner's stage ledger. Some built-in stages
+/// intentionally use lower-level edit_apply batches rather than a named
+/// MCP tool (notably the caption composer), so tool-name-only coverage
+/// would incorrectly report that those features were never consumed.
+pub fn derive_gates_with_stages(
+    observed: &[(ToolCall, Value)],
+    stages: &[StageRecord],
+) -> Vec<GateRecord> {
+    let mut gates = derive_gates(observed);
+    if let Some(stage) = stages.iter().find(|stage| stage.stage == Stage::Captions) {
+        gates.retain(|gate| gate.gate != "captions");
+        let voiceover_required = observed
+            .iter()
+            .rev()
+            .find(|(call, _)| call.tool == "plan_validate")
+            .and_then(|(call, _)| call.arguments.get("plan"))
+            .and_then(|plan| plan.pointer("/audio/voiceover"))
+            .is_some_and(|voiceover| !voiceover.is_null() && voiceover != &Value::Bool(false));
+        let (status, evidence) = match stage.outcome {
+            StageOutcome::Completed | StageOutcome::Skipped if !stage.calls.is_empty() => (
                 GateStatus::Pass,
-                format!("{tool} answered"),
-                false,
-            ));
-        }
+                format!(
+                    "the caption stage landed through {} successful edit call(s)",
+                    stage.calls.len()
+                ),
+            ),
+            StageOutcome::Completed | StageOutcome::Skipped => (
+                if voiceover_required {
+                    GateStatus::Fail
+                } else {
+                    GateStatus::Skipped
+                },
+                "the caption stage completed without placing caption edits".to_owned(),
+            ),
+            StageOutcome::Warned | StageOutcome::Failed => (
+                GateStatus::Fail,
+                stage
+                    .failure
+                    .clone()
+                    .unwrap_or_else(|| "the caption stage did not finish cleanly".to_owned()),
+            ),
+            StageOutcome::NotReached => (
+                GateStatus::Skipped,
+                "the caption stage was not reached".to_owned(),
+            ),
+        };
+        gates.push(GateRecord::new(
+            "captions",
+            status,
+            evidence,
+            voiceover_required,
+        ));
     }
     gates
 }

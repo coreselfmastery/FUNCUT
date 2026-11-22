@@ -83,6 +83,9 @@ pub enum Stage {
     /// The saved project is written and read back as the editable
     /// deliverable; no encoded video is produced by the default AUTO EDIT.
     TimelineReady,
+    /// Optional explicit render requested by the user. The default AUTO EDIT
+    /// does not schedule this stage.
+    Export,
     /// The export is certified when a caller explicitly requests a render.
     /// The default AUTO EDIT does not enter this optional stage.
     Export,

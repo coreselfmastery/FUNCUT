@@ -86,9 +86,6 @@ pub enum Stage {
     /// Optional explicit render requested by the user. The default AUTO EDIT
     /// does not schedule this stage.
     Export,
-    /// The export is certified when a caller explicitly requests a render.
-    /// The default AUTO EDIT does not enter this optional stage.
-    Export,
     /// The final saved timeline and its rendered preview are independently
     /// checked before the run is accepted.
     Verify,

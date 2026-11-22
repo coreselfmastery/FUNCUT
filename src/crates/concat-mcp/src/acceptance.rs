@@ -618,17 +618,25 @@ mod tests {
                 .contains("duplicate media id")
         );
 
+        let dir = std::env::temp_dir().join(format!(
+            "funcut-acceptance-overrun-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.mp4");
+        std::fs::write(&source, b"fixture").unwrap();
         let source_overrun = json!({
             "timeline":{"tracks":[{"id":"v1"}],"clips":[
                 {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":4.0,"speed":2.0,"media":"m1","sourceStart":2.0}
             ]},
-            "media":[{"id":"m1","path":"/tmp/source.mp4","duration":8.0}]
+            "media":[{"id":"m1","path":source.to_string_lossy(),"duration":8.0}]
         });
         assert!(
             timeline_integrity(&source_overrun)
                 .unwrap_err()
                 .contains("reads past media")
         );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -520,8 +520,7 @@ impl Runner {
                     // and a render the prior run started was not one
                     // this run could cancel - the replay carries both
                     // exactly as the run that drew them carried them.
-                    if stage == Stage::Verify
-                        && (call.tool == "emotion" || verification.is_null())
+                    if stage == Stage::Verify && (call.tool == "emotion" || verification.is_null())
                     {
                         verification = reply.clone();
                     }

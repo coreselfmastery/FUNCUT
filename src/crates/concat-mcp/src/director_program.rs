@@ -3347,12 +3347,21 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     /// One clip's contribution to the spine: when it opens and closes,
     /// the picture it puts on screen (if it puts one), the read's own
     /// mood at the moment it opens, and the words it plays.
-    type Span = (f64, f64, Option<(String, String)>, Option<EmotionLine>, String);
+    type Span = (
+        f64,
+        f64,
+        Option<(String, String)>,
+        Option<EmotionLine>,
+        String,
+    );
     let span_of = |clip: &Value| -> Span {
         let start = clip["start"].as_f64().unwrap_or(0.0);
         let end = start + clip["duration"].as_f64().unwrap_or(0.0);
         let kind = clip["kind"].as_str().unwrap_or("audio").to_owned();
-        let is_visual = matches!(kind.as_str(), "video" | "image" | "motion" | "text" | "shape");
+        let is_visual = matches!(
+            kind.as_str(),
+            "video" | "image" | "motion" | "text" | "shape"
+        );
         // The read's own act and temperature for the moment the
         // segment opens, where the read reached it: the clip's first
         // file second is the moment its line begins.
@@ -3418,9 +3427,10 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 // - the mood of the moment the window opens - and the
                 // words the spans play join, so a window the gather
                 // shops carries everything its narration said.
-                let real_footage = span.2.as_ref().is_some_and(|(_, kind)| {
-                    matches!(kind.as_str(), "video" | "image" | "motion")
-                });
+                let real_footage = span
+                    .2
+                    .as_ref()
+                    .is_some_and(|(_, kind)| matches!(kind.as_str(), "video" | "image" | "motion"));
                 let window_is_overlay = window.2.as_ref().is_some_and(|(_, kind)| {
                     !matches!(kind.as_str(), "video" | "image" | "motion")
                 });
@@ -5886,8 +5896,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .map(|(_, path)| path.clone())
                                 })?;
                                 let read = reads.iter().find(|read| {
-                                    read.take == path
-                                        && read.take_wide.integrated_lufs.is_some()
+                                    read.take == path && read.take_wide.integrated_lufs.is_some()
                                 })?;
                                 let measured = read.take_wide.integrated_lufs?;
                                 let gain = round3(read.safe_gain(target - measured))
@@ -7354,23 +7363,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .into_iter()
                                 .flatten()
                                 .filter_map(|preset| {
-                                        let id = preset["id"].as_str()?.to_owned();
-                                        let slots = preset["slots"].as_array()?;
-                                        let slot = slots
-                                            .iter()
-                                            .find(|slot| slot["field"] == json!("text"))?["label"]
-                                            .as_str()?
-                                            .to_owned();
-                                        let all = slots
-                                            .iter()
-                                            .filter_map(|slot| {
-                                                slot["label"].as_str().map(str::to_owned)
-                                            })
-                                            .collect();
-                                        let duration = preset["duration"].as_f64()?;
-                                        Some((id, slot, all, duration))
-                                    })
-                                    .collect();
+                                    let id = preset["id"].as_str()?.to_owned();
+                                    let slots = preset["slots"].as_array()?;
+                                    let slot = slots
+                                        .iter()
+                                        .find(|slot| slot["field"] == json!("text"))?["label"]
+                                        .as_str()?
+                                        .to_owned();
+                                    let all = slots
+                                        .iter()
+                                        .filter_map(|slot| {
+                                            slot["label"].as_str().map(str::to_owned)
+                                        })
+                                        .collect();
+                                    let duration = preset["duration"].as_f64()?;
+                                    Some((id, slot, all, duration))
+                                })
+                                .collect();
                             if shapes.is_empty() {
                                 return None;
                             }
@@ -7718,9 +7727,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // The log only grows past the base this stage drew,
                     // but a future call shape must not take the runner
                     // down with it for an invariant it cannot see.
-                    let Some(last) = log.last() else {
-                        return None;
-                    };
+                    let last = log.last()?;
                     if last.get("freepd").is_some() {
                         // A bgm_status reply: prepare the missing shelf,
                         // poll the loading one, shop the ready one.
@@ -10494,8 +10501,14 @@ mod tests {
         );
         // The verify and the watch both read the saved timeline, so both
         // follow it.
-        assert!(timeline_ready < verify, "the verify certifies the saved timeline");
-        assert!(timeline_ready < watch, "the watch scores the saved timeline");
+        assert!(
+            timeline_ready < verify,
+            "the verify certifies the saved timeline"
+        );
+        assert!(
+            timeline_ready < watch,
+            "the watch scores the saved timeline"
+        );
     }
 
     /// The revise answers a measured fault and only a measured fault: a
@@ -13591,9 +13604,7 @@ mod tests {
         let calls: Vec<&str> = step.calls.iter().map(|call| call.tool.as_str()).collect();
         assert_eq!(calls, ["collision_check", "timeline_read"]);
         assert!(
-            step.gates
-                .iter()
-                .any(|gate| gate.field() == "clean"),
+            step.gates.iter().any(|gate| gate.field() == "clean"),
             "the verify gate refuses shared lanes on the saved timeline"
         );
         // The probes the rendered export owes, on the acceptance's own

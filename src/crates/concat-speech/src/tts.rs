@@ -957,17 +957,11 @@ impl Speech {
                     std::fs::write(&part, crate::chatterbox::wav_bytes(&spoken, rate))
                 {
                     let _ = std::fs::remove_file(&part);
-                    return Err(format!(
-                        "could not write {}: {error}",
-                        part.display()
-                    ));
+                    return Err(format!("could not write {}: {error}", part.display()));
                 }
                 if let Err(error) = std::fs::rename(&part, &file) {
                     let _ = std::fs::remove_file(&part);
-                    return Err(format!(
-                        "could not land {}: {error}",
-                        file.display()
-                    ));
+                    return Err(format!("could not land {}: {error}", file.display()));
                 }
                 let duration = spoken.len() as f64 / f64::from(rate);
                 log::info!(

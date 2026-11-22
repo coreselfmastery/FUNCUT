@@ -559,13 +559,11 @@ fn attempt(
     // blamed the mirror for the proxy's corruption. A range that names
     // zero is the whole body (the download restarts whole); a range
     // that names anything else is this source's own miss.
-    let range_start = response
-        .header("Content-Range")
-        .and_then(|range| {
-            let after = range.trim().strip_prefix("bytes")?.trim();
-            let first = after.split('-').next()?.trim();
-            first.parse::<u64>().ok()
-        });
+    let range_start = response.header("Content-Range").and_then(|range| {
+        let after = range.trim().strip_prefix("bytes")?.trim();
+        let first = after.split('-').next()?.trim();
+        first.parse::<u64>().ok()
+    });
     let resumed = match (response.status() == 206, range_start) {
         (true, Some(start)) if start == already => true,
         (true, Some(0)) => false,

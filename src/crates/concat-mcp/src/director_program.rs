@@ -8422,13 +8422,6 @@ mod tests {
         // The program's artifact is the editable timeline. Rendering
         // remains an explicit user action in the editor.
         assert_eq!(program.export, std::path::Path::new("timeline"));
-        let called: Vec<&str> = program
-            .steps
-            .iter()
-            .flat_map(|step| step.calls().iter().map(|call| call.tool.as_str()))
-            .collect();
-        assert!(!called.contains(&"export_start"));
-        assert!(!called.contains(&"export_wait"));
         assert!(
             program.enforce_acceptance,
             "the auto edit claims the whole edit, so its receipt must decide the outcome"

@@ -872,6 +872,24 @@ pub fn timeline_integrity(view: &Value) -> Result<String, String> {
     ))
 }
 
+/// Whether the canonical edit plan represents narration. It may be a
+/// generated voiceover, an already-placed audio clip, or a plan whose
+/// signal log explicitly records voice readings.
+pub fn plan_has_voiceover(plan: &Value) -> bool {
+    let generated = plan
+        .pointer("/audio/voiceover")
+        .is_some_and(|voiceover| !voiceover.is_null() && voiceover != &Value::Bool(false));
+    let placed = plan
+        .get("audioClipId")
+        .and_then(Value::as_str)
+        .is_some_and(|id| !id.trim().is_empty());
+    let logged = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .is_some_and(|entries| !entries.is_empty());
+    generated || placed || logged
+}
+
 /// A narration edit is not complete if the saved timeline contains
 /// only titles: it must carry the voiceover and at least one visual source.
 /// The deeper timeline-integrity gate separately verifies every media id,
@@ -1103,9 +1121,7 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         .rev()
         .find(|(call, _)| call.tool == "plan_validate")
         .and_then(|(call, _)| call.arguments.get("plan"));
-    let voiceover_required = plan
-        .and_then(|plan| plan.pointer("/audio/voiceover"))
-        .is_some_and(|voiceover| !voiceover.is_null() && voiceover != &Value::Bool(false));
+    let voiceover_required = plan.is_some_and(plan_has_voiceover);
     if voiceover_required {
         let profiles: Vec<Value> = observed
             .iter()
@@ -1385,8 +1401,7 @@ pub fn derive_gates_with_stages(
             .rev()
             .find(|(call, _)| call.tool == "plan_validate")
             .and_then(|(call, _)| call.arguments.get("plan"))
-            .and_then(|plan| plan.pointer("/audio/voiceover"))
-            .is_some_and(|voiceover| !voiceover.is_null() && voiceover != &Value::Bool(false));
+            .is_some_and(plan_has_voiceover);
         let (status, evidence) = match stage.outcome {
             StageOutcome::Completed | StageOutcome::Skipped if !stage.calls.is_empty() => (
                 GateStatus::Pass,

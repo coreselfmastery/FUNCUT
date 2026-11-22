@@ -1833,6 +1833,7 @@ fn sense_schema(name: &str) -> Option<Value> {
         "emotion" => json!({
             "action": { "type": "string", "enum": ["extract", "brand", "gate", "verify", "template", "selftest"], "default": "extract" },
             "project": string("The project folder; its creative-brief.json supplies the brief (emotionalArc) and brandKit when not given directly."),
+            "audio": string("The take file the lines were measured from, so the extract echoes it back and the reader pairs replies with takes by it rather than by the order the calls were issued in."),
             "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]}." },
             "lines": { "type": "array", "description": "Lines as [{text, start, end}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } },
             "script": string("Raw narration text; split into sentences when no transcript or lines are given."),

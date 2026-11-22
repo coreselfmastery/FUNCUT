@@ -1159,7 +1159,12 @@ def selftest(only=None):
         checks.append({
             "tool": "detect_music_segments (dense speech)",
             "ok": bool(dense_gate.get("ok")) and dense_gate.get("musicPresent") is False
-                  and dense_gate.get("evidence") == "gate_false_positive",
+                  and dense_gate.get("evidence") == "gate_false_positive"
+                  # The path asked about, echoed back: the AUTO EDIT pairs
+                  # the reply with its take by this key, so a reply that
+                  # stops carrying it fails here instead of pairing the
+                  # takes by call order again.
+                  and dense_gate.get("audio") == dense,
             "error": dense_gate.get("error"),
             "extra": f"evidence={dense_gate.get('evidence')} "
                      f"tempoStrength={dense_gate.get('tempoStrength')}",

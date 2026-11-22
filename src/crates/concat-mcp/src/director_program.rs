@@ -1215,13 +1215,18 @@ fn beats_in_take_clock(beats: &Value, source: &AutoEditProgramSource, take: &str
 /// way it always did: positionally, in `takes` order.
 fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
     for reply in log {
-        if let (Some(present), Some(path)) = (
-            reply.get("musicPresent").and_then(Value::as_bool),
-            reply.get("audio").and_then(Value::as_str),
-        ) {
-            if present && takes.iter().any(|take| take.take == path) {
-                return Some(path.to_owned());
-            }
+        let Some(path) = reply.get("audio").and_then(Value::as_str) else {
+            // An echo-less reply pairs positionally, below, the way it
+            // always did.
+            continue;
+        };
+        if reply
+            .get("musicPresent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && takes.iter().any(|take| take.take == path)
+        {
+            return Some(path.to_owned());
         }
     }
     let reads: Vec<bool> = log

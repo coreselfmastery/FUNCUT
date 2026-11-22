@@ -1559,6 +1559,7 @@ pub fn emotion(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, A
             "transcript",
             "lines",
             "script",
+            "audio",
             "brief",
             "sections",
             "brand",

@@ -1142,7 +1142,13 @@ impl CompEngine for Geneva {
                 let Some(image) = rgba_png(bytes, pipe.width(), pipe.height()) else {
                     continue;
                 };
-                let _ = std::fs::write(frames.join(Baked::frame_name(index as u32)), image);
+                // `Baked::frame_name` is 1-based (`frame_name(1)` is
+                // `0001.png`, the first frame of every other producer),
+                // so pipe slot 0 lands in file 0001.png: a 0-based write
+                // put the first frame in 0000.png, off by one for every
+                // `frame_path(1)` reader and misaligned with the
+                // incremental seam's 1-based skip.
+                let _ = std::fs::write(frames.join(Baked::frame_name(index as u32 + 1)), image);
             }
             let name = pipe.name();
             if !name.is_empty() {

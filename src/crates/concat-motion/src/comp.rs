@@ -1379,6 +1379,14 @@ impl Comp {
         };
         for node in &self.nodes {
             match &node.kind {
+                // Geneva's mapper cannot draw a camera at all - the
+                // geneva.rs warning says a comp that carries one routes
+                // here - so a camera node is inexpressible there by
+                // definition, and the engine table must say so or a
+                // camera comp with the sidecar installed bakes without
+                // its move (the audit's finding: the arm was missing and
+                // the comp passed `engine_for` unchecked).
+                NodeKind::Camera { .. } => note("a 3D camera"),
                 NodeKind::Rig { .. } => note("a bone rig"),
                 NodeKind::Audio { .. } => note("an audio reaction"),
                 NodeKind::Path { boolean, taper, .. } => {

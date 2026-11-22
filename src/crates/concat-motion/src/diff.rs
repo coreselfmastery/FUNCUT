@@ -29,24 +29,52 @@ pub struct Diff {
     /// Nodes both carry, differently - timing, transform, tracks, kind,
     /// any of it: a node is equal or it is changed, nothing in between.
     pub changed: Vec<String>,
+    /// The document itself changed outside its nodes: the background,
+    /// the duration, the frame rate, a named curve, an asset's bytes -
+    /// things no node's window can bound, because they reach every
+    /// frame the comp holds. When this is set the diff is never empty
+    /// and every frame is dirty: an `ops: set-background` revision must
+    /// re-render, never inherit the old pixels under a new hash.
+    pub document: bool,
 }
 
 impl Diff {
     /// Whether the two revisions are the same document.
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty() && self.changed.is_empty()
+        self.added.is_empty()
+            && self.removed.is_empty()
+            && self.changed.is_empty()
+            && !self.document
     }
 
-    /// The frames the change can reach: a frame is dirty when a changed
-    /// or added node is on screen in it in the revision after, or a
-    /// removed node was on screen in it in the revision before - a node
-    /// that leaves dirties a frame it used to hold, whatever the revision
-    /// after says about it.
+    /// The frames the change can reach, at the frame rate the BAKE will
+    /// render at - not the comp documents' own, which a `motion_bake`
+    /// with an explicit `fps` can differ from. A frame is dirty when a
+    /// changed or added node is on screen in it in the revision after,
+    /// or a removed node was on screen in it in the revision before - a
+    /// node that leaves dirties a frame it used to hold, whatever the
+    /// revision after says about it.
     pub fn dirty_frames(&self, before: &Comp, after: &Comp) -> Vec<bool> {
-        let fps = before.fps.max(after.fps).max(1.0);
+        self.dirty_frames_at(before, after, before.fps.max(after.fps).max(1.0))
+    }
+
+    /// [`Diff::dirty_frames`](Diff::dirty_frames) at a named rate: the
+    /// bake's own. The mask's length and its node windows are both
+    /// computed at THIS rate, so a bake at 60 fps of a 30 fps comp
+    /// dirties the frames its seconds actually hold - the old
+    /// comp-rate mask padded with `false` left the second half of a
+    /// retimed node's window inherited stale.
+    pub fn dirty_frames_at(&self, before: &Comp, after: &Comp, fps: f64) -> Vec<bool> {
+        let fps = fps.max(1.0);
         let seconds = before.duration.max(after.duration);
         let frames = ((seconds * fps).ceil() as usize).max(1);
         let mut dirty = vec![false; frames];
+        // A document-level change reaches everywhere: there is no node
+        // window to bound it, so the whole bake is dirty.
+        if self.document {
+            dirty.iter_mut().for_each(|slot| *slot = true);
+            return dirty;
+        }
         let reach = |comp: &Comp, id: &str, dirty: &mut Vec<bool>| {
             for node in &comp.nodes {
                 if node.id != id {
@@ -55,7 +83,7 @@ impl Diff {
                 let from = node.start;
                 let to = node.end(comp.duration);
                 for (frame, dirty) in dirty.iter_mut().enumerate() {
-                    let at = frame as f64 / comp.fps.max(1.0);
+                    let at = frame as f64 / fps;
                     if at >= from && at < to {
                         *dirty = true;
                     }
@@ -79,6 +107,22 @@ impl Diff {
 /// Diff two revisions of one comp, by node id, through every sub-comp.
 pub fn diff(before: &Comp, after: &Comp) -> Diff {
     let mut out = Diff::default();
+    // The document outside the nodes: a changed background, duration,
+    // frame rate, named curve or asset bytes is a change no node id can
+    // name - `diff()` compared only nodes, so an `ops: set-background`
+    // revision produced an empty diff and the bake inherited every
+    // frame from the predecessor under a new hash, its new background
+    // never rendered. The document flag says so instead.
+    if before.background != after.background
+        || before.duration != after.duration
+        || before.fps != after.fps
+        || before.width != after.width
+        || before.height != after.height
+        || before.curves != after.curves
+        || before.assets != after.assets
+    {
+        out.document = true;
+    }
     for node in &after.nodes {
         match before.nodes.iter().find(|other| other.id == node.id) {
             None => out.added.push(node.id.clone()),

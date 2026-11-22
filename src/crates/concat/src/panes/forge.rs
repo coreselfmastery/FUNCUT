@@ -403,6 +403,11 @@ impl ForgePane {
                         if let Err(error) = concat_mcp::backend::release_window_session(&path) {
                             log::warn!("forge: the run's session did not release: {error}");
                         }
+                        // The display goes first: open_project's
+                        // same-folder early return would otherwise leave
+                        // the follow's read-only guard standing over the
+                        // finished edit.
+                        studio.land_live_follow();
                         match concat_host::projects::open(&path)
                             .and_then(|info| studio.open_project(info))
                         {
@@ -580,7 +585,14 @@ impl ForgePane {
         };
         self.signals.busy = true;
         self.set_status(tf("forge.signalsBusy", &[&label]));
-        crate::host::spawn_in_project(
+        // Plain `spawn`, not `spawn_in_project`: the reading is of the
+        // file the button was pressed on (its path is captured), and an
+        // epoch-guarded delivery would DROP the reply when the project
+        // changed mid-read - leaving `busy` true forever, every signal
+        // button dead for the rest of the session. The reading arrives,
+        // the card names its signal, and `signal_read` always clears
+        // the flag.
+        crate::host::spawn(
             move || read_one_signal(&audio, &name),
             move |studio, _, _, reading| {
                 studio.handle(Msg::Forge(ForgeMsg::SignalRead(reading)));
@@ -1274,6 +1286,9 @@ impl ForgePane {
                 if let Err(error) = concat_mcp::backend::release_window_session(&path) {
                     log::warn!("forge: the run's session did not release: {error}");
                 }
+                // The display goes first, or the landing's open reads
+                // as the display it already is and claims nothing.
+                studio.land_live_follow();
                 match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
                 {
                     Ok(()) => {}
@@ -1430,6 +1445,11 @@ impl ForgePane {
                     if let Err(error) = concat_mcp::backend::release_window_session(&path) {
                         log::warn!("forge: the run's session did not release: {error}");
                     }
+                    // The display goes first: the landing's open must
+                    // claim the sibling, not early-return as the display
+                    // it already is, or the finished edit stays
+                    // read-only under the follow's guard.
+                    studio.land_live_follow();
                     match concat_host::projects::open(&path)
                         .and_then(|info| studio.open_project(info))
                     {
@@ -1591,6 +1611,63 @@ fn terminate_forge_process(child: &mut Child) {
     }
 }
 
+/// The supervisor the two run readers share: poll the child until it
+/// exits, clean the process group, and answer the exit code. The exit is
+/// observed WITHOUT reaping - on Unix, `waitpid` with `WNOWAIT` leaves
+/// the exited leader a zombie, its pid unreusable - so the group cleanup
+/// that follows (a descendant can still own the pipes) always runs while
+/// the leader still exists, and `kill(-pid)` can never land on a
+/// recycled process group the way a post-reap kill could.
+fn supervise_forge_child(
+    mut child: Child,
+    kill: Arc<AtomicBool>,
+) -> Option<std::process::ExitStatus> {
+    loop {
+        #[cfg(unix)]
+        {
+            let pid = child.id() as libc::pid_t;
+            // SAFETY: waitpid with WNOHANG|WNOWAIT only peeks: it reports
+            // the exit without reaping, so the pid stays the leader's.
+            let mut code: libc::c_int = 0;
+            let seen = unsafe { libc::waitpid(pid, &mut code, libc::WNOHANG | libc::WNOWAIT) };
+            if seen == pid {
+                // The group first, while the leader still owns its pid
+                // and the group is certainly this run's: a descendant
+                // holding a pipe dies with the rest, and the readers'
+                // joins end. THEN the reap, for the real status.
+                // SAFETY: negative pid targets the run's own group.
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+                break child.wait().ok();
+            }
+            if seen == -1 {
+                // The poll itself failed: fall back to the leader-only
+                // stop and reap what is there.
+                log::warn!("forge: the child could not be polled");
+                terminate_forge_process(&mut child);
+                break child.wait().ok();
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = child.kill();
+                    break Some(status);
+                }
+                Err(_) => {
+                    let _ = child.kill();
+                    break child.wait().ok();
+                }
+                Ok(None) => {}
+            }
+        }
+        if kill.load(Ordering::Relaxed) {
+            terminate_forge_process(&mut child);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Reads the run on its own thread: each line of the harness's output is
 /// posted as it comes, and the run's exit code is posted after the last.
 /// A separate supervisor polls the child, so Cancel is honoured even
@@ -1631,26 +1708,7 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     // A quiet model call can take minutes without writing a line; Cancel must
     // still terminate it promptly instead of waiting for another stdout event.
     std::thread::spawn(move || {
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) => {
-                    if kill.load(Ordering::Relaxed) {
-                        terminate_forge_process(&mut child);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(error) => {
-                    log::warn!("could not poll Forge child: {error}");
-                    terminate_forge_process(&mut child);
-                    break child.wait().ok();
-                }
-            }
-        };
-        // A parent can exit while a detached descendant still owns one of
-        // its pipes. Reap any remaining members of this private process
-        // group before joining readers, even on an otherwise normal exit.
-        terminate_forge_process(&mut child);
+        let status = supervise_forge_child(child, kill);
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);
@@ -3251,25 +3309,7 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
         }
     });
     std::thread::spawn(move || {
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Some(status),
-                Ok(None) => {
-                    if kill.load(Ordering::Relaxed) {
-                        terminate_forge_process(&mut child);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(_) => {
-                    terminate_forge_process(&mut child);
-                    break child.wait().ok();
-                }
-            }
-        };
-        // A parent can exit while a detached descendant still owns one of
-        // its pipes. Reap any remaining members of this private process
-        // group before joining readers, even on an otherwise normal exit.
-        terminate_forge_process(&mut child);
+        let status = supervise_forge_child(child, kill);
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);

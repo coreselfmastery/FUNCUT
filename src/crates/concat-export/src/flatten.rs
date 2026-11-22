@@ -118,7 +118,7 @@ fn motion_sequence(
         return None;
     }
     let mut candidates: Vec<(bool, u64, u32, u32, f64, std::path::PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -152,6 +152,27 @@ fn motion_sequence(
             || height == 0
             || !fps.is_finite()
             || fps <= 0.0
+        {
+            continue;
+        }
+        // The assets fingerprint the manifest must still vouch for: the
+        // key over the asset bytes the comp document points at NOW. A
+        // re-saved logo under an unchanged document is exactly the stale
+        // bake the key exists to refuse, and the export is the bake's
+        // biggest consumer - `motion_bake` itself refuses such a cache
+        // hit, so accepting one here would ship the old pixels anyway.
+        // Only a RECORDED key that contradicts refuses: a manifest from
+        // before the field (or a comp with no assets) has nothing to
+        // compare, and refusing it would drop clips that always exported.
+        let comp_path = dir.join(format!("{key}.json"));
+        let assets_current = std::fs::read_to_string(&comp_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<concat_motion::comp::Comp>(&text).ok())
+            .and_then(|comp| concat_motion::engine::bake_assets_key(&comp, &dir));
+        if let (Some(current), Some(recorded)) = (
+            assets_current,
+            manifest.get("assets").and_then(Json::as_u64),
+        ) && current != recorded
         {
             continue;
         }

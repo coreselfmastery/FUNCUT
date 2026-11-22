@@ -29,6 +29,13 @@ use serde_json::{Value, json};
 use crate::backend::Backend;
 use crate::tools::{Context, Toolbox};
 
+/// How far a word may start from where the edit placed it, in the
+/// acceptance's own `emotion` verify: the watcher's own line
+/// (`VERIFICATION_SYNC_TOLERANCE_MS`, 60 ms) is the tolerance the whole
+/// pipeline promises, and an acceptance 2.5x looser would pass exports
+/// the agent believed it was held to.
+pub const SYNC_TOLERANCE_MS: u64 = 60;
+
 /// What a finished Director run is asked to prove: the project it edited
 /// and the export it was told to land.
 pub struct DirectorCheck<'a> {
@@ -274,7 +281,7 @@ pub fn check(
                 "action": "verify",
                 "expectedTakes": expected,
                 "actualPath": check.export,
-                "toleranceMs": 150,
+                "toleranceMs": SYNC_TOLERANCE_MS,
             });
             if let Some(reply) = caller.ask("emotion", arguments.clone()) {
                 answered.push("emotion".to_owned());

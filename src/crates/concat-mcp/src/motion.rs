@@ -1326,13 +1326,26 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     let mut predecessor_dir: Option<PathBuf> = None;
     let mut render_range: Option<(u32, u32)> = None;
     let mut skip_render = false;
+    // How many frames the inheritance may copy, so the finished sequence
+    // holds exactly the comp's own count: the skip path inherits all of
+    // it, the ranged path inherits the complement of what the engine
+    // renders.
+    let mut inherit_cap: Option<usize> = None;
     if let Some((previous_dir, previous_comp)) =
         predecessor(&project, &comp, &request, engine.kind())
     {
         let fps = request.fps(&comp);
         let frames = ((comp.duration * fps).ceil() as usize).max(1);
-        let mut dirty =
-            concat_motion::diff::diff(&previous_comp, &comp).dirty_frames(&previous_comp, &comp);
+        // The mask is computed at the BAKE's own rate - an explicit `fps`
+        // on the request can differ from the comp document's, and a
+        // comp-rate mask padded or truncated to the bake's frame count
+        // mis-scales every window: the second half of a retimed node at
+        // 60 fps over a 30 fps comp inherited stale.
+        let mut dirty = concat_motion::diff::diff(&previous_comp, &comp).dirty_frames_at(
+            &previous_comp,
+            &comp,
+            fps,
+        );
         dirty.truncate(frames);
         while dirty.len() < frames {
             dirty.push(false);
@@ -1343,9 +1356,14 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             (Some(from), Some(to)) => {
                 render_range = Some((from as u32, to as u32 + 1));
                 request.frames = render_range;
+                // The engine draws `from..=to+1` (1-based inclusive):
+                // the inheritance fills the rest, to the comp's count.
+                let rendered = to + 1 - from + 1;
+                inherit_cap = Some(frames.saturating_sub(rendered));
             }
             (None, None) => {
                 skip_render = true;
+                inherit_cap = Some(frames);
             }
             _ => {}
         }
@@ -1358,13 +1376,16 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     }
     let baked = if skip_render {
         // Nothing the change reaches: the whole sequence inherits, and
-        // nothing renders at all.
+        // nothing renders at all. Exactly the comp's own frame count -
+        // a longer donor must not ship its tail through the export's
+        // every-PNG listing, and the manifest vouches only for what it
+        // counted.
         let frames_dir = dir.join("frames");
         std::fs::create_dir_all(&frames_dir)
             .map_err(|error| ApiError::failed(format!("{}: {error}", frames_dir.display())))?;
         let copied = predecessor_dir
             .as_deref()
-            .map(|previous| inherit_outside(previous, &frames_dir, None))
+            .map(|previous| inherit_outside(previous, &frames_dir, None, inherit_cap))
             .unwrap_or(0);
         concat_motion::engine::Baked {
             dir: frames_dir,
@@ -1386,9 +1407,12 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             .bake(&comp, &request, &dir)
             .map_err(|error| ApiError::failed(error.to_string()))?;
         // The frames the render did not produce: inherited from the bake
-        // before it, byte for byte - determinism is the guarantee.
+        // before it, byte for byte - determinism is the guarantee. The
+        // cap holds the sequence to the comp's own count: a donor from a
+        // longer revision must not ship its tail past the last frame
+        // this comp plays.
         if let Some(previous) = predecessor_dir.as_deref() {
-            let copied = inherit_outside(previous, &baked.dir, render_range);
+            let copied = inherit_outside(previous, &baked.dir, render_range, inherit_cap);
             baked.frames += copied;
         }
         baked
@@ -1533,6 +1557,9 @@ fn predecessor(
     );
     let mut candidates: Vec<(std::time::SystemTime, PathBuf, Comp)> = Vec::new();
     let root = cache_dir(project);
+    // The assets fingerprint this revision bakes with, computed once:
+    // a donor whose manifest names a different one is skipped below.
+    let assets = concat_motion::engine::bake_assets_key(comp, &comps_dir(project));
     let Ok(entries) = std::fs::read_dir(&root) else {
         return None;
     };
@@ -1542,7 +1569,12 @@ fn predecessor(
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.contains(&suffix) || name.starts_with(&format!("{:016x}", comp.hash())) {
+        // The suffix must END the name, not merely sit inside it: bake
+        // dirs are exactly `{hash}{-WxH@fps}`, and `contains` matched
+        // `-1920x1080@30` against a `...-1920x1080@30.5` dir (and `@24`
+        // against `@240`, `@23` against `@23.976`), inheriting frames a
+        // DIFFERENT frame rate rendered.
+        if !name.ends_with(&suffix) || name.starts_with(&format!("{:016x}", comp.hash())) {
             continue;
         }
         let Ok(manifest) = std::fs::read_to_string(path.join("manifest.json")) else {
@@ -1555,6 +1587,17 @@ fn predecessor(
         // promise one another's pixels, and a frame inherited byte for
         // byte across engines would be a hybrid no manifest names.
         if manifest.get("engine").and_then(Value::as_str) != Some(engine.as_str()) {
+            continue;
+        }
+        // A donor whose assets fingerprint differs is no donor either:
+        // the manifest's `assets` key exists precisely so "the logo was
+        // re-saved, the clean frames still carry the old logo" cannot
+        // happen - the cache hit path compares it, and this seam must
+        // too, or a re-saved asset inherits the old pixels on every
+        // frame the range did not re-render. The same strict equality
+        // the cache hit uses: a manifest that records nothing is not a
+        // donor, it is a full render.
+        if manifest.get("assets").and_then(Value::as_u64) != assets {
             continue;
         }
         let Some(hash) = manifest.get("hash").and_then(Value::as_str) else {
@@ -1586,11 +1629,23 @@ fn predecessor(
 /// Copy the frames a re-render did not produce from the bake before it:
 /// every NNNN.png outside `range`, byte for byte, determinism the
 /// guarantee. `None` copies them all.
-fn inherit_outside(previous: &Path, dir: &Path, range: Option<(u32, u32)>) -> usize {
+///
+/// `limit` caps the copy at the comp's own frame count: a donor longer
+/// than the comp it feeds must not ship its tail (the export lists every
+/// PNG the frames dir holds, so a stale tail rides the clip), and files
+/// are taken in index order so the cap keeps the EARLIEST frames - the
+/// ones the comp actually plays.
+fn inherit_outside(
+    previous: &Path,
+    dir: &Path,
+    range: Option<(u32, u32)>,
+    limit: Option<usize>,
+) -> usize {
     let Ok(entries) = std::fs::read_dir(previous) else {
         return 0;
     };
-    let mut copied = 0;
+    // Index order, so a limit keeps the earliest frames.
+    let mut files: Vec<(u32, std::path::PathBuf, String)> = Vec::new();
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy().to_string();
         let Some(stem) = name.strip_suffix(".png") else {
@@ -1599,13 +1654,27 @@ fn inherit_outside(previous: &Path, dir: &Path, range: Option<(u32, u32)>) -> us
         let Ok(index) = stem.parse::<u32>() else {
             continue;
         };
+        // The skip is the CLOSED range the engine actually rendered: a
+        // ranged bake's `request.frames` is 1-based inclusive (native
+        // draws `from..=to`), so the donor's copy of any file in that
+        // span - including the LAST one - must not overwrite the fresh
+        // render. The old half-open skip (`index < to`) left the final
+        // dirty frame stale under every ranged incremental bake.
         if let Some((from, to)) = range
             && index >= from
-            && index < to
+            && index <= to
         {
             continue;
         }
-        if std::fs::copy(entry.path(), dir.join(&name)).is_ok() {
+        files.push((index, entry.path(), name));
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    if let Some(limit) = limit {
+        files.truncate(limit);
+    }
+    let mut copied = 0;
+    for (_, from, name) in files {
+        if std::fs::copy(from, dir.join(name)).is_ok() {
             copied += 1;
         }
     }

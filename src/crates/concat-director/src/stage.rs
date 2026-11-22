@@ -519,7 +519,7 @@ impl From<FanStep> for ProgramStep {
 /// lanes); [`EditProgram::new`] takes the static kind, and
 /// [`EditProgram::mixed`](EditProgram::mixed) takes any combination.
 pub struct EditProgram {
-    /// Where the plan says the export lands.
+    /// The promised artifact: an export path, or the literal `timeline` when the saved project is the deliverable.
     pub export: PathBuf,
     /// The steps, in the order the program runs them.
     pub steps: Vec<ProgramStep>,
@@ -533,7 +533,7 @@ pub struct EditProgram {
 }
 
 impl EditProgram {
-    /// A program exporting to `export`, running `steps`.
+    /// A program promising artifact `export`, running `steps`.
     pub fn new(export: PathBuf, steps: Vec<StageStep>) -> EditProgram {
         EditProgram {
             export,
@@ -542,7 +542,7 @@ impl EditProgram {
         }
     }
 
-    /// A program exporting to `export`, running `steps` of any kind:
+    /// A program promising artifact `export`, running `steps` of any kind:
     /// static, derived, fanned, in any order.
     pub fn mixed(export: PathBuf, steps: Vec<ProgramStep>) -> EditProgram {
         EditProgram {

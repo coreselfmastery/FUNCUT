@@ -1249,11 +1249,9 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
-    // The lanes: two clips may not share the same stretch of track. The
-    // check is optional here because the fixed spine and the Director are
-    // not the only callers of `derive_gates`; the Director's acceptance
-    // promotes it to required, because an edit the user cannot keep
-    // editing is not a finished edit.
+    // The lanes: two clips may not share the same stretch of track. A
+    // timeline-ready AUTO EDIT requires this gate because an edit the user
+    // cannot keep editing is not a finished deliverable.
     match last("collision_check") {
         Some(reply) => {
             let clean = reply.get("clean").and_then(Value::as_bool).unwrap_or(false);

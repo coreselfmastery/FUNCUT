@@ -49,6 +49,13 @@ reaches it.
   `stock_contact_sheet` shows B-roll candidates before you choose them;
   `motion_frame` now returns an inline image, not just a path. A file PATH to
   a PNG is not a picture you can see. Only inline `type: image` blocks are.
+- The default Director surface is the 105-tool creative surface. The
+  composition reads `scene_analysis`, `scene_timeline`, `motion_preview` and
+  `geneva_explain` are opt-in (the farm pair and the two destructive tools are
+  off by design); if one is not served, use the served equivalent
+  (`analyze_scenes`, `motion_frame`, `motion_reel`, the `motion` skill) and say
+  so. A specialist run may serve the whole catalogue with
+  `CONCAT_MCP_ALLOW=all`; never invent a tool that is not on the surface.
 - `creative_brief`, `watch_render`, `stock_contact_sheet`, `craft_critique`
   and `local_vlm` are part of the required pipeline, not optional extras.
   `local_vlm` with `action: "setup"` fetches a 0.5B local vision critic once
@@ -60,6 +67,34 @@ reaches it.
   openrouter — see docs/VLM.md) and unlocks full six-axis scoring; that
   path sends the contact-sheet frames to the provider's API, so ask the
   user before configuring it on their machine.
+
+## 0a. Multi-agent fan-out — when the harness exposes it
+
+Forge can expose `spawn_agents` and `/workflow` (`agent()`, `parallel()`,
+`pipeline()`). Use them when they are available; the run is faster and the
+judgment is better when independent work is done independently. The rules:
+
+- **One writer.** Only the Director thread calls `edit_apply`, `edit_undo`,
+  `project_save`, `export_start`, or any other mutating tool. Subagents are
+  read-only researchers, designers and critics; they return JSON, not edits.
+  Two writers on one timeline interleave and lose each other's work.
+- **Fan out the independent reads.** One agent per section or stock slot for
+  `stock_search` / `stock_fetch` / `stock_contact_sheet` / `footage_continuity`;
+  one per motion beat for `motion_inspect` / `motion_frame` / comp authoring;
+  one for sound design; one for the script/story map. Ask each for a small
+  artifact with ids, paths, reasons and confidence — never a chat essay.
+- **Keep the dependent work in the main thread.** The plan depends on the
+  story map; placement depends on the chosen footage; the grade depends on
+  the placed cut; the final watch depends on the export. Do not fan out a
+  dependency.
+- **Independent critic.** When subagents exist, give the rendered contact
+  sheet, the brief and the plan to a fresh-context critic that has not seen
+  the build conversation. It returns findings only; the Director decides
+  and executes the revision. If no subagent exists, run the same critique
+  inline with `craft_critique` and say so in the report.
+- **Fallback.** Without `spawn_agents`/`/workflow`, issue independent tool
+  calls in parallel where the harness allows it, and keep every write
+  sequential. Never pretend a fan-out happened.
 
 ## 1. The pipeline (in order — do not skip phases)
 
@@ -217,6 +252,18 @@ rest are called where the edit needs them, each as its door's `action`
 "clean_subtitles"}` before burning captions). A bare reading name is
 never a tool - always the door with its action.
 
+**Phase 1d — Story map and shot budget.** Before the plan, write the
+film's argument as a map the plan can execute: the one-sentence thesis, the
+hook's curiosity gap, the sections and their jobs, every claim and the
+evidence that proves it, the turn, the payoff, and the CTA. Give each
+section a **shot budget** (how many visual beats it earns) and a **sound
+job** (bed, accent, silence, or none). Read `analyze_scenes` for real shot
+boundaries and `suggest_cuts` for cut candidates; hold the map against
+`footage_plan_suggest` so a planned B-roll slot answers a real dialogue gap
+and a real gap is not left uncovered. The map is an artifact, not a mood
+board: if a claim has no evidence, cut the claim or find the evidence before
+you write the plan. No edit tool is called in this phase.
+
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c
 reading already classified them: cut ONLY the `dead_air` pauses, keep every
@@ -231,6 +278,15 @@ happen after transcription, retime all later segment boundaries by the exact
 removed spans before using them on the timeline. Word times are the transcript's
 measured `words`, never estimates interpolated from segment times — timing
 that is claimed but wrong is worse than timing that is honest.
+
+**Phase 2b — Voice edit proof.** Read the timeline back with
+`timeline_read` after the tighten. The runtime must equal the original
+runtime minus exactly the spans you removed; every later transcript time
+must be shifted by the same amount; no word may be clipped, duplicated, or
+moved onto a neighbour. If the reading disagrees, `edit_undo` the tighten
+and redo it before planning — a plan built on a timeline that does not match
+its transcript is a plan built on a lie. Keep the before/after runtime in
+the run report.
 
 **Phase 3 — Write the edit plan (ONE reasoning pass).** Emit the JSON plan
 from `templates/edit_plan.schema.json` (example beside it). The plan declares
@@ -285,6 +341,35 @@ segments, and a plan without it is a plan the segments alone describe:
 the slots are a shopping list, never a second timeline. There is no
 universal footage/graphics/hold percentage: choose the mix from this
 film's story, evidence, emotion, and available material.
+
+**Phase 3b — Storyboard and shot list.** Turn every plan segment into a
+shot the timeline can execute: `visual.type`, shot scale, subject,
+movement, screen direction, the line or beat it answers, and the reason it
+is there (cover / contrast / proof / breathe / transition). A `textCard` or
+`titleCard` that needs designed motion carries a complete
+`visual.storyboard` accepted by `motion_reel`; a `broll` visual carries its
+40+ character semantic description, fallback queries, `hero`, `motionMin`,
+shot scale and category; an `existing` visual names a real media id. Write
+the **coverage map**: no narration gap without a planned answer, no shot
+repeated, no two adjacent shots with the same scale and direction unless
+that repetition is the point. This is the plan's visual spine, not a second
+timeline — the `segments[]` remain the contract.
+
+**Phase 3c — Motion design code.** Every section makes an explicit motion
+decision: a designed comp, a kinetic-caption treatment, or a deliberate
+"no comp" with a reason (footage/performance/hold already carries it). The
+density floor is one designed beat per section and at least one per 15 s;
+every number, percentage, comparison, ranking, trend or process becomes a
+comp — `funcut.ticker.count`, `funcut.chart.bars|line|donut`,
+`funcut.stats.triptych`, `funcut.compare.split` — never a plain text card.
+For each comp, author the actual document: a preset plus one validated
+`ops` batch, or a full comp JSON; `motion_inspect` the slots and nodes,
+`motion_frame` the entrance/settled/exit stills, and write the exact
+comp/ops into `visual.storyboard` so Phase 5b can bake it without guessing.
+For kinetic captions, write the word-timed `captions_animate` recipe; for
+external motion, `motion_import` the Lottie/GSAP source. Record the decision
+and its reason in the plan's `signalLog` (graphic decision) so the critic
+can see why the beat exists.
 
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
@@ -384,6 +469,18 @@ shopping — the treatment changes, the slot stops searching, and the
 comp or the A-roll carries the span. `count: 0` is the clean answer;
 fetch and import only when the gate is quiet.
 
+**Phase 4b — Stock review, gate and continuity.** Do not place the first
+page. For each slot, LOOK at the `stock_contact_sheet`; run
+`emotion {action: "gate"}` on the candidate against the beat's register,
+act semantics and brand taboos; reject two failed checks and drop the beat
+rather than pad it. Read the filled manifest with `footage_continuity` and
+apply each flag's remedy before fetching: colour jump, reversed travel,
+repeated scale, one-category run, under-floor motion. Keep the provider,
+id and url licence triple with every chosen clip; a monetized brief never
+shops OpenVid. No clip may repeat a shot already used, and no slot may be
+filled with a generic "pretty" clip that does not answer its sentence.
+Only the approved manifest proceeds to Phase 5.
+
 **Phase 5 — Place (sequential, batched).** Cut to the plan: add B-roll clips
 (`clips_add_sequence` or `clip_add`), trim so the video LEADS the narration
 slightly (J-cut feel — but keep plan segments contiguous; the lead is inside
@@ -452,6 +549,25 @@ full-frame piece → `media_import` → `clip_add`. An encoded caption reel is
 opaque; never lay one over footage you still want to see. Full doctrine:
 `prompts/motion_comps.md` and the `motion` skill.
 
+**Phase 5c — Caption choreography.** Captions are a second performance,
+not a transcript dump. Use the measured words; group 2–4 words or one
+breath, never a wall; hold each line long enough to read twice; put the
+stressed word in the accent treatment the plan named; keep every line
+inside the platform's safe area; drop filler-only lines and re-check any
+word the voice reading gated. For a reel, use `captions_animate` with the
+measured word times and a kinetic recipe; for longform, use
+`captions_add` with the plan's segment timing. `sense_captions {action:
+"align_captions"}` and `{action: "clean_subtitles"}` are the proof, not a
+guess. Never let a caption cover a face, a number, or another caption.
+
+**Phase 5d — Sound design.** Build the sound spine: the BGM gate decides
+whether a bed exists at all; the bed is cut to the beat grid and ducked per
+act to the plan's `duckDb`; every SFX peak lands on a measured emphasis
+word or cut, not merely near one; no machine-gun repetition; leave breath
+between accents. `sounds_add` and `clip_audio_levels_db` are the tools;
+`measure_loudness` on the export is the proof. If the take already carries
+music, do not stack a bed; warn about the unknown licence in the report.
+
 **Phase 6 — Grade (required).** One consistent look per video. Either ONE
 effect layer spanning the whole runtime — `effect_layer_add {start: 0,
 duration: <runtime>, effectId, ...}` with the duration WRITTEN (the default
@@ -463,6 +579,15 @@ the package's own (`concat.teal-orange` → `amount` 0–100; find each in
 (fear cold and crushed, joy golden and lifted, disgust sickly) — express it
 as intensity variation of the same base recipe, never as a second filter.
 Prove the grade with a `preview_frame` A/B at 25% and 75% of runtime.
+
+**Phase 6b — Grade proof.** Do not call the grade done because a filter is
+on the timeline. `preview_frame` an A/B at 25% and 75% of the runtime:
+the same look, the right direction, no crushed skin, no clipped highlights,
+no bars, no accidental second filter. If the grade is an effect layer, its
+duration is the measured runtime, not the default five seconds; if it is
+per-clip, every clip carries the same chain. Record the effect id, the
+intensity key and both sample times in the run report. A grade nobody
+looked at is a guess.
 
 **Phase 7 — Watch the whole cut (never skip).** Call `watch_render` on the
 open project: ONE call returns a labelled contact sheet sampled across the
@@ -493,6 +618,17 @@ every clip fits the canvas, SFX peaks hit their cuts, the BGM ducks under
 speech. `preview_frame` is still there for a close-up on one suspicious
 moment — keep it under 5 calls per minute of video.
 
+**Phase 7b — Independent critique and revision.** The editor who made the
+cut is the worst judge of it. If the harness exposes subagents, send a
+fresh-context critic the contact sheet, the brief and the plan — not this
+conversation — and ask for findings, not a score to rubber-stamp. Otherwise
+run `craft_critique` inline and say the critique was not independent.
+Reconcile the findings; act on the highest-leverage one, not the easiest;
+re-watch the whole cut after the revision. Below 7 is not ready. If the
+critic names specific slots, re-shop only those, keeping every passing slot
+and its `exclude_ids`; never re-roll a passing slot. Record what changed and
+what did not.
+
 **Phase 8 — Export, then watch the actual file.** `export_start` (crf 20,
 h264 for platforms) → `export_wait` until the job says done → confirm the
 output file exists in the status. Then call `watch_render {path: <the
@@ -520,6 +656,28 @@ before anything is published: the voiceover carries a pre-existing
 track (`identify_music` described it — tempo, key, mood; it cannot name
 the song), its licence is unknown, and publishing needs the user's
 confirmation of the rights.
+
+**Phase 8b — Final watch and acceptance.** The export is not the finish
+line; the encoded file is. Run the same proof the pane's acceptance runs:
+`motion_probe` (it opens and reports streams), `measure_loudness` (the mix
+meets the platform target), `watch_render {path, audio: true}` (the whole
+encoded film), `craft_critique` (the rendered picture, not the timeline),
+`emotion {action: "verify"}` (the words survived the render), and
+`collision_check` (no shared lanes). Persist the canonical
+`<project>/edit-plan.json`; `project_save`; then report the measured score,
+the warnings, the licence provenance and any gate that did not pass. If the
+pane's independent acceptance rejects or cannot prove the run, say so — do
+not call a red receipt a finished video.
+
+**Phase 9 — Delivery and the wow bar.** A "wow" cut is not a pile of
+effects. It has one signature idea the audience can say back, one visual
+system (type, palette, grain, transition logic), one sound motif, a designed
+beat in every section, and a reason for every cut. Every number, comparison
+and process is a purpose-built comp; every B-roll shot answers its sentence;
+every caption is readable and timed; every SFX lands on a peak; the grade is
+one look; the final critic is independent and the score is real. Deliver the
+timeline, the export, the plan, the receipt and the honest failures. That is
+the bar — not "it rendered".
 
 ## 2. Job and artifact hygiene
 

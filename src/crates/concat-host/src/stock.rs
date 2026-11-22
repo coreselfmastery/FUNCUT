@@ -798,24 +798,36 @@ mod tests {
             .validate_download_url("https://videos.pexels.com/video-files/1.mp4")
             .expect("the Pexels CDN");
         assert_eq!(pexels.host_str(), Some("videos.pexels.com"));
-        assert!(Provider::Pexels
-            .validate_download_url("http://videos.pexels.com/video-files/1.mp4")
-            .is_err());
-        assert!(Provider::Pexels
-            .validate_download_url("https://videos.pexels.com.evil.test/file.mp4")
-            .is_err());
-        assert!(Provider::Pexels
-            .validate_download_url("https://user@videos.pexels.com/file.mp4")
-            .is_err());
-        assert!(Provider::Pexels
-            .validate_download_url("https://videos.pexels.com:8443/file.mp4")
-            .is_err());
-        assert!(Provider::Pixabay
-            .validate_download_url("https://videos.pexels.com/file.mp4")
-            .is_err());
-        assert!(Provider::Pixabay
-            .validate_download_url("https://cdn.pixabay.com/video/1.mp4")
-            .is_ok());
+        assert!(
+            Provider::Pexels
+                .validate_download_url("http://videos.pexels.com/video-files/1.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pexels
+                .validate_download_url("https://videos.pexels.com.evil.test/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pexels
+                .validate_download_url("https://user@videos.pexels.com/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pexels
+                .validate_download_url("https://videos.pexels.com:8443/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pixabay
+                .validate_download_url("https://videos.pexels.com/file.mp4")
+                .is_err()
+        );
+        assert!(
+            Provider::Pixabay
+                .validate_download_url("https://cdn.pixabay.com/video/1.mp4")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -831,17 +843,22 @@ mod tests {
         .expect("the provider CDN");
         assert_eq!(cdn.host_str(), Some("videos.pexels.com"));
         assert!(
-            redirected_url(Provider::Pexels, &start, "https://127.0.0.1/latest/meta-data")
-                .is_err()
+            redirected_url(
+                Provider::Pexels,
+                &start,
+                "https://127.0.0.1/latest/meta-data"
+            )
+            .is_err()
         );
         assert!(
-            redirected_url(Provider::Pexels, &start, "http://videos.pexels.com/file.mp4")
-                .is_err()
+            redirected_url(
+                Provider::Pexels,
+                &start,
+                "http://videos.pexels.com/file.mp4"
+            )
+            .is_err()
         );
-        assert!(
-            redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4")
-                .is_err()
-        );
+        assert!(redirected_url(Provider::Pexels, &start, "https://evil.example/file.mp4").is_err());
     }
 
     #[test]

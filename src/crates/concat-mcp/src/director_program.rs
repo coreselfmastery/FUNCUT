@@ -1151,10 +1151,6 @@ fn seam_transition(
     }
 }
 
-/// The take whose own audio already carries music, if any. The music read
-/// does not echo the path it was asked about, so the replies that carry
-/// `musicPresent` are matched to the takes in the order the Understand
-/// stage issued them - one per take, in `takes` order.
 /// The timeline's extent over the narration's own clips - the number a
 /// bed must be trimmed to and a runtime read must not inflate. The bed
 /// itself (a clip whose media lives in the project's bgm/ folder) is
@@ -1209,10 +1205,35 @@ fn beats_in_take_clock(beats: &Value, source: &AutoEditProgramSource, take: &str
     Value::Array(translated)
 }
 
+/// The take whose own audio already carries music, if any. The music
+/// read echoes the path it was asked about, so a reply that carries
+/// `musicPresent` names its take directly - a call that failed leaves
+/// no reply behind, and pairing by the order the calls were issued in
+/// would then name the wrong take as the one that already carries
+/// music, with the bed decision for the real one wrong beside it. A
+/// reply with no echo (a sidecar older than the field) still pairs the
+/// way it always did: positionally, in `takes` order.
 fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
+    for reply in log {
+        if let (Some(present), Some(path)) = (
+            reply.get("musicPresent").and_then(Value::as_bool),
+            reply.get("audio").and_then(Value::as_str),
+        ) {
+            if present && takes.iter().any(|take| take.take == path) {
+                return Some(path.to_owned());
+            }
+        }
+    }
     let reads: Vec<bool> = log
         .iter()
-        .filter_map(|reply| reply.get("musicPresent").and_then(Value::as_bool))
+        .filter_map(|reply| {
+            if reply.get("audio").and_then(Value::as_str).is_some() {
+                // A keyed reply was already paired above; only the
+                // echo-less ones pair positionally.
+                return None;
+            }
+            reply.get("musicPresent").and_then(Value::as_bool)
+        })
         .collect();
     reads
         .iter()
@@ -2796,12 +2817,15 @@ fn alternate_transition(emotion: &str) -> &'static str {
     }
 }
 
-/// The emotional read the run made, in the order the takes were asked
-/// about. The emotion stage asks once per take that has timed words, in
-/// program order, so the `emotion` replies sit in the log in exactly
-/// that order - the invariant this reader stands on, and the reason the
-/// reader filters its takes with the same [`spoken_lines`] predicate the
-/// stage skips them with.
+/// The emotional read the run made, keyed by the take each reply
+/// answered. The extract echoes the `audio` it was handed, so the
+/// pairing is keyed on the answer itself: a call that failed leaves no
+/// reply behind, and the positional zip this replaced would then have
+/// read every later take under its neighbour's arc - the wrong words,
+/// acts, beds and B-roll queries, with no error anywhere. A reply with
+/// no echo (a sidecar older than the field) still pairs positionally
+/// with the unclaimed takes, in program order, which is what the stage's
+/// asking order makes right when every call answered.
 fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
     let replies: Vec<&Value> = log
         .iter()
@@ -2815,9 +2839,22 @@ fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
         .iter()
         .filter(|take| !spoken_lines(log, &take.take).is_empty())
         .collect();
-    asked
+    // The takes each reply is paired with: the echo names its own take
+    // when it carries one, and an echo-less reply takes the first
+    // unclaimed take in program order - never a take another reply has
+    // already answered.
+    let mut claimed = vec![false; asked.len()];
+    replies
         .iter()
-        .zip(replies)
+        .filter_map(|reply| {
+            let echoed = reply.get("audio").and_then(Value::as_str);
+            let at = match echoed {
+                Some(path) => asked.iter().position(|take| take.take == path),
+                None => claimed.iter().position(|free| !free),
+            }?;
+            claimed[at] = true;
+            Some((asked[at], *reply))
+        })
         .flat_map(|(take, reply)| {
             // The lines the stage sent this take's extract, in order: the
             // reply's rows answer them one for one, and the words the
@@ -5105,7 +5142,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             ));
                             calls.push(call(
                                 "emotion",
-                                json!({ "action": "extract", "lines": lines }),
+                                json!({ "action": "extract", "audio": take.take, "lines": lines }),
                             ));
                         }
                         calls

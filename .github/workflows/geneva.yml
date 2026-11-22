@@ -37,6 +37,11 @@ concurrency:
   group: geneva-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The render lane reads the tree, downloads its pinned sidecar and writes
+# its artifacts; the token itself has nothing to write.
+permissions:
+  contents: read
+
 jobs:
   # The short lane: toolchain + sidecar + the example, nothing else.
   example:

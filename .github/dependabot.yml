@@ -1,4 +1,4 @@
-# Dependabot keeps two kinds of pin current, weekly, as pull requests that
+# Dependabot keeps three kinds of pin current, weekly, as pull requests that
 # CI tests like any other:
 #
 # - The actions every workflow uses, each pinned to a commit with its tag
@@ -7,6 +7,9 @@
 #   a week (security updates still come on their own, as they are found),
 #   so a week's bumps are reviewed and tested once rather than twenty
 #   times.
+# - The Python analysis requirements the CI lane installs, which carry no
+#   digest the way the prebuilt libraries do, so a weekly bump keeps them
+#   from drifting years behind what the lane actually tested.
 #
 # Not covered: the prebuilt libraries in scripts/ci/deps.lock (FFmpeg,
 # ONNX Runtime, sherpa-onnx, the packagers, LLVM, Intel's emulator), which
@@ -32,5 +35,13 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: pip
+    directory: /src/crates/concat-api/analysis
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
     commit-message:
       prefix: build

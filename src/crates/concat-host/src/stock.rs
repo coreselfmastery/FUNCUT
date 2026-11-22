@@ -644,7 +644,10 @@ fn pexels_hit(video: &Value) -> Option<Hit> {
         }
         let width = file.get("width").and_then(Value::as_u64).unwrap_or(0);
         let height = file.get("height").and_then(Value::as_u64).unwrap_or(0);
-        let pixels = width * height;
+        // Saturating, because the numbers are the provider's to send and a
+        // hostile or broken reply must not overflow the multiply into a
+        // panic (debug builds, the tests) or a wrapped "best" (release).
+        let pixels = width.saturating_mul(height);
         if pixels > 4096 * 2160 {
             continue;
         }
@@ -722,7 +725,12 @@ fn pixabay_hit(hit: &Value) -> Option<Hit> {
     // tiny. The first that exists is the one to keep.
     for rung in ["large", "medium", "small", "tiny"] {
         if let Some(file) = videos.get(rung) {
-            let url = file.get("url").and_then(Value::as_str)?;
+            // A missing or non-string url is the rung being unusable, the
+            // same as an empty one: the next rung is still worth asking,
+            // where `?` here would drop the whole hit.
+            let Some(url) = file.get("url").and_then(Value::as_str) else {
+                continue;
+            };
             if url.is_empty() {
                 continue;
             }

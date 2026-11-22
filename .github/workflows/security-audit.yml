@@ -33,7 +33,11 @@ permissions:
 
 concurrency:
   group: security-audit-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a pull request's run is superseded by the next push to it, the
+  # same rule every other lane keeps: a scheduled or pushed run is the
+  # record the account is auditable, and cancelling it mid-audit leaves
+  # a gap where the answer should be.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   cargo-audit:

@@ -1025,6 +1025,13 @@ def extract(spec):
                 + "); the hormone field is a creative shorthand for the viewer's "
                   "state, not physiology" + engine_note,
     }
+    # The take this extract was asked about, when the caller names one, so
+    # the reader that pairs these replies with takes keys the pairing on
+    # the answer itself: a call that failed leaves no reply behind, and a
+    # pairing by call order would then read every later take under its
+    # neighbour's emotional arc, acts and bed.
+    if spec.get("audio"):
+        result["audio"] = spec["audio"]
     if key:
         result["apiKey"] = _mask(key)
     if engine == "model+lexicon":

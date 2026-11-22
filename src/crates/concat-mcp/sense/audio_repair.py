@@ -647,6 +647,13 @@ def _detect_music_segments(spec):
     err, samples, env = _vq._need_audio(spec)
     if err:
         return {"ok": False, "error": err}
+    # The path this read was asked about, echoed back so the reader that
+    # pairs `musicPresent` replies with takes keys the pairing on the
+    # answer itself: a call that failed leaves no reply behind, and a
+    # pairing by call order would then name the wrong take as the one
+    # that already carries music - and the bed decision for the real
+    # take with it.
+    audio = spec.get("audio") or spec.get("path")
     duration = len(samples) / RATE
 
     # Per-second windows: beat strength (onset autocorrelation), duty cycle
@@ -741,6 +748,7 @@ def _detect_music_segments(spec):
         evidence = "gate"
     return _ok(
         "detect_music_segments",
+        audio=audio,
         duration=round(duration, 2),
         segments=merged,
         coverageSeconds={k: round(v * step / 100.0, 1) for k, v in coverage.items()},

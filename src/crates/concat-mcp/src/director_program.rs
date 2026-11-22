@@ -2683,6 +2683,25 @@ fn motion_specs(
         let line = lines.iter().find(|line| {
             line.take == entity.take && line.start <= at + 0.05 && line.end > at - 0.05
         });
+        // A number the narration measured is the card's own Number slot -
+        // the reader's value and unit set it instead of the prose the
+        // recogniser heard, and the words the narration said become the
+        // Label under it. Without the fill the card showed the sentence
+        // where its number belonged, and the profile's own measurement
+        // never reached the screen.
+        let slots: Vec<(&'static str, String)> = entity.value
+            .map(|value| {
+                let number = match entity
+                    .unit
+                    .as_deref()
+                    .filter(|unit| !unit.trim().is_empty())
+                {
+                    Some(unit) => format!("{value} {unit}"),
+                    None => format!("{value}"),
+                };
+                vec![("Number", number), ("Label", words.clone())]
+            })
+            .unwrap_or_default();
         ranked.push((
             line.map(|line| line.intensity).unwrap_or(0.5),
             MotionSpec {
@@ -2698,7 +2717,7 @@ fn motion_specs(
                 earned_by: "entities",
                 chapter: false,
                 slot: None,
-                slots: Vec::new(),
+                slots,
             },
         ));
     }

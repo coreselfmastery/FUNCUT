@@ -25,8 +25,8 @@ on:
       - .github/workflows/nix.yml
   workflow_dispatch:
 
-# Only a pull request's run is superseded by the next push to it; a run on
-# main is the record of whether main builds.
+# Every qualifying event gets its own run. Deliberately no concurrency
+# group: newer commits must not cancel or replace an earlier Nix build.
 jobs:
   build:
     name: nix build

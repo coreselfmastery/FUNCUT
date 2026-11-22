@@ -1625,7 +1625,7 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
             // A line that is not UTF-8 is skipped, not the end of the
             // log: `map_while` stopped at the first bad byte and silently
             // truncated everything the harness said after it.
-            for line in BufReader::new(pipe).lines().flatten() {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -1637,7 +1637,7 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
             // A line that is not UTF-8 is skipped, not the end of the
             // log: `map_while` stopped at the first bad byte and silently
             // truncated everything the harness said after it.
-            for line in BufReader::new(pipe).lines().flatten() {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -2382,7 +2382,7 @@ fn build_voiceover_sibling(
             let span = item
                 .duration
                 .filter(|duration| *duration > 0.5)
-                .unwrap_or_else(|| clip.source_start + clip.duration * clip.speed);
+                .unwrap_or(clip.source_start + clip.duration * clip.speed);
             let mix = concat_media::audio::mix_to_file(
                 &[concat_media::audio::AudioClip {
                     path: source_file.to_path_buf(),
@@ -2478,10 +2478,10 @@ fn build_voiceover_sibling(
         }
         // A talking-head's take plays on the lane its video played on,
         // so the words sit exactly where the face was.
-        if let Some((clip, _)) = talking_segment {
-            if !lanes.iter().any(|(from, _)| from == &clip.track_id) {
-                lanes.push((clip.track_id.clone(), mint.next("t")));
-            }
+        if let Some((clip, _)) = talking_segment
+            && !lanes.iter().any(|(from, _)| from == &clip.track_id)
+        {
+            lanes.push((clip.track_id.clone(), mint.next("t")));
         }
         let mut roll_lanes: Vec<(String, String)> = Vec::new();
         for (clip, _) in &visual {
@@ -2581,8 +2581,8 @@ fn build_voiceover_sibling(
             restored.blend = clip.blend.clone();
             restored.filters = clip.filters.clone();
             restored.video_effects = clip.video_effects.clone();
-            restored.crop = clip.crop.clone();
-            restored.mask = clip.mask.clone();
+            restored.crop = clip.crop;
+            restored.mask = clip.mask;
             restored.transition_in = clip.transition_in.clone();
             // The talking-head's own video: the take clip (placed below)
             // is its sound, so the picture plays muted beside it - the
@@ -3344,7 +3344,7 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
             // A line that is not UTF-8 is skipped, not the end of the
             // log: `map_while` stopped at the first bad byte and silently
             // truncated everything the harness said after it.
-            for line in BufReader::new(pipe).lines().flatten() {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
@@ -3356,7 +3356,7 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
             // A line that is not UTF-8 is skipped, not the end of the
             // log: `map_while` stopped at the first bad byte and silently
             // truncated everything the harness said after it.
-            for line in BufReader::new(pipe).lines().flatten() {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });

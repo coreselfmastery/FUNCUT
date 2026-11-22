@@ -723,6 +723,275 @@ impl AcceptanceReceipt {
 /// - **captions** and **motion** - optional, and answered only when the
 ///   run made them: a project with no graphics to bake has no motion to
 ///   prove.
+/// Validate the editable timeline against the editor's actual summary
+/// contract. A non-empty clips array is not enough: every clip must have a
+/// valid lane and time span, every file-backed clip must resolve to a media
+/// bin item, and every referenced source file must still exist on disk.
+pub fn timeline_integrity(view: &Value) -> Result<String, String> {
+    let clips = view
+        .pointer("/timeline/clips")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return timeline.clips".to_owned())?;
+    let tracks = view
+        .pointer("/timeline/tracks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return timeline.tracks".to_owned())?;
+    let media = view
+        .get("media")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return the media bin".to_owned())?;
+
+    if clips.is_empty() {
+        return Err("the saved timeline contains no clips".to_owned());
+    }
+
+    let mut track_ids = std::collections::HashSet::new();
+    for (index, track) in tracks.iter().enumerate() {
+        let id = track
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("track {} has no id", index + 1))?;
+        if !track_ids.insert(id) {
+            return Err(format!("duplicate track id `{id}`"));
+        }
+    }
+
+    let mut media_by_id = std::collections::HashMap::new();
+    for (index, item) in media.iter().enumerate() {
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("media item {} has no id", index + 1))?;
+        let path = item
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| format!("media item `{id}` has no source path"))?;
+        let duration = item.get("duration").and_then(Value::as_f64);
+        if media_by_id.insert(id, (path, duration)).is_some() {
+            return Err(format!("duplicate media id `{id}`"));
+        }
+    }
+
+    let mut clip_ids = std::collections::HashSet::new();
+    let mut checked_sources = std::collections::HashSet::new();
+    let mut file_backed = 0usize;
+
+    for (index, clip) in clips.iter().enumerate() {
+        let label = format!("clip {}", index + 1);
+        let id = clip
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("{label} has no id"))?;
+        if !clip_ids.insert(id) {
+            return Err(format!("{label} duplicates clip id `{id}`"));
+        }
+
+        let track = clip
+            .get("track")
+            .and_then(Value::as_str)
+            .filter(|track| !track.trim().is_empty())
+            .ok_or_else(|| format!("clip `{id}` has no track id"))?;
+        if !track_ids.contains(track) {
+            return Err(format!("clip `{id}` references missing track `{track}`"));
+        }
+
+        let start = clip
+            .get("start")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("clip `{id}` has no numeric start"))?;
+        let duration = clip
+            .get("duration")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("clip `{id}` has no numeric duration"))?;
+        if !start.is_finite() || start < 0.0 {
+            return Err(format!("clip `{id}` has invalid start {start}"));
+        }
+        if !duration.is_finite() || duration <= 0.0 || !(start + duration).is_finite() {
+            return Err(format!("clip `{id}` has invalid duration {duration}"));
+        }
+
+        let kind = clip.get("kind").and_then(Value::as_str).unwrap_or_default();
+        let media_id = clip.get("media").and_then(Value::as_str);
+        if matches!(kind, "video" | "audio" | "image") && media_id.is_none() {
+            return Err(format!(
+                "file-backed {kind} clip `{id}` has no media reference"
+            ));
+        }
+        if let Some(media_id) = media_id {
+            let (source, source_duration) = media_by_id
+                .get(media_id)
+                .copied()
+                .ok_or_else(|| format!("clip `{id}` references missing media `{media_id}`"))?;
+            if checked_sources.insert(source) && !std::path::Path::new(source).is_file() {
+                return Err(format!(
+                    "clip `{id}` media `{media_id}` source file is missing: {source}"
+                ));
+            }
+            let source_start = clip
+                .get("sourceStart")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| format!("clip `{id}` has no numeric sourceStart"))?;
+            let speed = clip
+                .get("speed")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0);
+            if !source_start.is_finite() || source_start < 0.0 {
+                return Err(format!("clip `{id}` has invalid sourceStart {source_start}"));
+            }
+            if !speed.is_finite() || speed <= 0.0 {
+                return Err(format!("clip `{id}` has invalid playback speed {speed}"));
+            }
+            if let Some(source_duration) = source_duration
+                && source_start + duration * speed > source_duration + 0.05
+            {
+                return Err(format!(
+                    "clip `{id}` reads past media `{media_id}`: source end {:.3}s exceeds {:.3}s",
+                    source_start + duration * speed,
+                    source_duration
+                ));
+            }
+            file_backed += 1;
+        }
+    }
+
+    Ok(format!(
+        "{} clips, {} tracks, {} file-backed clips; all referenced sources exist",
+        clips.len(),
+        tracks.len(),
+        file_backed
+    ))
+}
+
+/// Map the Director's accepted signal-log vocabulary to the confidence
+/// family the voice profile actually returns. Discourse and emotion signals
+/// are measured by their own tools and are deliberately not guessed here.
+fn measured_voice_family(signal: &str) -> Option<&'static str> {
+    let family = signal.split(['.', '[', '=']).next()?;
+    Some(match family {
+        "pause" | "speechRatio" => "pauses",
+        "emphasisWords" | "rhythmLayers" | "prosody" => "prosody",
+        "speechRate" => "speechRate",
+        "words" => "wordConfidence",
+        "language" => "language",
+        "sentence" => "sentenceType",
+        "entities" => "entities",
+        "motifs" => "motifs",
+        "fillers" => "fillers",
+        "forensic" | "noiseFloor" => "forensic",
+        "speaker" | "speakerChanges" => "speaker",
+        "loudness" => "loudness",
+        "formants" => "formants",
+        _ => return None,
+    })
+}
+
+/// Verify that voice-signal families claimed in the saved plan were
+/// actually measured on at least one narration take. The plan validator
+/// checks vocabulary and confidence shape; this independent gate checks
+/// the claims against fresh profile replies instead of trusting a number
+/// the Director wrote into its own signalLog.
+fn signal_evidence_gate(plan: &Value, profiles: &[Value]) -> (GateStatus, String) {
+    let entries = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if entries.is_empty() {
+        return (
+            GateStatus::Fail,
+            "the voiceover plan has no signalLog entries to verify".to_owned(),
+        );
+    }
+
+    let mut measured = std::collections::HashMap::<&str, f64>::new();
+    for profile in profiles {
+        if profile.get("ok").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        for row in profile
+            .pointer("/signalConfidence/perSignal")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(family), Some(confidence)) = (
+                row.get("signal").and_then(Value::as_str),
+                row.get("confidence").and_then(Value::as_f64),
+            ) {
+                measured
+                    .entry(family)
+                    .and_modify(|best| *best = best.max(confidence))
+                    .or_insert(confidence);
+            }
+        }
+    }
+
+    let mut claimed = std::collections::BTreeSet::new();
+    let mut failures = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let confidence = entry.get("confidence").and_then(Value::as_f64);
+        for signal in entry
+            .get("signals")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let Some(family) = measured_voice_family(signal) else {
+                continue;
+            };
+            claimed.insert(family);
+            match measured.get(family).copied().filter(|value| *value > 0.0) {
+                Some(actual) => {
+                    if confidence.is_some_and(|claimed_confidence| claimed_confidence > actual + 0.05)
+                    {
+                        failures.push(format!(
+                            "entry {} claims confidence {:.2} above measured {} confidence {:.2}",
+                            index + 1,
+                            confidence.unwrap_or_default(),
+                            family,
+                            actual
+                        ));
+                    }
+                }
+                None => failures.push(format!(
+                    "entry {} cites {}, but the voice profile did not measure {}",
+                    index + 1,
+                    signal,
+                    family
+                )),
+            }
+        }
+    }
+
+    if claimed.is_empty() {
+        return (
+            GateStatus::Fail,
+            "the signalLog cites no independently measurable voice-signal family".to_owned(),
+        );
+    }
+    if !failures.is_empty() {
+        return (GateStatus::Fail, failures.join("; "));
+    }
+    (
+        GateStatus::Pass,
+        format!(
+            "{} claimed voice-signal families verified against {} measured take profile(s): {}",
+            claimed.len(),
+            profiles
+                .iter()
+                .filter(|profile| profile.get("ok").and_then(Value::as_bool) == Some(true))
+                .count(),
+            claimed.into_iter().collect::<Vec<_>>().join(", ")
+        ),
+    )
+}
+
+
 pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     let last = |tool: &str| -> Option<&Value> {
         observed

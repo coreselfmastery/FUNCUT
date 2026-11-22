@@ -14,7 +14,7 @@
 > `CONCAT_MCP_ALLOW=all`), the agent's senses (scene cuts, beat grids, dead air,
 > transcription, TTS, loudness), perception (contact-sheet images a model
 > can actually see), an emotion-driven edit pipeline with a validated brand
-> kit, a motion-graphics engine, a director skill that runs a 12-phase
+> kit, a motion-graphics engine, a director skill that runs a 25-phase
 > measured pipeline, the vendored maestro design judgment and clip-skills
 > editing craft riding beside it, and a Forge page
 > in the editor that starts a whole faceless video with one click. Stock

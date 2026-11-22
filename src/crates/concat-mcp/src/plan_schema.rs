@@ -79,6 +79,11 @@ const COMPACT_DROPS: &[&str] = &[
     "maxSegmentSeconds",
     "text",
     "slots",
+    // The style bible and retention contract are validated at runtime and
+    // documented in the canonical schema; the compact plan_validate input
+    // schema keeps them accepted but does not spend client context on them.
+    "style",
+    "retention",
 ];
 
 /// What the compact projection keeps of a segment: the timeline facts
@@ -232,7 +237,7 @@ pub fn compact() -> Value {
         {
             signal_log.insert(
                 "description".to_owned(),
-                json!("The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition|pacing, signals: [names from the profile's decisionPolicy], note?}. A plan with a voiceover and no signalLog is not creativeReady."),
+                json!("The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition|pacing, signals: [names from the profile's decisionPolicy], confidence: 0-1, note: the basis}. An entry with no confidence, confidence 0, or no note is refused; a cut entry must land on a segment boundary; and a plan with a voiceover and no signalLog is not creativeReady."),
             );
         }
     }

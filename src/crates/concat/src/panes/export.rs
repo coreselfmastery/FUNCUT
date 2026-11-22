@@ -644,7 +644,17 @@ impl ExportPane {
             let slot = match studio.host.exporter.begin() {
                 Ok(slot) => slot,
                 Err(error) => {
-                    self.queue.finish(job, Err(error));
+                    // The slot being busy is not this job's failure: the
+                    // API thread can take it between this pane's own
+                    // `is_busy` check and `begin`. The job goes back to
+                    // the front of the queue with its request restored,
+                    // and the next pump - a new Begin, a Finished report,
+                    // the sheet's own start - drains it in order, so
+                    // nothing is marked failed for a race it did not
+                    // lose on its own merits, and no job is left Running
+                    // with no render behind it.
+                    log::debug!("the export queue waits for the shared slot: {error}");
+                    self.queue.requeue_front(job, request);
                     return;
                 }
             };

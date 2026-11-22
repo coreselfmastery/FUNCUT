@@ -20,6 +20,12 @@ assets; it validates structure and timeline continuity, not creative quality.
 
 ## Fill order
 
+0. **One look and one retention contract first.** Write `style` (name,
+   palette, grade, caption system, motion hand, sound world, footage
+   treatment, continuity rules) and `retention` (hook, turnAt, payoffAt,
+   patternBreaks, openLoops) before any segment. `plan_validate` blocks a
+   plan without them: a cut with five unrelated looks and no reason to keep
+   watching is not a finished edit. See `prompts/style_bible.md`.
 1. **Segments from the transcript.** Each `{start,end}` comes from the
    transcription's segments (already tightened by `clip_cut_spans`). Sort
    them; adjacent segments share boundaries; a gap or overlap is a plan error.

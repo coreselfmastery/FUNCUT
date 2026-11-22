@@ -161,7 +161,8 @@ AUTO EDIT
        plans, validates the plan (plan_validate: valid + creativeReady)
        cuts, gathers B-roll, builds motion, captions, grades, scores music
        watch_render -> craft_critique -> revises -> watch_render again
-       exports, then verifies the exported file
+       saves the editable project, reads the timeline back and checks every lane
+       watch_render -> craft_critique on the final project preview
   -> the finished edit opens on the timeline (the server lets the
        project go and the window claims it, undoable from the first edit)
 ```
@@ -173,8 +174,8 @@ reads are the Director's own to run, in the skill's order, and that a
 decision which never read the voice is a guess.
 
 Progress is read from the harness's own output. Each line that names one
-of the skill's twelve phase headings (0, 1, 1b, 1c, 2, 3, 4, 5, 5b, 6, 7,
-8) moves the pane's stage and bar to that phase - and only forward; a
+of the skill's twenty-five phase headings (1 through 25) moves the pane's
+stage and bar to that phase - and only forward; a
 line that names no phase moves nothing, so the bar cannot show work the
 Director has not reached. The stop button kills the harness at
 once.

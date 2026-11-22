@@ -29,7 +29,7 @@ English whisper, `base.en` the default sweet spot, `small` multilingual;
 Python extras installed (`scenedetect`, `opencv-headless`, `librosa`) — same
 rule: surface the pip hint.
 
-## Motion design (Phase 5b's engine)
+## Motion design (Phase 16's engine)
 
 `motion_presets` · `motion_inspect {preset|comp, project?, ops?}` ·
 `motion_frame {project, preset|comp, at, ops?, width?}` ·
@@ -235,7 +235,7 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
 `footage_plan_suggest {transcript: {segments: [{start,end,text}]}, beats?}`
 (the dialogue gaps and monotony runs that want B-roll, named before the plan is written)
 
-- `voice_signals` is Phase 1c's reader — the acoustic score the plan cuts
+- `voice_signals` is Phase 4's reader — the acoustic score the plan cuts
   by. Its reply carries `signalConfidence` (how much to lean on each signal
   family, and why), `decisionPolicy` (which signals drive each decision) and
   `directorHints` (the cut style, the caption gate, the BGM call). The plan's
@@ -247,15 +247,15 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   readings; `selftest: true` proves one). Each reading names its own traps
   in its reply; the family schema documents the shared inputs. Three
   audio-repair actions are wired into the pipeline itself:
-  `enhance_speech` (Phase 1 — a rough take is repaired before it is
+  `enhance_speech` (Phase 2 — a rough take is repaired before it is
   analyzed, and every later reading runs on the enhanced `file`),
-  `detect_music_segments` (Phase 4 — the BGM gate before `bgm_search`:
+  `detect_music_segments` (Phase 13 — the BGM gate before `bgm_search`:
   `musicPresent: true` means no bed, duck or replace, never stack) and
-  `identify_music` (Phase 4 — the copyright check on a take that carries
+  `identify_music` (Phase 13 — the copyright check on a take that carries
   music: an offline descriptor, never a title match; the user is warned
   before publishing).
 
-- The loop that uses them is the skill's Phase 0 and §4 (and
+- The loop that uses them is the skill's Phase 1 and §4 (and
   `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE
   B-roll candidates before choosing, `motion_frame` to SEE graphics, export,
   `watch_render` to SEE the whole cut, `craft_critique` for the honest score.
@@ -264,10 +264,10 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   fetched. `local_vlm` reports whether the local vision critic is installed
   (`setup` fetches it, no system install); without it the ranking and the
   critique degrade to captions and scores.
-- `emotion` is Phase 1b's reader and Phase 4's gate (see
+- `emotion` is Phase 3's reader and Phase 13's gate (see
   `prompts/creative_direction.md` and the placement-gate floor E): `extract`
   on the transcript, `gate` on stock candidates before anything is placed,
-  `brand`/`template` for the brandKit, `verify` in Phase 8 on the export.
+  `brand`/`template` for the brandKit, `verify` in Phase 23 on the export.
   Give it `project` and the brief and brandKit load themselves.
 - `measure_loudness` is the only proof a loudness target was met — EBU R128
   integrated LUFS, true peak and the error against `targetLufs` (−14
@@ -279,6 +279,6 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   sheet wrote — the loop's intended input), `autoSetup: true` to fetch the
   local critic unattended, and `profile: "minicpm"` for the denser-text
   local model.
-- `suggest_cuts` is Phase 1's no-Python rhythm path: BPM estimate and
+- `suggest_cuts` is Phase 2's no-Python rhythm path: BPM estimate and
   beat-aligned `cutTimes` from any file with an `ffmpeg` binary — use it
   when the librosa extras are not installed.

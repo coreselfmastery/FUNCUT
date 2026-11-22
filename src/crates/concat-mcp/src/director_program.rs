@@ -63,7 +63,7 @@ pub struct AutoEditProgramSource {
     /// One row per voiceover clip, in first-play order: the placement
     /// the verify's expected transcript falls back to (F-04).
     pub placements: Vec<TakePlacement>,
-    /// Where the export lands, inside the sibling's own export folder.
+    /// Suggested export destination for a later explicit render; AUTO EDIT itself leaves the timeline unrendered.
     pub export: String,
     /// The contact sheet's name, relative to the project: the window's
     /// server refuses absolute write paths, and the sheet is written
@@ -630,14 +630,16 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
         let timed: Vec<Value> = rows
             .iter()
             .filter(|line| {
-                line["start"].as_f64().is_some_and(|at| at >= 0.0)
-                    && line["end"].as_f64().is_some_and(|to| to > at)
-                    && line["text"]
-                        .as_str()
-                        .is_some_and(|text| !text.trim().is_empty())
-                    && line["words"]
-                        .as_array()
-                        .is_some_and(|words| !words.is_empty())
+                line["start"].as_f64().is_some_and(|start| {
+                    start >= 0.0
+                        && line["end"].as_f64().is_some_and(|end| end > start)
+                        && line["text"]
+                            .as_str()
+                            .is_some_and(|text| !text.trim().is_empty())
+                        && line["words"]
+                            .as_array()
+                            .is_some_and(|words| !words.is_empty())
+                })
             })
             .cloned()
             .collect();
@@ -2625,6 +2627,7 @@ fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
 /// section and at most one per fifteen seconds, strongest line first. Two
 /// cards in the same three seconds is a slideshow, not an edit.
 fn motion_specs(
+    log: &[Value],
     lines: &[EmotionLine],
     entities: &[Entity],
     chapters: &[TopicBoundary],
@@ -2680,6 +2683,26 @@ fn motion_specs(
         let line = lines.iter().find(|line| {
             line.take == entity.take && line.start <= at + 0.05 && line.end > at - 0.05
         });
+        // A number the narration measured is the card's own Number slot -
+        // the reader's value and unit set it instead of the prose the
+        // recogniser heard, and the words the narration said become the
+        // Label under it. Without the fill the card showed the sentence
+        // where its number belonged, and the profile's own measurement
+        // never reached the screen.
+        let slots: Vec<(&'static str, String)> = entity
+            .value
+            .map(|value| {
+                let number = match entity
+                    .unit
+                    .as_deref()
+                    .filter(|unit| !unit.trim().is_empty())
+                {
+                    Some(unit) => format!("{value} {unit}"),
+                    None => format!("{value}"),
+                };
+                vec![("Number", number), ("Label", words.clone())]
+            })
+            .unwrap_or_default();
         ranked.push((
             line.map(|line| line.intensity).unwrap_or(0.5),
             MotionSpec {
@@ -2695,7 +2718,7 @@ fn motion_specs(
                 earned_by: "entities",
                 chapter: false,
                 slot: None,
-                slots: Vec::new(),
+                slots,
             },
         ));
     }
@@ -2814,14 +2837,32 @@ fn motion_specs(
         ));
     }
     ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
+    // Cards from different takes carry file seconds of different,
+    // independent clocks - two cards at the same local second of two
+    // takes are minutes apart on the timeline, and within one take the
+    // tighten has since moved the words. The spacing the card layout
+    // actually owes is measured on the timeline the run edits, mapped
+    // through the placements the tighten left; a card whose moment
+    // cannot be mapped keeps its file second rather than being dropped.
+    let view = latest_view(log);
+    let media = view.as_ref().map(|view| media_paths(view));
+    let timeline_of = |spec: &MotionSpec| -> f64 {
+        match (&view, &media) {
+            (Some(view), Some(media)) => {
+                timeline_at(view, media, &spec.take, spec.at).unwrap_or(spec.at)
+            }
+            _ => spec.at,
+        }
+    };
     let mut kept: Vec<MotionSpec> = Vec::new();
     for (_, spec) in ranked {
         if kept.len() >= MOST {
             break;
         }
+        let at = timeline_of(&spec);
         let crowded = kept
             .iter()
-            .any(|other| (other.at - spec.at).abs() < SPACING);
+            .any(|other| (timeline_of(other) - at).abs() < SPACING);
         if !crowded {
             kept.push(spec);
         }
@@ -3424,10 +3465,23 @@ fn frame_of(view: &Value) -> FrameOf {
 fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource) -> Option<Value> {
     let view = latest_view(log)?;
     let media = media_paths(view);
+    // The music bed is the Music stage's own business, not a segment:
+    // a bed clip under the narration (a retry that already landed one)
+    // planned as B-roll would shop music as footage and overlap the
+    // voice's own span, which the validator refuses - refusing a plan
+    // for exactly the shape the run itself had built.
     let clips: Vec<&Value> = view["timeline"]["clips"]
         .as_array()?
         .iter()
-        .filter(|clip| clip["media"].as_str().is_some())
+        .filter(|clip| {
+            clip["media"].as_str().is_some_and(|id| {
+                media
+                    .iter()
+                    .find(|(mid, _)| mid == id)
+                    .map(|(_, path)| !path.contains("/bgm/"))
+                    .unwrap_or(true)
+            })
+        })
         .collect();
     if clips.is_empty() {
         return None;
@@ -3442,112 +3496,183 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         return None;
     }
     let read = emotion_lines(log, takes);
-    // The segments are the spine as the handoff left it: one per placed
-    // clip, in order. An audio clip is not a picture - claiming its span
-    // as `existing` footage was the plan's own black-span defect, the
-    // validator refusing exactly that claim - so a narration clip's span
-    // is planned as the B-roll the gather will place, shopped with the
-    // words the span plays, and only a clip that really puts pixels on
-    // screen is `existing` (with its kind stated, so the claim can be
-    // checked).
-    let segments: Vec<Value> = clips
+    // The segments are the spine as the handoff left it: one span per
+    // placed clip, MERGED where clips overlap - an a-roll handoff places
+    // the voice and its face together, and one span of timeline cannot
+    // carry two segments, or the validator refuses the plan for exactly
+    // the shape the run was handed. An audio clip is not a picture -
+    // claiming its span as `existing` footage was the plan's own
+    // black-span defect, the validator refusing exactly that claim - so
+    // a narration clip's span is planned as the B-roll the gather will
+    // place, shopped with the words the span plays, and only a clip that
+    // really puts pixels on screen is `existing` (with its kind stated,
+    // so the claim can be checked). Where a picture covers a span, the
+    // picture is the segment and the words it plays need no shopping:
+    // that is the a-roll's own grammar.
+    /// One clip's contribution to the spine: when it opens and closes,
+    /// the picture it puts on screen (if it puts one), the read's own
+    /// mood at the moment it opens, and the words it plays.
+    type Span = (
+        f64,
+        f64,
+        Option<(String, String)>,
+        Option<EmotionLine>,
+        String,
+    );
+    let span_of = |clip: &Value| -> Span {
+        let start = clip["start"].as_f64().unwrap_or(0.0);
+        let end = start + clip["duration"].as_f64().unwrap_or(0.0);
+        let kind = clip["kind"].as_str().unwrap_or("audio").to_owned();
+        let is_visual = matches!(
+            kind.as_str(),
+            "video" | "image" | "motion" | "text" | "shape"
+        );
+        // The read's own act and temperature for the moment the
+        // segment opens, where the read reached it: the clip's first
+        // file second is the moment its line begins.
+        let mood = clip["media"]
+            .as_str()
+            .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+            .and_then(|(_, path)| {
+                let (source_in, _, _) = clip_file_span(clip);
+                emotion_at(&read, path, source_in).cloned()
+            });
+        // The span's own words, both as the shopping query and as the
+        // semantic description the shelf ranks against: what the
+        // narration says while the shot plays is what the shot should
+        // show. A span too short to carry the description floor states
+        // the measured arc it sits in instead - never a padded fake.
+        let (source_in, source_out, _) = clip_file_span(clip);
+        let clip_path = clip["media"].as_str().and_then(|id| {
+            media
+                .iter()
+                .find(|(mid, _)| mid == id)
+                .map(|(_, path)| path.clone())
+        });
+        let spoken: String = transcripts_of(log, takes)
+            .into_iter()
+            .find(|(take_path, _)| clip_path.as_deref() == Some(take_path.as_str()))
+            .map(|(_, segments)| {
+                segments
+                    .iter()
+                    .filter_map(|row| {
+                        let from = row["start"].as_f64()?;
+                        let to = row["end"].as_f64()?;
+                        (to > source_in && from < source_out)
+                            .then(|| row["text"].as_str().unwrap_or_default().trim())
+                    })
+                    .collect::<Vec<&str>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let visual = is_visual.then(|| {
+            (
+                clip["media"].as_str().unwrap_or_default().to_owned(),
+                kind.clone(),
+            )
+        });
+        (start, end, visual, mood, spoken)
+    };
+    let mut spans: Vec<Span> = clips.iter().map(|clip| span_of(clip)).collect();
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Merge the overlapping spans into one window each: sorted by
+    // start, a span that opens before the window closes joins it (its
+    // end extends the window); a span that opens after the window
+    // closes starts the next one.
+    let mut windows: Vec<Span> = Vec::new();
+    for span in spans {
+        match windows.last_mut() {
+            Some(window) if span.0 < window.1 => {
+                window.1 = window.1.max(span.1);
+                // The picture the window shows: real footage beats an
+                // overlay - a text or shape clip riding a window never
+                // displaces the video, image or motion the window
+                // already shows, and a window with no picture takes any
+                // picture it is offered. The first span's mood is kept
+                // - the mood of the moment the window opens - and the
+                // words the spans play join, so a window the gather
+                // shops carries everything its narration said.
+                let real_footage = span
+                    .2
+                    .as_ref()
+                    .is_some_and(|(_, kind)| matches!(kind.as_str(), "video" | "image" | "motion"));
+                let window_is_overlay = window.2.as_ref().is_some_and(|(_, kind)| {
+                    !matches!(kind.as_str(), "video" | "image" | "motion")
+                });
+                if window.2.is_none() || (real_footage && window_is_overlay) {
+                    window.2 = span.2.clone();
+                }
+                if !span.4.trim().is_empty() {
+                    if !window.4.trim().is_empty() {
+                        window.4.push(' ');
+                    }
+                    window.4.push_str(span.4.trim());
+                }
+            }
+            _ => windows.push(span),
+        }
+    }
+    let segments: Vec<Value> = windows
         .iter()
         .enumerate()
-        .map(|(index, clip)| {
-            let start = clip["start"].as_f64().unwrap_or(0.0);
-            let end = start + clip["duration"].as_f64().unwrap_or(0.0);
-            let kind = clip["kind"].as_str().unwrap_or("audio");
-            let is_visual = matches!(kind, "video" | "image" | "motion" | "text" | "shape");
-            // The read's own act and temperature for the moment the
-            // segment opens, where the read reached it: the clip's first
-            // file second is the moment its line begins.
-            let mood = clip["media"]
-                .as_str()
-                .and_then(|id| media.iter().find(|(mid, _)| mid == id))
-                .and_then(|(_, path)| {
-                    let (source_in, _, _) = clip_file_span(clip);
-                    emotion_at(&read, path, source_in).cloned()
-                });
-            let mut segment = if is_visual {
-                json!({
+        .map(|(index, (start, end, visual, mood, spoken))| {
+            let start = *start;
+            let end = *end;
+            let spoken = spoken.trim().to_owned();
+            let mood = mood.clone();
+            let visual = visual.clone();
+            let mut segment = match visual {
+                Some((media_id, kind)) => json!({
                     "start": round3(start),
                     "end": round3(end),
                     "visual": {
                         "type": "existing",
-                        "mediaId": clip["media"].as_str().unwrap_or_default(),
-                        "kind": kind,
+                        "mediaId": media_id.as_str(),
+                        "kind": kind.as_str(),
                     },
-                })
-            } else {
-                // The span's own words, both as the shopping query and as
-                // the semantic description the shelf ranks against: what
-                // the narration says while the shot plays is what the
-                // shot should show. A span too short to carry the
-                // description floor states the measured arc it sits in
-                // instead - never a padded fake.
-                let (source_in, source_out, _) = clip_file_span(clip);
-                let clip_path = clip["media"].as_str().and_then(|id| {
-                    media
-                        .iter()
-                        .find(|(mid, _)| mid == id)
-                        .map(|(_, path)| path.clone())
-                });
-                let spoken: String = transcripts_of(log, takes)
-                    .into_iter()
-                    .find(|(take_path, _)| clip_path.as_deref() == Some(take_path.as_str()))
-                    .map(|(_, segments)| {
-                        segments
-                            .iter()
-                            .filter_map(|row| {
-                                let from = row["start"].as_f64()?;
-                                let to = row["end"].as_f64()?;
-                                (to > source_in && from < source_out)
-                                    .then(|| row["text"].as_str().unwrap_or_default().trim())
-                            })
-                            .collect::<Vec<&str>>()
-                            .join(" ")
+                }),
+                None => {
+                    let query = if spoken.is_empty() {
+                        mood.as_ref()
+                            .and_then(|line| line.queries.first().cloned())
+                            .unwrap_or_else(|| "cinematic establishing shot".to_owned())
+                    } else {
+                        spoken.clone()
+                    };
+                    let description = if spoken.chars().count() >= 40 {
+                        spoken.clone()
+                    } else {
+                        // The measured facts the run can stand behind: the
+                        // act, the register and the span's own subject, stated
+                        // as the description - padded with facts, never with
+                        // filler.
+                        let line = mood.as_ref();
+                        format!(
+                            "the narration's {} {} over {}, a {:.0} second piece",
+                            line.map(|line| line.act.as_str()).unwrap_or("body"),
+                            line.map(|line| line.emotion.as_str()).unwrap_or("neutral"),
+                            query,
+                            (end - start).max(1.0)
+                        )
+                    };
+                    json!({
+                        "start": round3(start),
+                        "end": round3(end),
+                        "visual": {
+                            "type": "broll",
+                            "provider": source.stock_provider,
+                            "query": query,
+                            "description": description,
+                        },
                     })
-                    .unwrap_or_default();
-                let query = if spoken.is_empty() {
-                    mood.as_ref()
-                        .and_then(|line| line.queries.first().cloned())
-                        .unwrap_or_else(|| "cinematic establishing shot".to_owned())
-                } else {
-                    spoken.clone()
-                };
-                let description = if spoken.chars().count() >= 40 {
-                    spoken.clone()
-                } else {
-                    // The measured facts the run can stand behind: the
-                    // act, the register and the span's own subject, stated
-                    // as the description - padded with facts, never with
-                    // filler.
-                    let line = mood.as_ref();
-                    format!(
-                        "the narration's {} {} over {}, a {:.0} second piece",
-                        line.map(|line| line.act.as_str()).unwrap_or("body"),
-                        line.map(|line| line.emotion.as_str()).unwrap_or("neutral"),
-                        query,
-                        (end - start).max(1.0)
-                    )
-                };
-                json!({
-                    "start": round3(start),
-                    "end": round3(end),
-                    "visual": {
-                        "type": "broll",
-                        "provider": source.stock_provider,
-                        "query": query,
-                        "description": description,
-                    },
-                })
+                }
             };
             // Every clip enters on purpose (floor M): the opening pops,
             // a reveal or a turn punches, tension whips, the landing
             // dissolves, and the calm middle alternates slide and
             // dissolve - an entrance the gate can read, and a vocabulary
             // the timeline's transition pass already speaks.
-            let last = index + 1 == clips.len();
+            let last = index + 1 == windows.len();
             let anim = match mood.as_ref().map(|line| line.act.as_str()) {
                 Some("hook") | Some("reveal") | Some("turn") => "punch",
                 Some("tension") => "whip",
@@ -3566,6 +3691,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             segment
         })
         .collect();
+
     // The sections the runtime falls into. A piece over 12 s owes a payoff
     // somewhere, so it gets a cta; a 4-12 s piece is hook and body (the
     // hook inside 3 s, or the creative gate names it); a very short one
@@ -4277,6 +4403,81 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         .unwrap_or("concat.teal-orange");
     let (intensity_key, intensity) = grade_param(look);
     let mode = if runtime > 60.0 { "longform" } else { "reel" };
+    let aspect = aspect_of(view);
+    let orientation = match aspect {
+        "9:16" | "4:5" => "vertical",
+        "1:1" => "square",
+        _ => "horizontal",
+    };
+    let palette = match look {
+        "concat.cold" | "concat.blue" => ["#08111f", "#9fd3ff", "#f4f8ff"],
+        "concat.warm" | "concat.golden" => ["#1a0f08", "#f2c078", "#fff7e8"],
+        "concat.mono" | "concat.noir" => ["#0a0a0a", "#e8e8e8", "#8a8a8a"],
+        _ => ["#0b0d12", "#f2e9dc", "#c96a3a"],
+    };
+    // The one look the whole fixed edit wears. The Director writes a
+    // richer style bible; this is the floor the deterministic fallback
+    // can prove, so the same validator can judge both paths.
+    let style = json!({
+        "name": format!("{look} / {orientation}"),
+        "palette": palette,
+        "grade": look,
+        "captions": {
+            "font": "Inter",
+            "weight": 700,
+            "emphasisColor": palette[1],
+            "position": if orientation == "vertical" { "center" } else { "lower-third" },
+        },
+        "motion": {
+            "language": "measured push-ins, one accent and clean entrances",
+            "easing": "spring-pop",
+            "intensity": 0.6,
+        },
+        "sound": {
+            "duckDb": duck,
+            "texture": "dry room, low pulse, airy transitions",
+        },
+        "footage": {
+            "orientation": orientation,
+            "treatment": "fill",
+            "continuity": "one camera height, no letterbox, colour temperature follows the act",
+        },
+        "continuityRules": [
+            "fill every frame; never letterbox a vertical reel",
+            "one accent colour per section",
+            "no two consecutive shots share a camera height",
+        ],
+    });
+    // The retention contract: the hook is the first spoken line, the turn
+    // is the strongest measured act (or the middle of the cut), and the
+    // payoff is the last line. Pattern breaks are spread across the cut
+    // plus the turn, so a clean fallback still has a rhythm a viewer can
+    // feel - and a longform cut gets enough of them to pass its own gate.
+    let turn_at = segments
+        .iter()
+        .find(|segment| segment.get("act").and_then(Value::as_str) == Some("turn"))
+        .and_then(|segment| segment.get("start").and_then(Value::as_f64))
+        .unwrap_or(runtime * 0.55);
+    let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
+    let mut pattern_breaks: Vec<f64> = (1..=wanted_breaks)
+        .map(|index| round3(runtime * index as f64 / (wanted_breaks + 1) as f64))
+        .collect();
+    pattern_breaks.push(round3(turn_at));
+    pattern_breaks.sort_by(|left, right| left.total_cmp(right));
+    let hook = spoken
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "the opening claim and the question it plants".to_owned());
+    let retention = json!({
+        "hook": hook,
+        "turnAt": round3(turn_at.clamp(runtime * 0.2, runtime * 0.8)),
+        "payoffAt": round3(runtime * 0.9),
+        "patternBreaks": pattern_breaks,
+        "openLoops": [
+            brief.get("curiosityGap").and_then(Value::as_str).unwrap_or("what is the claim?"),
+            brief.get("payoff").and_then(Value::as_str).unwrap_or("what proves it?"),
+        ],
+    });
     Some(json!({
         "title": source
             .project
@@ -4302,6 +4503,8 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             "intensity": intensity,
             "apply": "layer",
         },
+        "style": style,
+        "retention": retention,
         "signalLog": signal_log,
         "export": {
             "output": source.export,
@@ -5171,7 +5374,6 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
 /// Director agent's.
 pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let project = source.project.clone();
-    let export = source.export.clone();
     let takes = source.takes.clone();
     let call = |tool: &str, arguments: Value| ToolCall {
         tool: tool.to_owned(),
@@ -5752,6 +5954,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut graded = false;
                 let mut keyed = false;
                 let mut mixed = false;
+                let mut mixes: Option<Vec<ToolCall>> = None;
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
                         let read = emotion_lines(log, &grade_source);
@@ -5855,56 +6058,72 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // could meet the platform target by pushing the
                         // mix into overs the verify gate would own later.
                         if mixed {
-                            return None;
+                            // One level call per clip, one invocation each:
+                            // the queue drains after the gain each clip's
+                            // own take asked for.
+                            return mixes
+                                .as_mut()
+                                .and_then(|queue| (!queue.is_empty()).then(|| queue.remove(0)));
                         }
                         mixed = true;
                         let target = match platform_target(log) {
                             Some(target) => target,
                             None => return None,
                         };
-                        let loudest = voice_reads(log, &level_source)
-                            .into_iter()
-                            .filter(|read| read.take_wide.integrated_lufs.is_some())
-                            .max_by(|left, right| {
-                                left.take_wide
-                                    .integrated_lufs
-                                    .unwrap_or_default()
-                                    .total_cmp(&right.take_wide.integrated_lufs.unwrap_or_default())
-                            })?;
-                        let measured = loudest.take_wide.integrated_lufs?;
-                        let gain = round3(loudest.safe_gain(target - measured))
-                            // clip_audio_levels_db refuses baseDb outside
-                            // -60..+24; a very quiet take's wanted gain
-                            // (e.g. -40 LUFS asking for +26) used to get
-                            // the mix call refused after the grade had
-                            // already landed.
-                            .min(24.0);
-                        if gain.abs() < 1.0 {
-                            return None;
-                        }
                         let view = latest_view(log)?;
                         let media = media_paths(view);
-                        // The gain belongs on the clip that plays the
-                        // LOUDEST take - the measurement's own clip - not
-                        // the first clip that plays any take: with takes
-                        // of differing loudness, the first-played clip
-                        // took a gain computed for a different file.
-                        let clip = view["timeline"]["clips"].as_array()?.iter().find(|clip| {
-                            clip["media"]
-                                .as_str()
-                                .and_then(|id| media.iter().find(|(mid, _)| mid == id))
-                                .is_some_and(|(_, path)| path == &loudest.take)
-                        })?;
-                        let clip_id = clip["id"].as_str()?.to_owned();
-                        return Some(call(
-                            "clip_audio_levels_db",
-                            json!({
-                                "path": level_project,
-                                "clipId": clip_id,
-                                "baseDb": gain,
-                                "replaceAutomation": false,
-                            }),
-                        ));
+                        let reads = voice_reads(log, &level_source);
+                        // The gain belongs on EVERY clip that plays a
+                        // measured take, each from that take's own
+                        // reading - not the one clip that plays the
+                        // loudest take: with multiple placements, or
+                        // takes of differing loudness, the other clips
+                        // kept their uncorrected level, and the export's
+                        // integrated loudness missed the platform target
+                        // the verify stage then failed the whole run for.
+                        let levels: Vec<ToolCall> = view["timeline"]["clips"]
+                            .as_array()?
+                            .iter()
+                            .filter_map(|clip| {
+                                let path = clip["media"].as_str().and_then(|id| {
+                                    media
+                                        .iter()
+                                        .find(|(mid, _)| mid == id)
+                                        .map(|(_, path)| path.clone())
+                                })?;
+                                let read = reads.iter().find(|read| {
+                                    read.take == path && read.take_wide.integrated_lufs.is_some()
+                                })?;
+                                let measured = read.take_wide.integrated_lufs?;
+                                let gain = round3(read.safe_gain(target - measured))
+                                    // clip_audio_levels_db refuses baseDb outside
+                                    // -60..+24; a very quiet take's wanted gain
+                                    // (e.g. -40 LUFS asking for +26) used to get
+                                    // the mix call refused after the grade had
+                                    // already landed.
+                                    .min(24.0);
+                                if gain.abs() < 1.0 {
+                                    return None;
+                                }
+                                let clip_id = clip["id"].as_str()?.to_owned();
+                                Some(call(
+                                    "clip_audio_levels_db",
+                                    json!({
+                                        "path": level_project.clone(),
+                                        "clipId": clip_id,
+                                        "baseDb": gain,
+                                        "replaceAutomation": false,
+                                    }),
+                                ))
+                            })
+                            .collect();
+                        if levels.is_empty() {
+                            return None;
+                        }
+                        mixes = Some(levels);
+                        return mixes
+                            .as_mut()
+                            .and_then(|queue| (!queue.is_empty()).then(|| queue.remove(0)));
                     }
                     let view = latest_view(log)?;
                     let runtime = view["timeline"]["clips"]
@@ -7270,6 +7489,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .flat_map(|read| read.motifs.iter().cloned())
                             .collect();
                         motion_specs(
+                            log,
                             &emotion_lines(log, &motion_source),
                             &entity_graphics(log, &motion_source),
                             &topic_boundaries(log, &motion_source),
@@ -7358,31 +7578,40 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         1 => {
                             // The library's reply, read once and kept: the
                             // first text slot, every label, and the
-                            // duration of each preset, by id.
-                            labels = Some(
-                                log.last()
-                                    .and_then(|reply| reply["presets"].as_array())
-                                    .into_iter()
-                                    .flatten()
-                                    .filter_map(|preset| {
-                                        let id = preset["id"].as_str()?.to_owned();
-                                        let slots = preset["slots"].as_array()?;
-                                        let slot = slots
-                                            .iter()
-                                            .find(|slot| slot["field"] == json!("text"))?["label"]
-                                            .as_str()?
-                                            .to_owned();
-                                        let all = slots
-                                            .iter()
-                                            .filter_map(|slot| {
-                                                slot["label"].as_str().map(str::to_owned)
-                                            })
-                                            .collect();
-                                        let duration = preset["duration"].as_f64()?;
-                                        Some((id, slot, all, duration))
-                                    })
-                                    .collect(),
-                            );
+                            // duration of each preset, by id. A reply that
+                            // carries no preset at all is a refusal, not a
+                            // library: baking on with no shapes would ship
+                            // the presets' own sample text as fabricated
+                            // facts - the one thing the BLANK rule exists
+                            // to prevent - so no card is placed and the
+                            // stage's warn policy records the skipped work.
+                            let shapes: Vec<MotionPresetShape> = log
+                                .last()
+                                .and_then(|reply| reply["presets"].as_array())
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|preset| {
+                                    let id = preset["id"].as_str()?.to_owned();
+                                    let slots = preset["slots"].as_array()?;
+                                    let slot = slots
+                                        .iter()
+                                        .find(|slot| slot["field"] == json!("text"))?["label"]
+                                        .as_str()?
+                                        .to_owned();
+                                    let all = slots
+                                        .iter()
+                                        .filter_map(|slot| {
+                                            slot["label"].as_str().map(str::to_owned)
+                                        })
+                                        .collect();
+                                    let duration = preset["duration"].as_f64()?;
+                                    Some((id, slot, all, duration))
+                                })
+                                .collect();
+                            if shapes.is_empty() {
+                                return None;
+                            }
+                            labels = Some(shapes);
                             phase = 0;
                         }
                         2 => {
@@ -7723,7 +7952,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // The stage's own first call: the shelf's state.
                         return Some(call("bgm_status", json!({})));
                     }
-                    let last = log.last().expect("the log grew since base");
+                    // The log only grows past the base this stage drew,
+                    // but a future call shape must not take the runner
+                    // down with it for an invariant it cannot see.
+                    let last = log.last()?;
                     if last.get("freepd").is_some() {
                         // A bgm_status reply: prepare the missing shelf,
                         // poll the loading one, shop the ready one.
@@ -8511,214 +8743,44 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 13. The render, waited on by its project folder: the job's name is
-    //     minted when the export starts, and a program written before that
-    //     moment asks for the work by what it was started on.
+    // 13. Save and read back the editable project. AUTO EDIT's default
+    //     deliverable is the timeline the user can continue editing, not
+    //     an MP4 the user did not ask to render.
+    let ready_project = source.project.clone();
     steps.push(
         StageStep::run(
-            Stage::Export,
+            Stage::TimelineReady,
             vec![
-                call(
-                    "export_start",
-                    json!({
-                        "path": project.clone(),
-                        "output": export.clone(),
-                        "crf": 20,
-                    }),
-                ),
-                call(
-                    "export_wait",
-                    json!({ "path": project.clone(), "timeoutSeconds": 590 }),
-                ),
-                call(
-                    "export_wait",
-                    json!({ "path": project, "timeoutSeconds": 590 }),
-                ),
+                call("project_save", json!({ "path": ready_project.clone() })),
+                call("timeline_read", json!({ "path": ready_project.clone() })),
             ],
         )
-        // The waits give up with "still running" rather than an error
-        // when their budget ends; without a gate the stage then
-        // "completes" over a live render and the run dies three stages
-        // later in Verify on a transcript of a file that is not there
-        // yet - an error that names the transcript, not the render. The
-        // gate names the render.
-        .gate(ReplyGate::Word {
-            field: "state",
-            equals: "done",
-            what: "the render was still running when its waits ran out",
-        })
         .into(),
     );
-    // 14. The verify: the sanity reads first - collisions, and the
-    //     timeline as the placements left it - then the words re-read
-    //     from the render, the loudness measured against the short-form
-    //     target, and the re-read words COMPARED with the words the edit
-    //     places now, each piece of the voiceover a take of its own
-    //     (F-04). The expected side is derived from the timeline the run
-    //     ended with, not the one it planned: a tighten that moved a word
-    //     is verified where the word is. This reply is the verification
-    //     the run's terminal states carry, and the gates are the
-    //     measurements' own word.
-    let verify_source = takes.clone();
-    let verify_export = source.export.clone();
-    let verify_placements = source.placements.clone();
-    let verify_project_path = source.project.clone();
+
+    // 14. Verify the saved timeline and its lanes. The independent
+    //     acceptance receipt checks every media reference and source path;
+    //     this stage's own gate refuses shared lanes before the user opens
+    //     the result.
+    let verify_project = source.project.clone();
     steps.push(
-        DerivedStep::react(
+        StageStep::run(
             Stage::Verify,
-            Box::new({
-                let mut phase = 0u8;
-                move |log| {
-                    if phase == 0 {
-                        phase = 1;
-                        return Some(call(
-                            "collision_check",
-                            json!({ "path": verify_project_path }),
-                        ));
-                    }
-                    if phase == 1 {
-                        phase = 2;
-                        return Some(call(
-                            "timeline_read",
-                            json!({ "path": verify_project_path }),
-                        ));
-                    }
-                    if phase == 2 {
-                        phase = 3;
-                        return Some(call("transcribe", json!({ "path": verify_export })));
-                    }
-                    if phase == 3 {
-                        phase = 4;
-                        return Some(call(
-                            "analysis_wait",
-                            json!({ "path": verify_export, "timeoutSeconds": 590 }),
-                        ));
-                    }
-                    if phase == 4 {
-                        phase = 5;
-                        return Some(call(
-                            "analysis_wait",
-                            json!({ "path": verify_export, "timeoutSeconds": 590 }),
-                        ));
-                    }
-                    if phase == 5 {
-                        phase = 6;
-                        return Some(call("measure_loudness", json!({ "path": verify_export })));
-                    }
-                    if phase == 6 {
-                        phase = 7;
-                        // The expected words: the timeline's own voiceover
-                        // pieces, each mapped as the take it plays - the
-                        // placements the run began with when nothing
-                        // moved them, the pieces the tighten left when it
-                        // did.
-                        let expected: Vec<Value> =
-                            match latest_view(log).map(|view| {
-                                let media = media_paths(view);
-                                view["timeline"]["clips"]
-                                    .as_array()
-                                    .into_iter()
-                                    .flatten()
-                                    .filter(|clip| {
-                                        clip["media"].as_str().is_some_and(|id| {
-                                            media.iter().any(|(mid, path)| {
-                                                mid == id
-                                                    && verify_source
-                                                        .iter()
-                                                        .any(|take| take.take == *path)
-                                            })
-                                        })
-                                    })
-                                    .map(|clip| {
-                                        let (source_in, source_out, speed) = clip_file_span(clip);
-                                        json!({
-                                            "path": media
-                                                .iter()
-                                                .find(|(mid, _)| Some(mid.as_str()) == clip["media"].as_str())
-                                                .map(|(_, path)| path.clone())
-                                                .unwrap_or_default(),
-                                            "start": clip["start"].as_f64().unwrap_or(0.0),
-                                            "sourceIn": source_in,
-                                            "sourceOut": source_out,
-                                            "speed": speed,
-                                        })
-                                    })
-                                    .collect::<Vec<_>>()
-                            }) {
-                                Some(rows) if !rows.is_empty() => rows,
-                                // No view the closure can read: the
-                                // placements the run was written from are
-                                // the expected side, as they always were.
-                                _ => verify_placements
-                                    .iter()
-                                    .map(|placed| {
-                                        json!({
-                                            "path": placed.take,
-                                            "start": placed.start,
-                                            "sourceIn": placed.source_in,
-                                            "sourceOut": placed.source_out,
-                                            "speed": placed.speed,
-                                        })
-                                    })
-                                    .collect(),
-                            };
-                        return Some(call(
-                            "emotion",
-                            json!({
-                                "action": "verify",
-                                "expectedTakes": expected,
-                                "actualPath": verify_export,
-                                "toleranceMs": crate::acceptance::SYNC_TOLERANCE_MS,
-                            }),
-                        ));
-                    }
-                    if phase == 7 {
-                        phase = 8;
-                        // Transcript and loudness are not proof that the
-                        // rendered file is a usable video. Probe the actual
-                        // export as the final verification call: the media
-                        // reader reports its streams, duration, dimensions,
-                        // frame rate and codecs, and refuses a missing or
-                        // unreadable file.
-                        return Some(call(
-                            "motion_probe",
-                            json!({ "path": verify_export }),
-                        ));
-                    }
-                    None
-                }
-            }),
+            vec![
+                call("collision_check", json!({ "path": verify_project.clone() })),
+                call("timeline_read", json!({ "path": verify_project })),
+            ],
         )
         .gate(ReplyGate::True {
-            field: "platformTargetMet",
-            what: "the mix missed the platform loudness target",
-        })
-        .gate(ReplyGate::Word {
-            field: "verdict",
-            equals: "pass",
-            what: "the export's words are not the words the edit placed",
-        })
-        // The collision read the stage opened with is a gate, not
-        // decoration: a timeline whose clips share a lane is a damaged
-        // edit, whatever the transcript and the loudness say.
-        .gate(ReplyGate::True {
             field: "clean",
-            what: "clips share a lane on the timeline",
+            what: "clips share a lane on the saved timeline",
         })
         .into(),
     );
-    // 15. The watch, warn-policy: the whole cut as one contact sheet,
-    //     written beside the export, then read and scored. A score under
-    //     the bar is a flaw the edit ships with - recorded, yellow - not a
-    //     run thrown away after the render already landed. The gate is
-    //     the craft bar the headless runner ships on (7.0).
-    //
-    //     The final critique carries the same measured brief and the same
-    //     autoSetup the preview's did: the shipped file is judged against
-    //     the story its own voice measured, not the pictures alone, and a
-    //     machine with no vision model yet says so instead of answering
-    //     from pixels and calling it a critique.
-    let watch_export = source.export.clone();
+
+    // 15. Review the final timeline after revisions. watch_render renders
+    //     a preview/contact sheet from the open project, not an export;
+    //     the critic scores that sheet against the measured brief.
     let watch_project = source.project.clone();
     let watch_sheet = source.sheet.clone();
     steps.push(
@@ -8734,7 +8796,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return Some(call(
                             "watch_render",
                             json!({
-                                "path": watch_export,
                                 "project": watch_project,
                                 "out": watch_sheet,
                                 "audio": true,
@@ -8743,33 +8804,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     if phase == 1 {
                         phase = 2;
-                        // The sheet names where it kept its own pixels;
-                        // that is the path the critic reads. The joined
-                        // name is the fallback when the reply carried
-                        // none.
-                        let png = log
-                            .iter()
-                            .rev()
-                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .filter(|png| !png.trim().is_empty())
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| {
-                                std::path::Path::new(&watch_project)
-                                    .join(&watch_sheet)
-                                    .display()
-                                    .to_string()
-                            });
-                        let measured = signal_brief(log);
-                        let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
-                            measured
-                        } else {
-                            json!({})
-                        };
-                        // The watch's own sheet travels whole: its craft
-                        // (variety, black frames, letterboxing, static
-                        // cuts) and audio measurements are the critique's
-                        // evidence - pngPath alone answered a constant 6.7
-                        // and the 7.0 bar below could never pass.
                         let sheet = log
                             .iter()
                             .rev()
@@ -8777,17 +8811,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 reply
                                     .get("pngPath")
                                     .and_then(Value::as_str)
-                                    .is_some_and(|png| !png.trim().is_empty())
+                                    .is_some_and(|path| !path.trim().is_empty())
                             })
                             .cloned()
                             .unwrap_or_else(|| json!({}));
+                        let png_path = sheet
+                            .get("pngPath")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
                         return Some(call(
                             "craft_critique",
                             json!({
-                                "pngPath": png,
+                                "pngPath": png_path,
                                 "sheet": sheet,
                                 "project": watch_project,
-                                "brief": brief,
+                                "brief": signal_brief(log),
                                 "autoSetup": true,
                             }),
                         ));
@@ -8800,11 +8838,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .gate(ReplyGate::AtLeast {
             field: "overall",
             minimum: 7.0,
-            what: "the cut scored under the craft bar",
+            what: "the final timeline preview scored under the craft bar",
         })
         .into(),
     );
-    EditProgram::mixed(PathBuf::from(&source.export), steps).enforcing_acceptance()
+    EditProgram::mixed(PathBuf::from("timeline"), steps).enforcing_acceptance()
 }
 
 #[cfg(test)]
@@ -8862,10 +8900,7 @@ mod tests {
         // The register, in the run's own order: the fanned repair and
         // transcription, the derived tighten-then-grade, B-roll, captions,
         // title entrances, bed and accents, the preview, the revise,
-        // the static export, the derived verify-gates, and the watch.
-        // The creative layer's remaining stages (the plan's brief, the
-        // baked motion comps) are absent - the fraction the page shows
-        // counts only these.
+        // the saved timeline, the verify gates and the final watch.
         let order: Vec<&str> = program
             .steps
             .iter()
@@ -8888,17 +8923,17 @@ mod tests {
                 "sfx",
                 "preview",
                 "revise",
-                "export",
+                "timeline-ready",
                 "verify",
                 "watch",
             ]
         );
-        // The register and the run are the same order, not merely the same
-        // set: `Runner::completed` reports a resumed run in `Stage::ALL`'s
-        // order, so an `ALL` that disagreed with the program would resume
-        // a run in an order it never ran.
+        // Stage::ALL is the complete register, including the optional
+        // explicit-export stage. The default run must be an ordered
+        // subsequence and must not schedule an export.
         let register: Vec<&str> = Stage::ALL.iter().map(|stage| stage.label()).collect();
-        assert_eq!(register, order, "the register is the run's own order");
+        assert!(order.iter().all(|stage| register.contains(stage)));
+        assert!(!order.contains(&"export"));
         // The warn-policy stages, and only them: a take that cannot be
         // repaired ships as recorded, an emotional read that cannot be
         // made leaves the cut on its defaults, a plan the gate refuses
@@ -8930,11 +8965,9 @@ mod tests {
             ]
         );
 
-        // The export is promised where the program says it lands.
-        assert_eq!(
-            program.export,
-            std::path::Path::new("/edits/Reel edit/export/auto-edit.mp4")
-        );
+        // The program's artifact is the editable timeline. Rendering
+        // remains an explicit user action in the editor.
+        assert_eq!(program.export, std::path::Path::new("timeline"));
         assert!(
             program.enforce_acceptance,
             "the auto edit claims the whole edit, so its receipt must decide the outcome"
@@ -8997,58 +9030,32 @@ mod tests {
         // keyed by the stage, so a second step sharing `Stage::Timeline`
         // was skipped the moment the first completed and the run never
         // graded.
-        for at in [5usize, 6, 7, 8, 9, 10, 11, 12, 13, 15] {
+        for at in [4usize, 6, 7, 8, 9, 10, 11, 12, 13, 16] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
             );
         }
 
-        // The export is waited on by its project folder - the job's name
-        // is minted at run time - and the watch's sheet is a project-
-        // relative name, because the window's server refuses absolute
-        // write paths. The watch itself is derived now: the final
-        // critique carries the measured brief the preview's did. The
-        // export's own gate: a wait that gives up must not read as a
-        // landed render.
-        let export = program.steps[14].as_static();
-        assert_eq!(export.calls[0].tool, "export_start");
-        assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
-        assert_eq!(export.calls[1].tool, "export_wait");
-        assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
-
-        // The verify's gates: the loudness target, the words (F-04), and
-        // the collision read the stage opened with - on the derived step
-        // that reads the timeline as it ended up.
-        use concat_director::ReplyGate;
-        assert!(matches!(program.steps[15], ProgramStep::Derived(_)));
+        // The saved timeline is explicitly written and read back; the
+        // final verify checks collisions, and the final watch reviews the
+        // open project rather than an automatically encoded MP4.
+        let ready = program.steps[14].as_static();
+        assert_eq!(ready.calls[0].tool, "project_save");
+        assert_eq!(ready.calls[0].arguments["path"], source.project.as_str());
+        assert_eq!(ready.calls[1].tool, "timeline_read");
+        assert_eq!(ready.calls[1].arguments["path"], source.project.as_str());
+        let verify = program.steps[15].as_static();
+        assert_eq!(verify.calls[0].tool, "collision_check");
+        assert_eq!(verify.calls[1].tool, "timeline_read");
         assert_eq!(
-            program.steps[15].gates(),
-            vec![
-                ReplyGate::True {
-                    field: "platformTargetMet",
-                    what: "the mix missed the platform loudness target",
-                },
-                ReplyGate::Word {
-                    field: "verdict",
-                    equals: "pass",
-                    what: "the export's words are not the words the edit placed",
-                },
-                ReplyGate::True {
-                    field: "clean",
-                    what: "clips share a lane on the timeline",
-                },
-            ]
-        );
-        assert_eq!(
-            program.steps[14].gates(),
-            vec![ReplyGate::Word {
-                field: "state",
-                equals: "done",
-                what: "the render was still running when its waits ran out",
+            verify.gates,
+            vec![ReplyGate::True {
+                field: "clean",
+                what: "clips share a lane on the saved timeline",
             }]
         );
+        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
         // The transcription's own done gate: a wait that gives up with
         // "still running" used to complete the stage over a transcript
         // that never arrived, and every word-derived stage downstream
@@ -9066,7 +9073,7 @@ mod tests {
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
-                what: "the cut scored under the craft bar",
+                what: "the final timeline preview scored under the craft bar",
             }]
         );
         // The plan's own gate: its structure is refused before a single
@@ -9080,7 +9087,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 2 && at != 5 && at != 14 && at != 15 && at != 16 {
+            if at != 2 && at != 5 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -9166,7 +9173,7 @@ mod tests {
         let claims = uncovered_claims(&log, &takes);
         assert_eq!(claims.len(), 1, "the uncovered claim is the one read");
         assert_eq!(claims[0].text, "this ship sank in 1912");
-        let specs = motion_specs(&[], &[], &[], &[], &[], &claims, false);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &claims, false);
         let card = specs
             .iter()
             .find(|spec| spec.earned_by == "claims")
@@ -9217,7 +9224,7 @@ mod tests {
         let questions = question_acts(&log, &takes);
         assert_eq!(questions.len(), 1, "only the question line is an ask");
         assert_eq!(questions[0].start, 0.0);
-        let specs = motion_specs(&[], &[], &[], &[], &questions, &[], false);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &questions, &[], false);
         assert!(
             specs
                 .iter()
@@ -10779,20 +10786,31 @@ mod tests {
         };
         let preview = at("preview");
         let revise = at("revise");
-        let export = at("export");
+        let timeline_ready = at("timeline-ready");
         let verify = at("verify");
         let watch = at("watch");
 
         // The revise reads the preview's sheet, so it follows it...
         assert!(preview < revise, "the revise answers the preview");
-        // ...and corrects the timeline the export then encodes.
+        // ...and corrects the timeline the program then saves and reads
+        // back. The timeline is the deliverable the user keeps editing -
+        // an export the run was asked to land reads the same saved
+        // timeline, so a revise after the save leaves the shipped file
+        // unrevised exactly the way it left the exported one.
         assert!(
-            revise < export,
-            "a revise after the export leaves the shipped file unrevised"
+            revise < timeline_ready,
+            "a revise after the save lands a timeline the revise never corrected"
         );
-        // The verify and the watch both read the file, so both follow it.
-        assert!(export < verify, "the verify certifies the export");
-        assert!(export < watch, "the watch scores the exported file");
+        // The verify and the watch both read the saved timeline, so both
+        // follow it.
+        assert!(
+            timeline_ready < verify,
+            "the verify certifies the saved timeline"
+        );
+        assert!(
+            timeline_ready < watch,
+            "the watch scores the saved timeline"
+        );
     }
 
     /// The revise answers a measured fault and only a measured fault: a
@@ -13891,38 +13909,41 @@ mod tests {
             stock_provider: "pexels".to_owned(),
             script: None,
         };
-        let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(verify) = program
+        let program = auto_edit_program(&source);
+        // The program's own Verify stage is the timeline's: the lanes it
+        // leaves clean and the timeline it reads back. The encoded-file
+        // probes - the transcript re-read, the loudness, the words
+        // comparison and the motion probe of the actual file - are the
+        // independent acceptance's checks() when a render exists, so the
+        // shipped file is probed exactly where the surface says it is.
+        let verify = program
             .steps
-            .iter_mut()
+            .iter()
             .find(|step| step.stage().label() == "verify")
-            .expect("the program has a Verify stage")
-        else {
-            panic!("Verify is a derived stage");
+            .expect("the program has a Verify stage");
+        let ProgramStep::Static(step) = verify else {
+            panic!("Verify is a static stage");
         };
-
-        let mut log = Vec::new();
-        for expected in [
-            "collision_check",
-            "timeline_read",
-            "transcribe",
-            "analysis_wait",
-            "analysis_wait",
-            "measure_loudness",
-            "emotion",
-        ] {
-            let next = (verify.next)(&log).expect("the next verification call exists");
-            assert_eq!(next.tool, expected);
-            log.push(json!({}));
-        }
-
-        let probe = (verify.next)(&log).expect("the actual export is probed");
-        assert_eq!(probe.tool, "motion_probe");
-        assert_eq!(probe.arguments["path"], source.export);
-        log.push(json!({ "probe": { "streams": [] } }));
+        let calls: Vec<&str> = step.calls.iter().map(|call| call.tool.as_str()).collect();
+        assert_eq!(calls, ["collision_check", "timeline_read"]);
         assert!(
-            (verify.next)(&log).is_none(),
-            "the probe is the final Verify call"
+            step.gates.iter().any(|gate| gate.field() == "clean"),
+            "the verify gate refuses shared lanes on the saved timeline"
         );
+        // The probes the rendered export owes, on the acceptance's own
+        // list: the file itself is opened by the motion probe, its
+        // loudness measured, and the words it carries compared - after
+        // the content and mix gates the program already landed.
+        let asked = crate::acceptance::checks(&source.project, Some(&source.export));
+        let probes: Vec<&str> = asked.iter().map(|(tool, _)| *tool).collect();
+        assert!(
+            probes.contains(&"motion_probe"),
+            "the actual export is probed by the acceptance"
+        );
+        let probe = asked
+            .iter()
+            .find(|(tool, _)| *tool == "motion_probe")
+            .expect("the probe is asked");
+        assert_eq!(probe.1["path"], source.export);
     }
 }

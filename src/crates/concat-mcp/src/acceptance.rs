@@ -6,14 +6,13 @@
 //! The Director ends its turn and the harness exits zero. That says the
 //! agent stopped - not that the edit exists, plays, or carries the
 //! narration it was given. Until this module the pane believed the exit
-//! code, so a run that never exported still said the edit had shipped.
+//! code, so a run that never saved and verified its timeline still said the edit had shipped.
 //!
-//! The check is the one the fixed spine already walks at the end of its own
-//! program ([`crate::director_program`]'s verify and watch stages): probe
-//! the exported file with the engine's own reader, measure the mix against
-//! the platform target, re-read the words and score the picture. Both paths
-//! therefore answer to one contract, and the receipt is the same shape
-//! whichever path produced it.
+//! The Director's deliverable is the editable timeline: the check reads the
+//! saved project, judges its composited picture and proves its lanes are
+//! clean. An export is optional and adds the encoded-file gates: probe the file,
+//! measure the mix, re-read the words and score the picture. Both paths therefore answer to one receipt
+//! shape, but a timeline-ready run is not failed for not rendering.
 //!
 //! Every call goes through the pane's own [`Toolbox`] and [`Backend`], so
 //! what is asked here means exactly what the same call from an agent means.
@@ -22,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_director::{
     AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall,
-    ToolCaller, ToolError, Verdict, derive_gates,
+    ToolCaller, ToolError, Verdict, derive_gates, plan_has_voiceover,
 };
 use serde_json::{Value, json};
 
@@ -36,13 +35,16 @@ use crate::tools::{Context, Toolbox};
 /// the agent believed it was held to.
 pub const SYNC_TOLERANCE_MS: u64 = 60;
 
-/// What a finished Director run is asked to prove: the project it edited
-/// and the export it was told to land.
+/// What a finished Director run is asked to prove: the project it edited,
+/// and optionally the export it was told to land. The default Director
+/// deliverable is the timeline, not a render: the user asked to customize
+/// the cut, so the pane checks the open project and leaves the export to
+/// the user (or to a later explicit render).
 pub struct DirectorCheck<'a> {
     /// The sibling project the run edited.
     pub project: &'a str,
-    /// The file the run was told to land, and the only one worth probing.
-    pub export: &'a str,
+    /// The file the run was told to land, when it was asked to render one.
+    pub export: Option<&'a str>,
 }
 
 /// The check's answer: the receipt, and whether the pane may present the
@@ -62,17 +64,45 @@ impl DirectorAcceptance {
     }
 }
 
+/// Record a narration signal profile that could not be measured: the
+/// failed profile is the evidence the signal-evidence gate will skip on,
+/// so the run is honestly incomplete rather than falsely passing.
+fn record_signal_failure(observed: &mut Vec<(ToolCall, Value)>, arguments: Value, message: String) {
+    observed.push((
+        ToolCall {
+            tool: "voice_signals".to_owned(),
+            arguments,
+        },
+        json!({ "ok": false, "error": message }),
+    ));
+}
+
 /// The independent media checks, in dependency order. The contact
 /// sheet produced by watch_render is passed to craft_critique in check().
-pub fn checks(project: &str, export: &str) -> [(&'static str, Value); 3] {
-    [
-        ("motion_probe", json!({ "path": export })),
-        ("measure_loudness", json!({ "path": export })),
-        (
-            "watch_render",
-            json!({ "path": export, "project": project, "audio": true }),
-        ),
-    ]
+///
+/// With an export, the checks prove the encoded file: readable streams,
+/// platform loudness, the rendered picture, and lane collisions. Without
+/// one - the default Director deliverable - they prove the timeline the
+/// user is about to customize: it reads, its composited picture is judged,
+/// and no two clips share a lane.
+pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)> {
+    match export {
+        Some(export) => vec![
+            ("timeline_read", json!({ "path": project })),
+            ("motion_probe", json!({ "path": export })),
+            ("measure_loudness", json!({ "path": export })),
+            (
+                "watch_render",
+                json!({ "path": export, "project": project, "audio": true }),
+            ),
+            ("collision_check", json!({ "path": project })),
+        ],
+        None => vec![
+            ("timeline_read", json!({ "path": project })),
+            ("watch_render", json!({ "project": project, "audio": true })),
+            ("collision_check", json!({ "path": project })),
+        ],
+    }
 }
 
 /// Read the exact plan artifact the Director is instructed to persist.
@@ -148,7 +178,7 @@ fn expected_takes(project: &str) -> Result<Vec<Value>, String> {
 
 /// The expected narration coordinates the EDIT ITSELF ended with: the
 /// timeline's voiceover clips, each mapped as the take it plays. A
-/// Director that tightened the narration - the skill's own Phase 2, the
+/// Director that tightened the narration - the skill's own Phase 7, the
 /// ripple the auto prompt permits - moves every later word, and the
 /// mapping the pane wrote before the run would then fail a compliant
 /// edit. The mapping remains the fallback when no timeline answers: the
@@ -203,7 +233,8 @@ pub fn check(
     // Story validation is evidence only when the Director persisted the
     // exact plan it validated. Do not infer this gate from a successful
     // process exit or from the existence of a creative brief.
-    if let Some(plan) = saved_plan(check.project) {
+    let plan = saved_plan(check.project);
+    if let Some(plan) = plan.as_ref() {
         let arguments = json!({ "plan": plan });
         if let Some(reply) = caller.ask("plan_validate", arguments.clone()) {
             answered.push("plan_validate".to_owned());
@@ -214,6 +245,94 @@ pub fn check(
                 },
                 reply,
             ));
+        }
+    }
+
+    // Re-read the voice profile for every distinct narration take. This
+    // independent pass makes a fabricated signalLog confidence fail even
+    // when the plan's own structural validator accepts its vocabulary.
+    let signal_required = plan.as_ref().is_some_and(plan_has_voiceover);
+    let arc_required = plan.as_ref().is_some_and(|plan| {
+        plan.get("signalLog")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    entry
+                        .get("signals")
+                        .and_then(Value::as_array)
+                        .is_some_and(|signals| {
+                            signals.iter().any(|signal| signal.as_str() == Some("arc"))
+                        })
+                })
+            })
+    });
+    if signal_required {
+        match expected_takes(check.project) {
+            Ok(mapping_rows) => {
+                let paths: std::collections::BTreeSet<String> = mapping_rows
+                    .iter()
+                    .filter_map(|row| row.get("path").and_then(Value::as_str).map(str::to_owned))
+                    .collect();
+                for path in paths {
+                    let arguments = json!({ "audio": path });
+                    if let Some(reply) = caller.ask("voice_signals", arguments.clone()) {
+                        answered.push("voice_signals".to_owned());
+                        let lines = reply.get("lines").cloned();
+                        observed.push((
+                            ToolCall {
+                                tool: "voice_signals".to_owned(),
+                                arguments,
+                            },
+                            reply,
+                        ));
+                        if arc_required {
+                            let emotion_arguments = json!({
+                                "action": "extract",
+                                "lines": lines.clone().unwrap_or_else(|| json!([])),
+                                "project": check.project,
+                            });
+                            if let Some(emotion_reply) =
+                                caller.ask("emotion", emotion_arguments.clone())
+                            {
+                                answered.push("emotion".to_owned());
+                                observed.push((
+                                    ToolCall {
+                                        tool: "emotion".to_owned(),
+                                        arguments: emotion_arguments,
+                                    },
+                                    emotion_reply,
+                                ));
+                            } else {
+                                observed.push((
+                                    ToolCall {
+                                        tool: "emotion".to_owned(),
+                                        arguments: emotion_arguments,
+                                    },
+                                    json!({
+                                        "ok": false,
+                                        "error": "emotion extract could not independently measure the voiceover arc"
+                                    }),
+                                ));
+                            }
+                        }
+                    } else {
+                        record_signal_failure(
+                            &mut observed,
+                            arguments,
+                            "voice_signals could not independently read a narration take"
+                                .to_owned(),
+                        );
+                    }
+                }
+                if mapping_rows.is_empty() {
+                    record_signal_failure(
+                        &mut observed,
+                        json!({}),
+                        "voiceover mapping contains no distinct narration takes".to_owned(),
+                    );
+                }
+            }
+            Err(error) => record_signal_failure(&mut observed, json!({}), error),
         }
     }
 
@@ -235,12 +354,30 @@ pub fn check(
     }
 
     // craft_critique accepts a watch_render sheet, not an export path.
-    // Passing the actual sheet ensures the critic scores the rendered file.
+    // The critic is asked exactly as the program's own watch stage asks
+    // it: the sheet's own pngPath, the plan's own brief (the one the
+    // plan_validate judged, not a different file the critic would fall
+    // back to), and the VLM setup the local critic needs. An acceptance
+    // that asked with less was scored by the measured-pixel heuristic's
+    // own ceiling against the bar the gate reads, and could reject a
+    // run the program's own critique had passed.
     if let Some(sheet) = watch_sheet {
+        let png = sheet
+            .get("pngPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let brief = plan
+            .as_ref()
+            .and_then(|plan| plan.get("brief"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         let arguments = json!({
+            "pngPath": png,
             "sheet": sheet,
             "project": check.project,
-            "autoSetup": false,
+            "brief": brief,
+            "autoSetup": true,
         });
         if let Some(reply) = caller.ask("craft_critique", arguments.clone()) {
             answered.push("craft_critique".to_owned());
@@ -258,43 +395,66 @@ pub fn check(
     // ITSELF ended with - read live from the timeline, the same
     // derivation the fixed spine verifies with - and against the mapping
     // the pane wrote when no timeline answers. An absent mapping leaves
-    // the required words gate skipped, never falsely passed.
+    // the words gate skipped, never falsely passed. Without an export
+    // there is no encoded soundtrack to re-read; the timeline itself is
+    // the deliverable and the words gate is reported as not required.
     let mut warnings = Vec::new();
-    match expected_takes(check.project) {
-        Ok(mapping_rows) => {
-            let take_paths: Vec<String> = mapping_rows
-                .iter()
-                .filter_map(|row| row.get("path").and_then(Value::as_str).map(str::to_owned))
-                .collect();
-            // The live timeline, when it answers: a Director that rippled
-            // the dead air out moved every later word, and verifying
-            // those words against the pre-run mapping would fail a
-            // compliant edit.
-            let expected = caller
-                .ask("timeline_read", json!({ "path": check.project }))
-                .and_then(|view| {
-                    let rows = timeline_takes(&view, &take_paths);
-                    (!rows.is_empty()).then_some(rows)
-                })
-                .unwrap_or(mapping_rows);
-            let arguments = json!({
-                "action": "verify",
-                "expectedTakes": expected,
-                "actualPath": check.export,
-                "toleranceMs": SYNC_TOLERANCE_MS,
-            });
-            if let Some(reply) = caller.ask("emotion", arguments.clone()) {
-                answered.push("emotion".to_owned());
-                observed.push((
-                    ToolCall {
-                        tool: "emotion".to_owned(),
-                        arguments,
-                    },
-                    reply,
-                ));
+    if let Some(export) = check.export {
+        match expected_takes(check.project) {
+            Ok(mapping_rows) => {
+                let take_paths: Vec<String> = mapping_rows
+                    .iter()
+                    .filter_map(|row| row.get("path").and_then(Value::as_str).map(str::to_owned))
+                    .collect();
+                // The live timeline, when it answers: a Director that rippled
+                // the dead air out moved every later word, and verifying
+                // those words against the pre-run mapping would fail a
+                // compliant edit.
+                let view = caller.ask("timeline_read", json!({ "path": check.project }));
+                // The reading is evidence in its own right: the receipt
+                // reports every call the check actually made, and the
+                // timeline re-read the words gate leaned on used to
+                // vanish from it.
+                if let Some(view) = view.as_ref() {
+                    answered.push("timeline_read".to_owned());
+                    observed.push((
+                        ToolCall {
+                            tool: "timeline_read".to_owned(),
+                            arguments: json!({ "path": check.project }),
+                        },
+                        view.clone(),
+                    ));
+                }
+                let expected = view
+                    .and_then(|view| {
+                        let rows = timeline_takes(&view, &take_paths);
+                        (!rows.is_empty()).then_some(rows)
+                    })
+                    .unwrap_or(mapping_rows);
+                let arguments = json!({
+                    "action": "verify",
+                    "expectedTakes": expected,
+                    "actualPath": export,
+                    "toleranceMs": SYNC_TOLERANCE_MS,
+                });
+                if let Some(reply) = caller.ask("emotion", arguments.clone()) {
+                    answered.push("emotion".to_owned());
+                    observed.push((
+                        ToolCall {
+                            tool: "emotion".to_owned(),
+                            arguments,
+                        },
+                        reply,
+                    ));
+                }
             }
+            Err(error) => warnings.push(error),
         }
-        Err(error) => warnings.push(error),
+    } else {
+        warnings.push(
+            "timeline-ready acceptance: no export was requested, so the words and encoded-audio gates are not required; the saved timeline is the deliverable and can be exported later."
+                .to_owned(),
+        );
     }
     if cancelled.load(Ordering::Relaxed) {
         warnings.push(
@@ -303,11 +463,50 @@ pub fn check(
         );
     }
 
-    let gates = derive_gates(&observed);
+    let mut gates = derive_gates(&observed);
+    // The Director is the creative path: its plan must reach creativeReady,
+    // its rendered picture must be judged, and the timeline it leaves must
+    // be free of shared lanes. The fixed spine cannot promise the first, so
+    // `derive_gates` leaves the picture and lane gates optional; here, where
+    // only the Director's run is checked, they are promoted to required.
+    for gate in &mut gates {
+        if gate.gate == "visual" || gate.gate == "collisions" {
+            gate.required = true;
+        }
+        // Timeline-ready acceptance: the words, LUFS and encoded-stream
+        // gates need a render. Without one they are honestly skipped, not
+        // silently passed, and the timeline gate below is the required
+        // proof that the saved edit exists and reads.
+        if check.export.is_none()
+            && matches!(gate.gate.as_str(), "words" | "audio" | "export-integrity")
+        {
+            gate.required = false;
+        }
+    }
+    let plan_validation = observed
+        .iter()
+        .rev()
+        .find(|(call, _)| call.tool == "plan_validate")
+        .and_then(|(_, reply)| reply.get("creativeReady").and_then(Value::as_bool));
+    gates.push(GateRecord::new(
+        "creative",
+        match plan_validation {
+            Some(true) => GateStatus::Pass,
+            Some(false) => GateStatus::Fail,
+            None => GateStatus::Skipped,
+        },
+        match plan_validation {
+            Some(ready) => format!("the Director's plan reported creativeReady={ready}"),
+            None => "the saved plan was not independently validated as creativeReady".to_owned(),
+        },
+        true,
+    ));
     let verdict = verdict_of(&gates);
     let failure = gates
         .iter()
-        .filter(|gate| gate.status != GateStatus::Pass)
+        .filter(|gate| {
+            gate.status == GateStatus::Fail || (gate.required && gate.status == GateStatus::Skipped)
+        })
         .map(|gate| format!("{}: {}", gate.gate, gate.evidence))
         .collect::<Vec<_>>()
         .join("; ");
@@ -321,7 +520,13 @@ pub fn check(
         calls: answered,
         failure: (!failure.is_empty()).then_some(failure),
     };
-    let receipt = AcceptanceReceipt::new(check.project, check.export, vec![stage], gates, warnings);
+    let receipt = AcceptanceReceipt::new(
+        check.project,
+        check.export.unwrap_or("timeline"),
+        vec![stage],
+        gates,
+        warnings,
+    );
     DirectorAcceptance { receipt }
 }
 
@@ -385,17 +590,170 @@ impl ToolCaller for CheckCaller<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concat_director::timeline_integrity;
 
     #[test]
     fn media_checks_use_the_export_and_create_a_real_contact_sheet() {
-        let asked = checks("/edits/Reel", "/edits/Reel/export/reel.mp4");
+        let asked = checks("/edits/Reel", Some("/edits/Reel/export/reel.mp4"));
         let tools: Vec<&str> = asked.iter().map(|(tool, _)| *tool).collect();
-        assert_eq!(tools, ["motion_probe", "measure_loudness", "watch_render"]);
-        assert_eq!(asked[0].1["path"], "/edits/Reel/export/reel.mp4");
+        assert_eq!(
+            tools,
+            [
+                "timeline_read",
+                "motion_probe",
+                "measure_loudness",
+                "watch_render",
+                "collision_check"
+            ]
+        );
+        assert_eq!(asked[0].1["path"], "/edits/Reel");
         assert_eq!(asked[1].1["path"], "/edits/Reel/export/reel.mp4");
         assert_eq!(asked[2].1["path"], "/edits/Reel/export/reel.mp4");
-        assert_eq!(asked[2].1["project"], "/edits/Reel");
-        assert_eq!(asked[2].1["audio"], true);
+        assert_eq!(asked[3].1["path"], "/edits/Reel/export/reel.mp4");
+        assert_eq!(asked[3].1["project"], "/edits/Reel");
+        assert_eq!(asked[4].1["path"], "/edits/Reel");
+        // The audio flag rides the watch_render ask (index 3), not the
+        // loudness measurement (index 2) - measure_loudness carries only
+        // its path.
+        assert_eq!(asked[3].1["audio"], true);
+    }
+
+    #[test]
+    fn timeline_ready_checks_read_the_open_project_not_a_render() {
+        let asked = checks("/edits/Reel", None);
+        let tools: Vec<&str> = asked.iter().map(|(tool, _)| *tool).collect();
+        assert_eq!(tools, ["timeline_read", "watch_render", "collision_check"]);
+        assert_eq!(asked[0].1["path"], "/edits/Reel");
+        assert_eq!(asked[1].1["project"], "/edits/Reel");
+        assert!(asked[1].1.get("path").is_none());
+        assert_eq!(asked[1].1["audio"], true);
+        assert_eq!(asked[2].1["path"], "/edits/Reel");
+    }
+
+    #[test]
+    fn timeline_integrity_accepts_valid_file_backed_and_title_clips() {
+        let dir =
+            std::env::temp_dir().join(format!("funcut-acceptance-media-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.mp4");
+        std::fs::write(&source, b"fixture").unwrap();
+        let view = json!({
+            "timeline": {
+                "tracks": [{"id":"video-1"},{"id":"titles-1"}],
+                "clips": [
+                    {"id":"c1","kind":"video","track":"video-1","start":0.0,"duration":4.0,"sourceStart":0.0,"media":"m1"},
+                    {"id":"c2","kind":"text","track":"titles-1","start":1.0,"duration":2.0}
+                ]
+            },
+            "media": [{"id":"m1","path":source.to_string_lossy()}]
+        });
+        let result = timeline_integrity(&view).unwrap();
+        assert!(result.contains("2 clips"));
+        assert!(result.contains("1 file-backed"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn timeline_integrity_rejects_missing_media_tracks_and_source_files() {
+        let missing_track = json!({
+            "timeline":{"tracks":[],"clips":[
+                {"id":"c1","kind":"text","track":"gone","start":0.0,"duration":1.0}
+            ]},
+            "media":[]
+        });
+        assert!(
+            timeline_integrity(&missing_track)
+                .unwrap_err()
+                .contains("missing track")
+        );
+
+        let missing_media = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":1.0,"media":"gone"}
+            ]},
+            "media":[]
+        });
+        assert!(
+            timeline_integrity(&missing_media)
+                .unwrap_err()
+                .contains("missing media")
+        );
+
+        let missing_file = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":1.0,"media":"m1"}
+            ]},
+            "media":[{"id":"m1","path":"/definitely/missing/funcut-source.mp4"}]
+        });
+        assert!(
+            timeline_integrity(&missing_file)
+                .unwrap_err()
+                .contains("source file is missing")
+        );
+    }
+
+    #[test]
+    fn timeline_integrity_rejects_duplicate_bin_ids_and_source_overruns() {
+        let duplicate_media = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":1.0,"media":"m1","sourceStart":0.0}
+            ]},
+            "media":[
+                {"id":"m1","path":"/tmp/a.mp4"},
+                {"id":"m1","path":"/tmp/b.mp4"}
+            ]
+        });
+        assert!(
+            timeline_integrity(&duplicate_media)
+                .unwrap_err()
+                .contains("duplicate media id")
+        );
+
+        let dir =
+            std::env::temp_dir().join(format!("funcut-acceptance-overrun-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.mp4");
+        std::fs::write(&source, b"fixture").unwrap();
+        let source_overrun = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"video","track":"v1","start":0.0,"duration":4.0,"speed":2.0,"media":"m1","sourceStart":2.0}
+            ]},
+            "media":[{"id":"m1","path":source.to_string_lossy(),"duration":8.0}]
+        });
+        assert!(
+            timeline_integrity(&source_overrun)
+                .unwrap_err()
+                .contains("reads past media")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn timeline_integrity_rejects_invalid_clip_timing_and_duplicate_ids() {
+        let invalid_timing = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"c1","kind":"text","track":"v1","start":-1.0,"duration":1.0}
+            ]},
+            "media":[]
+        });
+        assert!(
+            timeline_integrity(&invalid_timing)
+                .unwrap_err()
+                .contains("invalid start")
+        );
+
+        let duplicate = json!({
+            "timeline":{"tracks":[{"id":"v1"}],"clips":[
+                {"id":"same","kind":"text","track":"v1","start":0.0,"duration":1.0},
+                {"id":"same","kind":"text","track":"v1","start":1.0,"duration":1.0}
+            ]},
+            "media":[]
+        });
+        assert!(
+            timeline_integrity(&duplicate)
+                .unwrap_err()
+                .contains("duplicates clip id")
+        );
     }
 
     #[test]
@@ -471,6 +829,7 @@ mod tests {
             "watch_render",
             "craft_critique",
             "emotion",
+            "collision_check",
         ] {
             assert!(
                 crate::protocol::DIRECTOR_ALLOWLIST.contains(&tool),

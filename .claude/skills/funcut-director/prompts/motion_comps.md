@@ -186,7 +186,43 @@ hand-authored comps, 54.6 s of 1080p30 in 1638 frames, rendered in 121 s on two 
 
 ---
 
-## 6. Verification
+## 6. 3D, camera and bone rigs — the power the presets do not show
+
+Geneva is not only 2D cards. A comp document can carry a **3D camera** and a
+**bone rig**, and those are the moves that make a designed beat feel filmed
+rather than pasted:
+
+- **`set-camera`** bakes a push, pan, roll or a multi-waypoint move into every
+  root layer. `depths` gives layers nearer and further than the camera plane
+  (`0.1..=3.0`), so a stack at `0.5`, `1.0` and `2.0` reads as real parallax.
+  Use it for a product turn, a fly-through, a title reveal or a hero push.
+  The camera moves **root** layers; group children ride their parent.
+- **`NodeKind::Camera`** with a `Camera3D` rig and optional depth of field is
+  the document-level version when the comp needs a true perspective. See
+  `data.camera` in `docs/MOTION.md` for a worked document.
+- **`NodeKind::Rig`** with `bones` articulates a character or object; animate
+  the bones, not a flat scale. A rig is authored in the comp JSON, so start
+  from a preset/example, `motion_inspect` it, then edit the bone tracks.
+- **`parallax`** on storyboard layers is the cheap 2.5D depth: three layers at
+  `0.5`, `1.0`, `2.0` drift at three rates. Identical drift on every layer is
+  a slideshow; differing drift is depth.
+- **`data.particles`** is atmosphere (embers, dust, confetti, sparks) and
+  **`funcut.backdrop.mesh`** is a lit mesh backdrop; both are native, so they
+  bake without the sidecar.
+
+The design rule: 3D must serve the beat. A camera fly-through over a stat
+card is a gimmick; a camera move that reveals the number the voice just said
+is a shot. If the sidecar is missing, a markup-requiring comp is refused with
+the install instructions; report that, do not fake depth with a flat scale.
+
+### Vertical 3D
+
+A 9:16 reel has a narrow horizontal field: lateral camera moves lose their
+read. Prefer vertical push-ins, slow drifts and rotations around the subject's
+axis; keep the subject in the middle 60%; and compose the comp at the reel's
+own frame size, never a 16:9 bake cropped later.
+
+## 7. Verification
 
 - Three frames per comp: mid-entrance, settled, mid-exit. A comp that is right at 2 s and wrong at
   6 s is a bug you have not seen yet.

@@ -95,8 +95,13 @@ jobs:
       # hosted-critic setup once broke silently.
       - run: python3 src/crates/concat-mcp/sense/vlm.py selftest
         if: ${{ !cancelled() }}
-      # The voice-signal reader's own selftest: the six wired signals, the
-      # three regex signals and the engine notes, on a synthetic take.
+      # Keep the Director's human-readable signal matrix in exact sync
+      # with the runtime catalogue: no invented aliases, missing readings
+      # or stale family counts can reach a creative run.
+      - run: python3 scripts/check-signal-matrix.py
+        if: ${{ !cancelled() }}
+      # The voice-signal reader's own selftest: the catalogue's measured
+      # readings, their sources and the conservative fallbacks on a synthetic take.
       - run: python3 src/crates/concat-mcp/sense/voice_signals.py selftest
         if: ${{ !cancelled() }}
       # The consumption layer's five family selftests: discourse (the

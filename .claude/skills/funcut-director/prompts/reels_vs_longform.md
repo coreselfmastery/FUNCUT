@@ -93,3 +93,16 @@ Reels are 9:16 (1080×1920). Longform is 16:9 for YouTube, 9:16 for
 vertical-first platforms. The plan's `aspect` sets the canvas via
 `project_set_video` BEFORE assets are gathered; a canvas changed after
 placement invalidates every fit and every comp bake.
+
+For a vertical reel:
+
+- set `style.footage.orientation` to `vertical`; `plan_validate` checks it
+  against `aspect`;
+- search stock with `orientation:"vertical"` first, then fill horizontally;
+  a 16:9 clip is `fill`ed and reframed, never shrunk with letterbox bars;
+- keep faces and the subject in the middle 60%; keep captions above the
+  platform's bottom UI and below its top chrome;
+- compose Geneva comps and generated images at 1080×1920, not a 16:9 bake
+  cropped later;
+- prefer vertical push-ins and drifts; lateral whips lose their read;
+- one idea per screen: the viewer sees one screen at a time.

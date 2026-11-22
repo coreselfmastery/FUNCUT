@@ -1,4 +1,7 @@
-# AUTO EDIT — Phase 0 audit
+# AUTO EDIT — audit
+
+> This audit predates the flat 25-phase ladder. The current Director
+> contract is `SKILL.md`; the latest changes are in `FUNCUT-CHANGES.md` §0.
 
 Every claim below is read from this tree, with the file and line that
 answers it. Where a claim in the improvement list could not be reproduced,

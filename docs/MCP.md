@@ -156,7 +156,7 @@ died with:
   export) up to `timeoutSeconds` (60 default, 600 at most) and returns its
   status.
 
-The motion layer - the design door the director skill's Phase 5b assumes -
+The motion layer - the design door the director skill's Phase 16 assumes -
 is fifteen tools: ten thin wrappers over the `concat-motion` crate here (the same
 vocabulary the `concat-motion-agent` CLI speaks), `geneva_explain` for the
 engine's own diagnostic codes, `motion_farm_progress` for reading a farmed

@@ -25,12 +25,12 @@ The skill is two layers, both Markdown knowledge (no runtime dependencies):
   decisions (situation → basis → decision → output), each with quick
   answers and per-software implementation notes. The modules that matter
   most to this editor's pipeline: `02` (the audio-driven cutting spine —
-  the theory behind Phase 1–2), `03` (A/B-roll classification and the five
-  B-roll rules behind Phase 4–5), `04`/`15` (music/duck and the voice chain
+  the theory behind Phases 2–7), `03` (A/B-roll classification and the five
+  B-roll rules behind Phases 13–15), `04`/`15` (music/duck and the voice chain
   behind the L floor), `05` (pacing and structure), `06` (color-grading
-  workflow behind Phase 6), `13` (caption readability and the four-zone
+  workflow behind Phase 19), `13` (caption readability and the four-zone
   text system behind the Z floor), `14` (transition semantics behind the T
-  floor), `12` (export parameters behind Phase 8).
+  floor), `12` (export parameters behind Phase 25).
 - **The execution guides** (`references/editor-*.md`) — the "which buttons"
   layer per software. `editor-funcut.md` is the one written for THIS
   editor: the module-to-tool map, the 80 ms padding rule, the honest
@@ -57,7 +57,7 @@ and decision lists, not prose-heavy pages.
 
 Two integration rules (both shelves follow the same ones maestro does):
 
-1. The Phase-0 `creative_brief` stays the single locked brief;
+1. The Phase 1 `creative_brief` stays the single locked brief;
    clip-skills' clarification checklist is a way to fill it, not a second
    interrogation. Its autonomous-execute mode does not run inside this
    repo — the director pipeline is the executor.

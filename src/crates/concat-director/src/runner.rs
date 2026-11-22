@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::error::{AutoEditError, ToolCall, ToolError};
-use crate::receipt::{AcceptanceReceipt, StageOutcome, StageRecord, derive_gates, provenance_of};
+use crate::receipt::{
+    AcceptanceReceipt, StageOutcome, StageRecord, derive_gates_with_stages, provenance_of,
+};
 use crate::stage::{EditProgram, ErrorPolicy, ProgramStep, ReplyGate, Stage};
 use crate::state::{AutoEditEvent, AutoEditProgress, AutoEditState, RunOutcome, timestamp};
 
@@ -511,6 +513,20 @@ impl Runner {
                     if !records[index].calls.contains(&call.tool) {
                         records[index].calls.push(call.tool.clone());
                     }
+                    // The skip replays the stage's whole evidence, and
+                    // the terminal states are part of it: a resumed run
+                    // that skipped its Verify step used to complete with
+                    // no verification at all (the report read empty),
+                    // and a render the prior run started was not one
+                    // this run could cancel - the replay carries both
+                    // exactly as the run that drew them carried them.
+                    if stage == Stage::Verify && (call.tool == "emotion" || verification.is_null())
+                    {
+                        verification = reply.clone();
+                    }
+                    if call.tool == "export_start" {
+                        exported = true;
+                    }
                 }
                 continue;
             }
@@ -730,31 +746,54 @@ impl Runner {
                     // log the run has drawn so far - its own replies
                     // included - until it answers None. Each call is
                     // stamped and driven exactly as a static one is.
-                    ProgramStep::Derived(derived) => loop {
-                        let next = (derived.next)(&log);
-                        let Some(next) = next else {
-                            break;
-                        };
-                        let call = stamp(epoch, stage)(next);
-                        last_call = Some(call.clone());
-                        let (walk_failure, walk_replies) = self.drive_calls(
-                            stage,
-                            index,
-                            total,
-                            run_started,
-                            &running,
-                            &mut log,
-                            &mut applied,
-                            vec![call],
-                            caller,
-                        );
-                        replies.extend(walk_replies);
-                        if let Some((error, attempt)) = walk_failure {
-                            failure = Some(error);
-                            failed_attempt = attempt;
-                            break;
+                    // The queue is bounded: a closure that answered a call
+                    // forever would spin the runner without one, and the
+                    // bound turns that into the stage's own failure
+                    // under its policy instead of a run that never ends.
+                    ProgramStep::Derived(derived) => {
+                        let mut derived_calls = 0usize;
+                        loop {
+                            derived_calls += 1;
+                            if derived_calls > 10_000 {
+                                failure.get_or_insert(AutoEditError::new(
+                                    stage,
+                                    last_call.clone(),
+                                    ToolError {
+                                        message: "the derived step never ran out of calls"
+                                            .to_owned(),
+                                        retryable: Some(false),
+                                        retry_after: None,
+                                        code: None,
+                                    },
+                                ));
+                                failed_attempt = 1;
+                                break;
+                            }
+                            let next = (derived.next)(&log);
+                            let Some(next) = next else {
+                                break;
+                            };
+                            let call = stamp(epoch, stage)(next);
+                            last_call = Some(call.clone());
+                            let (walk_failure, walk_replies) = self.drive_calls(
+                                stage,
+                                index,
+                                total,
+                                run_started,
+                                &running,
+                                &mut log,
+                                &mut applied,
+                                vec![call],
+                                caller,
+                            );
+                            replies.extend(walk_replies);
+                            if let Some((error, attempt)) = walk_failure {
+                                failure = Some(error);
+                                failed_attempt = attempt;
+                                break;
+                            }
                         }
-                    },
+                    }
                     ProgramStep::Fanned(_) => unreachable!("the fan ran above"),
                 }
             }
@@ -794,7 +833,25 @@ impl Runner {
                 for gate in &gates {
                     let mut answered = false;
                     let mut failed = None;
-                    for (_, reply) in &replies {
+                    // Repeated identical calls are polls of one job: an
+                    // earlier poll's "still running" is progress, not the
+                    // job's answer, so only the LAST reply of each distinct
+                    // call is judged - a lane's two chained waits cover a
+                    // budget the first wait alone cannot, and the first
+                    // wait's "running" was failing the whole stage after
+                    // the work was already paid for. Distinct calls - one
+                    // per fan lane, one per question - are each judged by
+                    // their own final answer, so a lane that never
+                    // finished still fails its gate.
+                    let mut last_of_call: Vec<(String, &Value)> = Vec::new();
+                    for (call, reply) in &replies {
+                        let key = format!("{}\u{1}{}", call.tool, call.arguments);
+                        match last_of_call.iter_mut().find(|(k, _)| *k == key) {
+                            Some(slot) => slot.1 = reply,
+                            None => last_of_call.push((key, reply)),
+                        }
+                    }
+                    for reply in last_of_call.iter().map(|(_, reply)| *reply) {
                         if let Some(answer) = gate.checked_by(reply) {
                             answered = true;
                             if let Err(sentence) = answer {
@@ -894,19 +951,21 @@ impl Runner {
         // replies its calls drew. A stage that never got its turn stays
         // `NotReached`, and a gate whose measurement never landed is
         // `Skipped` - never a pass the run did not earn.
+        let gates = derive_gates_with_stages(&observed, &records);
         let receipt = AcceptanceReceipt::new(
             self.project().display().to_string(),
             program.export.display().to_string(),
             records,
-            derive_gates(&observed),
+            gates,
             warnings.clone(),
         )
         .with_assets(provenance_of(&observed));
-        // A completed render is not an accepted edit. Keep the exported
-        // sibling for inspection, but force the warning terminal state
-        // whenever any required quality gate is rejected or unmeasured.
-        // The receipt keeps the stage warnings alone; this sentence is
-        // the receipt's verdict, not a warning it recorded.
+        // A completed stage sequence is not an accepted edit. Keep its
+        // editable project or explicit export for inspection, but force
+        // the warning terminal state whenever any required quality gate
+        // is rejected or unmeasured. The receipt keeps stage warnings
+        // alone; this sentence is the receipt's verdict, not a warning it
+        // recorded.
         if program.enforce_acceptance && receipt.verdict != crate::receipt::Verdict::Accepted {
             warnings.push(format!(
                 "quality acceptance {}: {}",
@@ -914,10 +973,12 @@ impl Runner {
                 receipt.summary()
             ));
         }
-        let detail = if warnings.is_empty() {
-            "the export is complete"
-        } else {
-            "the export is complete, with warnings"
+        let timeline_delivery = program.export.as_path() == std::path::Path::new("timeline");
+        let detail = match (timeline_delivery, warnings.is_empty()) {
+            (true, true) => "the editable timeline is ready",
+            (true, false) => "the editable timeline is ready, with warnings",
+            (false, true) => "the export is complete",
+            (false, false) => "the export is complete, with warnings",
         };
         let progress = AutoEditProgress::new(
             last.stage(),

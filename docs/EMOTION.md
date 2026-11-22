@@ -66,8 +66,8 @@ The nine stages a voiceover-driven edit walks, and the tool that owns each:
 | 3. Brand guide | the channel's non-negotiables | `emotion {action: "template"}` → `creative_brief {action:"set", brief:{brandKit}}` |
 | 4. Edit plan | emotion-constrained segments | `plan_validate` (per-segment `emotion`, `act`, `easing`, `colourTemp`, `duckDb`) |
 | 5a. Stock | emotion+act query vocabulary, then the gate | `openvid_search` with the extract's `queries` → `stock_contact_sheet` → `emotion {action: "gate"}` |
-| 5b. Motion | easing from the emotion, MAESTRO's judgment | `motion_inspect` → `motion_frame` → `motion_bake` (curve = the extract's authoring JSON) |
-| 5c. Sound | SFX peaks ON cuts, BGM ducked by act | `sounds_search` (`syncAt` → plan `peakAt`) → `sounds_add`; `clip_audio_levels_db` to each segment's `duckDb` |
+| 16. Motion | easing from the emotion, MAESTRO's judgment | `motion_inspect` → `motion_frame` → `motion_bake` (curve = the extract's authoring JSON) |
+| 17. Sound | SFX peaks ON cuts, BGM ducked by act | `sounds_search` (`syncAt` → plan `peakAt`) → `sounds_add`; `clip_audio_levels_db` to each segment's `duckDb` |
 | 6. Placement gate | 2+ failed checks rejects; all rejected drops the beat | `emotion {action: "gate", segment, candidates, brand}` |
 | 7. Grade + transitions | per-act colour temperature inside ONE look | `effect_layer_add` once; transitions via `clip_update` (never `effect_layer_add`) |
 | 8. Critic | six-axis score, measured not felt | `watch_render` → `craft_critique` |
@@ -170,8 +170,8 @@ defects the eye cannot see and no score would catch.
 ## Where the laws live
 
 - The director's contract: `.claude/skills/funcut-director/SKILL.md` —
-  Phase 1b (the read), §3.E (the gate floor), Phase 3 (the plan's
-  per-segment emotion fields), Phase 8 (the verify).
+  Phase 3 (the read), §3.E (the gate floor), Phase 9 (the plan's
+  per-segment emotion fields), Phase 25 (the verify).
 - The plan schema: `.claude/skills/funcut-director/templates/edit_plan.schema.json`
   — `emotion`, `act`, `easing`, `colourTemp`, `duckDb` per segment,
   validated when present, optional so non-voiceover edits still pass.

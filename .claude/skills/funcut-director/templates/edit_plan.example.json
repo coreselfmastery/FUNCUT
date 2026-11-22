@@ -20,6 +20,46 @@
   "aspect": "9:16",
   "mode": "reel",
   "niche": "science",
+  "style": {
+    "name": "salt light / vertical",
+    "palette": ["#08131d", "#7fd8ff", "#f4ead8"],
+    "grade": "concat.teal-orange",
+    "captions": {
+      "font": "Inter",
+      "weight": 700,
+      "emphasisColor": "#7fd8ff",
+      "position": "lower-third"
+    },
+    "motion": {
+      "language": "slow vertical push-ins and one kinetic type system",
+      "easing": "spring-pop",
+      "intensity": 0.58
+    },
+    "sound": {
+      "duckDb": -12,
+      "texture": "dry room, low sub pulse, airy transitions"
+    },
+    "footage": {
+      "orientation": "vertical",
+      "treatment": "fill",
+      "continuity": "one camera height, no letterbox, colour follows the act"
+    },
+    "continuityRules": [
+      "fill every frame; never letterbox a vertical reel",
+      "one accent colour per section",
+      "no two consecutive shots share a camera height"
+    ]
+  },
+  "retention": {
+    "hook": "a mountain dissolves into the sea in the first two seconds, asking where the rock went",
+    "turnAt": 10.0,
+    "payoffAt": 21.0,
+    "patternBreaks": [6.0, 10.0, 18.0],
+    "openLoops": [
+      "why is the sea salty if rivers are fresh?",
+      "where does the salt stay when water evaporates?"
+    ]
+  },
   "sections": [
     {
       "role": "hook",

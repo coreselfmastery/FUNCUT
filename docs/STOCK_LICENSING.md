@@ -30,6 +30,12 @@ The shelves the index names, and what is known about each:
 | `celebv` | CelebV-HQ-derived person/face clips | **Identity and likeness rights.** Highest-risk shelf for commercial or political content. Avoid for ads, endorsements or anything implying a real person said or did something. |
 | `other` / WebVid | Web-crawled video with scraped alt-text | Unknown provenance. Treat as research-only unless you clear it yourself. |
 
+The live shelves (`stock_search`) are **video-only** in this build: Pexels
+and Pixabay video APIs are called, and every hit is an MP4. There is no
+stock-photo result to import. A still for a beat comes from
+`preview_frame` on a clip, a generated image (`prompts/ai_media.md`), or a
+Geneva comp - not from a stock-photo call that does not exist.
+
 Additional facts from the code, not guesses:
 
 - The index stores captions, aesthetic/motion/temporal scores, camera

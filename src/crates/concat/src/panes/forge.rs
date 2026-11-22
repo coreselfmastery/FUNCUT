@@ -145,7 +145,7 @@ pub enum ForgeMsg {
     /// The check the pane runs on a finished Director run came back: the
     /// receipt is the verdict, and the exit code is not.
     DirectorChecked(Box<concat_mcp::acceptance::DirectorAcceptance>),
-    /// The post-export acceptance worker could not reach the editor's MCP backend.
+    /// The post-run acceptance worker could not reach the editor's MCP backend.
     DirectorCheckFailed(String),
     /// The signal catalogue came back: the families the lab's buttons are
     /// built from, or why the catalogue could not be read.
@@ -212,7 +212,7 @@ pub struct ForgePane {
 pub struct AutoEditPane {
     /// A run is going.
     pub running: bool,
-    /// A Director process has exited, but its export is still being independently checked.
+    /// A Director process has exited, but its timeline is still being independently checked.
     /// Keep both editing entry points locked until that check has a terminal result.
     pub checking: bool,
     /// The stage's own word, localized - or the terminal state's.
@@ -359,7 +359,7 @@ impl ForgePane {
                 // A handed-over run has no runner to report a stage, so the
                 // stage is read from the harness's own words as they come:
                 // the phase names the director skill prints, mapped onto
-                // the fraction of its twelve phases they sit at. A line
+                // the fraction of its twenty-five phases they sit at. A line
                 // that names no phase moves nothing, and a line naming an
                 // earlier phase than the one the run is in - a recap, a
                 // quoted plan - moves it backwards neither: the bar only
@@ -809,14 +809,14 @@ impl ForgePane {
     /// and then the deterministic spine of the pipeline is run by the
     /// concat-director runner over the window's own server: the repair,
     /// readings, tighten, grade, licensed live-stock B-roll, captions,
-    /// title entrances, music, preview, revise, export, verify and watch.
+    /// title entrances, music, preview, revise, save the timeline, verify and watch.
     /// The plan's creative brief, the eye-picked stock and the baked motion
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
     fn auto_edit_start(&mut self, script: String, studio: &mut Studio) {
         if auto_edit_busy(self.auto.running, self.auto.checking) {
             studio.notify(
-                "AUTO EDIT is still running or checking its previous export",
+                "AUTO EDIT is still running or checking its previous timeline",
                 true,
             );
             return;
@@ -860,6 +860,7 @@ impl ForgePane {
             self.auto.fraction = 0.0;
             self.auto.visible = true;
             self.auto.outcome = 0;
+            self.auto.check_cancel = None;
             self.auto.started = Some(Instant::now());
             self.auto.project = Some(source.project.clone());
             self.auto.source = Some(source.clone());
@@ -1098,7 +1099,6 @@ impl ForgePane {
         if handed_over {
             return;
         }
-        let mut auto = auto;
         auto.director = director_fallback;
         // The fixed spine runs the stages in this process, so it needs the
         // window's own server as its backend. The handover above does not:
@@ -1138,7 +1138,7 @@ impl ForgePane {
     /// The Director run's end. A zero exit is the harness saying the
     /// agent finished; the edit it made is opened here in the window, the
     /// same landing a Start Forge run has, and the pane reports the run
-    /// rather than a measured export - the Director's own craft_critique
+    /// rather than a measured timeline - the Director's own craft_critique
     /// and its final watch_render are what judged the file, and the pane
     /// does not invent a score of its own.
     fn auto_director_ended(&mut self, code: i32, studio: &mut Studio) {
@@ -1169,7 +1169,7 @@ impl ForgePane {
             // Keep the UI's running state during acceptance so the same
             // Stop button can cancel the remaining independent checks.
             self.auto.running = true;
-            // The agent has exited, but the export is not accepted yet. Keep
+            // The agent has exited, but the timeline is not accepted yet. Keep
             // the project locked while the independent checks run: otherwise
             // a second Start/AUTO EDIT can replace the active project and the
             // first run's receipt can be written beside the wrong project.
@@ -1178,21 +1178,16 @@ impl ForgePane {
             self.auto.check_cancel = Some(Arc::clone(&check_cancel));
             // The Director phases have ended, but independent acceptance is
             // still outstanding. Do not display 100% until every required
-            // export gate has actually passed.
+            // timeline gate has actually passed.
             self.auto.fraction = director_acceptance_fraction(false);
             // The harness exiting zero says the agent stopped, not that the
-            // edit exists. So the run is held to the same four questions the
-            // fixed spine asks of its own export - is the file readable, is
-            // the mix on target, what does the critic score it, does it say
-            // the words the edit placed - and only a receipt the gates
-            // accept is reported as a finished edit. The check runs on a
-            // worker: it probes and measures a real file.
+            // edit exists. The Director's deliverable is the saved timeline,
+            // not a render: the acceptance reads the open project, judges
+            // its composited picture and checks the lanes. An export is
+            // optional and only adds the encoded-file gates.
             self.auto.stage = t("forge.autoEditCheckingStage");
             self.set_status(t("forge.autoEditCheckingStage"));
-            let (Some(project), Some(export)) = (
-                self.auto.project.clone(),
-                self.auto.source.as_ref().map(|s| s.export.clone()),
-            ) else {
+            let Some(project) = self.auto.project.clone() else {
                 self.auto.checking = false;
                 self.auto.running = false;
                 self.auto.check_cancel = None;
@@ -1200,20 +1195,28 @@ impl ForgePane {
                 self.auto.stage = t("forge.autoEditDirectorFailedStage");
                 self.set_status(t("forge.autoEditDirectorFailedStage"));
                 studio.notify(
-                    "the Director finished but the run has no project and export to check",
+                    "the Director finished but the run has no project to check",
                     true,
                 );
                 self.live_follow_stop();
                 studio.end_live_follow_back();
                 return;
             };
+            let export = self
+                .auto
+                .source
+                .as_ref()
+                .map(|source| source.export.clone())
+                .filter(|export| {
+                    !export.trim().is_empty() && std::path::Path::new(export).is_file()
+                });
             crate::host::spawn_detached(move || {
                 let checked = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
                     Ok(mut backend) => {
                         let toolbox = concat_mcp::tools::Toolbox::new();
                         let check = concat_mcp::acceptance::DirectorCheck {
                             project: &project,
-                            export: &export,
+                            export: export.as_deref(),
                         };
                         concat_mcp::acceptance::check(
                             &check,
@@ -1319,6 +1322,16 @@ impl ForgePane {
             studio.notify(&tf("forge.autoEditDirectorUnproven", &[&summary]), true);
             self.live_follow_stop();
             studio.end_live_follow_back();
+            // The sibling stays and opens: the edit is real, it just is not
+            // proven. The user can inspect and keep editing it, and a
+            // second run resumes from it rather than rebuilding it.
+            if let Some(path) = self.auto.project.clone() {
+                match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
+                {
+                    Ok(()) => {}
+                    Err(error) => studio.notify(&error, true),
+                }
+            }
         }
     }
 
@@ -1338,6 +1351,12 @@ impl ForgePane {
         );
         self.live_follow_stop();
         studio.end_live_follow_back();
+        if let Some(path) = self.auto.project.clone() {
+            match concat_host::projects::open(&path).and_then(|info| studio.open_project(info)) {
+                Ok(()) => {}
+                Err(open) => studio.notify(&open, true),
+            }
+        }
     }
 
     /// Begins following a run's edit live: the window's timeline becomes
@@ -1410,6 +1429,14 @@ impl ForgePane {
     /// shipped, the edit opened here on the timeline, which is the point
     /// of the run.
     fn auto_edit_ended(&mut self, state: AutoEditState, studio: &mut Studio) {
+        // Keep the source's provenance before terminal cleanup clears the
+        // retry state. The report must say whether the Director actually
+        // ran, not infer that from a source object already discarded.
+        let director_reason = self
+            .auto
+            .source
+            .as_ref()
+            .and_then(|source| source.director.clone());
         self.auto.running = false;
         self.auto.started = None;
         self.live_follow_stop();
@@ -1440,7 +1467,14 @@ impl ForgePane {
                     AutoEditState::CompletedWithWarnings { warnings, .. } => warnings.len(),
                     _ => 0,
                 };
-                let exported = export.display().to_string();
+                let exported = if export == std::path::Path::new("timeline") {
+                    self.auto
+                        .project
+                        .clone()
+                        .unwrap_or_else(|| "editable timeline".to_owned())
+                } else {
+                    export.display().to_string()
+                };
                 if warnings == 0 {
                     self.auto.stage = t("forge.autoEditDoneStage");
                     self.set_status(t("forge.autoEditDoneStage"));
@@ -1524,13 +1558,9 @@ impl ForgePane {
             // fallback's reason was only ever a toast the user could miss
             // - here it is the record's own first fact, beside the edit
             // it explains.
-            let director = match self.auto.source.as_ref() {
-                Some(source) => source.director.clone(),
-                None => None,
-            };
             report.insert(
                 "director".to_owned(),
-                match director {
+                match director_reason {
                     Some(why) => serde_json::json!({ "used": false, "why": why }),
                     None => serde_json::json!({ "used": true }),
                 },
@@ -2961,8 +2991,8 @@ fn director_run_prompt(
              overlaps it played with are the edit's timing, and voiceover-mapping.json in the \
              project root maps each sibling clip to its source. Do NOT re-import, re-place, \
              retime or ripple the voiceover clips. Direct the WHOLE edit around that \
-             pre-placed narration: repair a rough take before analysing it (Phase 1), tighten \
-             only the dead air (Phase 2 - a dramatic hold is the performance, keep it), then \
+             pre-placed narration: repair a rough take before analysing it (Phase 2), tighten \
+             only the dead air (Phase 7 - a dramatic hold is the performance, keep it), then \
              the full pipeline: emotion and voice-signal reads, plan, B-roll, captions, \
              motion comps, ONE grade, the watch/critique loop, export.\n\n",
             project = source.project,
@@ -2998,13 +3028,13 @@ fn director_run_prompt(
         )
     };
     format!(
-        "Use the funcut-director skill and follow its phases IN ORDER. You are directing a \
+        "Use the funcut-director skill and follow its 25 phases IN ORDER. You are directing a \
          video, not assembling clips. The skill rides with two judgment shelves you MUST \
          consult, not decorate with: maestro (design, motion and film judgment - its shot \
          cards, its 157-shot vocabulary, its sound-design method) and clip-skills (the \
          editing craft - where to cut, the audio spine, B-roll matching, pacing, grading, \
-         voice processing, export numbers). Phase 3 draws on clip-skills' audio-driven \
-         cutting module and maestro's shot cards for scale, motion and register; Phase 4 \
+         voice processing, export numbers). Phase 9 draws on clip-skills' audio-driven \
+         cutting module and maestro's shot cards for scale, motion and register; Phase 13 \
          draws on clip-skills' B-roll matching module; name the module each decision used \
          in the plan's signalLog notes. An edit that never opened a shelf is an edit that \
          guessed.\n\n{brief}{material}\
@@ -3138,15 +3168,44 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
             .to_owned()
     };
     format!(
-        "Use the funcut-director skill and follow its phases IN ORDER. This is an \
+        "Use the funcut-director skill and follow its 25 phases IN ORDER. This is an \
          UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
          creative decision yourself and record it.\n\n\
+         READ THE DEEP PLAYBOOKS BEFORE YOU DECIDE: read .claude/skills/funcut-director/SKILL.md, \
+         prompts/creative_direction.md, prompts/style_bible.md, prompts/ai_media.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
+         and the example, prompts/motion_comps.md with .claude/skills/motion/SKILL.md, \
+         prompts/quality_loop.md, prompts/power_moves.md, prompts/signal_matrix.md, \
+         prompts/signal_recipes.md, prompts/emotion_to_edit.md, prompts/token_budget.md \
+         and prompts/tool_reference.md. The skill is the pipeline; the playbooks are the \
+         craft. Do not plan from memory.\n\n\
+         ALL-SIGNAL CONTRACT: voice_signals exposes 50 named readings across 13 families. Read \
+         prompts/signal_matrix.md and spend the readings, not just the family names: use the \
+         accepted signalLog family alias from the matrix, name the exact catalogue reading in \
+         its evidence note, and record confidence plus the decision it changed; a reading that \
+         was absent is named unmeasured, never cited at confidence 0. A silent family is a broken promise, not a neutral choice. Then use \
+         prompts/signal_recipes.md: score the seam, set the cut density, choose the cut type, \
+         and fall back conservatively when confidence is low.\n\n\
+         EMOTION IS A RECIPE: prompts/emotion_to_edit.md turns each of the seven labels and \
+         its intensity into pace, cut types, captions, sound, grade, motion and duck. The act \
+         wins the structure; the label wins the texture; log both.\n\n\
+         TOKEN BUDGET: prompts/token_budget.md is the 10-minute estimate (250-500k typical, \
+         800k hard stop) and the reduction rules. Read each tool result once, keep a compact \
+         per-section note, contact-sheet before metadata, cap candidates at three, one plan, \
+         one critique per pass, one revision before the re-watch. Never cut the first three \
+         seconds, the turn, the voice read, the contact sheet, the frame proof or the whole-cut \
+         watch to save tokens.\n\n\
+         MULTI-AGENT, WHEN THE HARNESS EXPOSES IT: if spawn_agents or /workflow is available, \
+         fan out the independent read-only work - one agent per stock slot, one per motion beat, \
+         one for sound, one for the story map, and a fresh-context critic. Subagents return \
+         JSON, paths and reasons, never edits. YOU are the only writer: only this thread calls \
+         edit_apply or project_save. If no subagent tool exists, parallelise \
+         independent tool calls and keep every write sequential; do not pretend a fan-out.\n\n\
          THE PROJECT: open '{project}' (project_open). The narration is ALREADY on the \
          timeline, reconstructed clip for clip with its own starts, in/out points, speed, \
          volume and fades; voiceover-mapping.json maps each clip to its source. Do NOT \
          re-import, re-place or otherwise retime the narration clips - with ONE \
          exception: you MAY tighten measured dead air with removeSpans on the narration \
-         clips (ripple on), which the skill's own Phase 2 asks for. The WORDS must \
+         clips (ripple on), which the skill's own Phase 7 asks for. The WORDS must \
          survive the tighten: never cut inside a word, and verify with emotion \
          {{action:\"verify\"}} on the exported file before you claim success.\n\n\
          {critic}\
@@ -3154,7 +3213,8 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          placed; nothing has been MEASURED yet. The repair, the transcription, \
          voice_signals and emotion are YOURS to run on this sibling, in the skill's order - \
          do not skip them and do not assume them. Every creative decision must name the \
-         signal that drove it in the plan's signalLog - an edit that never read the voice is \
+         signal that drove it in the plan's signalLog, with the confidence the profile \
+         rated it at and a one-sentence basis - an edit that never read the voice is \
          an edit that guessed, and an unavailable signal must be reported as missing rather \
          than claimed.\n\n\
          READ THE PROFILE WHOLE, THEN SPEND IT. voice_signals returns more than highlights: \
@@ -3172,13 +3232,16 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          family at confidence 0 was not measured, so say so and do not cite it. Never dump \
          the profile into a note: every signal you read must land on a choice.\n\n\
          {script}\
+         FIRST THE BRIEF: call creative_brief {{action:\"set\", path:'{project}', brief:...}} \
+         before any planning tool; the plan carries that brief and a plan without one is not \
+         creativeReady. Run a three-concept bake-off first: write three different films that could answer the brief, say what each would make the viewer feel, and choose one for a stated reason - then write the style bible (`style` in the plan: palette, grade, caption system, motion hand, sound world, footage treatment, continuity rules) and the retention contract (`retention`: hook, turnAt, payoffAt, patternBreaks, openLoops). Both are creativeReady blockers when absent. Then write the Phase 5 story map, not a shot list with no argument.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
          (plan_validate must return valid:true AND creativeReady:true), B-roll shopped on \
          the licensed live shelves (stock_search with the keys in your environment, \
          stock_fetch, then stock_contact_sheet with the fetched paths) and LOOKED AT \
          before choosing and gated with \
          footage_continuity before anything is imported (a flagged slot gets a different \
-         clip or holds), captions cut on the measured words in groups of two to four \
+         clip or holds). The live shelves in this build are VIDEO-ONLY: do not claim a stock still, and do not use a 16:9 clip unreframed in a 9:16 reel - fill and reframe it, or make a still from a clip with preview_frame, or use a generated image. If a real generator (the Higgsfield CLI) is installed, use prompts/ai_media.md: one nano_banana_2 style key first, then reference it for every still, then seedance_2_0/gemini_omni image-to-video for impossible shots; download into the project and media_import. If it is absent, say so and use footage, stills and Geneva comps - never fake a generated asset. captions cut on the measured words in groups of two to four \
          (punctuation, breath gaps and four words are the seams; the safe-remove fillers \
          never show; the delivery's stressed words take the accent through \
          title_style_words), Geneva motion comps for the beats that earn them \
@@ -3193,22 +3256,49 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          earn the strongest push-in, the loudest word and an entrance accent whatever the \
          mood. Fit the frame the project actually is - a vertical reel and a horizontal \
          cut are different edits. Use the editor's whole vocabulary; do not settle for a \
-         template.\n\n\
+         template. Use masks, subject tracking, 3D set-camera moves with depths, bone rigs, template_instantiate, kinetic captions, motion reels and \
+         overlays, scene analysis, clip_speed and clip_transform for a designed retime or \
+         reframe, tts_generate only for a missing pickup, and the full transition catalogue \
+         where the story earns them - not as decoration.\n\n\
+         STORYBOARD AND MOTION CODE: before placement, write the scene/beat/transition map (Phase 6), the storyboard (Phase 10), the motion decision (Phase 11) and the Geneva deep design (Phase 12) for every section. Each section has a designed beat or a \
+         stated reason it does not; every number, percentage, comparison, ranking, trend or \
+         process becomes a purpose-built comp (ticker, chart, triptych, compare) - never a plain \
+         text card. A textCard or titleCard carries a complete visual.storyboard accepted by \
+         motion_reel; author the comp/ops document, motion_inspect it, motion_frame the \
+         entrance/settled/exit, then motion_bake at the cut size; use motion_overlay for \
+         transparent comps and captions_animate for word-timed kinetic captions. The plan's \
+         signalLog records the graphic decision and its reason.\n\n\
+         LIVE TIMELINE: after every edit_apply batch, timeline_read the project; on the \
+         window's own server, timeline_seek the moment just placed so the user sees it arrive. \
+         On a headless server, preview_frame each section boundary and watch_render each act. \
+         The timeline is the deliverable; a decision that is not on it did not happen.\n\n\
          MANDATORY QUALITY LOOP: watch_render the OPEN timeline, craft_critique it, act on \
          at least one revision, watch_render AGAIN and compare the two craft scores, and \
          repeat until the overall score is >= 7 with no black frames, letterbox bars or long \
-         static runs. Only then export.\n\n\
+         static runs. Then collision_check the timeline and fix every shared lane, and \
+         project_save so the edit the acceptance opens is the edit you judged. Then hand off the \
+         timeline; do not export it.\n\n\
+         INDEPENDENT CRITIC: the editor who made the cut is the worst judge of it. If the \
+         harness exposes subagents, send a fresh-context critic the rendered contact sheet, the \
+         brief and the plan - not this conversation - and ask for findings, not a rubber stamp. \
+         Otherwise run craft_critique inline and say the critique was not independent. Act on \
+         the highest-leverage finding, then watch_render the whole cut again. Below 7 is not \
+         ready.\n\n\
          PERSIST THE PLAN: write the exact canonical plan object you validated to \
-         '{project}/edit-plan.json' before you export - the run's acceptance gate reads that \
+         '{project}/edit-plan.json' before you save - the run's acceptance gate reads that \
          file as its story evidence, and an edit without it lands unproven whatever its \
          craft score.\n\n\
-         THE EXPORT lands at '{export}'. Finish by calling watch_render on the exported file \
-         with audio:true and craft_critique once more, then report the honest score and what \
-         you changed. Never claim success on an unmeasured render. A file PATH to a PNG is \
-         not a picture you can see: only inline image blocks are.\n\n\
-         {stock}",
+         THE DELIVERABLE IS THE TIMELINE, NOT A RENDER: do NOT call export_start or \
+         export_wait. The user wants a finished timeline they can customize. Finish with \
+         project_save, then prove the timeline: watch_render the OPEN project with audio:true, \
+         craft_critique its sheet, collision_check the project, plan_validate the saved plan, and \
+         timeline_read the project. The pane's independent acceptance runs the same timeline \
+         checks; a skipped words/LUFS/export gate is honest, not a pass. Report the measured \
+         craft score, the gates, and what you changed. Exporting is the user's next click, not \
+         yours; if you rendered by mistake, leave the timeline as the deliverable and say so. A \
+         file PATH to a PNG is not a picture you can see: only inline image blocks are.\n\n\
+         {stock}\n\n         GENERATIVE MEDIA: {generator}",
         project = source.project,
-        export = source.export,
         critic = critic,
         script = source.script.as_deref().map_or_else(String::new, |script| {
             format!(
@@ -3226,6 +3316,17 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
             "NO stock key is saved (Settings > Stock APIs), so stock_search will refuse: \
              carry the picture with the project's own footage, Geneva motion comps and \
              typography over the narration instead - do not leave unpictured spans."
+                .to_owned()
+        },
+        generator = if ai_generator_ready() {
+            "A real generator is installed: the Higgsfield CLI answered. Read prompts/ai_media.md, \
+             generate one style key first, then reference it for every still and image-to-video, \
+             download into the project and media_import. Record model, prompt and licence."
+                .to_owned()
+        } else {
+            "NO generative media CLI is installed (higgsfield was not found). Do not invent a \
+             generated asset: use the project's footage, licensed video stock, stills from \
+             preview_frame, Geneva comps and typography, and say which one you used."
                 .to_owned()
         },
     )
@@ -3247,6 +3348,19 @@ fn stock_shelves_ready(studio: &Studio) -> bool {
     .any(|(field, name)| {
         !field.trim().is_empty() || std::env::var(name).is_ok_and(|set| !set.trim().is_empty())
     })
+}
+
+/// Whether a real generative-media CLI is installed. The Higgsfield shelf
+/// is the supported door (images, video, 3D, audio); the prompt reads this
+/// answer so an unattended run either uses a generator that exists or says
+/// plainly that none does, instead of pretending an asset was made.
+fn ai_generator_ready() -> bool {
+    Command::new("higgsfield")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Starts the Director over the AUTO EDIT's sibling: the same harness a
@@ -3317,6 +3431,19 @@ fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<Atom
 /// kill flag the supervisor polls - because a Director run is the same
 /// kind of process.
 fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
+    // The handed-over run has no runner to post a tick. Without this
+    // clock the pane's elapsed field only moved when the harness printed
+    // a line, so a model thinking for minutes showed 0s and looked dead.
+    let tick_still = Arc::new(AtomicBool::new(true));
+    let tick_flag = Arc::clone(&tick_still);
+    std::thread::spawn(move || {
+        while tick_flag.load(Ordering::Relaxed) {
+            crate::host::on_ui(|studio, _, _| {
+                studio.handle(Msg::Forge(ForgeMsg::AutoEditTick));
+            });
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
     let out = child.stdout.take();
     let err = child.stderr.take();
     let stdout_reader = std::thread::spawn(move || {
@@ -3350,6 +3477,7 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);
+        tick_still.store(false, Ordering::Relaxed);
         crate::host::on_ui(move |studio, _, _| {
             studio.handle(Msg::Forge(ForgeMsg::AutoDirectorEnded(code)));
         });
@@ -3360,45 +3488,82 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
 /// words its own headings and tool calls carry. A handed-over AUTO EDIT
 /// has no runner to name its stage, so the pane reads the harness's
 /// output instead and advances only when a phase is actually named -
-/// the twelve headings the skill prints (0, 1, 1b, 1c, 2, 3, 4, 5, 5b,
-/// 6, 7, 8), which is the same sequence a Start Forge run walks.
+/// the twenty-five headings the skill prints (1 through 25), which is
+/// the same sequence a Start Forge run walks.
 ///
 /// The words are the *fallback*: the skill numbers every heading, so the
 /// numbered match in `director_phase` decides almost every line, and a
 /// word here only places a line the harness emitted without its number.
-const DIRECTOR_PHASES: [&[&str]; 12] = [
+const DIRECTOR_PHASES: [&[&str]; 25] = [
     &["creative direction", "creative_brief"],
     &["understand the material"],
     &["emotion"],
     &["voice_signals", "voice signal"],
+    &["story map", "shot budget"],
+    &["scene", "beat map", "transition map"],
     &["tighten", "clip_cut_spans"],
+    &["voice edit proof"],
     &["plan_validate", "the edit plan"],
+    &["storyboard", "shot list"],
+    &["motion design code", "motion_inspect"],
+    &["geneva deep", "comp graph", "motion system"],
     &["gather", "stock_search", "b-roll"],
+    &["stock review", "footage_continuity", "continuity"],
     &["place", "rough cut"],
     &["motion_bake", "motion design", "geneva"],
-    &["grade", "the look", "effect_layer"],
+    &["caption choreography", "captions_animate", "captions_add"],
+    &["sound design", "sounds_add", "duck"],
+    &["grade (required)", "the look", "effect_layer"],
+    &["grade proof", "preview_frame"],
     &["watch_render", "craft_critique"],
-    &["export_start", "export_wait"],
+    &["independent critique", "revise"],
+    &[
+        "project_save",
+        "timeline ready",
+        "hand off",
+        "export_start",
+        "export_wait",
+    ],
+    &[
+        "final watch",
+        "motion_probe",
+        "measure_loudness",
+        "timeline acceptance",
+    ],
+    &["delivery", "receipt", "wow bar"],
 ];
 
 /// The skill's numbered ladder: the number each heading prints, the
-/// letter suffix three of them carry (1b, 1c, 5b), and the pane's
-/// phase index for that pair. A number the ladder does not carry - a
-/// "phase 12" an older prompt might still echo - matches nothing by
-/// number, so it can never be read as "phase 1".
-const DIRECTOR_PHASE_LADDER: [(u32, &str, usize); 12] = [
-    (0, "", 0),
-    (1, "", 1),
-    (1, "b", 2),
-    (1, "c", 3),
-    (2, "", 4),
-    (3, "", 5),
-    (4, "", 6),
-    (5, "", 7),
-    (5, "b", 8),
-    (6, "", 9),
-    (7, "", 10),
-    (8, "", 11),
+/// numbers 1 through 25, and the pane's phase index for each one. A
+/// number the ladder does not carry - a "phase 99" an older prompt might
+/// still echo - matches nothing by number, so it can never be read as
+/// "phase 1".
+const DIRECTOR_PHASE_LADDER: [(u32, &str, usize); 25] = [
+    (1, "", 0),
+    (2, "", 1),
+    (3, "", 2),
+    (4, "", 3),
+    (5, "", 4),
+    (6, "", 5),
+    (7, "", 6),
+    (8, "", 7),
+    (9, "", 8),
+    (10, "", 9),
+    (11, "", 10),
+    (12, "", 11),
+    (13, "", 12),
+    (14, "", 13),
+    (15, "", 14),
+    (16, "", 15),
+    (17, "", 16),
+    (18, "", 17),
+    (19, "", 18),
+    (20, "", 19),
+    (21, "", 20),
+    (22, "", 21),
+    (23, "", 22),
+    (24, "", 23),
+    (25, "", 24),
 ];
 
 /// The stage the pane shows for a phase. The words are spelled out here
@@ -3411,20 +3576,33 @@ fn director_phase_stage(index: usize) -> String {
         1 => t("forge.directorPhaseUnderstand"),
         2 => t("forge.directorPhaseAudio"),
         3 => t("forge.directorPhaseSignals"),
-        4 => t("forge.directorPhaseTighten"),
+        4 => t("forge.directorPhasePlan"),
         5 => t("forge.directorPhasePlan"),
-        6 => t("forge.directorPhaseFootage"),
-        7 => t("forge.directorPhaseCut"),
-        8 => t("forge.directorPhaseMotion"),
-        9 => t("forge.directorPhaseGrade"),
-        10 => t("forge.directorPhaseReview"),
+        6 => t("forge.directorPhaseTighten"),
+        7 => t("forge.directorPhaseTighten"),
+        8 => t("forge.directorPhasePlan"),
+        9 => t("forge.directorPhasePlan"),
+        10 => t("forge.directorPhaseMotion"),
+        11 => t("forge.directorPhaseMotion"),
+        12 => t("forge.directorPhaseFootage"),
+        13 => t("forge.directorPhaseFootage"),
+        14 => t("forge.directorPhaseCut"),
+        15 => t("forge.directorPhaseMotion"),
+        16 => t("forge.directorPhaseCut"),
+        17 => t("forge.directorPhaseAudio"),
+        18 => t("forge.directorPhaseGrade"),
+        19 => t("forge.directorPhaseGrade"),
+        20 => t("forge.directorPhaseReview"),
+        21 => t("forge.directorPhaseReview"),
+        22 => t("forge.directorPhaseExport"),
+        23 => t("forge.directorPhaseExport"),
         _ => t("forge.directorPhaseExport"),
     }
 }
 
 /// The phase a line of the harness's output names, and how far through
-/// the skill's twelve phases that is. A phase sits halfway through its
-/// own slot while it runs - the last phase is 11.5/12, never 1.0, which
+/// the skill's twenty-five phases that is. A phase sits halfway through
+/// its own slot while it runs - the last phase is 24.5/25, never 1.0, which
 /// only the accepted end of the run may show. A line that mentions two
 /// phases is a sentence about them, not a stage, so only the earliest
 /// match is taken and the fraction is that phase's own position.
@@ -3432,11 +3610,11 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
     let lower = line.to_ascii_lowercase();
     let total = DIRECTOR_PHASES.len() as f32;
     let at = |index: usize| (index, (index as f32 + 0.5) / total);
-    // A numbered phase is matched by its number and, where it carries
-    // one, its letter suffix: the skill prints "Phase 1b" and "Phase
-    // 5b", so a plain "phase 1" scan must not swallow them, a greedy
-    // digit read must not turn "phase 12" into "phase 1", and a number
-    // the ladder does not carry matches nothing by number at all.
+    // A numbered phase is matched by its number: the skill prints
+    // "Phase 1" through "Phase 25", so a plain "phase 1" scan must not
+    // swallow "phase 15", a greedy digit read must not turn "phase 12"
+    // into "phase 1", and a number the ladder does not carry matches
+    // nothing by number at all.
     let mut cursor = 0;
     while let Some(found) = lower[cursor..].find("phase ") {
         let rest = &lower[cursor + found + "phase ".len()..];
@@ -3744,6 +3922,7 @@ fn stage_label(stage: &Stage) -> String {
         Stage::Music => t("forge.stageMusic"),
         Stage::Sfx => t("forge.stageSfx"),
         Stage::Preview => t("forge.stagePreview"),
+        Stage::TimelineReady => t("forge.stageTimelineReady"),
         Stage::Export => t("forge.stageExport"),
         Stage::Watch => t("forge.stageWatch"),
         Stage::Revise => t("forge.stageRevise"),
@@ -3849,7 +4028,7 @@ mod tests {
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about
     /// nothing in particular moves no bar, the ladder is the one the
-    /// skill really prints (0, 1, 1b, 1c, 2 ... 5b, 6, 7, 8 - tested
+    /// skill really prints (1 through 25 - tested
     /// against the skill's own heading strings, not a paraphrase of
     /// them), and no phase - not the last - ever shows a finished bar,
     /// which only the accepted end of a run may do.
@@ -3859,56 +4038,57 @@ mod tests {
         assert_eq!(director_phase(""), None);
 
         let (first, at_first) =
-            director_phase("Phase 0 — Creative direction (do this FIRST)").expect("phase zero");
+            director_phase("Phase 1 — Creative direction (do this FIRST)").expect("phase one");
         assert_eq!(first, 0);
         assert!(at_first > 0.0 && at_first < 0.2);
 
-        let (understand, _) =
-            director_phase("Phase 1 — Understand the material.").expect("phase one");
-        assert_eq!(understand, 1);
+        // Every heading the skill prints maps to its own rung, 1 through 25.
+        for (number, index) in (1usize..=25).map(|number| (number, number - 1)) {
+            let heading = format!("Phase {number} — the skill's own heading");
+            assert_eq!(
+                director_phase(&heading).map(|(at, _)| at),
+                Some(index),
+                "{heading}"
+            );
+        }
 
-        // The lettered sub-phases are their own rungs: 1b is the emotion
-        // read and 1c the acoustic one, not phase 1 again.
-        let (feels, _) =
-            director_phase("Phase 1b — Read what the voiceover feels").expect("phase one b");
-        assert_eq!(feels, 2);
-        let (acoustic, _) =
-            director_phase("Phase 1c — Read what the voiceover IS").expect("phase one c");
-        assert_eq!(acoustic, 3);
-
-        // "phase 1" is inside "phase 10": a greedy digit read must not
-        // turn the older prompt's numbers into phase one, and a number
-        // the ladder does not carry matches nothing by number.
-        let (last, at_last) =
-            director_phase("Phase 12: export_start then export_wait").expect("the export words");
-        assert_eq!(last, 11);
-        assert!(at_last < 1.0, "no phase may show a finished bar");
+        // A greedy digit read must not turn "phase 15" into "phase 1",
+        // and a number the ladder does not carry matches nothing.
+        let (ten, _) = director_phase("Phase 10 — Storyboard and shot list").expect("phase ten");
+        assert_eq!(ten, 9);
+        let (twenty, at_twenty) =
+            director_phase("Phase 25 — Delivery, customization and the wow bar")
+                .expect("phase twenty-five");
+        assert_eq!(twenty, 24);
+        assert!(at_twenty < 1.0 && at_twenty > 0.8);
+        assert_eq!(director_phase("Phase 99 — not on the ladder"), None);
 
         // The watch phase is where the Director reviews its own cut: the
         // tool name alone is enough to place it.
         let (review, _) = director_phase("craft_critique the sheet").expect("review");
-        assert_eq!(review, 10);
+        assert_eq!(review, 20);
 
         // A named phase advances; the one before it is behind it.
-        let (plan, early) =
-            director_phase("Phase 5 — Place (sequential, batched)").expect("phase five");
-        assert_eq!(plan, 7);
+        let (place, early) =
+            director_phase("Phase 15 — Place (sequential, batched)").expect("phase fifteen");
+        assert_eq!(place, 14);
         assert!(early > at_first);
 
-        // 5b is motion design, its own rung after Place.
-        let (motion, _) = director_phase("Phase 5b — Motion design").expect("phase five b");
-        assert_eq!(motion, 8);
+        // 16 is motion design, its own rung after Place.
+        let (motion, _) = director_phase("Phase 16 — Motion design").expect("phase sixteen");
+        assert_eq!(motion, 15);
 
         // The grade phase the skill requires is visible to the bar too.
-        let (grade, _) = director_phase("Phase 6 — Grade (required)").expect("phase six");
-        assert_eq!(grade, 9);
+        let (grade, _) = director_phase("Phase 19 — Grade (required)").expect("phase nineteen");
+        assert_eq!(grade, 18);
 
         // The final phase never completes the bar: 1.0 is the accepted
         // end's alone.
-        let (export, at_export) =
-            director_phase("Phase 8 — Export, then watch the actual file.").expect("phase eight");
-        assert_eq!(export, 11);
-        assert!(at_export < 1.0 && at_export > 0.9);
+        let (save, at_save) =
+            director_phase("Phase 23 — Save and hand off the timeline (no export).")
+                .expect("phase twenty-three");
+        assert_eq!(save, 22);
+        assert!(at_save < 1.0 && at_save > 0.8);
     }
 
     /// One run at a time on the shared project: the Start is refused while

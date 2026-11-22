@@ -140,7 +140,7 @@ pub enum Capability {
     Grade,
     /// The review: the contact sheet, the craft score, the vision critic.
     Review,
-    /// The output: the export and its verification.
+    /// The output: the saved editable project, or an explicitly requested export.
     Delivery,
 }
 
@@ -220,9 +220,8 @@ impl Capability {
             "sounds_search" | "sounds_add" => Capability::Sfx,
             "effects_list" | "effect_layer_add" | "effect_key_set" => Capability::Grade,
             "watch_render" | "craft_critique" | "local_vlm" | "preview_frame" => Capability::Review,
-            "export_start" | "export_wait" | "export_status" | "collision_check" => {
-                Capability::Delivery
-            }
+            "export_start" | "export_wait" | "export_status" | "collision_check"
+            | "project_save" | "timeline_read" => Capability::Delivery,
             _ => return None,
         })
     }
@@ -573,7 +572,15 @@ impl AcceptanceReceipt {
             let mut tools: Vec<String> = Vec::new();
             for record in &stages {
                 for tool in &record.calls {
-                    if Capability::of_tool(tool) == Some(capability) && !tools.contains(tool) {
+                    let named_capability = Capability::of_tool(tool) == Some(capability);
+                    // The built-in caption composer deliberately emits a
+                    // custom edit_apply batch for per-group styles and
+                    // word accents instead of captions_add. Its stage is
+                    // the reliable capability identity for that call.
+                    let stage_capability = record.stage == Stage::Captions
+                        && tool == "edit_apply"
+                        && capability == Capability::Captions;
+                    if (named_capability || stage_capability) && !tools.contains(tool) {
                         tools.push(tool.clone());
                     }
                 }
@@ -723,6 +730,364 @@ impl AcceptanceReceipt {
 /// - **captions** and **motion** - optional, and answered only when the
 ///   run made them: a project with no graphics to bake has no motion to
 ///   prove.
+///
+/// Validate the editable timeline against the editor's actual summary
+/// contract. A non-empty clips array is not enough: every clip must have a
+/// valid lane and time span, every file-backed clip must resolve to a media
+/// bin item, and every referenced source file must still exist on disk.
+pub fn timeline_integrity(view: &Value) -> Result<String, String> {
+    let clips = view
+        .pointer("/timeline/clips")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return timeline.clips".to_owned())?;
+    let tracks = view
+        .pointer("/timeline/tracks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return timeline.tracks".to_owned())?;
+    let media = view
+        .get("media")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "timeline_read did not return the media bin".to_owned())?;
+
+    if clips.is_empty() {
+        return Err("the saved timeline contains no clips".to_owned());
+    }
+
+    let mut track_ids = std::collections::HashSet::new();
+    for (index, track) in tracks.iter().enumerate() {
+        let id = track
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("track {} has no id", index + 1))?;
+        if !track_ids.insert(id) {
+            return Err(format!("duplicate track id `{id}`"));
+        }
+    }
+
+    let mut media_by_id = std::collections::HashMap::new();
+    for (index, item) in media.iter().enumerate() {
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("media item {} has no id", index + 1))?;
+        let path = item
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| format!("media item `{id}` has no source path"))?;
+        let duration = item.get("duration").and_then(Value::as_f64);
+        if media_by_id.insert(id, (path, duration)).is_some() {
+            return Err(format!("duplicate media id `{id}`"));
+        }
+    }
+
+    let mut clip_ids = std::collections::HashSet::new();
+    let mut checked_sources = std::collections::HashSet::new();
+    let mut file_backed = 0usize;
+
+    for (index, clip) in clips.iter().enumerate() {
+        let label = format!("clip {}", index + 1);
+        let id = clip
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| format!("{label} has no id"))?;
+        if !clip_ids.insert(id) {
+            return Err(format!("{label} duplicates clip id `{id}`"));
+        }
+
+        let track = clip
+            .get("track")
+            .and_then(Value::as_str)
+            .filter(|track| !track.trim().is_empty())
+            .ok_or_else(|| format!("clip `{id}` has no track id"))?;
+        if !track_ids.contains(track) {
+            return Err(format!("clip `{id}` references missing track `{track}`"));
+        }
+
+        let start = clip
+            .get("start")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("clip `{id}` has no numeric start"))?;
+        let duration = clip
+            .get("duration")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("clip `{id}` has no numeric duration"))?;
+        if !start.is_finite() || start < 0.0 {
+            return Err(format!("clip `{id}` has invalid start {start}"));
+        }
+        if !duration.is_finite() || duration <= 0.0 || !(start + duration).is_finite() {
+            return Err(format!("clip `{id}` has invalid duration {duration}"));
+        }
+
+        let kind = clip.get("kind").and_then(Value::as_str).unwrap_or_default();
+        let media_id = clip.get("media").and_then(Value::as_str);
+        if matches!(kind, "video" | "audio" | "image") && media_id.is_none() {
+            return Err(format!(
+                "file-backed {kind} clip `{id}` has no media reference"
+            ));
+        }
+        if let Some(media_id) = media_id {
+            let (source, source_duration) = media_by_id
+                .get(media_id)
+                .copied()
+                .ok_or_else(|| format!("clip `{id}` references missing media `{media_id}`"))?;
+            if checked_sources.insert(source) && !std::path::Path::new(source).is_file() {
+                return Err(format!(
+                    "clip `{id}` media `{media_id}` source file is missing: {source}"
+                ));
+            }
+            let source_start = clip
+                .get("sourceStart")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| format!("clip `{id}` has no numeric sourceStart"))?;
+            let speed = clip.get("speed").and_then(Value::as_f64).unwrap_or(1.0);
+            if !source_start.is_finite() || source_start < 0.0 {
+                return Err(format!(
+                    "clip `{id}` has invalid sourceStart {source_start}"
+                ));
+            }
+            if !speed.is_finite() || speed <= 0.0 {
+                return Err(format!("clip `{id}` has invalid playback speed {speed}"));
+            }
+            if let Some(source_duration) = source_duration
+                && source_start + duration * speed > source_duration + 0.05
+            {
+                return Err(format!(
+                    "clip `{id}` reads past media `{media_id}`: source end {:.3}s exceeds {:.3}s",
+                    source_start + duration * speed,
+                    source_duration
+                ));
+            }
+            file_backed += 1;
+        }
+    }
+
+    Ok(format!(
+        "{} clips, {} tracks, {} file-backed clips; all referenced sources exist",
+        clips.len(),
+        tracks.len(),
+        file_backed
+    ))
+}
+
+/// Whether the canonical edit plan represents narration. It may be a
+/// generated voiceover, an already-placed audio clip, or a plan whose
+/// signal log explicitly records voice readings.
+pub fn plan_has_voiceover(plan: &Value) -> bool {
+    let generated = plan
+        .pointer("/audio/voiceover")
+        .is_some_and(|voiceover| !voiceover.is_null() && voiceover != &Value::Bool(false));
+    let placed = plan
+        .get("audioClipId")
+        .and_then(Value::as_str)
+        .is_some_and(|id| !id.trim().is_empty());
+    let logged = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .is_some_and(|entries| !entries.is_empty());
+    generated || placed || logged
+}
+
+/// A narration edit is not complete if the saved timeline contains
+/// only titles: it must carry the voiceover and at least one visual source.
+/// The deeper timeline-integrity gate separately verifies every media id,
+/// source path, trim and track reference.
+pub fn timeline_content_gate(view: &Value) -> (GateStatus, String) {
+    let Some(clips) = view.pointer("/timeline/clips").and_then(Value::as_array) else {
+        return (
+            GateStatus::Skipped,
+            "timeline_read did not return clips for the voiceover/visual check".to_owned(),
+        );
+    };
+    let has_voiceover = clips
+        .iter()
+        .any(|clip| clip.get("kind").and_then(Value::as_str) == Some("audio"));
+    let has_visual = clips.iter().any(|clip| {
+        matches!(
+            clip.get("kind").and_then(Value::as_str),
+            Some("video" | "image")
+        )
+    });
+    let status = if has_voiceover && has_visual {
+        GateStatus::Pass
+    } else {
+        GateStatus::Fail
+    };
+    (
+        status,
+        format!("saved timeline contains voiceover={has_voiceover}, visual={has_visual}"),
+    )
+}
+
+/// Map the Director's accepted signal-log vocabulary to the confidence
+/// family the voice profile actually returns. Discourse and emotion signals
+/// are measured by their own tools and are deliberately not guessed here.
+fn measured_voice_family(signal: &str) -> Option<&'static str> {
+    // Formants are a distinct confidence family even though the catalogue
+    // reading lives under the forensic namespace.
+    if signal == "forensic.formantsHz" {
+        return Some("formants");
+    }
+    let family = signal.split(['.', '[', '=']).next()?;
+    Some(match family {
+        // The arc is the one family not measured by the voice profile:
+        // the emotion extract's own reply is its evidence, and the gate
+        // reads it there. Without the arm the arc signal was skipped,
+        // the log cited no measurable family, and the gate could never
+        // pass no matter what the extract had measured.
+        "arc" => "arc",
+        "pause" | "speechRatio" => "pauses",
+        "emphasisWords" | "rhythmLayers" | "prosody" => "prosody",
+        "speechRate" => "speechRate",
+        "words" => "wordConfidence",
+        "language" => "language",
+        "sentence" => "sentenceType",
+        "entities" => "entities",
+        "motifs" => "motifs",
+        "fillers" => "fillers",
+        "forensic" | "noiseFloor" => "forensic",
+        "speaker" | "speakerChanges" => "speaker",
+        "loudness" => "loudness",
+        "formants" => "formants",
+        _ => return None,
+    })
+}
+
+/// Verify that voice-signal families claimed in the saved plan were
+/// actually measured on at least one narration take. The plan validator
+/// checks vocabulary and confidence shape; this independent gate checks
+/// the claims against fresh profile replies instead of trusting a number
+/// the Director wrote into its own signalLog.
+fn signal_evidence_gate(
+    plan: &Value,
+    profiles: &[Value],
+    emotion_arc: Option<&Value>,
+) -> (GateStatus, String) {
+    let entries = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if entries.is_empty() {
+        return (
+            GateStatus::Fail,
+            "the voiceover plan has no signalLog entries to verify".to_owned(),
+        );
+    }
+
+    let mut measured = std::collections::HashMap::<&str, f64>::new();
+    for profile in profiles {
+        if profile.get("ok").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        for row in profile
+            .pointer("/signalConfidence/perSignal")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(family), Some(confidence)) = (
+                row.get("signal").and_then(Value::as_str),
+                row.get("confidence")
+                    .and_then(Value::as_f64)
+                    .filter(|value| (0.0..=1.0).contains(value)),
+            ) {
+                measured
+                    .entry(family)
+                    .and_modify(|best| *best = best.max(confidence))
+                    .or_insert(confidence);
+            }
+        }
+    }
+
+    // The arc is measured by emotion.py, not inferred by the voice
+    // profile. Its own extract reply is the evidence the voice profile
+    // would carry if the arc were passed through at extract time.
+    if emotion_arc.is_some_and(|reply| {
+        reply.get("ok").and_then(Value::as_bool) == Some(true)
+            && reply
+                .pointer("/arc/arcShape")
+                .and_then(Value::as_str)
+                .is_some()
+            && reply
+                .pointer("/arc/arcScore")
+                .and_then(Value::as_f64)
+                .is_some()
+    }) {
+        measured.insert("arc", 0.8);
+    }
+
+    let mut claimed = std::collections::BTreeSet::new();
+    let mut failures = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        let confidence = entry.get("confidence").and_then(Value::as_f64);
+        for signal in entry
+            .get("signals")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            let Some(family) = measured_voice_family(signal) else {
+                continue;
+            };
+            claimed.insert(family);
+            match measured.get(family).copied().filter(|value| *value > 0.0) {
+                Some(actual) => {
+                    if confidence
+                        .is_some_and(|claimed_confidence| claimed_confidence > actual + 0.05)
+                    {
+                        failures.push(format!(
+                            "entry {} claims confidence {:.2} above measured {} confidence {:.2}",
+                            index + 1,
+                            confidence.unwrap_or_default(),
+                            family,
+                            actual
+                        ));
+                    }
+                }
+                None => failures.push(format!(
+                    "entry {} cites {}, but the voice profile did not measure {}",
+                    index + 1,
+                    signal,
+                    family
+                )),
+            }
+        }
+    }
+
+    if claimed.is_empty() {
+        return (
+            GateStatus::Fail,
+            "the signalLog cites no independently measurable voice-signal family".to_owned(),
+        );
+    }
+    if !failures.is_empty() {
+        return (GateStatus::Fail, failures.join("; "));
+    }
+    (
+        GateStatus::Pass,
+        format!(
+            "{} claimed voice-signal families verified against {} measured take profile(s): {}",
+            claimed.len(),
+            profiles
+                .iter()
+                .filter(|profile| profile.get("ok").and_then(Value::as_bool) == Some(true))
+                .count(),
+            claimed.into_iter().collect::<Vec<_>>().join(", ")
+        ),
+    )
+}
+
+/// Derive the acceptance gates from the tool calls a run actually made,
+/// in the order the receipt lists them: the story plan's structure, the
+/// narration signal evidence, the encoded file when an export was
+/// requested, the saved timeline's integrity and content, and the final
+/// craft score. A gate whose call never happened is recorded as skipped,
+/// never silently passed, so an incomplete run stays visibly incomplete.
 pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
     let last = |tool: &str| -> Option<&Value> {
         observed
@@ -771,109 +1136,215 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
-    // The words: the export re-read and compared to the edit. `emotion`
-    // is also an analysis tool, so the gate reads the last reply that
-    // actually carries a verdict, not merely the last emotion call.
+    // The fixed AUTO EDIT delivers a saved, editable timeline by default.
+    // Encoded-file gates are required only when an export was explicitly
+    // requested; timeline integrity, lane cleanliness and a final preview
+    // remain required in either mode.
+    let has_export = observed.iter().any(|(call, _)| {
+        matches!(
+            call.tool.as_str(),
+            "export_start" | "motion_probe" | "measure_loudness"
+        )
+    });
+
+    let plan = observed
+        .iter()
+        .rev()
+        .find(|(call, _)| call.tool == "plan_validate")
+        .and_then(|(call, _)| call.arguments.get("plan"));
+    let voiceover_required = plan.is_some_and(plan_has_voiceover);
+    if voiceover_required {
+        let profiles: Vec<Value> = observed
+            .iter()
+            .filter(|(call, _)| call.tool == "voice_signals")
+            .map(|(_, reply)| reply.clone())
+            .collect();
+        let failed_profile = profiles
+            .iter()
+            .any(|profile| profile.get("ok").and_then(Value::as_bool) != Some(true));
+        let (status, evidence) = if profiles.is_empty() || failed_profile {
+            (
+                GateStatus::Skipped,
+                "one or more narration voice profiles could not be independently measured"
+                    .to_owned(),
+            )
+        } else if let Some(plan) = plan {
+            let emotion_arc = observed
+                .iter()
+                .rev()
+                .find(|(call, reply)| {
+                    call.tool == "emotion"
+                        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+                        && reply
+                            .pointer("/arc/arcShape")
+                            .and_then(Value::as_str)
+                            .is_some()
+                })
+                .map(|(_, reply)| reply);
+            signal_evidence_gate(plan, &profiles, emotion_arc)
+        } else {
+            (
+                GateStatus::Skipped,
+                "the saved plan was not available for signal verification".to_owned(),
+            )
+        };
+        gates.push(GateRecord::new("signal-evidence", status, evidence, true));
+    }
+
+    // A rendered file can prove its words; a timeline-only deliverable
+    // cannot. Never turn the absence of a render into a false pass.
     let verification = observed
         .iter()
         .rev()
         .find(|(call, reply)| call.tool == "emotion" && reply.get("verdict").is_some())
         .map(|(_, reply)| reply);
-    match verification {
-        Some(reply) => {
-            let verdict = reply
-                .get("verdict")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            gates.push(GateRecord::new(
+    if has_export {
+        match verification {
+            Some(reply) => {
+                let verdict = reply
+                    .get("verdict")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                gates.push(GateRecord::new(
+                    "words",
+                    if verdict == "pass" {
+                        GateStatus::Pass
+                    } else {
+                        GateStatus::Fail
+                    },
+                    format!("the export's words read back as verdict={verdict}"),
+                    true,
+                ));
+            }
+            None => gates.push(GateRecord::new(
                 "words",
-                if verdict == "pass" {
-                    GateStatus::Pass
-                } else {
-                    GateStatus::Fail
-                },
-                format!("the export's words read back as verdict={verdict}"),
+                GateStatus::Skipped,
+                "the run never compared the export's words to the edit",
                 true,
-            ));
+            )),
         }
-        None => gates.push(GateRecord::new(
+    } else {
+        gates.push(GateRecord::new(
             "words",
             GateStatus::Skipped,
-            "the run never compared the export's words to the edit",
-            true,
-        )),
+            "no export was requested; the saved editable timeline is the deliverable",
+            false,
+        ));
     }
 
-    // The mix: the loudness reading against the platform target.
-    match last("measure_loudness") {
-        Some(reply) => {
-            let met = reply
-                .get("platformTargetMet")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let integrated = reply
-                .get("integratedLufs")
-                .and_then(Value::as_f64)
-                .map(|lufs| format!("{lufs:.1} LUFS"))
-                .unwrap_or_else(|| "unread".to_owned());
-            gates.push(GateRecord::new(
+    // The mix: only an encoded export can be measured against the final
+    // platform loudness target. The preview still receives an audio-aware
+    // craft review, but is not misreported as a final encode measurement.
+    if has_export {
+        match last("measure_loudness") {
+            Some(reply) => {
+                let met = reply
+                    .get("platformTargetMet")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let integrated = reply
+                    .get("integratedLufs")
+                    .and_then(Value::as_f64)
+                    .map(|lufs| format!("{lufs:.1} LUFS"))
+                    .unwrap_or_else(|| "unread".to_owned());
+                gates.push(GateRecord::new(
+                    "audio",
+                    if met {
+                        GateStatus::Pass
+                    } else {
+                        GateStatus::Fail
+                    },
+                    format!("the mix measured {integrated}, platformTargetMet={met}"),
+                    true,
+                ));
+            }
+            None => gates.push(GateRecord::new(
                 "audio",
-                if met {
-                    GateStatus::Pass
-                } else {
-                    GateStatus::Fail
-                },
-                format!("the mix measured {integrated}, platformTargetMet={met}"),
+                GateStatus::Skipped,
+                "the export mix was never measured",
                 true,
-            ));
+            )),
         }
-        None => gates.push(GateRecord::new(
+        match last("motion_probe") {
+            Some(reply) => {
+                let has_probe = reply.get("probe").is_some();
+                gates.push(GateRecord::new(
+                    "export-integrity",
+                    if has_probe {
+                        GateStatus::Pass
+                    } else {
+                        GateStatus::Fail
+                    },
+                    if has_probe {
+                        "the rendered file opened and reported its streams"
+                    } else {
+                        "the reader answered without a probe: the file is unreadable"
+                    },
+                    true,
+                ));
+            }
+            None => gates.push(GateRecord::new(
+                "export-integrity",
+                GateStatus::Skipped,
+                "the rendered file was never opened by the media reader",
+                true,
+            )),
+        }
+    } else {
+        gates.push(GateRecord::new(
             "audio",
             GateStatus::Skipped,
-            "the mix was never measured",
-            true,
-        )),
-    }
-
-    // The file: opened by the reader the renderer will use.
-    match last("motion_probe") {
-        Some(reply) => {
-            let has_probe = reply.get("probe").is_some();
-            gates.push(GateRecord::new(
-                "export-integrity",
-                if has_probe {
-                    GateStatus::Pass
-                } else {
-                    GateStatus::Fail
-                },
-                if has_probe {
-                    "the rendered file opened and reported its streams"
-                } else {
-                    "the reader answered without a probe: the file is unreadable"
-                },
-                true,
-            ));
-        }
-        None => gates.push(GateRecord::new(
+            "no export was requested; final encoded loudness is not yet measurable",
+            false,
+        ));
+        gates.push(GateRecord::new(
             "export-integrity",
             GateStatus::Skipped,
-            "the rendered file was never opened by the media reader",
-            true,
-        )),
+            "no export was requested; the saved timeline is the deliverable",
+            false,
+        ));
     }
 
-    // The picture: the critic's own score against the bar. Only a
-    // critique of the RENDERED file counts - the last craft_critique
-    // after the last export_start. When the watch's own critique never
-    // answered, the preview's pre-export score must not stand in for it
-    // and pass a cut that was never judged as shipped.
-    let export_at = observed
+    let timeline_view = last("timeline_read");
+    let (timeline_status, timeline_evidence) = match timeline_view {
+        Some(view) => match timeline_integrity(view) {
+            Ok(evidence) => (GateStatus::Pass, evidence),
+            Err(error) => (GateStatus::Fail, error),
+        },
+        None => (
+            GateStatus::Skipped,
+            "the run never read the saved timeline".to_owned(),
+        ),
+    };
+    gates.push(GateRecord::new(
+        "timeline-integrity",
+        timeline_status,
+        timeline_evidence,
+        true,
+    ));
+    if voiceover_required {
+        let (status, evidence) = timeline_view.map(timeline_content_gate).unwrap_or((
+            GateStatus::Skipped,
+            "the run never read the saved timeline's audio and visual clips".to_owned(),
+        ));
+        gates.push(GateRecord::new(
+            "content-completeness",
+            status,
+            evidence,
+            true,
+        ));
+    }
+
+    // The picture: the final craft score after the last watch_render.
+    // In timeline mode this is the final editable-project preview; in an
+    // explicit render mode it is the post-export preview.
+    let last_watch = observed
         .iter()
-        .rposition(|(call, _)| call.tool == "export_start");
+        .rposition(|(call, _)| call.tool == "watch_render");
     let last_critique = observed
         .iter()
         .rposition(|(call, _)| call.tool == "craft_critique")
-        .filter(|at| Some(*at) > export_at);
+        .filter(|at| Some(*at) > last_watch);
     match last_critique.and_then(|at| observed[at].1.get("overall")) {
         Some(score) => {
             let overall = score.as_f64();
@@ -889,27 +1360,123 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
                         .map(|overall| format!("{overall}"))
                         .unwrap_or_else(|| score.to_string())
                 ),
-                false,
+                !has_export,
             ));
         }
         None => gates.push(GateRecord::new(
             "visual",
             GateStatus::Skipped,
-            "no craft score was taken of the rendered file",
-            false,
+            "no craft score was taken of the final timeline or export preview",
+            !has_export,
         )),
     }
 
-    // The optional craft dimensions, answered only when the run made them.
-    for (name, tool) in [("captions", "captions_add"), ("motion", "motion_bake")] {
-        if observed.iter().any(|(call, _)| call.tool == tool) {
+    // The lanes: two clips may not share the same stretch of track. A
+    // timeline-ready AUTO EDIT requires this gate because an edit the user
+    // cannot keep editing is not a finished deliverable.
+    match last("collision_check") {
+        Some(reply) => {
+            let clean = reply.get("clean").and_then(Value::as_bool).unwrap_or(false);
+            let count = reply.get("count").and_then(Value::as_u64).unwrap_or(0);
             gates.push(GateRecord::new(
-                name,
-                GateStatus::Pass,
-                format!("{tool} answered"),
-                false,
+                "collisions",
+                if clean {
+                    GateStatus::Pass
+                } else {
+                    GateStatus::Fail
+                },
+                format!("collision_check clean={clean} count={count}"),
+                !has_export,
             ));
         }
+        None => gates.push(GateRecord::new(
+            "collisions",
+            GateStatus::Skipped,
+            "the run never checked the timeline for shared lanes",
+            !has_export,
+        )),
+    }
+
+    // The named caption tool is the Director's normal route. The
+    // deterministic runner's custom caption composer is certified from
+    // its StageRecord by derive_gates_with_stages below.
+    if observed.iter().any(|(call, _)| call.tool == "captions_add") {
+        gates.push(GateRecord::new(
+            "captions",
+            GateStatus::Pass,
+            "captions_add answered",
+            voiceover_required,
+        ));
+    } else if voiceover_required {
+        gates.push(GateRecord::new(
+            "captions",
+            GateStatus::Skipped,
+            "the Director plan requires captions but no captions_add call answered",
+            true,
+        ));
+    }
+    if observed.iter().any(|(call, _)| call.tool == "motion_bake") {
+        gates.push(GateRecord::new(
+            "motion",
+            GateStatus::Pass,
+            "motion_bake answered",
+            false,
+        ));
+    }
+    gates
+}
+
+/// Add evidence from the runner's stage ledger. Some built-in stages
+/// intentionally use lower-level edit_apply batches rather than a named
+/// MCP tool (notably the caption composer), so tool-name-only coverage
+/// would incorrectly report that those features were never consumed.
+pub fn derive_gates_with_stages(
+    observed: &[(ToolCall, Value)],
+    stages: &[StageRecord],
+) -> Vec<GateRecord> {
+    let mut gates = derive_gates(observed);
+    if let Some(stage) = stages.iter().find(|stage| stage.stage == Stage::Captions) {
+        gates.retain(|gate| gate.gate != "captions");
+        let voiceover_required = observed
+            .iter()
+            .rev()
+            .find(|(call, _)| call.tool == "plan_validate")
+            .and_then(|(call, _)| call.arguments.get("plan"))
+            .is_some_and(plan_has_voiceover);
+        let (status, evidence) = match stage.outcome {
+            StageOutcome::Completed | StageOutcome::Skipped if !stage.calls.is_empty() => (
+                GateStatus::Pass,
+                format!(
+                    "the caption stage landed through {} successful edit call(s)",
+                    stage.calls.len()
+                ),
+            ),
+            StageOutcome::Completed | StageOutcome::Skipped => (
+                if voiceover_required {
+                    GateStatus::Fail
+                } else {
+                    GateStatus::Skipped
+                },
+                "the caption stage completed without placing caption edits".to_owned(),
+            ),
+            StageOutcome::Warned | StageOutcome::Failed => (
+                GateStatus::Fail,
+                stage
+                    .failure
+                    .clone()
+                    .unwrap_or_else(|| "the caption stage did not finish cleanly".to_owned()),
+            ),
+            StageOutcome::NotReached => (
+                GateStatus::Skipped,
+                "the caption stage was not reached".to_owned(),
+            ),
+        };
+        gates.push(GateRecord::new(
+            "captions",
+            status,
+            evidence,
+            voiceover_required,
+        ));
     }
     gates
 }
@@ -992,6 +1559,19 @@ mod tests {
                 call("motion_probe"),
                 json!({ "file": "/p/out.mp4", "probe": {} }),
             ),
+            (
+                call("timeline_read"),
+                json!({
+                    "timeline": {
+                        "tracks": [{"id":"titles"}],
+                        "clips": [{
+                            "id":"title-1","kind":"text","track":"titles",
+                            "start":0.0,"duration":2.0
+                        }]
+                    },
+                    "media": []
+                }),
+            ),
         ];
         let gates = derive_gates(&observed);
         let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
@@ -1007,6 +1587,279 @@ mod tests {
             .expect("the visual gate is recorded");
         assert_eq!(visual.status, GateStatus::Skipped);
         assert!(!visual.required);
+    }
+
+    #[test]
+    fn plan_voiceover_detection_covers_generated_placed_and_logged_voice() {
+        assert!(plan_has_voiceover(&json!({
+            "audio":{"voiceover":{"source":"tts"}}
+        })));
+        assert!(plan_has_voiceover(&json!({"audioClipId":"voice-1"})));
+        assert!(plan_has_voiceover(&json!({
+            "signalLog":[{"signals":["pause"],"confidence":0.7}]
+        })));
+        assert!(!plan_has_voiceover(&json!({
+            "audio":{"voiceover":null},
+            "audioClipId":"",
+            "signalLog":[]
+        })));
+    }
+
+    #[test]
+    fn voiceover_timeline_requires_both_audio_and_visual_content() {
+        let complete = json!({
+            "timeline": {"clips": [
+                {"kind":"audio","media":"voice"},
+                {"kind":"video","media":"footage"},
+                {"kind":"text"}
+            ]}
+        });
+        let (status, evidence) = timeline_content_gate(&complete);
+        assert_eq!(status, GateStatus::Pass);
+        assert!(evidence.contains("voiceover=true, visual=true"));
+
+        let title_only = json!({
+            "timeline": {"clips": [{"kind":"text"}]}
+        });
+        let (status, evidence) = timeline_content_gate(&title_only);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("voiceover=false, visual=false"));
+
+        let missing = json!({});
+        let (status, _) = timeline_content_gate(&missing);
+        assert_eq!(status, GateStatus::Skipped);
+    }
+
+    #[test]
+    fn signal_evidence_gate_accepts_only_measured_profile_families() {
+        let plan = json!({
+            "signalLog": [
+                {"signals":["pause.class=dead_air","words"],"confidence":0.7}
+            ]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"wordConfidence","confidence":0.75}
+                ]
+            }
+        })];
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
+        assert_eq!(status, GateStatus::Pass);
+        assert!(evidence.contains("2 claimed voice-signal families"));
+    }
+
+    #[test]
+    fn signal_evidence_gate_rejects_unmeasured_or_inflated_confidence() {
+        let plan = json!({
+            "signalLog": [
+                {"signals":["pause","words"],"confidence":0.95}
+            ]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8}
+                ]
+            }
+        })];
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("did not measure wordConfidence"));
+        assert!(evidence.contains("above measured pauses confidence"));
+    }
+
+    #[test]
+    fn arc_signal_requires_the_independent_emotion_extract() {
+        let plan = json!({
+            "signalLog": [{"signals":["arc"],"confidence":0.7}]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [{"signal":"arc","confidence":0.0}]
+            }
+        })];
+        let emotion = json!({
+            "ok": true,
+            "arc": {"arcShape":"rise","arcScore":8.2}
+        });
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, Some(&emotion));
+        assert_eq!(status, GateStatus::Pass);
+        assert!(evidence.contains("arc"));
+
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("did not measure arc"));
+    }
+
+    #[test]
+    fn signal_evidence_gate_rejects_empty_logs_and_unrated_families() {
+        let empty = json!({"signalLog":[]});
+        let (status, evidence) = signal_evidence_gate(&empty, &[], None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("no signalLog entries"));
+
+        let plan = json!({
+            "signalLog": [{"signals":["speaker"],"confidence":0.7}]
+        });
+        let profiles = [json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [{"signal":"speaker","confidence":0.0}]
+            }
+        })];
+        let (status, evidence) = signal_evidence_gate(&plan, &profiles, None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(evidence.contains("did not measure speaker"));
+    }
+
+    #[test]
+    fn signal_family_aliases_match_the_voice_profile_confidence_keys() {
+        assert_eq!(
+            measured_voice_family("pause.class=dead_air"),
+            Some("pauses")
+        );
+        assert_eq!(measured_voice_family("words"), Some("wordConfidence"));
+        assert_eq!(measured_voice_family("sentence.type"), Some("sentenceType"));
+        assert_eq!(measured_voice_family("speechRatio"), Some("pauses"));
+        assert_eq!(
+            measured_voice_family("loudness.truePeakDbfs"),
+            Some("loudness")
+        );
+        assert_eq!(
+            measured_voice_family("prosody.emphasisWords"),
+            Some("prosody")
+        );
+        assert_eq!(
+            measured_voice_family("forensic.formantsHz"),
+            Some("formants")
+        );
+        assert_eq!(measured_voice_family("noiseFloor.snr_db"), Some("forensic"));
+        assert_eq!(measured_voice_family("speakerChanges"), Some("speaker"));
+        assert_eq!(measured_voice_family("speechActs"), None);
+    }
+
+    #[test]
+    fn caption_stage_edits_are_counted_even_when_they_use_edit_apply() {
+        let call = |tool: &str, arguments: Value| ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let observed = vec![
+            (
+                call(
+                    "plan_validate",
+                    json!({
+                        "plan": {
+                            "audio": {"voiceover": true},
+                            "signalLog": [{"signals":["pause"],"confidence":0.5}]
+                        }
+                    }),
+                ),
+                json!({"valid":true,"creativeReady":true}),
+            ),
+            (
+                call("voice_signals", json!({"audio":"/voice.wav"})),
+                json!({
+                    "ok":true,
+                    "signalConfidence":{"perSignal":[
+                        {"signal":"pauses","confidence":0.7}
+                    ]}
+                }),
+            ),
+        ];
+        let completed = [StageRecord::completed(
+            Stage::Captions,
+            vec!["edit_apply".to_owned()],
+        )];
+        let gates = derive_gates_with_stages(&observed, &completed);
+        let captions = gates.iter().find(|gate| gate.gate == "captions").unwrap();
+        assert_eq!(captions.status, GateStatus::Pass);
+        assert!(captions.required);
+
+        let empty = [StageRecord::completed(Stage::Captions, Vec::new())];
+        let gates = derive_gates_with_stages(&observed, &empty);
+        let captions = gates.iter().find(|gate| gate.gate == "captions").unwrap();
+        assert_eq!(captions.status, GateStatus::Fail);
+        assert!(captions.required);
+    }
+
+    #[test]
+    fn a_timeline_ready_run_can_be_accepted_without_an_export() {
+        let call = |tool: &str, arguments: Value| ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let observed = vec![
+            (
+                call("plan_validate", json!({ "plan": { "signalLog": [] } })),
+                json!({ "valid": true, "creativeReady": true }),
+            ),
+            (
+                call("timeline_read", json!({ "path": "/p" })),
+                json!({
+                    "timeline": {
+                        "tracks": [{"id":"titles"}],
+                        "clips": [{
+                            "id":"title-1","kind":"text","track":"titles",
+                            "start":0.0,"duration":2.0
+                        }]
+                    },
+                    "media": []
+                }),
+            ),
+            (
+                call("collision_check", json!({ "path": "/p" })),
+                json!({ "clean": true, "count": 0 }),
+            ),
+            (
+                call("watch_render", json!({ "project": "/p", "audio": true })),
+                json!({ "pngPath": "/p/preview.png" }),
+            ),
+            (
+                call("craft_critique", json!({ "project": "/p" })),
+                json!({ "overall": 8.1 }),
+            ),
+        ];
+        let gates = derive_gates(&observed);
+        let receipt = AcceptanceReceipt::new("/p", "timeline", Vec::new(), gates, Vec::new());
+        assert_eq!(receipt.verdict, Verdict::Accepted);
+        for name in ["story", "timeline-integrity", "collisions", "visual"] {
+            assert_eq!(
+                receipt
+                    .gates
+                    .iter()
+                    .find(|gate| gate.gate == name)
+                    .unwrap()
+                    .status,
+                GateStatus::Pass,
+                "{name} must pass for timeline delivery"
+            );
+        }
+        for name in ["words", "audio", "export-integrity"] {
+            assert_eq!(
+                receipt
+                    .gates
+                    .iter()
+                    .find(|gate| gate.gate == name)
+                    .unwrap()
+                    .status,
+                GateStatus::Skipped,
+                "{name} is honestly skipped without an export"
+            );
+            assert!(
+                !receipt
+                    .gates
+                    .iter()
+                    .find(|gate| gate.gate == name)
+                    .unwrap()
+                    .required
+            );
+        }
     }
 
     #[test]
@@ -1084,6 +1937,39 @@ mod tests {
     }
 
     #[test]
+    fn caption_stage_edit_batches_consume_caption_capability() {
+        let stages = vec![StageRecord::completed(
+            Stage::Captions,
+            vec!["edit_apply".to_owned()],
+        )];
+        let receipt = AcceptanceReceipt::new("/p", "timeline", stages, Vec::new(), Vec::new());
+        let captions = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Captions)
+            .expect("caption capability is listed");
+        assert!(captions.consumed);
+        assert_eq!(captions.tools, vec!["edit_apply".to_owned()]);
+    }
+
+    #[test]
+    fn saving_and_reading_the_project_consumes_delivery_capability() {
+        let stages = vec![StageRecord::completed(
+            Stage::TimelineReady,
+            vec!["project_save".to_owned(), "timeline_read".to_owned()],
+        )];
+        let receipt = AcceptanceReceipt::new("/p", "timeline", stages, Vec::new(), Vec::new());
+        let delivery = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Delivery)
+            .expect("delivery capability is listed");
+        assert!(delivery.consumed);
+        assert!(delivery.tools.contains(&"project_save".to_owned()));
+        assert!(delivery.tools.contains(&"timeline_read".to_owned()));
+    }
+
+    #[test]
     fn an_editing_operation_is_not_a_capability() {
         // clip_add places a clip; it decides nothing, so it claims no
         // area - otherwise every run would look fully covered.
@@ -1104,7 +1990,7 @@ mod tests {
         let gates = derive_gates(&[]);
         // Nothing measured: every required dimension is skipped, never a
         // pass the run did not earn.
-        for name in ["story", "words", "audio", "export-integrity"] {
+        for name in ["story", "timeline-integrity"] {
             let gate = gates
                 .iter()
                 .find(|gate| gate.gate == name)
@@ -1112,15 +1998,22 @@ mod tests {
             assert_eq!(gate.status, GateStatus::Skipped, "{name} was not measured");
             assert!(gate.required);
         }
-        // The craft score is a judgement, not proof of the file: it is
-        // recorded when the critic saw the frames and never blocks a run
-        // whose required gates all answered.
+        for name in ["words", "audio", "export-integrity"] {
+            let gate = gates
+                .iter()
+                .find(|gate| gate.gate == name)
+                .expect("the optional export gate is listed");
+            assert_eq!(gate.status, GateStatus::Skipped, "{name} was not measured");
+            assert!(!gate.required);
+        }
+        // The final visual review is required when the timeline itself is
+        // the deliverable: no MP4 is needed, but the open edit must be seen.
         let visual = gates
             .iter()
             .find(|gate| gate.gate == "visual")
             .expect("the visual gate is listed");
         assert_eq!(visual.status, GateStatus::Skipped);
-        assert!(!visual.required);
+        assert!(visual.required);
         let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", Vec::new(), gates, Vec::new());
         assert_eq!(receipt.verdict, Verdict::Incomplete);
     }

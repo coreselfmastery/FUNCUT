@@ -1,5 +1,5 @@
 {
-  "$id": "funcut-director/edit-plan/v2",
+  "$id": "funcut-director/edit-plan/v3",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "description": "The one-pass plan a director emits after measuring, before cutting. Times are seconds unless a field says otherwise.",
   "properties": {
@@ -342,6 +342,214 @@
       "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto.",
       "type": "string"
     },
+    "style": {
+      "description": "The style bible: the one look the whole film wears. Set it before the plan; every segment, caption, comp, grade and sound choice must conform. A plan without it is structurally valid but not creativeReady, because five good shots in five different styles read as five videos.",
+      "properties": {
+        "captions": {
+          "description": "The one caption system: family, weight, case, accent colour and placement. Per-segment captions may change presence, never the system.",
+          "properties": {
+            "emphasisColor": {
+              "description": "#rrggbb for the one accent word.",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": "string"
+            },
+            "font": {
+              "description": "The caption face family, one for the whole film.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "position": {
+              "description": "Where the caption block sits: lower-third, center or upper-third.",
+              "enum": [
+                "lower-third",
+                "center",
+                "upper-third"
+              ],
+              "type": "string"
+            },
+            "weight": {
+              "description": "One weight for the whole film.",
+              "maximum": 900,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "font",
+            "weight",
+            "emphasisColor",
+            "position"
+          ],
+          "type": "object"
+        },
+        "continuityRules": {
+          "description": "The rules a reviewer can check: e.g. 'every shot is fill, never letterboxed', 'the accent appears once per section', 'no two consecutive shots share a camera height'. At least one.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "footage": {
+          "description": "How every picture is treated, so stock, A-roll and generated stills sit in one frame.",
+          "properties": {
+            "continuity": {
+              "description": "The continuity rule for the footage: camera height, movement, colour temperature and shot-size progression.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "orientation": {
+              "description": "The frame the footage is shot for; must agree with the plan aspect.",
+              "enum": [
+                "vertical",
+                "horizontal",
+                "square"
+              ],
+              "type": "string"
+            },
+            "treatment": {
+              "description": "fill = cover and crop; blurPlate = a deliberate blurred plate behind a fitted subject.",
+              "enum": [
+                "fill",
+                "blurPlate"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "orientation",
+            "treatment",
+            "continuity"
+          ],
+          "type": "object"
+        },
+        "grade": {
+          "description": "The one grade filter the whole film wears; it must equal the plan's grade.filter.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "motion": {
+          "description": "The one motion language: how things enter, how they ease, how hard they push. Comps and captions may vary the idea, never the hand.",
+          "properties": {
+            "easing": {
+              "description": "The curve family the whole film uses for entrances and exits.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "intensity": {
+              "description": "How far the motion pushes, 0-1; the film keeps one register.",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "language": {
+              "description": "One sentence: what motion means in this film (measured push-ins, paper cuts, kinetic type, 3D camera).",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "language",
+            "easing",
+            "intensity"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "A name for the look, short enough to say on set.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "palette": {
+          "description": "The film's palette as #rrggbb values, in order of dominance. Every generated graphic, caption accent and grade tint draws from it.",
+          "items": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "sound": {
+          "description": "The one sound world: the bed's duck depth and the texture that sits under the voice.",
+          "properties": {
+            "duckDb": {
+              "description": "The bed's duck depth; must equal audio.bgm.duckDb when a bed is present.",
+              "maximum": 0,
+              "minimum": -60,
+              "type": "number"
+            },
+            "texture": {
+              "description": "One sentence: the room, the air, the low end, the transition sound.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "duckDb",
+            "texture"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "palette",
+        "grade",
+        "captions",
+        "motion",
+        "sound",
+        "footage",
+        "continuityRules"
+      ],
+      "type": "object"
+    },
+    "retention": {
+      "description": "The retention contract: what earns the first three seconds, where the turn lands, what pays it off, and the pattern breaks that keep a scroll from becoming a swipe. A plan without it is not creativeReady.",
+      "properties": {
+        "hook": {
+          "description": "What the first three seconds show or say, and the open question it plants.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "openLoops": {
+          "description": "The questions the viewer needs answered; at least two, one answered by the payoff.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "patternBreaks": {
+          "description": "Times where the visual or sonic pattern deliberately changes (a new shot size, a silence, a colour turn, a camera move). At least two.",
+          "items": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "payoffAt": {
+          "description": "The second the promise is answered; normally the last 10-20% of the cut.",
+          "minimum": 0,
+          "type": "number"
+        },
+        "turnAt": {
+          "description": "The second the argument or feeling turns; normally 40-60% of the cut.",
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "hook",
+        "turnAt",
+        "payoffAt",
+        "patternBreaks",
+        "openLoops"
+      ],
+      "type": "object"
+    },
     "sections": {
       "description": "The piece's structure, by role. Reel: hook + body + cta. Longform: hook + intro + body(chapters) + cta + outro. Boundaries align to segments.",
       "items": {
@@ -455,7 +663,7 @@
             ]
           },
           "cutType": {
-            "description": "How this segment begins; the twelve-cut vocabulary in prompts/cuts_and_pacing.md. A run of six hards is a pacing smell.",
+            "description": "How this segment begins; the eighteen-cut vocabulary in prompts/cuts_and_pacing.md. A run of six hards is a pacing smell.",
             "enum": [
               "hard",
               "match",
@@ -468,7 +676,13 @@
               "action",
               "beat",
               "flash",
-              "speed"
+              "speed",
+              "cutaway",
+              "insert",
+              "reaction",
+              "cross",
+              "freeze",
+              "contrast"
             ],
             "type": "string"
           },
@@ -788,7 +1002,7 @@
       "type": "array"
     },
     "signalLog": {
-      "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM and transition decision, naming the signals (from the profile's decisionPolicy) behind it. A plan with a voiceover and no signalLog is NOT creativeReady.",
+      "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM and transition decision, naming the signals (from the profile's decisionPolicy) behind it, with their confidence and a one-sentence basis. A `cut` entry must land on a segment boundary; an entry at an arbitrary time is not evidence that a cut was driven. A plan with a voiceover and no signalLog is NOT creativeReady.",
       "items": {
         "additionalProperties": false,
         "properties": {
@@ -798,7 +1012,7 @@
             "type": "number"
           },
           "confidence": {
-            "description": "How certain the profile was of the signals behind this choice, 0-1: the weakest family it names. Absent when the run could not rate them.",
+            "description": "How certain the profile was of the signals behind this choice, 0-1: the weakest family it names. Required by the signal gate; an entry without it, or with 0, is refused.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"
@@ -816,7 +1030,7 @@
             "type": "string"
           },
           "note": {
-            "description": "One sentence a reviewer reads: why these signals drove this choice.",
+            "description": "One sentence a reviewer reads: why these signals drove this choice. Required by the signal gate.",
             "type": "string"
           },
           "signals": {

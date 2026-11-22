@@ -325,7 +325,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
-            description: "Validate schema, creative readiness and signalLog before edits; return blockers and craft score.",
+            description: "Validate schema, creative readiness and signalLog before edits; return blockers and craft score. A plan without a `style` bible or a `retention` contract is structurally valid but not creativeReady.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -466,7 +466,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "stock_search",
             "Search live stock (Pexels, Pixabay)",
-            "Search the live rights-cleared shelves (Pexels, Pixabay) by words; every hit carries the licence commercial use stands on. A missing key is a named refusal, not an empty page.",
+            "Search live rights-cleared stock (Pexels, Pixabay) by words; every hit carries its licence. Live shelves return VIDEO only; for a still use preview_frame. A missing key is a named refusal.",
             "stock.search",
             Raw,
         )
@@ -3481,7 +3481,7 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     }
     if longest_hard_run >= 6 {
         warnings.push(format!(
-            "{longest_hard_run} hard cuts in a row; the catalog has twelve cut types - a run of hards is a slideshow"
+            "{longest_hard_run} hard cuts in a row; the catalog has eighteen cut types - a run of hards is a slideshow"
         ));
     }
     if missing_entrances > 0 {
@@ -3705,6 +3705,15 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         .unwrap_or_default();
     let mut problems: Vec<String> = Vec::new();
     let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    // A cut entry is only evidence when it lands on a real segment boundary.
+    // Counting entries alone let a plan log five cuts at arbitrary times and
+    // call the voice read spent; the boundary is what makes it inspectable.
+    let boundaries: Vec<f64> = segments
+        .iter()
+        .skip(1)
+        .filter_map(|segment| segment.get("start").and_then(Value::as_f64))
+        .collect();
+    let mut covered = vec![false; boundaries.len()];
     for (at, entry) in entries.iter().enumerate() {
         let decision = entry
             .get("decision")
@@ -3725,6 +3734,19 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             problems.push(format!(
                 "entry {at}: at {time} lies outside the plan's 0-{runtime} s"
             ));
+        }
+        if decision == "cut"
+            && let Some(time) = entry.get("at").and_then(Value::as_f64)
+        {
+            match boundaries
+                .iter()
+                .position(|boundary| (*boundary - time).abs() <= 0.06)
+            {
+                Some(boundary) => covered[boundary] = true,
+                None => problems.push(format!(
+                    "entry {at}: cut at {time} s is not a segment boundary - the signal did not drive a cut"
+                )),
+            }
         }
         let signals = entry
             .get("signals")
@@ -3749,15 +3771,67 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
                 ));
             }
         }
+        // A decision without a stated confidence or a one-sentence basis
+        // is a claim, not a reading. The profile's signalConfidence is
+        // what makes the entry inspectable after the run.
+        match entry.get("confidence").and_then(Value::as_f64) {
+            Some(confidence) if (0.0..=1.0).contains(&confidence) && confidence > 0.0 => {}
+            Some(0.0) => problems.push(format!(
+                "entry {at}: confidence 0 - the signal was not measured; do not cite it"
+            )),
+            Some(confidence) => problems.push(format!(
+                "entry {at}: confidence {confidence} lies outside 0-1"
+            )),
+            None => problems.push(format!(
+                "entry {at}: confidence is absent - the run did not rate the signals behind this choice"
+            )),
+        }
+        if entry
+            .get("note")
+            .and_then(Value::as_str)
+            .is_none_or(|note| note.trim().is_empty())
+        {
+            problems.push(format!(
+                "entry {at}: no note - state the basis the signals gave this choice"
+            ));
+        }
         *counts.entry(decision).or_default() += 1;
     }
-    let driven = !entries.is_empty() && problems.is_empty();
+    let has_voiceover = plan
+        .pointer("/audio/voiceover")
+        .is_some_and(|voiceover| !voiceover.is_null());
+    let has_bgm = plan.pointer("/audio/bgm").is_some_and(|bgm| !bgm.is_null());
     // The decisions a plan this size owes a log for: the cuts are the
-    // segment boundaries, and one BGM choice, one caption style and one
-    // grade are the video-wide minimum. Entries beyond the minimum are
-    // welcome; the coverage names how many there are.
-    let expected_cuts = segments.len().saturating_sub(1);
+    // segment boundaries, and one BGM choice and one caption style are
+    // the video-wide minimum. Entries beyond the minimum are welcome;
+    // the coverage names how many cuts there are.
+    let expected_cuts = boundaries.len();
     let logged_cuts = *counts.get("cut").unwrap_or(&0);
+    if expected_cuts > 0 && logged_cuts < expected_cuts {
+        problems.push(format!(
+            "the signalLog logs {logged_cuts} of {expected_cuts} cuts - every segment boundary needs the signal that drove it"
+        ));
+    }
+    for (index, boundary) in boundaries.iter().enumerate() {
+        if !covered[index] {
+            problems.push(format!(
+                "the signalLog has no cut entry at {boundary} s - the boundary was not driven"
+            ));
+        }
+    }
+    if has_voiceover && *counts.get("caption").unwrap_or(&0) == 0 {
+        problems.push(
+            "the plan has a voiceover but the signalLog names no caption choice - every spoken line is captioned"
+                .to_owned(),
+        );
+    }
+    if has_bgm && *counts.get("bgm").unwrap_or(&0) == 0 {
+        problems.push(
+            "the plan adds BGM but the signalLog names no bgm choice - the bed was not read"
+                .to_owned(),
+        );
+    }
+    let driven = !entries.is_empty() && problems.is_empty();
     let coverage = if entries.is_empty() {
         0.0
     } else {
@@ -3776,7 +3850,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         "coverage": (coverage * 100.0).round() / 100.0,
         "perDecision": per_decision,
         "problems": problems,
-        "how": "voice_signals (action extract) on the take, then record {at, decision, signals, note} for each choice; the profile's decisionPolicy names the signals each decision reads.",
+        "how": "voice_signals (action extract) on the take, then record {at, decision, signals, confidence, note} for each choice; the profile's decisionPolicy names the signals each decision reads and signalConfidence rates them.",
     })
 }
 
@@ -3845,6 +3919,263 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
             }
         }
         Some(_) => blockers.push("creativeBrief must be an object".to_owned()),
+    }
+
+    // The style bible: five good shots in five different styles read as
+    // five videos. The plan names one look, and the grade, captions,
+    // footage treatment, motion hand and sound world have to agree with
+    // it. This is deliberately a creativeReady blocker, not a hard
+    // structural error: an old plan still validates, but it cannot pass
+    // as a finished Director cut.
+    match object.get("style") {
+        None => {
+            blockers.push(
+                "no style bible: set `style` with one name, palette, grade, caption system, motion hand, sound world and footage treatment before planning - otherwise the cut is five videos in one"
+                    .to_owned(),
+            );
+            score -= 1.5;
+        }
+        Some(Value::Object(style)) => {
+            let text = |key: &str| {
+                style
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            };
+            if text("name").is_none() {
+                blockers.push("style.name is missing: name the one look".to_owned());
+                score -= 0.3;
+            }
+            let palette = style.get("palette").and_then(Value::as_array);
+            if palette.is_none_or(|palette| palette.len() < 2) {
+                blockers.push(
+                    "style.palette needs at least two #rrggbb colours - the film's dominant colours"
+                        .to_owned(),
+                );
+                score -= 0.5;
+            } else if palette.is_some_and(|palette| {
+                palette.iter().any(|colour| {
+                    !colour.as_str().is_some_and(|hex| {
+                        hex.len() == 7
+                            && hex.starts_with('#')
+                            && hex[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+                    })
+                })
+            }) {
+                blockers.push("style.palette contains a colour that is not #rrggbb".to_owned());
+                score -= 0.3;
+            }
+            let grade = text("grade");
+            let plan_grade = object.pointer("/grade/filter").and_then(Value::as_str);
+            if grade.is_none() {
+                blockers.push("style.grade is missing: the film wears one grade".to_owned());
+                score -= 0.3;
+            } else if let (Some(style_grade), Some(plan_grade)) = (grade, plan_grade)
+                && style_grade != plan_grade
+            {
+                blockers.push(format!(
+                    "style.grade `{style_grade}` disagrees with grade.filter `{plan_grade}` - one film, one grade"
+                ));
+                score -= 0.4;
+            }
+            let captions = style.get("captions").and_then(Value::as_object);
+            if captions.is_none_or(|captions| {
+                captions
+                    .get("font")
+                    .and_then(Value::as_str)
+                    .is_none_or(|font| font.trim().is_empty())
+                    || captions
+                        .get("emphasisColor")
+                        .and_then(Value::as_str)
+                        .is_none()
+            }) {
+                blockers.push(
+                    "style.captions needs one font and one emphasisColor for the whole film"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            }
+            if let (Some(caption_style), Some(plan_captions)) = (
+                captions
+                    .and_then(|captions| captions.get("emphasisColor"))
+                    .and_then(Value::as_str),
+                object
+                    .pointer("/captions/emphasisColor")
+                    .and_then(Value::as_str),
+            ) && caption_style != plan_captions
+            {
+                blockers.push(format!(
+                    "style.captions.emphasisColor `{caption_style}` disagrees with captions.emphasisColor `{plan_captions}`"
+                ));
+                score -= 0.3;
+            }
+            let motion = style.get("motion").and_then(Value::as_object);
+            if motion.is_none_or(|motion| {
+                motion
+                    .get("language")
+                    .and_then(Value::as_str)
+                    .is_none_or(|language| language.trim().is_empty())
+                    || motion
+                        .get("easing")
+                        .and_then(Value::as_str)
+                        .is_none_or(|easing| easing.trim().is_empty())
+                    || motion
+                        .get("intensity")
+                        .and_then(Value::as_f64)
+                        .is_none_or(|intensity| !(0.0..=1.0).contains(&intensity))
+            }) {
+                blockers.push(
+                    "style.motion needs one language, one easing family and an intensity in 0-1"
+                        .to_owned(),
+                );
+                score -= 0.4;
+            }
+            let sound = style.get("sound").and_then(Value::as_object);
+            if sound.is_none_or(|sound| {
+                sound
+                    .get("texture")
+                    .and_then(Value::as_str)
+                    .is_none_or(|texture| texture.trim().is_empty())
+                    || sound
+                        .get("duckDb")
+                        .and_then(Value::as_f64)
+                        .is_none_or(|duck| !(-60.0..=0.0).contains(&duck))
+            }) {
+                blockers.push(
+                    "style.sound needs one texture and a duckDb between -60 and 0".to_owned(),
+                );
+                score -= 0.3;
+            } else if let (Some(style_duck), Some(plan_duck)) = (
+                sound
+                    .and_then(|sound| sound.get("duckDb"))
+                    .and_then(Value::as_f64),
+                object.pointer("/audio/bgm/duckDb").and_then(Value::as_f64),
+            ) && (style_duck - plan_duck).abs() > 0.01
+            {
+                blockers.push(format!(
+                    "style.sound.duckDb {style_duck} disagrees with audio.bgm.duckDb {plan_duck} - one bed, one duck"
+                ));
+                score -= 0.3;
+            }
+            let footage = style.get("footage").and_then(Value::as_object);
+            let expected_orientation = match object.get("aspect").and_then(Value::as_str) {
+                Some("9:16") | Some("4:5") => Some("vertical"),
+                Some("16:9") => Some("horizontal"),
+                Some("1:1") => Some("square"),
+                _ => None,
+            };
+            if footage.is_none_or(|footage| {
+                footage
+                    .get("treatment")
+                    .and_then(Value::as_str)
+                    .is_none_or(|treatment| !matches!(treatment, "fill" | "blurPlate"))
+                    || footage
+                        .get("continuity")
+                        .and_then(Value::as_str)
+                        .is_none_or(|continuity| continuity.trim().is_empty())
+            }) {
+                blockers.push(
+                    "style.footage needs a treatment (fill or blurPlate) and a continuity rule"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            }
+            if let (Some(expected), Some(actual)) = (
+                expected_orientation,
+                footage
+                    .and_then(|footage| footage.get("orientation"))
+                    .and_then(Value::as_str),
+            ) && expected != actual
+            {
+                blockers.push(format!(
+                    "style.footage.orientation `{actual}` disagrees with aspect `{}` - a vertical reel is not a horizontal cut",
+                    object.get("aspect").and_then(Value::as_str).unwrap_or("unknown")
+                ));
+                score -= 0.4;
+            }
+            if style
+                .get("continuityRules")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
+                blockers.push(
+                    "style.continuityRules needs at least one checkable rule (fill, no letterbox, one accent per section)"
+                        .to_owned(),
+                );
+                score -= 0.3;
+            }
+        }
+        Some(_) => blockers.push("style must be an object".to_owned()),
+    }
+
+    // The retention contract: a clean cut can still be a scroll-past. The
+    // hook earns the first three seconds, the turn changes the question,
+    // the payoff answers it, and pattern breaks keep the eye from
+    // adapting. These are the checks a viewer makes before a critic does.
+    match object.get("retention") {
+        None => {
+            blockers.push(
+                "no retention contract: set `retention` with hook, turnAt, payoffAt, patternBreaks and openLoops - a technically clean cut is not a watched one"
+                    .to_owned(),
+            );
+            score -= 1.5;
+        }
+        Some(Value::Object(retention)) => {
+            if retention
+                .get("hook")
+                .and_then(Value::as_str)
+                .is_none_or(|hook| hook.trim().is_empty())
+            {
+                blockers.push(
+                    "retention.hook is missing: say what the first three seconds show and ask"
+                        .to_owned(),
+                );
+                score -= 0.4;
+            }
+            let turn = retention.get("turnAt").and_then(Value::as_f64);
+            let payoff = retention.get("payoffAt").and_then(Value::as_f64);
+            if turn.is_none_or(|turn| !(runtime * 0.2..=runtime * 0.8).contains(&turn)) {
+                blockers.push(format!(
+                    "retention.turnAt must sit between {:.1}s and {:.1}s (20-80% of the cut)",
+                    runtime * 0.2,
+                    runtime * 0.8
+                ));
+                score -= 0.5;
+            }
+            if payoff.is_none_or(|payoff| !(runtime * 0.75..=runtime).contains(&payoff)) {
+                blockers.push(format!(
+                    "retention.payoffAt must sit between {:.1}s and the end - the promise has to be answered",
+                    runtime * 0.75
+                ));
+                score -= 0.5;
+            }
+            let breaks = retention
+                .get("patternBreaks")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
+            let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
+            if breaks < wanted_breaks {
+                blockers.push(format!(
+                    "retention.patternBreaks has {breaks} changes; a {runtime:.0}s cut needs at least {wanted_breaks} deliberate visual or sonic breaks"
+                ));
+                score -= 0.5;
+            }
+            if retention
+                .get("openLoops")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+                < 2
+            {
+                blockers.push(
+                    "retention.openLoops needs at least two questions the viewer wants answered"
+                        .to_owned(),
+                );
+                score -= 0.4;
+            }
+        }
+        Some(_) => blockers.push("retention must be an object".to_owned()),
     }
 
     // RISK-01/RISK-02: a monetized brief cannot stand on stock whose
@@ -6881,6 +7212,23 @@ mod tests {
                 "payoff": "The evidence reveals the cause",
                 "emotionalArc": ["curiosity", "tension", "clarity"]
             },
+            "style": {
+                "name": "one look",
+                "palette": ["#0b0d12", "#f2e9dc"],
+                "grade": "concat.teal-orange",
+                "captions": { "font": "Inter", "weight": 700, "emphasisColor": "#f2e9dc", "position": "lower-third" },
+                "motion": { "language": "measured push-ins", "easing": "spring-pop", "intensity": 0.6 },
+                "sound": { "duckDb": -12, "texture": "dry room, low pulse" },
+                "footage": { "orientation": "horizontal", "treatment": "fill", "continuity": "one camera height" },
+                "continuityRules": ["fill, never letterbox"]
+            },
+            "retention": {
+                "hook": "a question in the first two seconds",
+                "turnAt": 15.0,
+                "payoffAt": 27.0,
+                "patternBreaks": [8.0, 20.0],
+                "openLoops": ["what happened?", "why?"]
+            },
             "sections": [
                 { "role": "hook", "start": 0.0, "end": 3.0 },
                 { "role": "body", "start": 3.0, "end": 25.0 },
@@ -6916,6 +7264,23 @@ mod tests {
                 "curiosityGap": "What actually happened?",
                 "payoff": "The evidence reveals the cause",
                 "emotionalArc": ["curiosity", "tension", "clarity"]
+            },
+            "style": {
+                "name": "one look",
+                "palette": ["#0b0d12", "#f2e9dc"],
+                "grade": "concat.teal-orange",
+                "captions": { "font": "Inter", "weight": 700, "emphasisColor": "#f2e9dc", "position": "lower-third" },
+                "motion": { "language": "measured push-ins", "easing": "spring-pop", "intensity": 0.6 },
+                "sound": { "duckDb": -12, "texture": "dry room, low pulse" },
+                "footage": { "orientation": "horizontal", "treatment": "fill", "continuity": "one camera height" },
+                "continuityRules": ["fill, never letterbox"]
+            },
+            "retention": {
+                "hook": "a question in the first two seconds",
+                "turnAt": 5.0,
+                "payoffAt": 9.0,
+                "patternBreaks": [3.0, 7.0],
+                "openLoops": ["what happened?", "why?"]
             },
             "audio": { "bgm": { "trackId": "lofi-0123456789ab" } },
             "sections": [
@@ -7004,17 +7369,23 @@ mod tests {
         let mut driven = base.clone();
         driven["signalLog"] = json!([
             { "at": 2.0, "decision": "cut", "signals": ["pause.class=dead_air", "emphasisWords"],
-              "note": "dead air before the emphasis word" },
-            { "at": 3.5, "decision": "cut", "signals": ["speechRate.pace"] },
-            { "at": 5.0, "decision": "cut", "signals": ["rhythmLayers"] },
-            { "at": 6.5, "decision": "cut", "signals": ["motifs"] },
-            { "at": 8.0, "decision": "cut", "signals": ["pause.class=dead_air"] },
+              "confidence": 0.8, "note": "dead air before the emphasis word" },
+            { "at": 3.5, "decision": "cut", "signals": ["speechRate.pace"],
+              "confidence": 0.8, "note": "the pace lifts into the next clause" },
+            { "at": 5.0, "decision": "cut", "signals": ["rhythmLayers"],
+              "confidence": 0.8, "note": "the rhythm layer changes here" },
+            { "at": 6.5, "decision": "cut", "signals": ["motifs"],
+              "confidence": 0.8, "note": "the motif closes the thought" },
+            { "at": 8.0, "decision": "cut", "signals": ["pause.class=dead_air"],
+              "confidence": 0.8, "note": "the pause before the call to action" },
             { "at": 0.0, "decision": "bgm", "signals": ["forensic.noiseFloorDbfs", "speechRatio"],
-              "note": "dry take: bed it" },
-            { "at": 2.0, "decision": "caption", "signals": ["emphasisWords", "words[].confidence"] },
+              "confidence": 0.8, "note": "dry take: bed it" },
+            { "at": 2.0, "decision": "caption", "signals": ["emphasisWords", "words[].confidence"],
+              "confidence": 0.8, "note": "the stressed word takes the accent" },
             { "at": 4.0, "decision": "graphic", "signals": ["entities", "sentence.type"],
-              "note": "the money line gets a stat card" },
-            { "at": 8.0, "decision": "transition", "signals": ["speakerChanges", "topics"] }
+              "confidence": 0.8, "note": "the money line gets a stat card" },
+            { "at": 8.0, "decision": "transition", "signals": ["speakerChanges", "topics"],
+              "confidence": 0.8, "note": "the speaker change earns the move" }
         ]);
         let result = validate_edit_plan(&driven).expect("valid");
         assert_eq!(result["signalLog"]["driven"], json!(true), "{result}");
@@ -7063,6 +7434,22 @@ mod tests {
                 .iter()
                 .any(|problem| problem.as_str().is_some_and(|text| text.contains("99"))),
             "the out-of-plan time is named: {result}"
+        );
+        // A cut entry between boundaries is a claim, not a driven cut.
+        let mut off_boundary = base.clone();
+        off_boundary["signalLog"] = json!([
+            { "at": 2.5, "decision": "cut", "signals": ["pause"], "confidence": 0.8, "note": "not a boundary" }
+        ]);
+        let result = validate_edit_plan(&off_boundary).expect("valid");
+        assert!(
+            result["signalLog"]["problems"]
+                .as_array()
+                .expect("problems")
+                .iter()
+                .any(|problem| problem
+                    .as_str()
+                    .is_some_and(|text| text.contains("not a segment boundary"))),
+            "the off-boundary cut is named: {result}"
         );
     }
 

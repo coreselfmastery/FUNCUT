@@ -23,7 +23,6 @@ serde = { version = "1", features = ["derive"] }
 # in the log rather than failing an edit that already happened.
 log = { version = "0.4", features = ["std"] }
 serde_json.workspace = true
-url.workspace = true
 # The frame method hands back a PNG: the one picture format every
 # caller reads and that keeps the compositor's pixels exact.
 png = "0.17"

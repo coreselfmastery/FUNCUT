@@ -15,7 +15,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::error::{AutoEditError, ToolCall, ToolError};
-use crate::receipt::{AcceptanceReceipt, StageOutcome, StageRecord, derive_gates_with_stages, provenance_of};
+use crate::receipt::{
+    AcceptanceReceipt, StageOutcome, StageRecord, derive_gates_with_stages, provenance_of,
+};
 use crate::stage::{EditProgram, ErrorPolicy, ProgramStep, ReplyGate, Stage};
 use crate::state::{AutoEditEvent, AutoEditProgress, AutoEditState, RunOutcome, timestamp};
 

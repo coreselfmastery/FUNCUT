@@ -51,6 +51,26 @@ playback cache.
   sidecar; a simple comp falls back to native with `sidecar-missing`; a
   native-only feature is delegated under the Geneva surface; a Lottie comp
   routes to native; a requested native surface is reported as `requested`.
+- **`remap` is the programmatic-video primitive.** It samples `time` or a
+  numeric track, maps an input range onto an output range, and writes a
+  target track - with `clamp`, a curve and a sample count. An emotion
+  signal becomes a property range without hand-written keys.
+- **Frame and preview caching.** `motion_frame` and `motion_preview` keep
+  their PNGs under `motion/`, keyed by comp hash, engine, width and time;
+  a repeated look is a file read and says `cached: true`.
+- **Parallel preview.** `motion_preview` splits its samples across the
+  available cores (capped at four), then restores time order. One core
+  keeps the sequential path; the sidecar is a process per call and the
+  native engine shares only its font registry.
+- **Capability inventory.** `motion_presets` carries a `capabilities`
+  document - nodes, animation, shapes, effects, graphics, text, render
+  modes, delegated features and the exact Geneva limits - so an agent can
+  plan against the engine instead of discovering its edges at bake time.
+- **The timeline door.** `motion_bake {place: true}` bakes and places a
+  `ClipKind::Motion` clip in one call; the clip references the comp and
+  records the engine that drew it. `AddMotionClip` now takes the comp's
+  own duration, and the Motion page passes it, so a sting is not stretched
+  to five seconds and a long card is not cut off.
 
 ## 0. Latest director pass: one style bible, a retention contract and real generative media
 

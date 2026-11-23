@@ -450,6 +450,11 @@ pub enum Command {
         /// predates the field.
         #[serde(default)]
         engine: Option<String>,
+        /// The clip's length on the timeline, in seconds. Absent keeps the
+        /// editorial default; a comp that knows its own duration passes it
+        /// so the card is not cut off or left holding a dead frame.
+        #[serde(default)]
+        duration: Option<f64>,
     },
     /// Places a layer: a look or an effect over a span of the timeline that
     /// treats everything beneath it. No media; the chain starts as the one
@@ -1206,7 +1211,9 @@ impl Command {
             Command::AddLayerClip {
                 start, duration, ..
             } => bad([*start]) || bad(*duration),
-            Command::AddMotionClip { start, .. } => bad([*start]),
+            Command::AddMotionClip {
+                start, duration, ..
+            } => bad([*start]) || duration.is_some_and(|duration| bad([duration])),
             Command::SetClipSpeedCurve { curve, .. } => {
                 bad(curve
                     .iter()

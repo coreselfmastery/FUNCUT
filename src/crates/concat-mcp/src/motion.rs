@@ -11,7 +11,9 @@
 //! `<project>/cache/comps/<hash>-<w>x<h>@<fps>/`, and an encoded piece
 //! lands in `<project>/motion/` ready for `media_import` and `clip_add`.
 //! The project is only a folder to these tools - no session, no lock -
-//! because a comp is a document, not an edit.
+//! because a comp is a document, not an edit; the one exception is
+//! `motion_bake {place: true}`, which opens the project and sends
+//! `addMotionClip` after the bake.
 //!
 //! The engine is chosen the way the project's own compositor would choose
 //! it: Geneva, the browserless markup renderer, when the sidecar is there
@@ -110,6 +112,55 @@ impl Engine {
             Engine::Native(engine) => *engine,
         }
     }
+}
+
+/// One drawn preview frame, kept for the reply after the workers join.
+struct PreviewSample {
+    index: usize,
+    at: f64,
+    path: PathBuf,
+    bytes: Vec<u8>,
+    cached: bool,
+}
+
+/// Draw one preview sample, or read the cached PNG the same key already
+/// kept. The worker owns no shared mutable state: the engine, the comp
+/// and the project are read-only here.
+fn preview_sample(
+    engine: &Engine,
+    comp: &Comp,
+    index: usize,
+    frames: u64,
+    width: u32,
+    project: &Path,
+    source: &Path,
+) -> Result<PreviewSample, ApiError> {
+    let at = comp.duration * (index as f64) / (frames as f64);
+    let path = motion_dir(project).join(format!(
+        "preview-{:016x}-{}-{width}-{}-{at:.2}.png",
+        comp.hash(),
+        engine.kind().as_str(),
+        index + 1
+    ));
+    let cached = path.is_file();
+    if !cached {
+        let drawn = engine
+            .as_dyn()
+            .frame(comp, at, Some(width), source)
+            .map_err(|error| ApiError::failed(error.to_string()))?;
+        std::fs::copy(&drawn, &path)
+            .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
+        let _ = std::fs::remove_file(&drawn);
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|error| ApiError::failed(format!("could not read the drawn frame: {error}")))?;
+    Ok(PreviewSample {
+        index,
+        at,
+        path,
+        bytes,
+        cached,
+    })
 }
 
 /// The engine that draws `comp`: the preference's choice, given the
@@ -291,6 +342,54 @@ fn summary_of(comp: &Comp) -> Value {
     value
 }
 
+/// The engine's capability inventory, in the words an agent can plan
+/// against. This is a catalogue, not a guard: `Comp::validate` and the
+/// route are the guards. It answers "what can I make here?" without
+/// making the caller read the whole comp format first.
+fn capabilities() -> Value {
+    json!({
+        "surface": "geneva",
+        "renderers": ["geneva", "native", "lottie"],
+        "nodes": {
+            "both": ["group", "rect", "ellipse", "text", "image", "composition"],
+            "genevaFull": ["html", "css", "markup"],
+            "nativeOnly": ["path", "adjustment", "audio", "rig", "camera", "lottie"],
+        },
+        "animation": [
+            "keyframes", "bezier", "spring", "steps", "noise", "remap", "pulse",
+            "camera", "rig", "audio-reaction", "per-word timing", "stagger"
+        ],
+        "shapes": [
+            "path trim", "path morph", "boolean combine", "tapered stroke",
+            "track matte", "path mask", "linear gradient", "radial gradient"
+        ],
+        "effectsNativeOnly": [
+            "blur", "shadow", "glow", "aberration", "ripple", "wave", "bulge",
+            "pixelate", "scanlines", "tracking", "kaleidoscope", "shader"
+        ],
+        "graphics": ["charts", "counters", "particles", "data tables"],
+        "text": [
+            "31 text presets", "kinetic typography", "karaoke", "word timing",
+            "markup cards", "variable-weight ramps", "letter spacing"
+        ],
+        "render": [
+            "png sequence", "mp4", "alpha png", "manifest", "bake cache",
+            "frame cache", "parallel preview", "incremental per-scene bake"
+        ],
+        "delegates": [
+            "a vector path", "a track matte", "a path mask", "a 3D camera",
+            "a bone rig", "an adjustment layer", "an audio reaction",
+            "a supported effect", "a Lottie asset"
+        ],
+        "genevaLimits": [
+            "a shadow effect on a clip", "a path node", "conic-gradient",
+            "radial-gradient with two radii", "font-variation-settings",
+            "animated font-weight", "em lengths in keyframes",
+            "transform as a base style"
+        ],
+    })
+}
+
 /// `motion_presets`: the library - every preset with its category, size,
 /// duration, slots and whether the sidecar is there to bake it.
 pub fn presets_list() -> Result<Outcome, ApiError> {
@@ -332,6 +431,7 @@ pub fn presets_list() -> Result<Outcome, ApiError> {
         "surface": preference.default.as_str(),
         "policy": "one engine surface; native-only comps are delegated to the native \
                    rasterizer and the reply's route says why",
+        "capabilities": capabilities(),
         "geneva": match &engine {
             Some(geneva) => {
                 let version = geneva.version().unwrap_or_default();
@@ -809,19 +909,30 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
         .map(|w| w as u32);
     std::fs::create_dir_all(motion_dir(&project))
         .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
-    let drawn = engine
-        .as_dyn()
-        .frame(&comp, at, width, &comps_dir(&project))
-        .map_err(|error| ApiError::failed(error.to_string()))?;
-    let out = motion_dir(&project).join(format!("frame-{:016x}-{at:.2}.png", comp.hash(),));
-    // Read the drawn PNG before it is removed: an agent cannot open a path,
-    // so the frame has to travel back as MCP `type: image` content. This is
-    // what makes the look-before-you-bake design loop actually work.
-    let bytes = std::fs::read(&drawn)
+    let out_width = width.unwrap_or(comp.width);
+    // The cache key carries the engine and the width as well as the comp:
+    // a frame drawn by native before the sidecar was installed is not the
+    // frame Geneva would draw, and a 480px preview is not a 1080p one.
+    let out = motion_dir(&project).join(format!(
+        "frame-{:016x}-{}-{out_width}-{at:.2}.png",
+        comp.hash(),
+        engine.kind().as_str()
+    ));
+    let cached = out.is_file();
+    if !cached {
+        let drawn = engine
+            .as_dyn()
+            .frame(&comp, at, width, &comps_dir(&project))
+            .map_err(|error| ApiError::failed(error.to_string()))?;
+        std::fs::copy(&drawn, &out)
+            .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
+        let _ = std::fs::remove_file(&drawn);
+    }
+    // Read the kept PNG: an agent cannot open a path, so the frame travels
+    // back as MCP `type: image` content. This is what makes the
+    // look-before-you-bake design loop actually work.
+    let bytes = std::fs::read(&out)
         .map_err(|error| ApiError::failed(format!("could not read the drawn frame: {error}")))?;
-    std::fs::copy(&drawn, &out)
-        .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
-    let _ = std::fs::remove_file(&drawn);
     let inline = crate::sense::base64(&bytes);
     let mut reading = json!({
         "at": at,
@@ -830,6 +941,7 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
         "width": width.unwrap_or(comp.width),
         "height": comp.height,
         "engine": engine.kind().as_str(),
+        "cached": cached,
         "route": route,
         "note": "Look at this frame. Check legibility, contrast, safe margins and whether the motion is mid-entrance or settled before baking.",
     });
@@ -910,37 +1022,64 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
     // One sixth of the way in is the first sample, five sixths the last:
     // the samples walk [0, duration) without ever landing on the frame
     // after everything has left.
+    // Preview is the hot loop an agent and a scrubber both live in, so the
+    // samples render in parallel: one worker per available core, capped
+    // at four, each taking a contiguous slice. The sidecar is a process
+    // per call and the native engine locks only its font registry, so the
+    // workers do not share mutable state. A machine with one core gets the
+    // sequential path it had before.
+    let source = comps_dir(&project);
+    let workers = std::thread::available_parallelism()
+        .map(|cores| cores.get())
+        .unwrap_or(1)
+        .min(4)
+        .min(frames as usize)
+        .max(1);
+    let chunk = (frames as usize).div_ceil(workers);
+    let mut samples: Vec<PreviewSample> = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(workers);
+        for worker in 0..workers {
+            let start = worker * chunk;
+            let end = ((worker + 1) * chunk).min(frames as usize);
+            if start >= end {
+                continue;
+            }
+            let engine = &engine;
+            let comp = &comp;
+            let project = &project;
+            let source = &source;
+            handles.push(scope.spawn(move || {
+                (start..end)
+                    .map(|index| {
+                        preview_sample(engine, comp, index, frames, width as u32, project, source)
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()
+            }));
+        }
+        let mut all = Vec::with_capacity(frames as usize);
+        for handle in handles {
+            let chunk = handle
+                .join()
+                .map_err(|_| ApiError::failed("a preview worker panicked".to_owned()))??;
+            all.extend(chunk);
+        }
+        all.sort_by_key(|sample| sample.index);
+        Ok::<_, ApiError>(all)
+    })?;
+
     let mut content = Vec::with_capacity(frames as usize + 1);
     let mut said = Vec::with_capacity(frames as usize);
-    for index in 0..frames {
-        let at = comp.duration * f64::from(index as u32) / f64::from(frames as u32);
-        let drawn = engine
-            .as_dyn()
-            .frame(&comp, at, Some(width as u32), &comps_dir(&project))
-            .map_err(|error| ApiError::failed(error.to_string()))?;
-        // Read the drawn PNG before it is removed: an agent cannot open a
-        // path, so each sample travels back as MCP `type: image` content,
-        // in time order - the flipbook the reply is.
-        let bytes = std::fs::read(&drawn).map_err(|error| {
-            ApiError::failed(format!("could not read the drawn frame: {error}"))
-        })?;
-        let out = motion_dir(&project).join(format!(
-            "preview-{:016x}-{}-{at:.2}.png",
-            comp.hash(),
-            index + 1
-        ));
-        std::fs::copy(&drawn, &out)
-            .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
-        let _ = std::fs::remove_file(&drawn);
+    for sample in samples.drain(..) {
         content.push(json!({
             "type": "image",
-            "data": crate::sense::base64(&bytes),
+            "data": crate::sense::base64(&sample.bytes),
             "mimeType": "image/png",
         }));
         said.push(json!({
-            "index": index + 1,
-            "at": (at * 100.0).round() / 100.0,
-            "frame": out.display().to_string(),
+            "index": sample.index + 1,
+            "at": (sample.at * 100.0).round() / 100.0,
+            "frame": sample.path.display().to_string(),
+            "cached": sample.cached,
         }));
     }
     let mut reading = json!({
@@ -1264,7 +1403,7 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to
 /// PNG frames in the project's cache and, when `encode` is set, written as
 /// one video file under `motion/` ready for `media_import`.
-pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
+pub fn bake(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
         .cloned()
@@ -1272,7 +1411,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     for key in fields.keys() {
         if ![
             "project", "preset", "comp", "ops", "width", "height", "fps", "crf", "encode", "name",
-            "vars",
+            "vars", "place", "start", "duration",
         ]
         .contains(&key.as_str())
         {
@@ -1533,6 +1672,59 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         });
     }
 
+    // The timeline door: a bake can land as a motion clip in the same
+    // call, so an agent does not have to bake, read the hash, and send a
+    // second edit. The clip references the content-addressed comp file
+    // and records the engine that drew it; the comp's own duration is the
+    // default, because a five-second default cuts a sting short and
+    // leaves a long card holding a dead frame.
+    if fields
+        .get("place")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let start = fields.get("start").and_then(Value::as_f64).unwrap_or(0.0);
+        let duration = fields
+            .get("duration")
+            .and_then(Value::as_f64)
+            .unwrap_or(comp.duration);
+        if !start.is_finite() || start < 0.0 {
+            return Err(ApiError::invalid(
+                "invalid arguments: `start` is timeline seconds and cannot be negative",
+            ));
+        }
+        if !duration.is_finite() || duration <= 0.0 {
+            return Err(ApiError::invalid(
+                "invalid arguments: `duration` is seconds and must be positive",
+            ));
+        }
+        let path = project.display().to_string();
+        backend.call(
+            serde_json::from_value(json!({ "method": "project.open", "path": path.clone() }))
+                .map_err(|error| ApiError::failed(format!("opening the project: {error}")))?,
+        )?;
+        let placed = backend.call(
+            serde_json::from_value(json!({
+                "method": "edit.apply",
+                "path": path,
+                "command": {
+                    "op": "addMotionClip",
+                    "start": start,
+                    "comp": format!("{hash}.json"),
+                    "hash": hash.clone(),
+                    "engine": baked.engine.as_str(),
+                    "duration": duration,
+                },
+            }))
+            .map_err(|error| ApiError::failed(format!("placing the motion clip: {error}")))?,
+        )?;
+        reply["placed"] = json!({
+            "start": start,
+            "duration": duration,
+            "clip": placed.get("createdId").cloned().unwrap_or(Value::Null),
+        });
+    }
+
     if fields.get("encode").and_then(Value::as_bool) == Some(true) {
         let name = fields
             .get("name")
@@ -1550,7 +1742,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         } else {
             format!("{hash}-{name}")
         };
-        let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
+        let out = crate::sense::write_target(&*backend, Some(&motion_dir(&project)), &name)?;
         match &engine {
             Engine::Geneva(engine) => encode_bake(engine, &dir, &out, crf)?,
             Engine::Native(_) => {
@@ -2871,12 +3063,13 @@ mod tests {
         .expect("the ops apply");
         comp_in(project.path(), "native-card.json", &comp);
 
+        let mut backend = Windowless;
         let baked = bake(
             json!({
                 "project": project.path(),
                 "comp": "native-card.json",
             }),
-            &Windowless,
+            &mut backend,
         )
         .expect("the bake renders");
         let reply = baked.structured.expect("the bake replies");
@@ -2911,6 +3104,122 @@ mod tests {
         // says the fidelity reason; without one, the availability one.
         let note = reply["engineNote"].as_str().unwrap_or_default();
         assert!(note.contains("native"), "the note says native: {note}");
+    }
+
+    /// The preview is the hot loop: it renders its samples on the native
+    /// engine, keeps them, and answers the second look from the cache.
+    #[test]
+    fn a_preview_renders_its_samples_and_caches_them() {
+        let project = tempfile::tempdir().expect("a project folder");
+        let comp = authoring::apply_json(
+            &base("preview-card", 1.0),
+            &json!({"ops": [
+                {"op": "add-rect", "id": "card", "width": 320, "height": 180,
+                 "fill": "#101418ff", "radius": 12, "x": 320, "y": 180},
+                {"op": "set-track-colors", "node": "card", "property": "fill",
+                 "keys": [[0.0, "#101418", null], [1.0, "#3b82f6", null]]},
+            ]}),
+        )
+        .expect("the ops apply");
+        comp_in(project.path(), "preview-card.json", &comp);
+        let arguments = json!({
+            "project": project.path(),
+            "comp": "preview-card.json",
+            "frames": 4,
+            "width": 160,
+        });
+        let first = preview(arguments.clone(), &Windowless).expect("the preview renders");
+        let reply = first.structured.expect("the preview replies");
+        assert_eq!(reply["engine"], "native");
+        assert_eq!(reply["count"], 4);
+        assert_eq!(
+            first
+                .content
+                .iter()
+                .filter(|block| block["type"] == "image")
+                .count(),
+            4,
+            "one inline image per sample"
+        );
+        assert!(
+            reply["frames"]
+                .as_array()
+                .expect("the samples")
+                .iter()
+                .all(|sample| sample["cached"] == false),
+            "the first look renders"
+        );
+
+        let second = preview(arguments, &Windowless).expect("the second preview");
+        let reply = second.structured.expect("the second preview replies");
+        assert!(
+            reply["frames"]
+                .as_array()
+                .expect("the samples")
+                .iter()
+                .all(|sample| sample["cached"] == true),
+            "the second look reads the cache"
+        );
+    }
+
+    /// A backend that records the requests a tool sends: the placement
+    /// door is one bake followed by one `addMotionClip`, and the test can
+    /// read both without a window.
+    #[derive(Default)]
+    struct Recording {
+        requests: Vec<concat_api::Request>,
+    }
+
+    impl Backend for Recording {
+        fn call(&mut self, request: concat_api::Request) -> Result<Value, ApiError> {
+            self.requests.push(request);
+            Ok(json!({ "createdId": "c1" }))
+        }
+
+        fn describe(&self) -> Value {
+            json!({ "mode": "recording" })
+        }
+    }
+
+    #[test]
+    fn a_bake_can_place_itself_on_the_timeline() {
+        let project = tempfile::tempdir().expect("a project folder");
+        let comp = authoring::apply_json(
+            &base("placed-card", 1.5),
+            &json!({"ops": [
+                {"op": "add-rect", "id": "card", "width": 320, "height": 180,
+                 "fill": "#101418ff", "radius": 12, "x": 320, "y": 180},
+            ]}),
+        )
+        .expect("the ops apply");
+        comp_in(project.path(), "placed-card.json", &comp);
+
+        let mut backend = Recording::default();
+        let baked = bake(
+            json!({
+                "project": project.path(),
+                "comp": "placed-card.json",
+                "place": true,
+                "start": 2.0,
+                "duration": 1.5,
+            }),
+            &mut backend,
+        )
+        .expect("the bake places");
+        let reply = baked.structured.expect("the bake replies");
+        assert_eq!(reply["placed"]["clip"], "c1");
+        assert_eq!(reply["placed"]["start"], 2.0);
+        assert_eq!(reply["placed"]["duration"], 1.5);
+
+        assert_eq!(backend.requests.len(), 2, "open, then edit");
+        let sent = serde_json::to_value(&backend.requests[1]).expect("the request serialises");
+        assert_eq!(sent["method"], "edit.apply");
+        assert_eq!(sent["command"]["op"], "addMotionClip");
+        assert_eq!(sent["command"]["start"], 2.0);
+        assert_eq!(sent["command"]["duration"], 1.5);
+        assert_eq!(sent["command"]["engine"], "native");
+        let comp_file = format!("{}.json", reply["hash"].as_str().unwrap());
+        assert_eq!(sent["command"]["comp"].as_str(), Some(comp_file.as_str()));
     }
 
     /// One frame of the same comp, on the same terms: the look-before-bake
@@ -2969,14 +3278,15 @@ mod tests {
                 .needs_markup(),
             "the preset really is a markup comp"
         );
+        let mut backend = Windowless;
         if Geneva::discover(EnginePreference::default().geneva.as_deref()).is_none() {
-            let refused = bake(arguments, &Windowless).expect_err("no sidecar, no markup render");
+            let refused = bake(arguments, &mut backend).expect_err("no sidecar, no markup render");
             assert!(
                 refused.to_string().contains("CONCAT_GENEVA_BIN"),
                 "the refusal names the installer: {refused}"
             );
         } else {
-            let baked = bake(arguments, &Windowless).expect("the sidecar renders");
+            let baked = bake(arguments, &mut backend).expect("the sidecar renders");
             let reply = baked.structured.expect("the bake replies");
             assert_eq!(reply["engine"], "geneva");
         }

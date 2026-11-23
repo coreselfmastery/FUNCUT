@@ -914,7 +914,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
-            description: "Bake a comp to frames, and encode when asked - the render step.",
+            description: "Bake a comp to frames, encode when asked, and place it.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1936,7 +1936,7 @@ fn motion_schema(name: &str) -> Option<Value> {
             "type": "array",
             "description": "Authoring operations applied before anything else: set-slot, \
              set-text, set-words, set-markup, move, retime, set-track, set-track-points, \
-             set-noise-track (seeded), fade-in, slide-to, pop, add-group, add-rect, \
+             remap, set-noise-track (seeded), fade-in, slide-to, pop, add-group, add-rect, \
              add-text, add-chart, add-counter, add-particles, set-camera, set-blend, \
              set-opacity, set-duration, set-background, delete.",
             "items": { "type": "object" }
@@ -2127,6 +2127,32 @@ fn motion_schema(name: &str) -> Option<Value> {
                              prepended when missing, because export finds a motion clip's \
                              bake by that hash. .webm is VP9, .mov ProRes 4444, otherwise \
                              H.264."
+                        }),
+                    ),
+                    (
+                        "place",
+                        json!({
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Place the bake on the timeline as a motion clip that points \
+                             at the content-addressed comp and records its engine."
+                        }),
+                    ),
+                    (
+                        "start",
+                        json!({
+                            "type": "number",
+                            "minimum": 0,
+                            "default": 0,
+                            "description": "Timeline seconds for the placed clip."
+                        }),
+                    ),
+                    (
+                        "duration",
+                        json!({
+                            "type": "number",
+                            "exclusiveMinimum": 0,
+                            "description": "Placed clip length; defaults to the comp's duration."
                         }),
                     ),
                 ],

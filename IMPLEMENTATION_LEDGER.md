@@ -12,7 +12,7 @@ pushed separately. Status: done / in-progress / planned / dropped(why).
 | `v0.2.8-funcut.15` | published, Latest | ten assets; checksums and manifest verified |
 | Release workflow | red only at Nix | runner lost communication; publish skipped; release published manually |
 | Test count | 2,325 | 2,286 workspace + 9 doc + 30 gRPC; 13 skipped |
-| Branch protection | open | no required status checks; `KNOWN_ISSUES.md` item 14 |
+| Branch protection | configured | three `ci.yml` checks required; `enforce_admins` on; PR approval not required |
 
 The `.14` tag and its cancelled release run are superseded by `.15`.
 Target-machine proxy/Geneva acceptance, VAAPI on real hardware, motion-clip

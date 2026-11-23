@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
+  <img src="assets/concat-mark-dark.png" alt="Concat" width="100" />
 </p>
 
 <h1 align="center">FUNCUT</h1>
@@ -19,7 +19,7 @@
 
 <sub>Translations may lag the English README.</sub>
 
-<img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="FUNCUT editor" width="100%" />
+<img src="assets/editor.png" alt="FUNCUT editor" width="100%" />
 
 </div>
 

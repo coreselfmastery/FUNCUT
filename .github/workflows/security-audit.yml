@@ -25,11 +25,13 @@ on:
       - 'src/Cargo.lock'
       - 'src/**/Cargo.toml'
       - '.github/workflows/security-audit.yml'
+      - '.github/workflows/release.yml'
   pull_request:
     paths:
       - 'src/Cargo.lock'
       - 'src/**/Cargo.toml'
       - '.github/workflows/security-audit.yml'
+      - '.github/workflows/release.yml'
   schedule:
     - cron: '17 7 * * 1'
   workflow_dispatch:

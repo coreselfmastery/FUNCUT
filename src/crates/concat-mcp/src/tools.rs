@@ -7757,7 +7757,7 @@ mod tests {
             pasted, names,
             "the paste-ready whole-catalogue list is the catalogue, comma for comma"
         );
-        // And the count the comment claims: "95 of the 105 tools".
+        // And the count the comment claims: "106 of the 114 tools".
         if let Some(rest) = forge.split(" of the ").nth(1) {
             let said: usize = rest
                 .split(|c: char| !c.is_ascii_digit())
@@ -7776,9 +7776,9 @@ mod tests {
     /// comment's advice but the env the server starts with - an
     /// assignment in the `[servers.transport.env]` table - and it must
     /// name only tools the catalogue carries, leaving out exactly the
-    /// nine the director never calls by surprise (the farm pair, the
-    /// specialist motion reads, track_subject, geneva_explain, and the
-    /// two a harness must never call: project_close and export_cancel).
+    /// eight the director never calls by surprise (the farm pair, the
+    /// composition reads, geneva_explain, and the two a harness must
+    /// never call: project_close and export_cancel).
     /// `motion_probe` is NOT among them: it is the only tool that proves
     /// the export is a readable file, so the preferred path must be able
     /// to call it before it calls the run done.

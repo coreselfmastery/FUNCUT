@@ -15,9 +15,10 @@ name: Release
 #
 # The bundles are self-contained: the Linux packages
 # (.deb, .rpm, .AppImage, Arch) carry the
-# FFmpeg runtime libraries beside the binary. CI, the Nix package build and
-# the RustSec dependency audit must all pass on the selected tag before
-# anything is published. Each bundle is also launched where it was built:
+# FFmpeg runtime libraries beside the binary. CI, Geneva's rendered example
+# and dependency checks, the Nix package build and the RustSec dependency audit
+# must all pass on the selected tag before anything is published. Each bundle
+# is also launched where it was built:
 # build-app.yml starts each one
 # (`--version`, `--smoke`, and on x86_64 under an emulated Ivy Bridge)
 # before it uploads it, and a bundle that does not start fails its job,
@@ -120,6 +121,15 @@ jobs:
     with:
       ref: ${{ needs.check.outputs.tag }}
 
+  # The motion renderer is part of the shipped editor; the same tag must
+  # pass its real sidecar, rendered example, quality floors and dependency dance.
+  geneva:
+    name: Geneva
+    needs: [check, engine]
+    uses: ./.github/workflows/geneva.yml
+    with:
+      ref: ${{ needs.check.outputs.tag }}
+
   # Both builds are told the tag too. Left to themselves they build the
   # ref the run started on, and a run started by hand starts on main:
   # 0.2.6 shipped that way, 35 commits past the tag it was named for.
@@ -148,7 +158,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [check, engine, build, nix, security]
+    needs: [check, engine, build, nix, security, geneva]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -223,11 +233,12 @@ jobs:
           done
           test "$checked" -ge 1 || { echo "::error::no AppImage was checked"; exit 1; }
 
-      # The notes are the commits since the previous tag; see the script.
-      # For a release, the previous tag is the previous release: its own
-      # candidates (v0.2.7-rc.2 before v0.2.7) are ancestors too, and from
-      # the last of them the notes would be the handful of fixes it took to
-      # get the candidate through, not what changed since 0.2.6.
+      # A hand-written letter for this tag wins; otherwise the notes are
+      # the commits since the previous tag, see the script. For a release,
+      # the previous tag is the previous release: its own candidates
+      # (v0.2.7-rc.2 before v0.2.7) are ancestors too, and from the last
+      # of them the notes would be the handful of fixes it took to get the
+      # candidate through, not what changed since 0.2.6.
       - name: Write the notes
         id: notes
         env:
@@ -241,7 +252,12 @@ jobs:
             *) candidates=(--exclude 'v*-*') ;;
           esac
           previous=$(git describe --tags --abbrev=0 --match 'v*' "${candidates[@]}" "$tag^" 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -1)
-          .github/release-notes.sh "$previous" "$tag" "${tag#v}" > "$RUNNER_TEMP/notes.md"
+          letter="docs/RELEASE-LETTER-${tag#v}.md"
+          if [ -f "$letter" ]; then
+            cp "$letter" "$RUNNER_TEMP/notes.md"
+          else
+            .github/release-notes.sh "$previous" "$tag" "${tag#v}" > "$RUNNER_TEMP/notes.md"
+          fi
           cat "$RUNNER_TEMP/notes.md"
 
       # Published by the run itself; every bundle was launched before it

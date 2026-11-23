@@ -21,6 +21,7 @@ on:
       - src/Cargo.toml
       - src/crates/*/Cargo.toml
       - .github/workflows/nix.yml
+      - .github/workflows/release.yml
   pull_request:
     paths:
       - flake.nix
@@ -29,6 +30,7 @@ on:
       - src/Cargo.toml
       - src/crates/*/Cargo.toml
       - .github/workflows/nix.yml
+      - .github/workflows/release.yml
   workflow_dispatch:
 
 jobs:

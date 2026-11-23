@@ -100,6 +100,8 @@ jobs:
       # or stale family counts can reach a creative run.
       - run: python3 scripts/check-signal-matrix.py
         if: ${{ !cancelled() }}
+      - run: python3 scripts/ci/check-release-gates.py
+        if: ${{ !cancelled() }}
       # The voice-signal reader's own selftest: the catalogue's measured
       # readings, their sources and the conservative fallbacks on a synthetic take.
       - run: python3 src/crates/concat-mcp/sense/voice_signals.py selftest

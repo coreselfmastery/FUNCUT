@@ -75,7 +75,7 @@ Engine routing is explicit: a comp whose only engine-specific feature is `scene3
 - **Creative contract** — `plan_validate` enforces a style bible and a retention contract.
 - **The signal work** — the fifty-signal vocabulary is parsed, spent and logged; every reading has a reader, a consumer and a decision.
 - **AUTO EDIT picture work** — carried A-roll, the talking-head door, the picture floor, the beat grid, honest plans, live timeline follow.
-- **Security and CI** — stock redirect validation, the `url 2.5.9` RUSTSEC fix, Nix and RustSec release gates, a non-cancelling workflow queue.
+- **Security and CI** — stock redirect validation, the `url 2.5.9` RUSTSEC fix, CI, Geneva, Nix and RustSec release gates, a non-cancelling workflow queue.
 
 Read the full note: [`docs/RELEASE-LETTER-0.2.8-funcut.15.md`](docs/RELEASE-LETTER-0.2.8-funcut.15.md).
 
@@ -105,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/coreselfmastery/FUNCUT/main/install
 ./install-linux.sh --list     # show what the releases hold, install nothing
 ```
 
-If the newest tag is still building, the script picks the newest **published** build. The release workflow publishes a release itself when the tag’s CI and package jobs pass.
+If the newest tag is still building, the script picks the newest **published** build. The release workflow publishes a release itself when the tag’s CI, Geneva, package, Nix and RustSec jobs pass.
 
 ### Packages
 

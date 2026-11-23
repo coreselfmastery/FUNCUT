@@ -1723,7 +1723,7 @@ fn transcript_words(path: &str, backend: &mut dyn Backend) -> Result<Vec<Value>,
     Ok(words)
 }
 
-/// The signal catalogue, read without a backend: the fifty named
+/// The signal catalogue, read without a backend: the seventy named
 /// readings with their families and whys, as the Python side's static
 /// table answers them. A UI builds its per-signal buttons from this
 /// before any server is listening - the catalogue is a table, not a

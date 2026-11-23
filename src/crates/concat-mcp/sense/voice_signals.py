@@ -5,7 +5,7 @@ Pure Python standard library, same contract as the other sense scripts:
 `voice_signals.py <extract|catalog|selftest> --spec -` reads one JSON spec
 from stdin (or argv) and prints one JSON object on stdout.
 
-`catalog` answers the signal catalogue: the fifty named readings, grouped
+`catalog` answers the signal catalogue: the seventy named readings, grouped
 by family, each with what it measures and why the edit wants it - the
 table a UI's per-signal buttons are built from. `extract` accepts a
 `signals: [name...]` filter (the catalogue's own names): a manual
@@ -77,6 +77,25 @@ SCHEMA = "funcut.voice-signals/2"
 # signal names are the log's vocabulary: a signalLog entry that names one
 # of these is a decision the profile can stand behind.
 DECISION_POLICY = {
+    "motion": {
+        "signals": ["motion.emphasisHits", "motion.kineticScale",
+                    "motion.pitchDirection", "motion.pitchTravel",
+                    "motion.rateTempo", "motion.pauseDwell",
+                    "motion.onsetSync", "motion.rhythmStagger",
+                    "motion.sentenceEntry", "motion.emotionEase",
+                    "motion.arcTurn", "motion.entityCard",
+                    "motion.topicChapter", "motion.motifReturn",
+                    "motion.speakerTurn", "motion.confidenceGate",
+                    "motion.sibilanceTexture", "motion.reverbSpace",
+                    "motion.noiseGrain", "motion.levelPulse"],
+        "rule": "The motion-design read: emphasis and onsets set hit timing, "
+                "pitch and level set travel, rate and rhythm set speed and "
+                "stagger, pauses and sentences set holds and entries, arc and "
+                "emotion set easing, entities/topics/motifs/speakers set hero "
+                "cards and callbacks, and the forensic texture sets grain, "
+                "shimmer and background space. Every motion choice names the "
+                "reading that moved it.",
+    },
     "cut": {
         "signals": ["pause.class=dead_air", "emphasisWords", "speechRate.pace",
                     "rhythmLayers", "motifs"],
@@ -126,7 +145,7 @@ def _decision_policy_out():
 
 
 # ---------------------------------------------------------------------------
-# The signal catalogue: the fifty named readings, one button each
+# The signal catalogue: the seventy named readings, one button each
 # ---------------------------------------------------------------------------
 
 # Every reading the profile answers, named, grouped by family, and held
@@ -136,7 +155,7 @@ def _decision_policy_out():
 # reading, ("line", <dotted path within one line row>) for a per-line
 # one - so a filtered extract can resolve exactly what was asked. `rust`
 # marks the readings that need the binary's ears; `new` marks the
-# fourteen the fifty-ear pass added.
+# thirty-four the two catalogue passes added.
 SIGNAL_CATALOGUE = [
     # The loudness family, one ebur128 pass.
     {"name": "loudness.integratedLufs", "family": "Loudness",
@@ -480,6 +499,135 @@ SIGNAL_CATALOGUE = [
      "why": "A take whose longest silence never reached 0.9 s is left "
             "whole: its silences are its breathing, not dead air.",
      "where": ("take", "speaker.longestSilenceSec"), "rust": True, "new": True},
+    # The motion-design family: twenty readings that turn the voice profile
+    # into motion choices. They add no audio pass; they are derived from
+    # the readings above and name the motion decision each one moves.
+    {"name": "motion.emphasisHits", "family": "Motion design",
+     "label": "Emphasis hits",
+     "reads": "Every stressed word with its time, strength and suggested "
+              "scale pop.",
+     "why": "A kinetic word lands on the emphasis, not on the sentence "
+            "start (decision: motion).",
+     "where": ("take", "motion.emphasisHits"), "rust": True, "new": True},
+    {"name": "motion.kineticScale", "family": "Motion design",
+     "label": "Kinetic scale",
+     "reads": "A per-line scale travel from emphasis strength and pitch "
+              "range.",
+     "why": "A performed line grows further than a reported one; the card "
+            "never scales by a guessed constant (decision: motion).",
+     "where": ("take", "motion.kineticScale"), "rust": True, "new": True},
+    {"name": "motion.pitchDirection", "family": "Motion design",
+     "label": "Pitch direction",
+     "reads": "Whether the line's pitch rises, falls or stays flat, with "
+              "the measured slope.",
+     "why": "A rising line moves up-screen; a falling line settles down - "
+            "the motion follows the voice (decision: motion).",
+     "where": ("take", "motion.pitchDirection"), "rust": True, "new": True},
+    {"name": "motion.pitchTravel", "family": "Motion design",
+     "label": "Pitch travel",
+     "reads": "The slope converted to a bounded pixel travel.",
+     "why": "The keyframe's vertical distance, so a steep question lifts "
+            "further than a flat statement (decision: motion).",
+     "where": ("take", "motion.pitchTravel"), "rust": True, "new": True},
+    {"name": "motion.rateTempo", "family": "Motion design",
+     "label": "Rate tempo",
+     "reads": "Words per minute converted to a 0.6-1.6 animation speed.",
+     "why": "Punchy delivery moves faster; slow delivery lets a card "
+            "breathe (decision: motion).",
+     "where": ("take", "motion.rateTempo"), "rust": True, "new": True},
+    {"name": "motion.pauseDwell", "family": "Motion design",
+     "label": "Pause dwell",
+     "reads": "Each classified pause with its hold and frame dwell.",
+     "why": "A dramatic hold keeps the frame still; a scene turn is where "
+            "the next hero enters (decision: motion).",
+     "where": ("take", "motion.pauseDwell"), "rust": True, "new": True},
+    {"name": "motion.onsetSync", "family": "Motion design",
+     "label": "Onset sync",
+     "reads": "The spectral-flux onsets, timed and mapped to their line.",
+     "why": "Hits, flashes and SFX land on measured transients rather than "
+            "on a metronome (decision: motion).",
+     "where": ("take", "motion.onsetSync"), "rust": True, "new": True},
+    {"name": "motion.rhythmStagger", "family": "Motion design",
+     "label": "Rhythm stagger",
+     "reads": "The rhythm layers and the stagger they imply.",
+     "why": "Multi-layer cards enter on the delivery's own rhythm instead "
+            "of all at once (decision: motion).",
+     "where": ("take", "motion.rhythmStagger"), "rust": True, "new": True},
+    {"name": "motion.sentenceEntry", "family": "Motion design",
+     "label": "Sentence entry",
+     "reads": "The sentence type mapped to the preset its entry wants.",
+     "why": "A question opens a kinetic caption, an exclamation a sting, a "
+            "fragment a pull quote (decision: motion).",
+     "where": ("take", "motion.sentenceEntry"), "rust": True, "new": True},
+    {"name": "motion.emotionEase", "family": "Motion design",
+     "label": "Emotion ease",
+     "reads": "The arc shape mapped to a spring, emphasis, ease-out or "
+              "linear curve.",
+     "why": "The easing is the emotional read's own shape, not a house "
+            "default (decision: motion).",
+     "where": ("take", "motion.emotionEase"), "rust": True, "new": True},
+    {"name": "motion.arcTurn", "family": "Motion design",
+     "label": "Arc turn",
+     "reads": "Where valence or arousal turns in the emotional arc.",
+     "why": "The turn is the scene change: the background and hero swap "
+            "there, not on an arbitrary cut (decision: motion).",
+     "where": ("take", "motion.arcTurn"), "rust": True, "new": True},
+    {"name": "motion.entityCard", "family": "Motion design",
+     "label": "Entity hero",
+     "reads": "Each timed entity with the card it earns and its parsed "
+              "value.",
+     "why": "A number, name or date gets a hero card whose motion is sized "
+            "to its importance (decision: motion).",
+     "where": ("take", "motion.entityCard"), "rust": True, "new": True},
+    {"name": "motion.topicChapter", "family": "Motion design",
+     "label": "Chapter entry",
+     "reads": "Scene-turn pauses as chapter entries with the next line's "
+              "headline.",
+     "why": "A chapter card enters on the topic change and leaves before "
+            "the narration resumes (decision: motion).",
+     "where": ("take", "motion.topicChapter"), "rust": True, "new": True},
+    {"name": "motion.motifReturn", "family": "Motion design",
+     "label": "Motif return",
+     "reads": "Every repeated phrase and where it returns.",
+     "why": "The same visual returns with the same motion, so the callback "
+            "reads as design (decision: motion).",
+     "where": ("take", "motion.motifReturn"), "rust": True, "new": True},
+    {"name": "motion.speakerTurn", "family": "Motion design",
+     "label": "Speaker turn",
+     "reads": "Each speaker change, timed and mapped to its line.",
+     "why": "A turn flips the lower-third and the frame side; a monologue "
+            "keeps one hero (decision: motion).",
+     "where": ("take", "motion.speakerTurn"), "rust": True, "new": True},
+    {"name": "motion.confidenceGate", "family": "Motion design",
+     "label": "Confidence gate",
+     "reads": "The words under 0.5 confidence with their times.",
+     "why": "An unsure word gets no glitch, no scale pop and no hero - the "
+            "motion never celebrates a guess (decision: motion).",
+     "where": ("take", "motion.confidenceGate"), "rust": True, "new": True},
+    {"name": "motion.sibilanceTexture", "family": "Motion design",
+     "label": "Sibilance texture",
+     "reads": "The take's sibilance ratio as a shimmer intensity.",
+     "why": "A bright, sibilant voice can carry a light shimmer; a dull one "
+            "gets none (decision: motion).",
+     "where": ("take", "motion.sibilanceTexture"), "rust": True, "new": True},
+    {"name": "motion.reverbSpace", "family": "Motion design",
+     "label": "Reverb space",
+     "reads": "The reverb tail as a background blur and parallax depth.",
+     "why": "A roomy take earns a deeper, softer background; a dry one "
+            "stays crisp (decision: motion).",
+     "where": ("take", "motion.reverbSpace"), "rust": True, "new": True},
+    {"name": "motion.noiseGrain", "family": "Motion design",
+     "label": "Noise grain",
+     "reads": "The floor and spectral flatness as a grain intensity.",
+     "why": "A noisy take wears a matching grain so the design sits in the "
+            "same world as the picture (decision: motion).",
+     "where": ("take", "motion.noiseGrain"), "rust": True, "new": True},
+    {"name": "motion.levelPulse", "family": "Motion design",
+     "label": "Level pulse",
+     "reads": "Each line's lift over the take as a scale pulse.",
+     "why": "A lifted line pulses a little harder; a quiet one holds back "
+            "(decision: motion).",
+     "where": ("take", "motion.levelPulse"), "rust": True, "new": True},
 ]
 
 # The catalogue as the `catalog` action answers it: the families in
@@ -493,7 +641,7 @@ for _entry in SIGNAL_CATALOGUE:
 
 
 def _catalog_out():
-    """The catalogue whole: what the fifty signals are and why each one
+    """The catalogue whole: what the seventy signals are and why each one
     exists - the table the UI's signal buttons are built from, and the
     vocabulary the `signals` filter accepts."""
     return {
@@ -551,7 +699,7 @@ def _resolve_requested(out, wanted):
         "Words": "wordConfidence", "Language": "language", "Sentence": "sentenceType",
         "Entities": "entities", "Motifs": "motifs", "Fillers": "fillers",
         "Arc": "arc", "Prosody": "prosody", "Forensics": "forensic",
-        "Speakers": "speaker",
+        "Speakers": "speaker", "Motion design": "motion",
     }
     # A few signals carry their own confidence row rather than their
     # family's: the formants are a separate, lower-confidence LPC reading
@@ -565,7 +713,7 @@ def _resolve_requested(out, wanted):
         "Words": "wordConfidence", "Language": "language", "Sentence": "sentenceType",
         "Entities": "entities", "Motifs": "motifs", "Fillers": "fillers",
         "Arc": "arc", "Prosody": "prosody", "Forensics": "forensic",
-        "Speakers": "speaker",
+        "Speakers": "speaker", "Motion design": "motion",
     }
     rows = []
     for entry in SIGNAL_CATALOGUE:
@@ -1677,6 +1825,290 @@ def _whisperx_words(audio, lines, language):
 # ---------------------------------------------------------------------------
 
 
+def _motion_design(lines_out, pauses, motifs, entities, arc, speaker,
+                   forensic_whole):
+    """The twenty motion-design readings, derived from the profile.
+
+    They add no pass: each one turns a reading the profile already made
+    into the motion choice it can justify. The shapes are deliberately
+    small and timed - a UI draws them as a lane, and a director spends
+    them as keyframes, entrances, holds and texture.
+    """
+    def number(value):
+        return value if isinstance(value, (int, float)) else None
+
+    def nearest_line(moment):
+        best = None
+        for line in lines_out:
+            start, end = number(line.get("start")), number(line.get("end"))
+            if start is None or end is None:
+                continue
+            if start <= moment <= end:
+                return line.get("index")
+            distance = min(abs(moment - start), abs(moment - end))
+            if best is None or distance < best[0]:
+                best = (distance, line.get("index"))
+        return best[1] if best else None
+
+    def next_text(moment):
+        for line in lines_out:
+            start = number(line.get("start"))
+            if start is not None and start >= moment:
+                return str(line.get("text") or "")
+        return ""
+
+    emphasis_hits = []
+    kinetic_scale = []
+    pitch_direction = []
+    pitch_travel = []
+    rate_tempo = []
+    rhythm_stagger = []
+    sentence_entry = []
+    confidence_gate = []
+    level_pulse = []
+    entry_presets = {
+        "question": "funcut.caption.kinetic",
+        "exclamation": "funcut.sting.wordmark",
+        "fragment": "funcut.quote.pull",
+        "statement": "funcut.lower-third.minimal",
+    }
+
+    for line in lines_out:
+        index = line.get("index")
+        prosody = line.get("prosody") or {}
+        rate = line.get("speechRate") or {}
+        loudness = line.get("loudness") or {}
+        sentence = (line.get("sentence") or {}).get("type") or "statement"
+
+        emphasis = prosody.get("emphasisWords") or []
+        peak = 0.0
+        for word in emphasis:
+            strength = number(word.get("strength")) or 0.5
+            peak = max(peak, strength)
+            at = number(word.get("t"))
+            if at is None:
+                at = number(line.get("start")) or 0.0
+            emphasis_hits.append({
+                "line": index,
+                "at": round(at, 3),
+                "word": word.get("wordText") or word.get("word"),
+                "strength": round(strength, 3),
+                "scale": round(1.0 + 0.25 * strength, 3),
+            })
+
+        pitch_range = number(prosody.get("pitchRangeSemitones"))
+        scale = 1.0 + 0.18 * peak
+        if pitch_range is not None:
+            scale += min(max(pitch_range, 0.0), 12.0) / 12.0 * 0.12
+        kinetic_scale.append({
+            "line": index,
+            "start": line.get("start"),
+            "scale": round(min(scale, 1.35), 3),
+        })
+
+        slope = number(prosody.get("pitchSlopeSemitonesPerSec"))
+        final_rise = prosody.get("finalRise")
+        if final_rise is True or (slope is not None and slope > 0.4):
+            direction = "rise"
+        elif slope is not None and slope < -0.4:
+            direction = "fall"
+        else:
+            direction = "flat"
+        pitch_direction.append({
+            "line": index,
+            "direction": direction,
+            "semitonesPerSec": round(slope, 3) if slope is not None else None,
+            "finalRise": final_rise,
+        })
+        pitch_travel.append({
+            "line": index,
+            "semitonesPerSec": round(slope, 3) if slope is not None else None,
+            "travelPx": round(max(-48.0, min(48.0, (slope or 0.0) * 8.0)), 1),
+        })
+
+        wpm = number(rate.get("wordsPerMinute"))
+        rate_tempo.append({
+            "line": index,
+            "start": line.get("start"),
+            "end": line.get("end"),
+            "wpm": wpm,
+            "speed": round(max(0.6, min(1.6, (wpm or 150.0) / 150.0)), 3),
+        })
+
+        layers = prosody.get("rhythmLayers") or []
+        rhythm_stagger.append({
+            "line": index,
+            "layers": layers,
+            "staggerSec": round(0.06 * len(layers), 3),
+        })
+        sentence_entry.append({
+            "line": index,
+            "start": line.get("start"),
+            "end": line.get("end"),
+            "type": sentence,
+            "preset": entry_presets.get(sentence, entry_presets["statement"]),
+        })
+
+        for word in line.get("words") or []:
+            confidence = number(word.get("confidence"))
+            if confidence is not None and confidence < 0.5:
+                confidence_gate.append({
+                    "line": index,
+                    "at": word.get("start"),
+                    "word": word.get("text"),
+                    "confidence": round(confidence, 3),
+                })
+
+        lift = number(loudness.get("relativeLu"))
+        if lift is not None:
+            level_pulse.append({
+                "line": index,
+                "relativeLu": round(lift, 2),
+                "scale": round(1.0 + max(-0.08, min(0.12, lift * 0.02)), 3),
+            })
+
+    pause_dwell = []
+    topic_chapter = []
+    for pause in pauses:
+        start = number(pause.get("start"))
+        if start is None:
+            continue
+        duration = number(pause.get("durationSec")) or 0.0
+        pause_dwell.append({
+            "at": round(start, 3),
+            "class": pause.get("class"),
+            "holdSec": round(duration, 3),
+            "dwellFrames": int(round(duration * 30)),
+        })
+        if pause.get("class") == "scene_turn":
+            topic_chapter.append({
+                "at": round(start, 3),
+                "reason": "scene_turn",
+                "headline": next_text(start),
+            })
+
+    onsets = (forensic_whole or {}).get("fluxOnsetsSec") or []
+    onset_sync = [
+        {
+            "at": round(float(moment), 3),
+            "line": nearest_line(float(moment)),
+            "strength": 1.0,
+        }
+        for moment in onsets[:240]
+        if isinstance(moment, (int, float))
+    ]
+
+    arc_turn = []
+    emotion_ease = []
+    if isinstance(arc, dict):
+        valence = arc.get("valenceCurve") or []
+        arousal = arc.get("arousalCurve") or []
+        for index in range(1, min(len(valence), len(lines_out))):
+            turn = (valence[index] * valence[index - 1] < 0
+                    or abs(arousal[index] - arousal[index - 1]) >= 0.25)
+            if turn:
+                arc_turn.append({
+                    "at": lines_out[index].get("start"),
+                    "line": index,
+                    "from": round(valence[index - 1], 3),
+                    "to": round(valence[index], 3),
+                    "shape": arc.get("arcShape"),
+                })
+        ease = {
+            "rise": "spring",
+            "fall": "ease-out",
+            "wave": "emphasis",
+            "flat": "linear",
+        }.get(str(arc.get("arcShape") or ""), "emphasis")
+        emotion_ease.append({
+            "shape": arc.get("arcShape"),
+            "ease": ease,
+            "arcScore": arc.get("arcScore"),
+            "valence": round(sum(valence) / len(valence), 3) if valence else None,
+        })
+
+    entity_card = [
+        {
+            "at": entity.get("at"),
+            "line": nearest_line(entity.get("at")),
+            "kind": entity.get("kind"),
+            "card": entity.get("card"),
+            "text": entity.get("text"),
+            "value": entity.get("value"),
+            "unit": entity.get("unit"),
+        }
+        for entity in entities
+        if number(entity.get("at")) is not None
+    ]
+
+    motif_return = []
+    for motif in motifs:
+        for index in motif.get("lineIndices") or []:
+            if not isinstance(index, int) or index <= 0 or index >= len(lines_out):
+                continue
+            motif_return.append({
+                "at": lines_out[index].get("start"),
+                "line": index,
+                "phrase": motif.get("phrase"),
+                "count": motif.get("count"),
+            })
+
+    speaker_turn = []
+    for moment in (speaker or {}).get("changes") or []:
+        if isinstance(moment, (int, float)):
+            speaker_turn.append({
+                "at": round(float(moment), 3),
+                "line": nearest_line(float(moment)),
+            })
+
+    floor = (forensic_whole or {}).get("noiseFloorDbfs")
+    flatness = (forensic_whole or {}).get("spectralFlatness")
+    grain = 0.0
+    if isinstance(floor, (int, float)):
+        grain = max(0.0, min(1.0, (floor + 60.0) / 40.0))
+    if isinstance(flatness, (int, float)):
+        grain = max(grain, min(1.0, flatness * 2.0))
+    noise_grain = [{
+        "noiseFloorDbfs": floor,
+        "spectralFlatness": flatness,
+        "grain": round(grain, 3),
+    }]
+
+    sibilance = (forensic_whole or {}).get("sibilanceRatio")
+    sibilance_texture = [{
+        "ratio": sibilance,
+        "shimmer": round(min(1.0, (sibilance or 0.0) * 2.0), 3),
+    }]
+    reverb = (forensic_whole or {}).get("reverbTailSec")
+    reverb_space = [{
+        "tailSec": reverb,
+        "blurPx": round(min(24.0, (reverb or 0.0) * 40.0), 1),
+    }]
+
+    return {
+        "emphasisHits": emphasis_hits,
+        "kineticScale": kinetic_scale,
+        "pitchDirection": pitch_direction,
+        "pitchTravel": pitch_travel,
+        "rateTempo": rate_tempo,
+        "pauseDwell": pause_dwell,
+        "onsetSync": onset_sync,
+        "rhythmStagger": rhythm_stagger,
+        "sentenceEntry": sentence_entry,
+        "emotionEase": emotion_ease,
+        "arcTurn": arc_turn,
+        "entityCard": entity_card,
+        "topicChapter": topic_chapter,
+        "motifReturn": motif_return,
+        "speakerTurn": speaker_turn,
+        "confidenceGate": confidence_gate,
+        "sibilanceTexture": sibilance_texture,
+        "reverbSpace": reverb_space,
+        "noiseGrain": noise_grain,
+        "levelPulse": level_pulse,
+    }
+
+
 def _signal_confidence(sources, audio, rust, wx_words, series, notes,
                         script_alignment=None):
     """One confidence per signal family, with the basis a director can
@@ -1788,6 +2220,12 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes,
               "vocal-tract formants"
               + (" on a narrow-band take (phone audio): the higher "
                  "formants are missing" if band and band < 5000 else ""))
+        # The motion family is derived, not measured: its confidence is
+        # the floor of the readings it spends, and its basis names them.
+        entry("motion", (0.8 if (sources.get("prosody") or sources.get("pauses"))
+                         else 0.5),
+              "derived from the profile's line, pause, prosody, forensic, "
+              "speaker, entity, motif and arc readings; no extra pass")
     else:
         for name in ("prosody", "forensic", "speaker", "entities", "formants"):
             basis = next(
@@ -1795,6 +2233,8 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes,
                  or "voice-signals binary" in n), None)
             entry(name, 0.0, basis or "the Rust ear is not built: "
                                      "cargo build -p voice-signals")
+        entry("motion", 0.4, "derived from text, pause and rate readings "
+                             "only; the Rust ears did not answer")
 
     return {"ok": True, "perSignal": lines}
 
@@ -1827,9 +2267,10 @@ def _director_hints(lines_out, pauses, rust, language, arc, bgm):
         speaker_changes = rust["speaker"]["changes"]
     questions = [l["index"] for l in lines_out
                  if l.get("sentence", {}).get("type") == "question"]
-    emphasis = [{"lineIndex": l["index"], "words": [w.get("wordText") for w in
-                                                    (l.get("prosody") or {}).get("emphasisWords") or []
-                                                    if w.get("wordText")]}
+    emphasis = [{"lineIndex": l["index"], "words": [
+                    w.get("wordText") or w.get("word")
+                    for w in (l.get("prosody") or {}).get("emphasisWords") or []
+                    if w.get("wordText") or w.get("word")]}
                 for l in lines_out if (l.get("prosody") or {}).get("emphasisWords")]
     emphasis = [e for e in emphasis if e["words"]]
     return {
@@ -1935,18 +2376,22 @@ def extract(spec):
     wanted = _wanted_signals(spec)
     if isinstance(wanted, dict):
         return {"ok": False, "error": wanted["error"]}
-    need_pauses = wanted is None or any(
+    # The motion-design readings are derived from the rest of the profile,
+    # so asking for one owes every pass it derives from.
+    need_motion = wanted is None or any(
+        name.startswith("motion.") for name in wanted)
+    need_pauses = need_motion or wanted is None or any(
         name in ("pauses.classes", "pauses.speechRatio", "words.confidence")
         for name in wanted)
     # The measured word gate reads the momentary series, so a
     # words.confidence ask owes the loudness pass too - WhisperX's own
     # scores replace the gate only when the alignment actually ran.
-    need_loudness = wanted is None or any(
+    need_loudness = need_motion or wanted is None or any(
         name.startswith("loudness.") for name in wanted) \
         or "words.confidence" in wanted
-    need_rust = wanted is None or any(
+    need_rust = need_motion or wanted is None or any(
         CATALOGUE_BY_NAME[name]["rust"] for name in wanted)
-    need_whisperx = wanted is None or "words.confidence" in wanted
+    need_whisperx = need_motion or wanted is None or "words.confidence" in wanted
     language = _detect_language(lines, spec.get("language"))
     notes = []
     sources = {
@@ -1962,6 +2407,7 @@ def extract(spec):
         "forensic": None,
         "speaker": None,
         "entities": None,
+        "motion": None,
         "alignment": "whisper token timestamps",
     }
     # The alignment source, named when the script pass ran: the word
@@ -2158,6 +2604,13 @@ def extract(spec):
         speech_ratio = max(0.0, min(1.0, spoken / max(0.1, duration)))
     bgm = _bgm_decision(rust, speech_ratio)
     hints = _director_hints(lines_out, pauses, rust, language, arc, bgm)
+    motifs_out = _motifs(lines)
+    motion = _motion_design(
+        lines_out, pauses, motifs_out, entities, arc,
+        (rust or {}).get("speaker"),
+        (rust or {}).get("forensic", {}).get("whole"))
+    sources["motion"] = ("derived from the profile's own readings "
+                         "(no extra pass)")
     # The filter's own note lands before the confidence builder reads the
     # notes, so an ear the ask never needed explains itself as skipped by
     # request rather than as broken.
@@ -2221,7 +2674,8 @@ def extract(spec):
         "language": language,
         "lines": lines_out,
         "pauses": pauses,
-        "motifs": _motifs(lines),
+        "motifs": motifs_out,
+        "motion": motion,
         "entities": entities,
         "entitiesAvailable": entities_available,
         "arc": arc,
@@ -2360,6 +2814,22 @@ def selftest():
         if not result.get("ok"):
             return {"ok": False, "selftest": "extract failed", "error": result.get("error")}
         lines = result["lines"]
+        # The motion family adds no pass, so its shape is provable without
+        # ffmpeg: every one of the twenty readings must be present, and the
+        # per-line derivations must answer for every line.
+        motion = result.get("motion") or {}
+        for name in ("emphasisHits", "kineticScale", "pitchDirection",
+                     "pitchTravel", "rateTempo", "pauseDwell", "onsetSync",
+                     "rhythmStagger", "sentenceEntry", "emotionEase", "arcTurn",
+                     "entityCard", "topicChapter", "motifReturn", "speakerTurn",
+                     "confidenceGate", "sibilanceTexture", "reverbSpace",
+                     "noiseGrain", "levelPulse"):
+            if name not in motion:
+                failures.append(f"motion.{name} missing from the profile")
+        for name in ("kineticScale", "pitchDirection", "pitchTravel",
+                     "rateTempo", "rhythmStagger", "sentenceEntry"):
+            if len(motion.get(name) or []) != len(lines):
+                failures.append(f"motion.{name} did not answer every line")
         # Half the signals ride ffmpeg (silencedetect, ebur128); the rest
         # are pure Python. The selftest proves everything it can on this
         # machine and names the half it proved.
@@ -2540,18 +3010,19 @@ def selftest():
             failures.append("loudness confidence low on a real take with a decoder on it")
         # The decision policy: every decision names its signals.
         policy = result.get("decisionPolicy") or {}
-        for decision in ("cut", "caption", "graphic", "bgm", "transition"):
+        for decision in ("cut", "caption", "graphic", "bgm", "transition",
+                         "motion"):
             entry = policy.get(decision)
             if not entry or not entry.get("signals") or not entry.get("rule"):
                 failures.append(f"no decision policy for {decision}: {entry}")
-        # The catalogue: the fifty named readings, fourteen of them the
-        # fifty-ear pass added, every name unique, every family named,
-        # every entry held to a why and a where.
+        # The catalogue: seventy named readings, thirty-four of them the
+        # two catalogue passes added, every name unique, every family
+        # named, every entry held to a why and a where.
         catalog = _catalog_out()
-        if catalog["count"] != 50:
-            failures.append(f"catalogue carries {catalog['count']} signals, not 50")
-        if catalog["new"] != 14:
-            failures.append(f"catalogue marks {catalog['new']} new signals, not 14")
+        if catalog["count"] != 70:
+            failures.append(f"catalogue carries {catalog['count']} signals, not 70")
+        if catalog["new"] != 34:
+            failures.append(f"catalogue marks {catalog['new']} new signals, not 34")
         names = [entry["name"] for entry in catalog["signals"]]
         if len(set(names)) != len(names):
             failures.append("catalogue names repeat")

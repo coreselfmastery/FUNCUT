@@ -60,7 +60,7 @@ reaches it.
   thesis, hook, pacing, footage, motion, captions, sound, grade and timeline
   acceptance. Use the moves the story earns; record the ones you leave out.
 - `prompts/signal_matrix.md` names the decision every `voice_signals`
-  reading informs (13 families, 50 named readings). Spend the readings, not just
+  reading informs (14 families, 70 named readings). Spend the readings, not just
   the family names; a reading that is absent is named unmeasured.
 - `prompts/signal_recipes.md` turns those readings into a cut score, a cut
   density, a cut type and a confidence fallback. Read it at the plan phase.
@@ -1003,7 +1003,7 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/ai_media.md` | generative stills/video/3D/audio when a real generator is installed, and the honest fallback when none is |
 | `prompts/quality_loop.md` | watch_render -> craft_critique -> revise, and how to read the scores |
 | `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
-| `prompts/signal_matrix.md` | all 13 signal families and 50 named readings, and the decision each informs |
+| `prompts/signal_matrix.md` | all 14 signal families and 70 named readings, and the decision each informs |
 | `prompts/signal_recipes.md` | cut score, cut density, cut type and confidence fallback from the readings |
 | `prompts/emotion_to_edit.md` | the seven emotion labels as pace/cut/sound/grade/motion/duck recipes |
 | `prompts/token_budget.md` | the 10-minute token estimate and the rules that cut waste, not craft |

@@ -13,7 +13,7 @@ use concat_director::{
 };
 use serde_json::{Value, json};
 
-use crate::voice_read::{Entity, Motif, VoiceRead};
+use crate::voice_read::{Entity, LineRead, Motif, VoiceRead};
 
 /// One voiceover file's fixed paths inside the sibling, as the AUTO
 /// EDIT's program is written from them: the take the timeline plays, and
@@ -630,16 +630,16 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
         let timed: Vec<Value> = rows
             .iter()
             .filter(|line| {
-                line["start"].as_f64().is_some_and(|start| {
-                    start >= 0.0
-                        && line["end"].as_f64().is_some_and(|end| end > start)
-                        && line["text"]
-                            .as_str()
-                            .is_some_and(|text| !text.trim().is_empty())
-                        && line["words"]
-                            .as_array()
-                            .is_some_and(|words| !words.is_empty())
-                })
+                let Some(start) = line["start"].as_f64().filter(|at| *at >= 0.0) else {
+                    return false;
+                };
+                line["end"].as_f64().is_some_and(|to| to > start)
+                    && line["text"]
+                        .as_str()
+                        .is_some_and(|text| !text.trim().is_empty())
+                    && line["words"]
+                        .as_array()
+                        .is_some_and(|words| !words.is_empty())
             })
             .cloned()
             .collect();
@@ -1121,6 +1121,24 @@ fn category_of(query: &str) -> String {
 /// inline choice read: the mood the line before the gap carried, the
 /// seam's own reading (a speaker change, a question, a held beat, a
 /// chapter, a pivot), and the no-repeat rule against the last move.
+/// The seam's own readings, named so the precedence below reads as a
+/// sentence rather than a tuple of anonymous booleans.
+#[derive(Default)]
+struct SeamRead {
+    crosses_speaker: bool,
+    asks: bool,
+    exclaim: bool,
+    fragment: bool,
+    holds: bool,
+    scene_turn: bool,
+    dramatic: bool,
+    beat: bool,
+    breath: bool,
+    chapter: bool,
+    pivot: bool,
+    phrase: bool,
+}
+
 fn seam_transition(
     voice: &[VoiceRead],
     chapters: &[TopicBoundary],
@@ -1134,73 +1152,122 @@ fn seam_transition(
         .unwrap_or_else(|| "neutral".to_owned());
     let seam = {
         let read = voice_read_of(voice, &slot.take);
-        let crosses_speaker = read.is_some_and(|read| {
-            // The speakers' own shares gate the change points: a
-            // change the diarization found in a take one voice holds
-            // (a second speaker under a fifth of the speech) is a
-            // clustering wobble, not a turn, and a single-voice
-            // take's seams belong to the phrase and the question -
-            // the changes are only spent where the take is a real
-            // conversation. Unmeasured shares keep the changes: the
-            // one reading is not the other's contradiction.
-            read.conversation() != Some(false)
-                && read
-                    .take_wide
-                    .speaker_changes
-                    .iter()
-                    .any(|change| *change > slot.from - 0.35 && *change < slot.to + 0.35)
-        });
-        let asks = read.is_some_and(|read| {
-            read.line_at(slot.from).is_some_and(|line| {
-                line.sentence_type == "question"
-                    || line.rise_confirms == Some(true)
-                    // The acoustic terminal rise stands in where the
-                    // punctuation carried no question to confirm: the
-                    // ear heard the ask even when the text did not
-                    // write it.
-                    || line.final_rise == Some(true)
-            })
-        });
-        let holds = read.is_some_and(|read| read.keeps_pause_at(slot.from));
-        // A phrase boundary opens in the gap: the narration's own
-        // breath-group turned, a seam the picture can register even
-        // where no speaker changed and no question was asked.
-        let phrase = read.is_some_and(|read| read.phrase_seam(slot.from, 0.15));
-        // A chapter opens in this gap: the strongest seam the script
-        // has, and the one the chapter card is already naming.
-        let chapter = chapters.iter().any(|boundary| {
-            boundary.take == slot.take
-                && boundary.at > slot.from - 0.5
-                && boundary.at < slot.to + 0.5
-        });
-        // A connective pivot inside the gap: the argument turned here,
-        // so the picture turns with it.
-        let pivot = pivots
-            .iter()
-            .any(|(take, at)| take == &slot.take && *at > slot.from - 0.5 && *at < slot.to + 0.5);
-        (crosses_speaker, asks, holds, chapter, pivot, phrase)
+        let pause_class = read.and_then(|read| read.pause_class_at(slot.from));
+        SeamRead {
+            crosses_speaker: read.is_some_and(|read| {
+                // The speakers' own shares gate the change points: a
+                // change the diarization found in a take one voice holds
+                // (a second speaker under a fifth of the speech) is a
+                // clustering wobble, not a turn, and a single-voice
+                // take's seams belong to the phrase and the question -
+                // the changes are only spent where the take is a real
+                // conversation. Unmeasured shares keep the changes: the
+                // one reading is not the other's contradiction.
+                read.conversation() != Some(false)
+                    && read
+                        .take_wide
+                        .speaker_changes
+                        .iter()
+                        .any(|change| *change > slot.from - 0.35 && *change < slot.to + 0.35)
+            }),
+            asks: read.is_some_and(|read| {
+                read.line_at(slot.from).is_some_and(|line| {
+                    line.sentence_type == "question"
+                        || line.rise_confirms == Some(true)
+                        // The acoustic terminal rise stands in where the
+                        // punctuation carried no question to confirm: the
+                        // ear heard the ask even when the text did not
+                        // write it.
+                        || line.final_rise == Some(true)
+                })
+            }),
+            holds: read.is_some_and(|read| read.keeps_pause_at(slot.from)),
+            // The silence classes are distinct moves: a scene turn is
+            // the topic moving, a dramatic beat is a held reveal, a
+            // beat is a small breath in the argument, a breath is a
+            // soft phrase boundary. A class with no entry falls through
+            // to the mood's own move.
+            scene_turn: pause_class == Some("scene_turn"),
+            dramatic: pause_class == Some("dramatic"),
+            beat: pause_class == Some("beat"),
+            breath: pause_class == Some("breath"),
+            // A sentence's own shape is a seam too: an exclamation lands
+            // hard, a fragment is a thought that trails off.
+            exclaim: read.is_some_and(|read| {
+                read.line_at(slot.from)
+                    .is_some_and(|line| line.sentence_type == "exclamation")
+            }),
+            fragment: read.is_some_and(|read| {
+                read.line_at(slot.from)
+                    .is_some_and(|line| line.sentence_type == "fragment")
+            }),
+            // A phrase boundary opens or closes in the gap: the
+            // narration's own breath-group turned, a seam the picture can
+            // register even where no speaker changed and no question was
+            // asked.
+            phrase: read.is_some_and(|read| read.phrase_seam(slot.from, 0.15)),
+            // A chapter opens in this gap: the strongest seam the script
+            // has, and the one the chapter card is already naming.
+            chapter: chapters.iter().any(|boundary| {
+                boundary.take == slot.take
+                    && boundary.at > slot.from - 0.5
+                    && boundary.at < slot.to + 0.5
+            }),
+            // A connective pivot inside the gap: the argument turned here,
+            // so the picture turns with it.
+            pivot: pivots.iter().any(|(take, at)| {
+                take == &slot.take && *at > slot.from - 0.5 && *at < slot.to + 0.5
+            }),
+        }
     };
-    let first = match seam {
+    let first = if seam.chapter {
         // A chapter opening is the clearest seam there is: the story
         // moved on, and the whip is the move that says so.
-        (_, _, _, true, _, _) => "concat.whip-pan",
+        "concat.whip-pan"
+    } else if seam.pivot {
         // A connective pivot is the argument turning: the slice is the
         // move that makes the turn read.
-        (_, _, _, _, true, _) => "concat.slice-social",
+        "concat.slice-social"
+    } else if seam.scene_turn {
+        // The profile heard the topic turn in the silence itself.
+        "concat.whip-pan"
+    } else if seam.crosses_speaker {
         // A speaker change is the clearest voice seam: the frame
         // changes because the voice did.
-        (true, _, _, _, _, _) => "concat.glitch-social",
+        "concat.glitch-social"
+    } else if seam.asks {
         // A question opens a gap the answer fills: the snap is the
         // ask, not the mood.
-        (_, true, _, _, _, _) => "concat.snap-zoom",
+        "concat.snap-zoom"
+    } else if seam.exclaim {
+        // An exclamation lands hard; the crash is the sentence's own
+        // punctuation, not an emotion guessed from it.
+        "concat.crash-zoom"
+    } else if seam.fragment {
+        // A fragment trails off, so the move stays light.
+        "concat.cross-pop"
+    } else if seam.dramatic {
+        // A dramatic beat is a held reveal, so it takes the softest move.
+        "concat.dissolve"
+    } else if seam.holds {
         // A held beat keeps the softest move the catalogue has, so the
         // cut never fights the silence the read said to hold.
-        (_, _, true, _, _, _) => "concat.dissolve",
+        "concat.dissolve"
+    } else if seam.beat {
+        // A small beat in the argument gets a flash, not a dissolve:
+        // the pause is a punctuation mark, not a scene change.
+        "concat.flash-social"
+    } else if seam.breath {
+        // A breath is the lightest seam: a soft pop keeps it visible
+        // without making it a scene change.
+        "concat.cross-pop"
+    } else if seam.phrase {
         // A phrase boundary is the weakest structural seam: a visible
         // move, but only when nothing stronger - a hold, a turn -
         // claims the gap.
-        (_, _, _, _, _, true) => "concat.cross-pop",
-        _ => transition_for_emotion(&mood),
+        "concat.cross-pop"
+    } else {
+        transition_for_emotion(&mood)
     };
     if last != Some(first) {
         return first;
@@ -1500,10 +1567,12 @@ fn planned_spans_overlap(log: &[Value], takes: &[TakePaths], tile: &BrollSlot) -
 /// The structural moments a take measured, that a coverage tile's bound
 /// may snap to: the pauses (where the speaker breathed), the speaker
 /// changes (where the voice itself changed - only populated when the
-/// take is a real conversation) and the flux onsets (the transients,
-/// a word's own attack). The order the snap spends them in is the
-/// order a human editor would: the scene change first, the breath
-/// second, the attack last.
+/// take is a real conversation), the phrase boundaries (the narration's
+/// own breath-groups), the stressed words (the delivery's own beats) and
+/// the flux onsets (the transients, a word's own attack). The order the
+/// snap spends them in is the order a human editor would: the scene
+/// change first, the phrase turn next, the stressed word, the breath,
+/// the attack last.
 #[derive(Clone, Default)]
 struct SnapBounds {
     /// Pause starts, in file seconds, sorted.
@@ -1511,6 +1580,13 @@ struct SnapBounds {
     /// Speaker-change times, in file seconds, sorted. Empty on a
     /// single-voice take.
     speaker_changes: Vec<f64>,
+    /// Phrase-boundary starts, in file seconds, sorted: the narration's
+    /// own breath-groups, the seam a shot can register even where no
+    /// pause was classified.
+    phrases: Vec<f64>,
+    /// Stressed-word times, in file seconds, sorted: the delivery's own
+    /// beats, a place a cut can land where the voice itself leaned.
+    emphasis: Vec<f64>,
     /// Spectral-flux onsets, in file seconds.
     onsets: Vec<f64>,
 }
@@ -1518,10 +1594,11 @@ struct SnapBounds {
 impl SnapBounds {
     /// The strongest structural moment near `target` that stays past
     /// `floor` (the earliest bound a tile of honest length allows): a
-    /// speaker change inside the breath window first, then a pause, then
-    /// an onset inside the tighter transient window. `None` when no
-    /// measured moment is near enough - the bound then stays where the
-    /// cadence put it, which is an arbitrary frame but an honest one.
+    /// speaker change inside the breath window first, then a phrase
+    /// boundary, then a stressed word, then a pause, then an onset inside
+    /// the tighter transient window. `None` when no measured moment is
+    /// near enough - the bound then stays where the cadence put it, which
+    /// is an arbitrary frame but an honest one.
     fn snap(&self, target: f64, floor: f64, window: f64, onset_window: f64) -> Option<f64> {
         let nearest = |moments: &[f64], win: f64| {
             moments
@@ -1533,6 +1610,12 @@ impl SnapBounds {
         // A speaker change is the strongest boundary the take has: a new
         // voice is a new scene, and the shot owes it a change of angle.
         nearest(&self.speaker_changes, window)
+            // The phrase boundary: the narration's own breath-group
+            // turned, so the picture can turn with it.
+            .or_else(|| nearest(&self.phrases, window))
+            // The stressed word: the delivery leaned here, so a cut that
+            // lands on it reads as the edit's own beat.
+            .or_else(|| nearest(&self.emphasis, window))
             // The breath: the shot changes where the speaker paused, and
             // a bound that lands mid-word is the one thing the tiling
             // must never do.
@@ -1583,23 +1666,50 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     // a cut, and the cut wants the strongest structural moment near it:
     // who changed, then where the speaker breathed, then the nearest
     // attack - an arbitrary frame is the last resort, never the choice.
-    let pauses: Vec<(String, SnapBounds)> = voice_reads(log, takes)
-        .into_iter()
+    let voice = voice_reads(log, takes);
+    let pauses: Vec<(String, SnapBounds)> = voice
+        .iter()
         .map(|voice| {
+            let conversation = voice.conversation().filter(|real| *real);
+            let mut speaker_changes = conversation
+                .map(|_| voice.take_wide.speaker_changes.clone())
+                .unwrap_or_default();
+            if conversation.is_some() {
+                // A turn edge is the exchange's own seam even when the
+                // change detector missed it: the second speaker taking
+                // the floor is the scene change, whatever the clustering
+                // reported between the two.
+                for turn in &voice.take_wide.speaker_turns {
+                    speaker_changes.push(turn.start);
+                    speaker_changes.push(turn.end);
+                }
+            }
             let mut bounds = SnapBounds {
                 pauses: voice.pauses.iter().map(|pause| pause.start).collect(),
-                speaker_changes: voice
-                    .conversation()
-                    .filter(|real| *real)
-                    .map(|_| voice.take_wide.speaker_changes.clone())
-                    .unwrap_or_default(),
+                speaker_changes,
+                phrases: voice
+                    .take_wide
+                    .phrases
+                    .iter()
+                    .map(|phrase| phrase.start)
+                    .collect(),
+                emphasis: voice
+                    .lines
+                    .iter()
+                    .flat_map(|line| line.emphasis.iter().map(|word| word.at))
+                    .collect(),
                 onsets: voice.take_wide.flux_onsets.clone(),
             };
             bounds.pauses.sort_by(|left, right| left.total_cmp(right));
             bounds
                 .speaker_changes
                 .sort_by(|left, right| left.total_cmp(right));
-            (voice.take, bounds)
+            bounds
+                .speaker_changes
+                .dedup_by(|left, right| (*left - *right).abs() < 1.0e-3);
+            bounds.phrases.sort_by(|left, right| left.total_cmp(right));
+            bounds.emphasis.sort_by(|left, right| left.total_cmp(right));
+            (voice.take.clone(), bounds)
         })
         .collect();
 
@@ -1711,48 +1821,97 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
                     break;
                 }
                 let query = {
-                    // The emotional read's own vocabulary for the line
-                    // the tile sits in - the register x act shot the
-                    // extract computed is the query candidates arrive
-                    // pre-matched by.
-                    let register = read
-                        .iter()
-                        .filter(|line| line.take == *take && line.end > from && line.start < next)
-                        .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
-                        .and_then(|line| line.queries.first().cloned())
-                        .unwrap_or_default();
-                    if !register.trim().is_empty() {
-                        register
-                    } else {
-                        // The tile's own words: what the narration says
-                        // while this shot plays is what the shot should
-                        // show.
-                        let mut words: Vec<&str> = spoken
-                            .iter()
-                            .filter(|(_, end, _)| *end > from)
-                            .take_while(|(start, _, _)| *start < next)
-                            .flat_map(|(_, _, text)| text.split_whitespace())
-                            .collect();
-                        words.truncate(QUERY_WORDS);
-                        let joined = words.join(" ");
-                        if !joined.is_empty() {
-                            joined
-                        } else {
-                            // A silent tile with no words behind it: the
-                            // words that led into it, the way the gap
-                            // scan always shopped.
-                            spoken
+                    let take_read = voice.iter().find(|read| read.take == *take);
+                    // A tile over a line the confidence gate could not
+                    // hear, or one with almost no voice under it, has no
+                    // words worth shopping: a neutral establishing shot
+                    // is more honest than a query built on a misheard
+                    // phrase.
+                    let uncertain = take_read.is_some_and(|read| {
+                        read.unsure_between(from, next).len() >= 2
+                            || read
+                                .lines
                                 .iter()
-                                .rev()
-                                .find(|(_, end, _)| *end <= from + 1e-6)
-                                .map(|(_, _, text)| tail_words(text, QUERY_WORDS))
-                                .filter(|tail| !tail.trim().is_empty())
-                                .unwrap_or_else(|| {
-                                    // Nothing measured anything here; a
-                                    // neutral establishing shot is the
-                                    // honest last resort.
-                                    "cinematic establishing shot".to_owned()
+                                .find(|line| line.end > from && line.start < next)
+                                .and_then(|line| line.voiced_ratio)
+                                .is_some_and(|ratio| ratio < 0.2)
+                    });
+                    if uncertain {
+                        "cinematic establishing shot".to_owned()
+                    } else if let Some(query) = take_read.and_then(|read| {
+                        // A named organisation, person, date or place
+                        // is a stronger subject than the words around
+                        // it: the shot shows who or where the line is
+                        // about, not merely the sentence's verb.
+                        read.entities
+                            .iter()
+                            .filter(|entity| entity.at.is_some_and(|at| at >= from && at < next))
+                            .find_map(entity_stock_query)
+                    }) {
+                        query
+                    } else if let Some(query) = take_read
+                        .and_then(|read| {
+                            // A repeated phrase returns with the visual it
+                            // established: the callback is the motif's own
+                            // query, not a fresh interpretation of the words.
+                            read.motifs.iter().find(|motif| {
+                                motif.line_indices.iter().any(|index| {
+                                    read.lines
+                                        .get(*index)
+                                        .is_some_and(|line| line.end > from && line.start < next)
                                 })
+                            })
+                        })
+                        .map(|motif| card_words(&motif.phrase))
+                        .filter(|query| !query.trim().is_empty())
+                    {
+                        query
+                    } else {
+                        // The emotional read's own vocabulary for the line
+                        // the tile sits in - the register x act shot the
+                        // extract computed is the query candidates arrive
+                        // pre-matched by.
+                        let register = read
+                            .iter()
+                            .filter(|line| {
+                                line.take == *take && line.end > from && line.start < next
+                            })
+                            .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
+                            .and_then(|line| line.queries.first().cloned())
+                            .unwrap_or_default();
+                        if !register.trim().is_empty() {
+                            register
+                        } else {
+                            // The tile's own words: what the narration says
+                            // while this shot plays is what the shot should
+                            // show.
+                            let mut words: Vec<&str> = spoken
+                                .iter()
+                                .filter(|(_, end, _)| *end > from)
+                                .take_while(|(start, _, _)| *start < next)
+                                .flat_map(|(_, _, text)| text.split_whitespace())
+                                .collect();
+                            words.truncate(QUERY_WORDS);
+                            let joined = words.join(" ");
+                            if !joined.is_empty() {
+                                joined
+                            } else {
+                                // A silent tile with no words behind it: the
+                                // words that led into it, the way the gap
+                                // scan always shopped.
+                                spoken
+                                    .iter()
+                                    .rev()
+                                    .find(|(_, end, _)| *end <= from + 1e-6)
+                                    .map(|(_, _, text)| tail_words(text, QUERY_WORDS))
+                                    .filter(|tail| !tail.trim().is_empty())
+                                    .unwrap_or_else(|| {
+                                        // Nothing measured anything here; a
+                                        // neutral establishing shot is the
+                                        // honest last resort.
+                                        "cinematic establishing shot".to_owned()
+                                    })
+                            }
                         }
                     }
                 };
@@ -2143,7 +2302,7 @@ impl EmotionLine {
 /// "measured slow" from "not measured" - a stage that invented a pace
 /// would be claiming evidence it never read.
 fn delivery_pace(log: &[Value], take: &str, start: f64, end: f64) -> String {
-    let mut best: Option<(f64, &str)> = None;
+    let mut best: Option<(f64, String)> = None;
     for reply in log {
         if reply.pointer("/audio/path").and_then(Value::as_str) != Some(take) {
             continue;
@@ -2153,19 +2312,47 @@ fn delivery_pace(log: &[Value], take: &str, start: f64, end: f64) -> String {
             else {
                 continue;
             };
-            let Some(pace) = line.pointer("/speechRate/pace").and_then(Value::as_str) else {
+            // The profile's pace class is the primary reading; a foreign
+            // reply that carries only words-per-minute still gets a pace
+            // from the same 180/115 bars the producer uses.
+            let pace = line
+                .pointer("/speechRate/pace")
+                .and_then(Value::as_str)
+                .filter(|pace| !pace.trim().is_empty())
+                .map(str::to_owned)
+                .or_else(|| {
+                    line.pointer("/speechRate/wordsPerMinute")
+                        .and_then(Value::as_f64)
+                        .map(|wpm| pace_from_wpm(wpm).to_owned())
+                });
+            let Some(pace) = pace else {
                 continue;
             };
             let overlap = line_end.min(end) - line_start.max(start);
             if overlap <= 0.0 {
                 continue;
             }
-            if best.is_none_or(|(best_overlap, _)| overlap > best_overlap) {
+            if best
+                .as_ref()
+                .is_none_or(|(best_overlap, _)| overlap > *best_overlap)
+            {
                 best = Some((overlap, pace));
             }
         }
     }
-    best.map(|(_, pace)| pace.to_owned()).unwrap_or_default()
+    best.map(|(_, pace)| pace).unwrap_or_default()
+}
+
+/// The pace class a words-per-minute reading falls in, on the producer's
+/// own bars: fast delivery at 180 and over, slow at 115 and under.
+fn pace_from_wpm(wpm: f64) -> &'static str {
+    if wpm >= 180.0 {
+        "punchy"
+    } else if wpm <= 115.0 {
+        "slow"
+    } else {
+        "conversational"
+    }
 }
 
 /// The words the take's own delivery stressed, lowercased and
@@ -2200,9 +2387,13 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64)> {
         .iter()
         .flat_map(|read| {
             read.lines.iter().flat_map(move |line| {
-                line.emphasis
-                    .iter()
-                    .map(move |word| (read.take.clone(), word.at, word.strength))
+                line.emphasis.iter().map(move |word| {
+                    // An accent lands on a transient, not on a word's
+                    // nominal start: when the flux ear measured one
+                    // nearby, the hit moves to it.
+                    let at = read.onset_near(word.at, 0.12).unwrap_or(word.at);
+                    (read.take.clone(), at, word.strength)
+                })
             })
         })
         .collect()
@@ -2496,6 +2687,29 @@ fn bundled_font(hint: &str) -> &'static str {
     }
 }
 
+/// The stock query an entity earns: a named organisation wants its
+/// industry's footage, a person wants a portrait, a date wants the era's
+/// archive, a place wants its location. A number wants no footage - the
+/// stat card is its artefact - and a reading the NER was not sure of is
+/// not a subject to shop on.
+fn entity_stock_query(entity: &Entity) -> Option<String> {
+    if entity.confidence.is_some_and(|confidence| confidence < 0.5) {
+        return None;
+    }
+    let subject = card_words(&entity.text);
+    if subject.is_empty() {
+        return None;
+    }
+    let suffix = match entity.kind.as_str() {
+        "ORG" => "company",
+        "PER" => "portrait",
+        "DATE" => "archive",
+        "GPE" | "LOC" | "FAC" => "location",
+        _ => return None,
+    };
+    Some(format!("{subject} {suffix}"))
+}
+
 /// The preset an entity's kind asks for, and the words the card carries.
 ///
 /// The NER is the only reader that knows a line said a number, a date or a
@@ -2521,7 +2735,62 @@ fn comp_for_entity(entity: &Entity) -> Option<(&'static str, String)> {
             _ => return None,
         },
     };
-    Some((preset, card_words(&entity.text)))
+    Some((preset, entity_card_words(entity)))
+}
+
+/// The words a card carries: the parsed value and unit when the ear read
+/// one, the entity's own text otherwise. A stat card should show
+/// `$10,450` or `45%`, not make every viewer re-parse the recogniser's
+/// words; a lower-third keeps the spoken name.
+fn entity_card_words(entity: &Entity) -> String {
+    let Some(value) = entity.value else {
+        return card_words(&entity.text);
+    };
+    let number = grouped_number(value);
+    match entity
+        .unit
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "percent" => format!("{number}%"),
+        "usd" => format!("${number}"),
+        "gbp" => format!("£{number}"),
+        "eur" => format!("€{number}"),
+        "bdt" => format!("৳{number}"),
+        "inr" => format!("₹{number}"),
+        "jpy" => format!("¥{number}"),
+        // A year is read as a year, not as a grouped quantity: 2,026 is
+        // not a date anyone writes. A count has no unit to print.
+        "year" => format!("{value:.0}"),
+        "" | "count" => number,
+        _ => format!("{number} {}", entity.unit.as_deref().unwrap_or_default()),
+    }
+}
+
+/// A number as a card reads it: whole values keep their grouping, and a
+/// fractional value keeps two places. The profile rounds away float noise
+/// before it writes the value; this is only the display form.
+fn grouped_number(value: f64) -> String {
+    let raw = if (value.fract()).abs() < 1.0e-6 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    };
+    let (whole, fraction) = raw.split_once('.').unwrap_or((raw.as_str(), ""));
+    let mut grouped = String::new();
+    for (index, digit) in whole.chars().enumerate() {
+        if index > 0 && (whole.len() - index) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    if fraction.is_empty() {
+        grouped
+    } else {
+        format!("{grouped}.{fraction}")
+    }
 }
 
 /// The entity cards the run will bake, strongest first: an entity the NER
@@ -2619,6 +2888,71 @@ fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
     })
 }
 
+/// The line read that holds a file second, in the take the card belongs
+/// to. `None` when the ear read no line there - a foreign reply may have
+/// the emotion but not the prosody.
+fn voice_line_at<'a>(voice: &'a [VoiceRead], take: &str, at: f64) -> Option<&'a LineRead> {
+    voice
+        .iter()
+        .find(|read| read.take == take)
+        .and_then(|read| read.line_at(at))
+}
+
+/// Where the card should open: the strongest stressed word inside the
+/// line, so the graphic lands on the delivery's own beat rather than a
+/// fixed offset from the line start. `None` when the ear stressed no word
+/// in the span, which keeps the old line-start behaviour.
+fn emphasis_moment(voice: &[VoiceRead], take: &str, from: f64, to: f64) -> Option<f64> {
+    voice
+        .iter()
+        .find(|read| read.take == take)
+        .and_then(|read| {
+            read.lines
+                .iter()
+                .filter(|line| line.end > from && line.start < to)
+                .flat_map(|line| line.emphasis.iter())
+                .max_by(|left, right| left.strength.total_cmp(&right.strength))
+                .map(|word| word.at)
+        })
+        .filter(|at| *at >= from && *at <= to)
+}
+
+/// Whether the line under a card is solid enough to carry one: the
+/// forensic ear did not call the voice unstable, the line has some voice
+/// under it, and the confidence gate did not flag most of its words. An
+/// unmeasured line is not a vetoed one - only a reading that says "this
+/// line is not what the transcript thinks" refuses the card.
+fn motion_line_reliable(voice: &[VoiceRead], take: &str, at: f64) -> bool {
+    let Some(read) = voice_read_of(voice, take) else {
+        return true;
+    };
+    let Some(line) = read.line_at(at) else {
+        return true;
+    };
+    read.clean_voice(line) != Some(false)
+        && line.voiced_ratio.is_none_or(|ratio| ratio >= 0.2)
+        && read.unsure_between(line.start, line.end).len() < 2
+}
+
+/// The line's register lift over the take's mean pitch, in semitones. A
+/// card on a lifted line holds a little longer: the delivery raised it.
+fn pitch_lift_at(voice: &[VoiceRead], take: &str, at: f64) -> Option<f64> {
+    voice
+        .iter()
+        .find(|read| read.take == take)
+        .and_then(|read| read.line_at(at).and_then(|line| read.register_lift(line)))
+}
+
+/// The confidence floor a card must clear: a reading the producer rated
+/// below this is a guess, and a guess does not get to interrupt the
+/// picture. `None` is not a low score - an unrated reading keeps its
+/// card, because the producer's silence is not a contradiction.
+const CARD_FLOOR: f64 = 0.35;
+
+fn card_confident(confidence: Option<f64>) -> bool {
+    confidence.is_none_or(|confidence| confidence >= CARD_FLOOR)
+}
+
 /// The motion the run will bake, one row per line that earned a card, in
 /// play order: the take and file second the line opens on (the stage maps
 /// it through the timeline), the preset, and the words the card sets.
@@ -2629,6 +2963,7 @@ fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
 fn motion_specs(
     log: &[Value],
     lines: &[EmotionLine],
+    voice: &[VoiceRead],
     entities: &[Entity],
     chapters: &[TopicBoundary],
     motifs: &[Motif],
@@ -2651,17 +2986,29 @@ fn motion_specs(
             if words.is_empty() {
                 return None;
             }
+            let at = emphasis_moment(voice, &line.take, line.start, line.end)
+                .unwrap_or(line.start)
+                .clamp(line.start, (line.end - 0.2).max(line.start));
+            if !motion_line_reliable(voice, &line.take, at) || !card_confident(line.confidence) {
+                return None;
+            }
+            let line_read = voice_line_at(voice, &line.take, at);
             Some((
-                line.intensity,
+                line.intensity * line.confidence.unwrap_or(0.8),
                 MotionSpec {
                     take: line.take.clone(),
-                    at: line.start,
+                    at,
                     end: line.end,
                     preset,
                     words,
                     act: line.act.clone(),
                     pace: line.pace.clone(),
+                    pitch_range: line_read.and_then(|line| line.pitch_range),
+                    pitch_lift: pitch_lift_at(voice, &line.take, at),
                     earned_by: "emotion",
+                    intensity: line.intensity,
+                    pulse: voice_read_of(voice, &line.take).and_then(|read| read.pulse_period()),
+                    motion_speed: motion_speed_at(log, &line.take, at),
                     chapter: false,
                     slot: None,
                     slots: Vec::new(),
@@ -2677,34 +3024,33 @@ fn motion_specs(
         let (Some(at), Some((preset, words))) = (entity.at, comp_for_entity(entity)) else {
             continue;
         };
-        if words.is_empty() {
+        if words.is_empty()
+            || !motion_line_reliable(voice, &entity.take, at)
+            || !card_confident(entity.confidence)
+        {
             continue;
         }
         let line = lines.iter().find(|line| {
             line.take == entity.take && line.start <= at + 0.05 && line.end > at - 0.05
         });
         // A number the narration measured is the card's own Number slot -
-        // the reader's value and unit set it instead of the prose the
-        // recogniser heard, and the words the narration said become the
-        // Label under it. Without the fill the card showed the sentence
-        // where its number belonged, and the profile's own measurement
-        // never reached the screen.
-        let slots: Vec<(&'static str, String)> = entity
-            .value
-            .map(|value| {
-                let number = match entity
-                    .unit
-                    .as_deref()
-                    .filter(|unit| !unit.trim().is_empty())
-                {
-                    Some(unit) => format!("{value} {unit}"),
-                    None => format!("{value}"),
-                };
-                vec![("Number", number), ("Label", words.clone())]
-            })
-            .unwrap_or_default();
+        // the reader's display form sets it instead of the prose the
+        // recogniser heard - and the words the narration said become the
+        // Label under it. The old fill put the raw `10450 usd` in Number
+        // and the formatted `$10,450` in Label, so the card repeated the
+        // number where its label belonged.
+        let slots: Vec<(&'static str, String)> = if entity.value.is_some() {
+            vec![
+                ("Number", entity_card_words(entity)),
+                ("Label", card_words(&entity.text)),
+            ]
+        } else {
+            Vec::new()
+        };
+        let rank =
+            line.map(|line| line.intensity).unwrap_or(0.5) * entity.confidence.unwrap_or(0.8);
         ranked.push((
-            line.map(|line| line.intensity).unwrap_or(0.5),
+            rank,
             MotionSpec {
                 take: entity.take.clone(),
                 at,
@@ -2715,7 +3061,13 @@ fn motion_specs(
                     .map(|line| line.act.clone())
                     .unwrap_or_else(|| "proof".to_owned()),
                 pace: line.map(|line| line.pace.clone()).unwrap_or_default(),
+                pitch_range: voice_line_at(voice, &entity.take, at)
+                    .and_then(|line| line.pitch_range),
+                pitch_lift: pitch_lift_at(voice, &entity.take, at),
                 earned_by: "entities",
+                intensity: line.map(|line| line.intensity).unwrap_or(0.5),
+                pulse: voice_read_of(voice, &entity.take).and_then(|read| read.pulse_period()),
+                motion_speed: motion_speed_at(log, &entity.take, at),
                 chapter: false,
                 slot: None,
                 slots,
@@ -2728,11 +3080,11 @@ fn motion_specs(
     // floor, because a chapter card landing on a stat card is a pile.
     for (index, chapter) in chapters.iter().enumerate() {
         let words = card_words(&chapter.headline);
-        if words.is_empty() {
+        if words.is_empty() || !card_confident(chapter.confidence) {
             continue;
         }
         ranked.push((
-            1.0,
+            chapter.confidence.unwrap_or(0.75),
             MotionSpec {
                 take: chapter.take.clone(),
                 at: chapter.at,
@@ -2741,7 +3093,12 @@ fn motion_specs(
                 words,
                 act: "turn".to_owned(),
                 pace: String::new(),
+                pitch_range: None,
+                pitch_lift: None,
                 earned_by: "topics",
+                intensity: 1.0,
+                pulse: None,
+                motion_speed: motion_speed_at(log, &chapter.take, chapter.at),
                 chapter: true,
                 slot: Some("Title"),
                 slots: vec![
@@ -2765,17 +3122,35 @@ fn motion_specs(
             let Some(line) = lines.get(*index) else {
                 continue;
             };
+            let at = emphasis_moment(voice, &line.take, line.start, line.end)
+                .unwrap_or(line.start)
+                .clamp(line.start, (line.end - 0.2).max(line.start));
+            if !motion_line_reliable(voice, &line.take, at) {
+                continue;
+            }
+            let confidence = voice_read_of(voice, &line.take)
+                .map(|read| read.weight("motifs"))
+                .unwrap_or(0.7);
+            if confidence < CARD_FLOOR {
+                continue;
+            }
             ranked.push((
-                line.intensity * 0.9,
+                line.intensity * 0.9 * confidence,
                 MotionSpec {
                     take: line.take.clone(),
-                    at: line.start,
+                    at,
                     end: line.end,
                     preset,
                     words: words.clone(),
                     act: line.act.clone(),
                     pace: line.pace.clone(),
+                    pitch_range: voice_line_at(voice, &line.take, at)
+                        .and_then(|line| line.pitch_range),
+                    pitch_lift: pitch_lift_at(voice, &line.take, at),
                     earned_by: "motifs",
+                    intensity: line.intensity,
+                    pulse: voice_read_of(voice, &line.take).and_then(|read| read.pulse_period()),
+                    motion_speed: motion_speed_at(log, &line.take, at),
                     chapter: false,
                     slot: None,
                     slots: Vec::new(),
@@ -2789,20 +3164,32 @@ fn motion_specs(
     // profile's graphic policy names exactly this signal.
     for question in questions {
         let words = card_words(&question.text);
-        if words.is_empty() || captions_placed {
+        if words.is_empty() || captions_placed || !card_confident(question.confidence) {
+            continue;
+        }
+        let at = emphasis_moment(voice, &question.take, question.start, question.end)
+            .unwrap_or(question.start)
+            .clamp(question.start, (question.end - 0.2).max(question.start));
+        if !motion_line_reliable(voice, &question.take, at) {
             continue;
         }
         ranked.push((
-            0.85,
+            0.85 * question.confidence.unwrap_or(0.75),
             MotionSpec {
                 take: question.take.clone(),
-                at: question.start,
+                at,
                 end: question.end,
                 preset: "funcut.caption.kinetic",
                 words,
                 act: String::new(),
                 pace: String::new(),
+                pitch_range: voice_line_at(voice, &question.take, at)
+                    .and_then(|line| line.pitch_range),
+                pitch_lift: pitch_lift_at(voice, &question.take, at),
                 earned_by: "speechActs",
+                intensity: 0.85,
+                pulse: voice_read_of(voice, &question.take).and_then(|read| read.pulse_period()),
+                motion_speed: motion_speed_at(log, &question.take, at),
                 chapter: false,
                 slot: None,
                 slots: Vec::new(),
@@ -2816,20 +3203,32 @@ fn motion_specs(
     // claims and grows no card.
     for claim in claims {
         let words = card_words(&claim.text);
-        if words.is_empty() {
+        if words.is_empty() || !card_confident(claim.confidence) {
+            continue;
+        }
+        let at = emphasis_moment(voice, &claim.take, claim.start, claim.end)
+            .unwrap_or(claim.start)
+            .clamp(claim.start, (claim.end - 0.2).max(claim.start));
+        if !motion_line_reliable(voice, &claim.take, at) {
             continue;
         }
         ranked.push((
-            0.8,
+            0.8 * claim.confidence.unwrap_or(0.75),
             MotionSpec {
                 take: claim.take.clone(),
-                at: claim.start,
+                at,
                 end: claim.end,
                 preset: "funcut.quote.pull",
                 words,
                 act: "proof".to_owned(),
                 pace: String::new(),
+                pitch_range: voice_line_at(voice, &claim.take, at)
+                    .and_then(|line| line.pitch_range),
+                pitch_lift: pitch_lift_at(voice, &claim.take, at),
                 earned_by: "claims",
+                intensity: 0.8,
+                pulse: voice_read_of(voice, &claim.take).and_then(|read| read.pulse_period()),
+                motion_speed: motion_speed_at(log, &claim.take, at),
                 chapter: false,
                 slot: None,
                 slots: Vec::new(),
@@ -2877,7 +3276,7 @@ type MotionPresetShape = (String, String, Vec<String>, f64);
 /// One designed beat, as the plan records it and the motion stage bakes
 /// it: the line it sits on, the preset, the span it covers, and the words
 /// the card sets - the line's own, so a card is never a sample's text.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Default)]
 struct MotionSpec {
     /// The take the line was read from.
     take: String,
@@ -2895,10 +3294,26 @@ struct MotionSpec {
     /// card on a punchy line holds tighter than one on a slow line: the
     /// delivery, not the clock, is what sets the beat.
     pace: String,
+    /// The line's pitch range in semitones: a performed line holds its
+    /// card a touch longer than a reported one.
+    pitch_range: Option<f64>,
+    /// The line's register lift over the take, in semitones: a lifted
+    /// line's card holds longer still.
+    pitch_lift: Option<f64>,
     /// The signal that earned the card: the read's act, or the entity the
     /// narration named. The log cites this, so a stat card is never
     /// accounted for by an emotion that had nothing to do with it.
     earned_by: &'static str,
+    /// The emotional intensity of the line, 0..1. A high-intensity beat
+    /// holds its card a touch longer and a calm one lets it go.
+    intensity: f64,
+    /// The take's rhythm period, in seconds, when the prosody read found
+    /// one with strength behind it. A card whose hold lands on the
+    /// delivery's own beat reads as part of the edit rather than over it.
+    pulse: Option<f64>,
+    /// The motion-design read's tempo for the line, 0.6-1.6: a punchy
+    /// delivery shortens the hold, a slow one lets it breathe.
+    motion_speed: Option<f64>,
     /// How the card holds. A chapter card is a title over a topic change:
     /// it holds its own beat rather than the line's, and never longer.
     chapter: bool,
@@ -2936,7 +3351,28 @@ impl MotionSpec {
             "slow" => measured * 1.2,
             _ => measured,
         };
-        round3(paced.clamp(1.2, 5.0))
+        // The motion-design tempo is a second, measured opinion on the
+        // delivery: a fast read shortens the card, a slow one lengthens it.
+        let paced = paced / self.motion_speed.unwrap_or(1.0).clamp(0.6, 1.6);
+        // A performed line (a wide pitch range) and a lifted one (its
+        // register over the take's) carry more than a flat report: the
+        // card stays a beat longer, still inside the editorial cap.
+        let performed = self.pitch_range.is_some_and(|range| range >= 6.0);
+        let lifted = self.pitch_lift.is_some_and(|lift| lift >= 2.0);
+        let shaped = paced * if performed { 1.08 } else { 1.0 } * if lifted { 1.04 } else { 1.0 };
+        // The emotional read's own intensity is the card's last arm: a
+        // beat the read called intense holds a touch longer, a calm one
+        // lets the narration move on. It never breaks the editorial cap.
+        let arc = 0.9 + 0.2 * self.intensity.clamp(0.0, 1.0);
+        let shaped = shaped * arc;
+        // A strong pulse quantizes the hold to the delivery's own beat,
+        // inside the editorial bounds. A period with no strength behind
+        // it never reaches here: `pulse_period` already held it to 0.25.
+        let shaped = match self.pulse.filter(|period| (0.2..=2.0).contains(period)) {
+            Some(period) => (shaped / period).round() * period,
+            None => shaped,
+        };
+        round3(shaped.clamp(1.2, 5.0))
     }
 }
 
@@ -3135,6 +3571,112 @@ fn arc_building(read: &[EmotionLine], take: &str) -> bool {
         rows.iter().map(|line| line.intensity).sum::<f64>() / rows.len().max(1) as f64
     };
     mean(&lines[lines.len() - third..]) - mean(&lines[..third]) >= 0.25
+}
+
+/// The look the grade lays, and the readings that chose it. Emotion is
+/// the primary read; the forensic tone is the tie-breaker only where the
+/// emotion named no temperature (the house teal-and-orange), so a
+/// measured dull take is warmed and a measured bright or sibilant one is
+/// cooled instead of shipping the same default look on every neutral
+/// script. The arc decides whether the grade lifts again at the end.
+struct GradeChoice {
+    look: &'static str,
+    signals: Vec<&'static str>,
+    note: String,
+    builds: bool,
+}
+
+fn grade_decision(log: &[Value], takes: &[TakePaths]) -> GradeChoice {
+    let read = emotion_lines(log, takes);
+    let dominant = dominant(&read);
+    let mut signals: Vec<&'static str> = Vec::new();
+    let mut look = "concat.teal-orange";
+    let mut builds = false;
+    let mut facts: Vec<String> = Vec::new();
+    let mut add = |signal: &'static str| {
+        if !signals.contains(&signal) {
+            signals.push(signal);
+        }
+    };
+    if let Some(line) = dominant {
+        look = look_for_temperature(&line.temperature);
+        add("emotion");
+        facts.push(format!("the {} line asks for {look}", line.emotion));
+        builds = arc_building(&read, &line.take);
+        if builds {
+            add("arc");
+            facts.push("the arc builds, so the grade lifts at the end".to_owned());
+        }
+    }
+    let reads = voice_reads(log, takes);
+    let mut centroid_sum = 0.0;
+    let mut centroid_count = 0usize;
+    for hz in reads
+        .iter()
+        .filter_map(|read| read.take_wide.spectral_centroid_hz)
+        .filter(|hz| hz.is_finite() && *hz > 0.0)
+    {
+        centroid_sum += hz;
+        centroid_count += 1;
+    }
+    if centroid_count > 0 {
+        add("forensic.spectralCentroidHz");
+        let centroid = centroid_sum / centroid_count as f64;
+        if look == "concat.teal-orange" {
+            if centroid < 1600.0 {
+                look = "concat.golden-hour";
+                facts.push(format!(
+                    "the take's centroid measures {centroid:.0} Hz, so the dull read is warmed"
+                ));
+            } else if centroid > 3200.0 {
+                look = "concat.cool";
+                facts.push(format!(
+                    "the take's centroid measures {centroid:.0} Hz, so the bright read is cooled"
+                ));
+            }
+        }
+    }
+    let sibilance = reads
+        .iter()
+        .filter_map(|read| read.take_wide.sibilance_ratio)
+        .fold(None, |worst: Option<f64>, share| {
+            Some(worst.map_or(share, |worst| worst.max(share)))
+        });
+    if let Some(share) = sibilance {
+        add("forensic.sibilanceRatio");
+        if look == "concat.teal-orange" && share >= 0.15 {
+            look = "concat.cool";
+            facts.push(format!(
+                "the sibilance share is {share:.2}, so the warm look would ride the harsh band"
+            ));
+        }
+    }
+    let reverb = reads
+        .iter()
+        .filter_map(|read| read.take_wide.reverb_tail_sec)
+        .fold(None, |longest: Option<f64>, tail| {
+            Some(longest.map_or(tail, |longest| longest.max(tail)))
+        });
+    if let Some(tail) = reverb {
+        add("forensic.reverbTailSec");
+        if look == "concat.teal-orange" && tail >= 0.4 {
+            look = "concat.vintage";
+            facts.push(format!(
+                "the reverb tail measures {tail:.2} s, so the softer vintage texture fits the room"
+            ));
+        }
+    }
+    let note = if facts.is_empty() {
+        "no read measured a look; the house look stands".to_owned()
+    } else {
+        facts.join("; ")
+    };
+    GradeChoice {
+        look,
+        signals,
+        note,
+        builds,
+    }
 }
 
 /// The sound queries an emotion's profile asks for, in the order the
@@ -3877,6 +4419,9 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     }
     if measured_words {
         let mut signals = vec!["words"];
+        if reads.iter().any(|read| read.weight("wordConfidence") > 0.0) {
+            signals.push("wordConfidence");
+        }
         if measured_emphasis {
             signals.push("emphasisWords");
         }
@@ -3975,6 +4520,35 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             },
         }));
     }
+    // The motion-design read: one entry naming the twenty readings that
+    // actually carried values, so the keyframes, entrances, holds and
+    // texture are accounted for in the same log as the cuts and cards.
+    if let Some(motion) = motion_design(log) {
+        let mut signals: Vec<String> = vec!["motion".to_owned()];
+        if let Some(fields) = motion.as_object() {
+            for (name, value) in fields {
+                let measured = match value {
+                    Value::Array(rows) => !rows.is_empty(),
+                    Value::Object(map) => !map.is_empty(),
+                    Value::Null => false,
+                    _ => true,
+                };
+                if measured {
+                    signals.push(format!("motion.{name}"));
+                }
+            }
+        }
+        let at = motion
+            .pointer("/emphasisHits/0/at")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        signal_log.push(json!({
+            "at": round3(at),
+            "decision": "motion",
+            "signals": signals,
+            "note": "the motion-design read sizes the keyframes, entries, holds and texture from the measured delivery",
+        }));
+    }
     let bed_words = dominant(&read)
         .and_then(|line| line.bgm_words.first().cloned())
         .unwrap_or_else(|| "cinematic".to_owned());
@@ -4021,6 +4595,17 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         }
         if measured_speech_ratio {
             signals.push("speechRatio");
+        }
+        // The voicing rate is the forensic second opinion on density, and
+        // a dialogue's speaker shares deepen the duck further.
+        if reads
+            .iter()
+            .any(|read| read.take_wide.voicing_rate.is_some())
+        {
+            signals.push("forensic.voicingRate");
+        }
+        if reads.iter().any(|read| read.conversation() == Some(true)) {
+            signals.push("speaker");
         }
         // The music check earns its place when the gate measured it, and
         // when the profile's own verdict turned on it: a `skip` is the
@@ -4085,13 +4670,171 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             }),
     ) && (target - measured).abs() >= 1.0
     {
+        let mut signals: Vec<&str> = vec!["loudness.integratedLufs"];
+        if reads
+            .iter()
+            .any(|read| read.take_wide.true_peak_dbfs.is_some())
+        {
+            signals.push("loudness.truePeakDbfs");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.loudness_range_lu.is_some())
+        {
+            signals.push("loudness.loudnessRangeLu");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.clipping_ratio.is_some())
+        {
+            signals.push("forensic.clippingRatio");
+        }
+        if reads.iter().any(|read| read.take_wide.crest.is_some()) {
+            signals.push("forensic.crest");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.dynamic_range_db.is_some())
+        {
+            signals.push("forensic.dynamicRangeDb");
+        }
+        if measured_speech_ratio {
+            signals.push("speechRatio");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.voicing_rate.is_some())
+        {
+            signals.push("forensic.voicingRate");
+        }
         signal_log.push(json!({
             "at": 0.0,
-            "decision": "pacing",
-            "signals": ["loudness"],
+            "decision": "mix",
+            "signals": signals,
             "note": format!(
-                "the take measured {measured:.1} LUFS and the platform targets {target:.0}, so the voice takes {:+.1} dB",
+                "the take measured {measured:.1} LUFS and the platform targets {target:.0}, so the voice takes {:+.1} dB; the peak, clipping, crest and range readings cap that gain",
                 target - measured
+            ),
+        }));
+    }
+    // The repair: the forensic ear names the target and the line reads
+    // name the unstable voice. This is its own decision, not a BGM note:
+    // a hum wants a notch, a DC offset a blocker, a muffled take a
+    // presence lift, and a hoarse line no accent at all.
+    let repair_noise = reads.iter().find_map(|read| read.noise_character());
+    let hoarse = reads.iter().any(|read| {
+        read.lines
+            .iter()
+            .any(|line| read.clean_voice(line) == Some(false))
+    });
+    if repair_noise.is_some() || hoarse {
+        let mut signals: Vec<&str> = Vec::new();
+        if repair_noise.is_some() {
+            signals.push("forensic.noiseType");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.spectral_flatness.is_some())
+        {
+            signals.push("forensic.spectralFlatness");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.spectral_centroid_hz.is_some())
+        {
+            signals.push("forensic.spectralCentroidHz");
+        }
+        if reads.iter().any(|read| read.take_wide.hum_hz.is_some()) {
+            signals.push("forensic.humHz");
+        }
+        if reads.iter().any(|read| read.take_wide.dc_offset.is_some()) {
+            signals.push("forensic.dcOffset");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.spectral_rolloff_hz.is_some())
+        {
+            signals.push("forensic.spectralRolloffHz");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.spectral_bandwidth_hz.is_some())
+        {
+            signals.push("forensic.spectralBandwidthHz");
+        }
+        if hoarse {
+            signals.push("forensic.hnrDb");
+            signals.push("forensic.jitter");
+            signals.push("forensic.shimmer");
+        }
+        let note = match &repair_noise {
+            Some(noise) => format!("the forensic ear names the repair: {noise}"),
+            None => "the line's voice quality is unstable, so the repair runs before any accent"
+                .to_owned(),
+        };
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "repair",
+            "signals": signals,
+            "note": note,
+        }));
+    }
+    // The grade: emotion names the temperature, the forensic tone breaks
+    // a neutral tie, and the arc decides whether the look lifts at the
+    // end. This is the decision the colour stage spends, so it is logged
+    // as `grade` rather than as a vague pacing note.
+    let grade = grade_decision(log, takes);
+    if !grade.signals.is_empty() {
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "grade",
+            "signals": grade.signals,
+            "note": grade.note,
+        }));
+    }
+    // The accents: the prosody ear's emphasis peaks are the hits, and the
+    // forensic room/SNR readings decide which peaks can hold one. This is
+    // the SFX decision, separate from the bed it sits over.
+    let accent_peaks = emphasis_peaks(&reads);
+    if !accent_peaks.is_empty() {
+        let mut signals: Vec<&str> = vec!["emphasisWords", "prosody"];
+        if !read.is_empty() {
+            signals.push("emotion");
+        }
+        if reads.iter().any(|read| read.take_wide.snr_db.is_some()) {
+            signals.push("forensic.snrDb");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.reverb_tail_sec.is_some())
+        {
+            signals.push("forensic.reverbTailSec");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.sibilance_ratio.is_some())
+        {
+            signals.push("forensic.sibilanceRatio");
+        }
+        if reads
+            .iter()
+            .any(|read| !read.take_wide.flux_onsets.is_empty())
+        {
+            signals.push("forensic.fluxOnsetsSec");
+        }
+        if reads
+            .iter()
+            .any(|read| read.take_wide.dominant_period_sec.is_some())
+        {
+            signals.push("rhythmLayers");
+        }
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "sfx",
+            "signals": signals,
+            "note": format!(
+                "the prosody ear measured {} emphasis peaks; the room and SNR readings decide which can hold an accent",
+                accent_peaks.len()
             ),
         }));
     }
@@ -4578,11 +5321,12 @@ fn picture_clips_with_media(view: &Value) -> Vec<(String, f64, f64, bool, String
 
 /// The profile's own family names, mapped onto the vocabulary
 /// `plan_validate` checks a decision against. The producer names a family
-/// for what it measured (`pauses`, `sentenceType`, `wordConfidence`); the
-/// vocabulary names it for the decision it serves (`pause`, `sentence`,
-/// `words`). A brief that handed a critic the producer's name would give
-/// it a signal it cannot cite, so every name is translated here and a
-/// family with no vocabulary name is left out rather than offered.
+/// for what it measured (`pauses`, `sentenceType`); the vocabulary names
+/// it for the decision it serves (`pause`, `sentence`). A brief that
+/// handed a critic the producer's name would give it a signal it cannot
+/// cite, so every name is translated here and a family with no vocabulary
+/// name is left out rather than offered. `wordConfidence` is both: the
+/// profile rates it and the vocabulary now cites it under its own name.
 fn vocabulary_name(family: &str) -> Option<&'static str> {
     Some(match family {
         "pauses" => "pause",
@@ -4599,7 +5343,35 @@ fn vocabulary_name(family: &str) -> Option<&'static str> {
         "speechRate" => "speechRate",
         "loudness" => "loudness",
         "rhythmLayers" => "rhythmLayers",
+        "motion" => "motion",
         _ => return None,
+    })
+}
+
+/// The newest voice profile's motion-design block, when the take was read
+/// with the motion family. It is the only place the twenty motion readings
+/// live, and the motion stage and the signal log both spend it from here.
+fn motion_design(log: &[Value]) -> Option<&Value> {
+    log.iter()
+        .rev()
+        .find_map(|reply| reply.get("motion").filter(|motion| motion.is_object()))
+}
+
+/// The motion-design tempo the take measured at a file second, 0.6-1.6.
+/// `None` when that take's profile carried no motion reading there, so a
+/// card keeps the editorial default instead of a guessed speed.
+fn motion_speed_at(log: &[Value], take: &str, at: f64) -> Option<f64> {
+    let motion = log.iter().rev().find_map(|reply| {
+        (reply.pointer("/audio/path").and_then(Value::as_str) == Some(take))
+            .then(|| reply.get("motion"))
+            .flatten()
+    })?;
+    motion.get("rateTempo")?.as_array()?.iter().find_map(|row| {
+        let start = row["start"].as_f64()?;
+        let end = row["end"].as_f64()?;
+        (start <= at + 0.05 && end > at - 0.05)
+            .then(|| row["speed"].as_f64())
+            .flatten()
     })
 }
 
@@ -4700,7 +5472,10 @@ fn signal_evidence(log: &[Value]) -> Value {
     // on the choice it actually informs instead of citing it decoratively.
     let decides: serde_json::Map<String, Value> = families
         .keys()
-        .filter_map(|name| decision_for(name).map(|decision| (name.clone(), json!(decision))))
+        .filter_map(|name| {
+            let decisions = decision_for(name);
+            (!decisions.is_empty()).then(|| (name.clone(), json!(decisions)))
+        })
         .collect();
     if !decides.is_empty() {
         digest.insert("decides".to_owned(), Value::Object(decides));
@@ -4708,21 +5483,43 @@ fn signal_evidence(log: &[Value]) -> Value {
     Value::Object(digest)
 }
 
-/// The decision a family informs, in the profile's own decision-policy
-/// words. A family with no entry drives no timeline choice here, and the
-/// digest leaves it out of `decides` rather than inventing one.
-fn decision_for(family: &str) -> Option<&'static str> {
-    Some(match family {
-        "pause" | "emphasisWords" | "speechRate" | "rhythmLayers" | "motifs" => "cut",
+/// Every decision a family informs, in the profile's own decision-policy
+/// words. A family may drive more than one choice: `forensic` names the
+/// bed, the repair, the mix, the grade's tone and the accent's placement,
+/// and a single mapping would make the critic believe it only chose BGM.
+/// A family with no entry drives no choice here, and the digest leaves it
+/// out of `decides` rather than inventing one.
+fn decision_for(family: &str) -> &'static [&'static str] {
+    match family {
+        "pause" => &["cut", "transition"],
+        "emphasisWords" => &["cut", "graphic", "sfx"],
+        "speechRate" => &["cut", "caption", "pacing"],
+        "rhythmLayers" => &["cut", "sfx"],
+        "motifs" => &["cut", "graphic"],
         // A filler is stripped from the caption it sits in, so the
         // decision it informs is the caption's.
-        "words" | "language" | "sentence" | "fillers" => "caption",
-        "entities" | "speechActs" | "claims" => "graphic",
-        "noiseFloor" | "musicSegments" | "speechRatio" | "forensic" => "bgm",
-        "speakerChanges" | "speaker" | "topics" | "discourseMarkers" => "transition",
-        "loudness" | "prosody" | "emotion" | "arc" => "pacing",
-        _ => return None,
-    })
+        "words" | "wordConfidence" => &["caption", "graphic"],
+        "language" => &["caption", "bgm"],
+        "sentence" => &["caption", "transition"],
+        "fillers" => &["caption"],
+        "entities" | "speechActs" | "claims" => &["graphic"],
+        "noiseFloor" => &["bgm", "repair", "mix"],
+        "musicSegments" => &["bgm"],
+        "speechRatio" => &["bgm", "mix"],
+        "forensic" => &["bgm", "repair", "mix", "grade", "sfx"],
+        "speakerChanges" | "discourseMarkers" => &["transition"],
+        "speaker" => &["transition", "bgm"],
+        "topics" => &["transition", "graphic"],
+        "loudness" => &["caption", "mix", "pacing"],
+        "prosody" => &["cut", "caption", "graphic", "sfx", "pacing"],
+        "arc" => &["grade", "pacing", "graphic"],
+        "emotion" => &["bgm", "grade", "graphic", "sfx", "transition", "pacing"],
+        // The motion-design family is the one that turns the voice read
+        // into keyframes, entries, holds and texture; every one of its
+        // twenty readings informs that single decision.
+        "motion" => &["motion"],
+        _ => &[],
+    }
 }
 
 /// The run's own measured evidence, as the brief the critic reads: the
@@ -5993,10 +6790,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if let (Some(layer), Some(runtime)) = (layer, runtime)
                                 && runtime > 1.0
                             {
-                                let look = dominant(&emotion_lines(log, &grade_source))
-                                    .map(|line| look_for_temperature(&line.temperature))
-                                    .unwrap_or("concat.teal-orange");
-                                let (key, base) = grade_param(look);
+                                let choice = grade_decision(log, &grade_source);
+                                let (key, base) = grade_param(choice.look);
                                 let body = base * 0.85;
                                 let mut commands = vec![json!({
                                     "op": "setEffectKey",
@@ -6015,7 +6810,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "at": round3(hook_share),
                                     "value": round3(body),
                                 }));
-                                if runtime > 12.0 {
+                                if runtime > 12.0 && choice.builds {
                                     commands.push(json!({
                                         "op": "setEffectKey",
                                         "clipId": layer,
@@ -6137,9 +6932,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     if runtime < 0.5 {
                         return None;
                     }
-                    let look = dominant(&emotion_lines(log, &grade_source))
-                        .map(|line| look_for_temperature(&line.temperature))
-                        .unwrap_or("concat.teal-orange");
+                    let look = grade_decision(log, &grade_source).look;
                     graded = true;
                     Some(call(
                         "edit_apply",
@@ -7151,7 +7944,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         let read = emotion_lines(log, &caption_emotion);
                         let mut commands: Vec<Value> = Vec::new();
                         placed_groups.clear();
-                        for (at, to, group) in kept {
+                        let next_starts: Vec<f64> = kept.iter().map(|(at, _, _)| *at).collect();
+                        for (index, (at, to, group)) in kept.into_iter().enumerate() {
                             let take_of = group.take.clone();
                             // The line the group sits in: its read decides
                             // the group's look, exactly as it decided the
@@ -7198,23 +7992,30 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // seconds performed the hook whatever the level
                             // meter read, and the hook's captions carry the
                             // weight the rise earned.
-                            let lifted = take_read
-                                .and_then(|take_read| take_read.line_at(group.start))
-                                .and_then(|line| line.relative_lu)
-                                // 1.5 LU is the profile's own definition of
-                                // a lifted line (the same bar its hint
-                                // counts by); 3.0 matched nothing the
-                                // producer documents.
-                                .is_some_and(|lu| lu >= 1.5)
-                                || (at < 3.0
-                                    && take_read
-                                        .and_then(|take_read| take_read.hook_lift())
-                                        .is_some_and(|lift| lift >= 2.0));
+                            let lifted = take_read.is_some_and(|take_read| {
+                                take_read.line_at(group.start).is_some_and(|line| {
+                                    // 1.5 LU is the profile's own
+                                    // definition of a lifted line.
+                                    take_read.line_lift(line).is_some_and(|lu| lu >= 1.5)
+                                }) || (at < 3.0
+                                    && take_read.hook_lift().is_some_and(|lift| lift >= 2.0))
+                            });
                             let performed = take_read.and_then(|take_read| {
                                 take_read
                                     .line_at(group.start)
                                     .and_then(|line| take_read.performs(line))
                             });
+                            // The pitch twin of the level lift: a line the
+                            // speaker raised over the take's own register
+                            // is a line the delivery performed, even when
+                            // the loudness meter saw no change.
+                            let register = take_read
+                                .and_then(|take_read| {
+                                    take_read
+                                        .line_at(group.start)
+                                        .and_then(|line| take_read.register_lift(line))
+                                })
+                                .is_some_and(|lift| lift >= 2.0);
                             // A fast line is read at a glance, so its
                             // caption is set a touch smaller; a slow line
                             // can carry a larger one.
@@ -7223,6 +8024,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 Some("slow") => 0.046,
                                 _ => 0.04,
                             };
+                            // The sentence's own shape is a caption cue:
+                            // an exclamation carries, a fragment is quiet.
+                            match take_read
+                                .and_then(|take_read| take_read.line_at(group.start))
+                                .map(|line| line.sentence_type.as_str())
+                            {
+                                Some("exclamation") => size += 0.002,
+                                Some("fragment") => size -= 0.002,
+                                _ => {}
+                            }
                             // A clean voice carries its own weight: a
                             // line the forensic ear read as stable (an
                             // HNR at 10 dB or better, a jitter under 5%
@@ -7254,6 +8065,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             {
                                 size += 0.003;
                             }
+                            if register && !gated && steady != Some(false) {
+                                size += 0.002;
+                            }
                             // The vertical band is narrower and sits higher
                             // than the horizontal one: the words stay clear
                             // of the platform UI a reel carries at the
@@ -7269,12 +8083,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if at < 3.0 {
                                 size += 0.006;
                             }
+                            // The reading rate sets a floor on the hold:
+                            // a line of long words needs longer on screen
+                            // than its spoken span, but the extension is
+                            // capped so it never runs into the next line.
+                            let mut duration = to - at;
+                            if let Some(hold) = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(group.start)
+                                    .and_then(|line| take_read.caption_hold(line))
+                            }) {
+                                duration = duration.max(hold.min(duration + 0.4));
+                            }
+                            // Never run into the next caption: the hold's
+                            // extension is capped by the next group's own
+                            // start when one is already placed.
+                            if let Some(next_at) = next_starts.get(index + 1).copied()
+                                && next_at > to
+                            {
+                                duration = duration.min(next_at - at);
+                            }
                             commands.push(json!({
                                 "op": "addTextClip",
                                 "trackId": null,
                                 "above": true,
                                 "start": round3(at),
-                                "duration": round3(to - at),
+                                "duration": round3(duration),
                                 "style": {
                                     "fontFamily": font,
                                     "fontSize": round3(size),
@@ -7491,6 +8325,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         motion_specs(
                             log,
                             &emotion_lines(log, &motion_source),
+                            &reads,
                             &entity_graphics(log, &motion_source),
                             &topic_boundaries(log, &motion_source),
                             &motifs,
@@ -8169,12 +9004,36 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .unwrap_or(-20.0);
                         let density_db = voice_reads(log, &music_source)
                             .iter()
-                            .filter_map(|read| read.take_wide.speech_ratio)
+                            .filter_map(|read| {
+                                // Speech ratio and voicing rate are two
+                                // ears on the same question - how much of
+                                // the take is voice - so the denser of the
+                                // two decides the duck. A take with either
+                                // reading is measured; a take with neither
+                                // keeps the act's level.
+                                read.take_wide
+                                    .speech_ratio
+                                    .into_iter()
+                                    .chain(read.take_wide.voicing_rate)
+                                    .reduce(f64::max)
+                            })
                             .fold(None::<f64>, |worst, ratio| {
                                 Some(worst.map_or(ratio, |worst: f64| worst.max(ratio)))
                             })
                             .map(|ratio| -6.0 * ratio)
                             .unwrap_or(0.0);
+                        // A conversation leaves less room for a bed than a
+                        // monologue: the speakers' own shares are the
+                        // reading that says the take is a dialogue, and
+                        // the bed drops another 2 dB under it.
+                        let conversation_db = if voice_reads(log, &music_source)
+                            .iter()
+                            .any(|read| read.conversation() == Some(true))
+                        {
+                            -2.0
+                        } else {
+                            0.0
+                        };
                         // The room and the band: a reverberant tail
                         // smears the voice over whatever sits under
                         // it, and a sibilant voice lives in the very
@@ -8200,8 +9059,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         } else {
                             0.0
                         };
-                        let base_db =
-                            round3((act_db + density_db + room_db + band_db).clamp(-30.0, -6.0));
+                        let base_db = round3(
+                            (act_db + density_db + conversation_db + room_db + band_db)
+                                .clamp(-30.0, -6.0),
+                        );
                         // The shape's keys ride at this base: kept as
                         // the linear gain the volume keys carry.
                         bed_level = Some(f64::powf(10.0, base_db / 20.0));
@@ -9173,7 +10034,7 @@ mod tests {
         let claims = uncovered_claims(&log, &takes);
         assert_eq!(claims.len(), 1, "the uncovered claim is the one read");
         assert_eq!(claims[0].text, "this ship sank in 1912");
-        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &claims, false);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &[], &claims, false);
         let card = specs
             .iter()
             .find(|spec| spec.earned_by == "claims")
@@ -9224,7 +10085,7 @@ mod tests {
         let questions = question_acts(&log, &takes);
         assert_eq!(questions.len(), 1, "only the question line is an ask");
         assert_eq!(questions[0].start, 0.0);
-        let specs = motion_specs(&[], &[], &[], &[], &[], &questions, &[], false);
+        let specs = motion_specs(&[], &[], &[], &[], &[], &[], &questions, &[], false);
         assert!(
             specs
                 .iter()
@@ -9433,11 +10294,18 @@ mod tests {
                 emotion_row(4.0, 7.0, "fear", 0.9, "reveal", "cold", ""),
             ]}),
             json!({ "audio": { "path": "/t/a.wav" },
+                "directorHints": { "cutStyle": "mixed" },
                 "wholeTake": {
                     "loudness": { "integratedLufs": -20.0 },
                     "forensic": { "noiseFloorDbfs": -60.0, "snrDb": 18.0 },
                 },
                 "pauses": [{ "start": 3.0, "end": 4.0, "class": "dead_air" }],
+                "motion": {
+                    "emphasisHits": [{ "line": 0, "at": 0.5, "word": "wreck",
+                                       "strength": 0.8, "scale": 1.2 }],
+                    "rateTempo": [{ "line": 0, "start": 0.0, "end": 3.0,
+                                    "wpm": 210.0, "speed": 1.4 }],
+                },
                 "signalConfidence": { "perSignal": [
                     { "signal": "pauses", "confidence": 0.75 },
                     { "signal": "wordConfidence", "confidence": 0.95 },
@@ -9470,6 +10338,10 @@ mod tests {
         assert!(
             decisions.contains(&"pacing"),
             "the fixture must exercise the pacing entry: {decisions:?}"
+        );
+        assert!(
+            decisions.contains(&"motion"),
+            "the fixture must exercise the motion entry: {decisions:?}"
         );
         let schema = crate::plan_schema::canonical();
         crate::schema::check(&schema, &plan, &schema, "plan")
@@ -9606,6 +10478,7 @@ mod tests {
             // transient it lands on.
             "speaker",
             "forensic",
+            "motion",
         ];
         // Families the vocabulary names but this program deliberately does
         // not spend, and why. Each is a real reading the profile makes; the
@@ -10086,11 +10959,15 @@ mod tests {
                 .is_some_and(|why| why.contains("gate")),
             "a weak family carries its basis: {evidence:?}"
         );
-        assert_eq!(evidence["decides"]["pause"], json!("cut"));
-        assert_eq!(evidence["decides"]["words"], json!("caption"));
+        assert_eq!(evidence["decides"]["pause"], json!(["cut", "transition"]));
+        assert_eq!(
+            evidence["decides"]["words"],
+            json!(["caption", "graphic"]),
+            "a family the plan now spends names every decision it informs"
+        );
         assert_eq!(
             evidence["decides"]["forensic"],
-            json!("bgm"),
+            json!(["bgm", "repair", "mix", "grade", "sfx"]),
             "a family the plan now spends names the decision it informs"
         );
     }
@@ -10155,31 +11032,44 @@ mod tests {
             .iter()
             .copied()
             .filter(|family| !NOT_SPENT.contains(family))
-            .filter(|family| decision_for(family).is_none())
+            .filter(|family| decision_for(family).is_empty())
             .collect();
         assert!(
             unmapped.is_empty(),
             "these families are spent by the edit but name no decision, so \
              the critic is never told what they drove: {unmapped:?}"
         );
-        // And the mapping is not free-form: a family may only claim one of
-        // the decisions the log's own gate accepts, or the critic would be
+        // And the mapping is not free-form: a family may only claim a
+        // decision the log's own gate accepts, or the critic would be
         // pointed at a choice the validator rejects.
         for family in crate::tools::signal_vocabulary() {
-            let Some(decision) = decision_for(family) else {
-                continue;
-            };
-            assert!(
-                matches!(
-                    decision,
-                    "cut" | "caption" | "graphic" | "bgm" | "transition" | "pacing"
-                ),
-                "{family} claims {decision:?}, which is not a logged decision"
-            );
+            for decision in decision_for(family) {
+                assert!(
+                    matches!(
+                        *decision,
+                        "cut"
+                            | "caption"
+                            | "graphic"
+                            | "bgm"
+                            | "transition"
+                            | "pacing"
+                            | "repair"
+                            | "mix"
+                            | "grade"
+                            | "sfx"
+                            | "motion"
+                    ),
+                    "{family} claims {decision:?}, which is not a logged decision"
+                );
+            }
         }
-        assert_eq!(decision_for("fillers"), Some("caption"));
-        assert_eq!(decision_for("pause"), Some("cut"));
-        assert_eq!(decision_for("topics"), Some("transition"));
+        assert_eq!(decision_for("fillers"), &["caption"][..]);
+        assert_eq!(decision_for("pause"), &["cut", "transition"][..]);
+        assert_eq!(decision_for("topics"), &["transition", "graphic"][..]);
+        assert!(decision_for("forensic").contains(&"grade"));
+        assert!(decision_for("forensic").contains(&"mix"));
+        assert!(decision_for("forensic").contains(&"repair"));
+        assert!(decision_for("forensic").contains(&"sfx"));
     }
 
     /// The family-level guard above is not enough, and this is the test
@@ -10196,21 +11086,6 @@ mod tests {
         // nor an entry here fails: the profile measured it and the edit
         // threw it away.
         const NOT_SPENT: &[(&str, &str)] = &[
-            (
-                "spectral_centroid_hz",
-                "a spectral centroid describes the voice's timbre, not the \
-                 cut: the noise type and flatness already decide the repair",
-            ),
-            (
-                "voicing_rate",
-                "how much of the take is voiced separates speech from noise, \
-                 which `speechRatio` already reports at the take's own level",
-            ),
-            (
-                "dynamic_range_db",
-                "a take-wide crest factor restates what `crest` measures per \
-                 transient, and the duck depth already reads the SNR",
-            ),
             (
                 "cut_rule",
                 "the profile's own cut-style rule is prose: `cut_style` is \
@@ -10590,11 +11465,11 @@ mod tests {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|row| row["decision"] == json!("pacing"))
+                .filter(|row| row["decision"] == json!("mix"))
                 .filter(|row| {
                     row["signals"]
                         .as_array()
-                        .is_some_and(|signals| signals.contains(&json!("loudness")))
+                        .is_some_and(|signals| signals.contains(&json!("loudness.integratedLufs")))
                 })
                 .cloned()
                 .collect::<Vec<_>>()
@@ -12884,6 +13759,22 @@ mod tests {
         );
     }
 
+    /// A foreign reply may carry words-per-minute without the producer's
+    /// pace class; the same 180/115 bars still turn it into a beat.
+    #[test]
+    fn a_rate_without_a_pace_class_still_sets_the_beat() {
+        let log = vec![json!({
+            "audio": { "path": "/t/a.wav" },
+            "lines": [
+                { "start": 0.0, "end": 2.0, "speechRate": { "wordsPerMinute": 200.0 } },
+                { "start": 2.0, "end": 4.0, "speechRate": { "wordsPerMinute": 100.0 } },
+            ],
+        })];
+        assert_eq!(delivery_pace(&log, "/t/a.wav", 0.0, 2.0), "punchy");
+        assert_eq!(delivery_pace(&log, "/t/a.wav", 2.0, 4.0), "slow");
+        assert_eq!(pace_from_wpm(140.0), "conversational");
+    }
+
     /// A card on a punchy line holds tighter than the same line delivered
     /// slowly, and an unmeasured line keeps the editorial default: the
     /// delivery is what sets the beat, not the clock alone.
@@ -12897,13 +13788,199 @@ mod tests {
             words: "the wreck".to_owned(),
             act: "reveal".to_owned(),
             pace: pace.to_owned(),
+            pitch_range: None,
+            pitch_lift: None,
             earned_by: "emotion",
+            intensity: 0.5,
+            pulse: None,
+            motion_speed: None,
             chapter: false,
             slot: None,
             slots: Vec::new(),
         };
         assert!(card("punchy").hold() < card("").hold());
         assert!(card("slow").hold() > card("").hold());
+    }
+
+    /// The emotional read's intensity and the take's pulse both shape a
+    /// card's hold: a hard beat stays longer, and a pulsed take rounds
+    /// the hold onto its own beat rather than the frame grid.
+    #[test]
+    fn the_arc_and_pulse_shape_a_cards_hold() {
+        let card = |intensity: f64, pulse: Option<f64>| MotionSpec {
+            take: "/t/a.wav".to_owned(),
+            at: 0.0,
+            end: 4.0,
+            preset: "kinetic.title",
+            words: "the wreck".to_owned(),
+            act: "reveal".to_owned(),
+            pace: String::new(),
+            pitch_range: None,
+            pitch_lift: None,
+            earned_by: "emotion",
+            intensity,
+            pulse,
+            motion_speed: None,
+            chapter: false,
+            slot: None,
+            slots: Vec::new(),
+        };
+        assert!(
+            card(0.9, None).hold() > card(0.1, None).hold(),
+            "an intense beat holds longer than a calm one"
+        );
+        let pulsed = card(0.5, Some(0.5)).hold();
+        assert!(
+            (pulsed / 0.5).fract().abs() < 1.0e-6,
+            "a pulsed hold lands on the beat, got {pulsed}"
+        );
+    }
+
+    /// An entity is a stock subject only when it names something a camera
+    /// can show, and only when the NER was sure: a number is a stat
+    /// card's job, and a low-confidence reading is not a subject to shop.
+    #[test]
+    fn the_entity_stock_query_shops_names_not_numbers() {
+        let entity = |kind: &str, text: &str, confidence: Option<f64>| Entity {
+            take: "/t/a.wav".to_owned(),
+            kind: kind.to_owned(),
+            text: text.to_owned(),
+            card: String::new(),
+            at: Some(1.0),
+            approximate: false,
+            confidence,
+            value: None,
+            unit: None,
+        };
+        assert_eq!(
+            entity_stock_query(&entity("ORG", "Acme", Some(0.9))),
+            Some("Acme company".to_owned())
+        );
+        assert_eq!(
+            entity_stock_query(&entity("PER", "Ada Lovelace", Some(0.9))),
+            Some("Ada Lovelace portrait".to_owned())
+        );
+        assert_eq!(
+            entity_stock_query(&entity("DATE", "1972", Some(0.9))),
+            Some("1972 archive".to_owned())
+        );
+        assert_eq!(
+            entity_stock_query(&entity("MONEY", "$10,450", Some(0.9))),
+            None,
+            "a number is a stat card, not footage"
+        );
+        assert_eq!(
+            entity_stock_query(&entity("ORG", "Acme", Some(0.4))),
+            None,
+            "an unsure reading is not a subject"
+        );
+    }
+
+    /// A motion card is vetoed by the same readings that veto a caption:
+    /// a hoarse voice, a line with almost no voice under it, or a line
+    /// the confidence gate could not hear. An unmeasured line is not
+    /// vetoed - only a reading that says the line is not what the
+    /// transcript thinks refuses the card.
+    #[test]
+    fn a_motion_card_is_vetoed_by_an_unreliable_line() {
+        let read = |line: LineRead| VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            lines: vec![line],
+            ..Default::default()
+        };
+        let clean = LineRead {
+            start: 0.0,
+            end: 2.0,
+            hnr_db: Some(24.0),
+            jitter: Some(0.01),
+            shimmer: Some(0.01),
+            voiced_ratio: Some(0.9),
+            ..Default::default()
+        };
+        assert!(motion_line_reliable(&[read(clean)], "/t/a.wav", 1.0));
+        let hoarse = LineRead {
+            start: 0.0,
+            end: 2.0,
+            jitter: Some(0.12),
+            ..Default::default()
+        };
+        assert!(!motion_line_reliable(&[read(hoarse)], "/t/a.wav", 1.0));
+        let unvoiced = LineRead {
+            start: 0.0,
+            end: 2.0,
+            voiced_ratio: Some(0.05),
+            ..Default::default()
+        };
+        assert!(!motion_line_reliable(&[read(unvoiced)], "/t/a.wav", 1.0));
+        let unmeasured = LineRead {
+            start: 0.0,
+            end: 2.0,
+            ..Default::default()
+        };
+        assert!(motion_line_reliable(&[read(unmeasured)], "/t/a.wav", 1.0));
+    }
+
+    /// A coverage bound snaps to a stressed word when no stronger
+    /// structural moment is near: the delivery's own beat is a better cut
+    /// than the cadence's arbitrary frame.
+    #[test]
+    fn a_coverage_bound_snaps_to_a_stressed_word() {
+        let bounds = SnapBounds {
+            emphasis: vec![3.0],
+            ..Default::default()
+        };
+        assert_eq!(bounds.snap(3.1, 0.0, 0.8, 0.3), Some(3.0));
+    }
+
+    /// A card opens on the delivery's stressed word, not a fixed offset
+    /// from the line start, and a performed or lifted line holds it a
+    /// beat longer.
+    #[test]
+    fn a_motion_card_opens_on_the_stressed_word() {
+        let line = EmotionLine {
+            take: "/t/a.wav".to_owned(),
+            start: 0.0,
+            end: 4.0,
+            emotion: "neutral".to_owned(),
+            intensity: 0.8,
+            act: "reveal".to_owned(),
+            temperature: "balanced".to_owned(),
+            duck_db: -18.0,
+            sfx_type: String::new(),
+            bgm_words: Vec::new(),
+            queries: Vec::new(),
+            easing: default_ease(),
+            text: "we found the wreck".to_owned(),
+            pace: "conversational".to_owned(),
+            confidence: None,
+        };
+        let mut read = VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            ..Default::default()
+        };
+        read.take_wide.mean_f0_hz = Some(120.0);
+        read.lines.push(LineRead {
+            start: 0.0,
+            end: 4.0,
+            text: "we found the wreck".to_owned(),
+            pitch_range: Some(8.0),
+            pitch_mean_hz: Some(180.0),
+            emphasis: vec![crate::voice_read::Emphasis {
+                word: "wreck".to_owned(),
+                at: 2.5,
+                strength: 0.9,
+            }],
+            ..LineRead::default()
+        });
+        let specs = motion_specs(&[], &[line], &[read], &[], &[], &[], &[], &[], false);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].at, 2.5, "the card opens on the stressed word");
+        assert_eq!(specs[0].pitch_range, Some(8.0));
+        assert!(
+            specs[0].hold() > 1.35,
+            "a performed, lifted line holds longer: {}",
+            specs[0].hold()
+        );
     }
 
     /// The look the grade lays over the cut is the temperature the read
@@ -13048,6 +14125,81 @@ mod tests {
         let second = seam_transition(&[], &[chapter], &[], &[], &slot, Some(first));
         assert_ne!(second, first, "a chapter seam repeated its own move");
         assert_eq!(second, "concat.blur-dissolve");
+    }
+
+    /// The seam spends the pause class and the sentence shape, not only
+    /// the presence of a gap: a scene turn earns a visible move, an
+    /// exclamation a hard one, a fragment a light one.
+    #[test]
+    fn the_seam_spends_the_pause_class_and_sentence_type() {
+        let slot = BrollSlot {
+            take: "take.wav".into(),
+            from: 5.0,
+            to: 6.0,
+            query: "city".into(),
+        };
+        let mut read = VoiceRead {
+            take: "take.wav".into(),
+            ..Default::default()
+        };
+        read.lines.push(LineRead {
+            start: 4.0,
+            end: 5.5,
+            text: "we found it".into(),
+            sentence_type: "exclamation".into(),
+            ..LineRead::default()
+        });
+        read.pauses.push(crate::voice_read::Pause {
+            start: 5.0,
+            end: 6.0,
+            class: "scene_turn".into(),
+            keep: true,
+        });
+        assert_eq!(
+            seam_transition(&[read.clone()], &[], &[], &[], &slot, None),
+            "concat.whip-pan",
+            "a scene turn is the strongest pause class"
+        );
+        read.pauses[0].class = "breath".into();
+        assert_eq!(
+            seam_transition(&[read.clone()], &[], &[], &[], &slot, None),
+            "concat.crash-zoom",
+            "an exclamation lands hard even over a breath"
+        );
+        read.lines[0].sentence_type = "fragment".into();
+        assert_eq!(
+            seam_transition(&[read], &[], &[], &[], &slot, None),
+            "concat.cross-pop",
+            "a fragment trails off"
+        );
+    }
+
+    /// A parsed entity value is what the card shows: the viewer reads
+    /// `$10,450`, `45%` or `2026`, not the raw words the ear happened to
+    /// hear. An unparsed entity keeps its text.
+    #[test]
+    fn an_entity_card_formats_the_parsed_value_and_unit() {
+        let entity = |text: &str, value: Option<f64>, unit: Option<&str>| Entity {
+            take: "take.wav".into(),
+            kind: "MONEY".into(),
+            text: text.into(),
+            card: "stat".into(),
+            at: Some(2.0),
+            approximate: false,
+            confidence: Some(0.9),
+            value,
+            unit: unit.map(str::to_owned),
+        };
+        let money = comp_for_entity(&entity("$10,450", Some(10450.0), Some("USD")));
+        assert_eq!(money.expect("a stat card").1, "$10,450");
+        let percent = comp_for_entity(&entity("45%", Some(45.0), Some("percent")));
+        assert_eq!(percent.expect("a stat card").1, "45%");
+        let year = comp_for_entity(&entity("2026", Some(2026.0), Some("year")));
+        assert_eq!(year.expect("a stat card").1, "2026");
+        let count = comp_for_entity(&entity("1,500", Some(1500.0), Some("count")));
+        assert_eq!(count.expect("a stat card").1, "1,500");
+        let raw = comp_for_entity(&entity("a great many", None, None));
+        assert_eq!(raw.expect("a stat card").1, "a great many");
     }
 
     /// The accents are shopped by the read's own register: a line the

@@ -348,7 +348,7 @@ instead of randomly calling tools. **Twenty-five phases, numbered 1–25**:
 2. **Understand the material** — TTS delivery, transcription, silence,
    scenes, beats and `suggest_cuts` when the Python extras are absent.
 3. **Emotion** — `emotion {action:"extract"}`; a flat script is fixed first.
-4. **Voice signals** — `voice_signals`: the 25 families and 50+ readings.
+4. **Voice signals** — `voice_signals`: the 14 families and 70 readings.
 5. **Story map and shot budget** — sections, beats, seconds and shot count.
 6. **Scene, beat and transition map** — measured boundaries and the change
    each transition carries.

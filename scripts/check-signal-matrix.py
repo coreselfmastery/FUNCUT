@@ -39,6 +39,7 @@ def main() -> int:
         "Prosody": "prosody",
         "Forensics": "forensic",
         "Speakers": "speaker",
+        "Motion design": "motion",
     }
     expected_aliases = {
         entry["name"]: (

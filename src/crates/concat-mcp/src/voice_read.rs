@@ -50,6 +50,8 @@ pub struct LineRead {
     /// The line's pitch range, in semitones: a wide range is a line that
     /// performs, a narrow one is a line that reports.
     pub pitch_range: Option<f64>,
+    /// The line's mean momentary loudness, in LUFS.
+    pub mean_lufs_m: Option<f64>,
     /// The line's level against the take's integrated level, in LU.
     pub relative_lu: Option<f64>,
     /// The line's mean voiced pitch, in Hz: the register the line sits in.
@@ -420,13 +422,37 @@ impl VoiceRead {
         })
     }
 
+    /// The line's level over the take's integrated level, in LU. The
+    /// producer writes `relativeLu` itself; a foreign reply may carry only
+    /// `meanLufsM`, so the take's own integrated level completes it rather
+    /// than losing the line's lift.
+    pub fn line_lift(&self, line: &LineRead) -> Option<f64> {
+        line.relative_lu.or_else(|| {
+            line.mean_lufs_m
+                .zip(self.take_wide.integrated_lufs)
+                .map(|(mean, integrated)| mean - integrated)
+        })
+    }
+
     /// Whether the pause opening at `start` is one the profile says to
     /// keep: a dramatic hold or a scene turn, whatever the silence
     /// detector's duration would have suggested.
     pub fn keeps_pause_at(&self, start: f64) -> bool {
+        self.pause_at(start).is_some_and(|pause| pause.keep)
+    }
+
+    /// The classified silence opening at `start`, if one does.
+    pub fn pause_at(&self, start: f64) -> Option<&Pause> {
         self.pauses
             .iter()
-            .any(|pause| (pause.start - start).abs() < 0.2 && pause.keep)
+            .find(|pause| (pause.start - start).abs() < 0.2)
+    }
+
+    /// The class the profile gave the silence at `start`: a scene turn
+    /// wants a visible move, a dramatic beat a soft one, a breath the
+    /// shortest trim.
+    pub fn pause_class_at(&self, start: f64) -> Option<&str> {
+        self.pause_at(start).map(|pause| pause.class.as_str())
     }
 
     /// The unsure words that fall inside a span, in file seconds.
@@ -703,15 +729,14 @@ impl VoiceRead {
         (first > 0.0).then(|| 12.0 / std::f64::consts::LN_2 * (last / first).ln())
     }
 
-    /// Whether a phrase boundary opens within `window` of a file second:
-    /// the narration's own breath-group turned there, which is a seam the
-    /// picture can register even when no speaker changed and no question
-    /// was asked.
+    /// Whether a phrase boundary opens or closes within `window` of a
+    /// file second: the narration's own breath-group turned there, which
+    /// is a seam the picture can register even when no speaker changed
+    /// and no question was asked.
     pub fn phrase_seam(&self, moment: f64, window: f64) -> bool {
-        self.take_wide
-            .phrases
-            .iter()
-            .any(|phrase| (phrase.start - moment).abs() <= window)
+        self.take_wide.phrases.iter().any(|phrase| {
+            (phrase.start - moment).abs() <= window || (phrase.end - moment).abs() <= window
+        })
     }
 
     /// The take's normalized local energy at a file second, 0..1: where
@@ -767,6 +792,18 @@ impl VoiceRead {
             .take_wide
             .loudness_range_lu
             .is_some_and(|lra| lra < 4.0)
+        {
+            gain = gain.min(6.0);
+        }
+        // The other two compression readings say the same thing as the
+        // loudness range from different ears: a low crest or a narrow
+        // dynamic range is a take whose peaks were already squashed, so
+        // raising it lifts the squash with the voice.
+        if self.take_wide.crest.is_some_and(|crest| crest < 6.0)
+            || self
+                .take_wide
+                .dynamic_range_db
+                .is_some_and(|range| range < 8.0)
         {
             gain = gain.min(6.0);
         }
@@ -928,6 +965,7 @@ fn line_of(row: &Value) -> LineRead {
         pitch_range: row
             .pointer("/prosody/pitchRangeSemitones")
             .and_then(Value::as_f64),
+        mean_lufs_m: row.pointer("/loudness/meanLufsM").and_then(Value::as_f64),
         relative_lu: row.pointer("/loudness/relativeLu").and_then(Value::as_f64),
         pitch_mean_hz: row.pointer("/prosody/pitchMeanHz").and_then(Value::as_f64),
         final_rise: row.pointer("/prosody/finalRise").and_then(Value::as_bool),
@@ -1353,6 +1391,7 @@ mod tests {
             },
             "lines": [
                 { "start": 0.0, "end": 4.0, "text": "a line",
+                  "loudness": { "meanLufsM": -14.0 },
                   "prosody": { "pitchMeanHz": 175.0, "finalRise": true, "voicedRatio": 0.9 },
                   "forensic": { "hnrDb": 18.0, "jitter": 0.01, "shimmer": 0.02 } },
             ],
@@ -1396,6 +1435,10 @@ mod tests {
         assert_eq!(read.take_wide.speaker_seconds[1].speech_seconds, 2.1);
         // The per-line readings the new consumers spend.
         let line = &read.lines[0];
+        assert_eq!(line.mean_lufs_m, Some(-14.0));
+        // The producer's `relativeLu` is absent here, so the take's
+        // integrated level completes the line's lift: -14 over -16.5.
+        assert_eq!(read.line_lift(line), Some(2.5));
         assert_eq!(line.pitch_mean_hz, Some(175.0));
         assert_eq!(line.final_rise, Some(true));
         assert_eq!(line.voiced_ratio, Some(0.9));
@@ -1746,5 +1789,33 @@ mod tests {
         });
         let read = VoiceRead::of(&present).expect("the reply is a reading");
         assert_eq!(read.take_wide.utterances, Some(7));
+    }
+
+    /// A pause's class is a decision, not metadata: a scene turn earns a
+    /// visible move and a dramatic beat a soft one, so the seam reads the
+    /// class rather than only the keep flag.
+    #[test]
+    fn a_pause_carries_the_class_the_seam_spends() {
+        let read = VoiceRead {
+            pauses: vec![
+                Pause {
+                    start: 2.0,
+                    end: 3.2,
+                    class: "scene_turn".to_owned(),
+                    keep: true,
+                },
+                Pause {
+                    start: 7.0,
+                    end: 8.0,
+                    class: "dramatic".to_owned(),
+                    keep: true,
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(read.pause_class_at(2.05), Some("scene_turn"));
+        assert_eq!(read.pause_class_at(7.0), Some("dramatic"));
+        assert_eq!(read.pause_class_at(5.0), None);
+        assert!(read.keeps_pause_at(2.0));
     }
 }

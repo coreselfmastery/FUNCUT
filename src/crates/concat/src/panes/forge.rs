@@ -325,7 +325,7 @@ impl ForgePane {
                     self.probe();
                 }
                 // The same first look reads the signal catalogue, quietly:
-                // the fifty buttons the lab shows are built from it, and
+                // the seventy buttons the lab shows are built from it, and
                 // it is a static table - no transcript, no audio, no
                 // server - so the page is ready before a run ever starts.
                 if on && self.signals.families.is_empty() && !self.signals.loading {
@@ -3178,7 +3178,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          prompts/signal_recipes.md, prompts/emotion_to_edit.md, prompts/token_budget.md \
          and prompts/tool_reference.md. The skill is the pipeline; the playbooks are the \
          craft. Do not plan from memory.\n\n\
-         ALL-SIGNAL CONTRACT: voice_signals exposes 50 named readings across 13 families. Read \
+         ALL-SIGNAL CONTRACT: voice_signals exposes 70 named readings across 14 families. Read \
          prompts/signal_matrix.md and spend the readings, not just the family names: use the \
          accepted signalLog family alias from the matrix, name the exact catalogue reading in \
          its evidence note, and record confidence plus the decision it changed; a reading that \

@@ -15,9 +15,10 @@ name: Release
 #
 # The bundles are self-contained: the Linux packages
 # (.deb, .rpm, .AppImage, Arch) carry the
-# FFmpeg runtime libraries beside the binary. Nothing is built until CI
-# has passed on the tag, and nothing is published until every bundle has
-# been launched where it was built: build-app.yml starts each one
+# FFmpeg runtime libraries beside the binary. CI, the Nix package build and
+# the RustSec dependency audit must all pass on the selected tag before
+# anything is published. Each bundle is also launched where it was built:
+# build-app.yml starts each one
 # (`--version`, `--smoke`, and on x86_64 under an emulated Ivy Bridge)
 # before it uploads it, and a bundle that does not start fails its job,
 # which `publish` needs.
@@ -131,9 +132,23 @@ jobs:
     # inheriting would only widen the release's secrets to a 700-line
     # build job that never asked for them.
 
+  nix:
+    name: Nix package
+    needs: [check, engine]
+    uses: ./.github/workflows/nix.yml
+    with:
+      ref: ${{ needs.check.outputs.tag }}
+
+  security:
+    name: Dependency security audit
+    needs: [check, engine]
+    uses: ./.github/workflows/security-audit.yml
+    with:
+      ref: ${{ needs.check.outputs.tag }}
+
   publish:
     name: Publish release
-    needs: [check, build]
+    needs: [check, engine, build, nix, security]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

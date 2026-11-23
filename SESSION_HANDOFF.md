@@ -4,68 +4,62 @@ If a new session starts: read AGENT_STATE.md, IMPLEMENTATION_LEDGER.md,
 TEST_EVIDENCE.md and KNOWN_ISSUES.md first, then this file, then:
 
 ```sh
-git -C /home/z/my-project/FUNCUT fetch origin
-git -C /home/z/my-project/FUNCUT checkout main
-git -C /home/z/my-project/FUNCUT pull --ff-only
+git -C /workspace/project/FUNCUT fetch origin
+git -C /workspace/project/FUNCUT checkout main
+git -C /workspace/project/FUNCUT pull --ff-only
 ```
 
-## Where this session stands
+## Where this stands — 2026-11-23, the `.15` release
 
-- `main` at `6dafbeeeeae9a1f1db93845bfac8abcd003e1ace` (PR #76 merged;
-  its engine job was the last check still running at handoff — every
-  other check green, and the merged content equals PR #76's CI-green
-  head plus a main that was 7/7 green at `94ebfdde`).
-- **PR #78 open** (`feat/completion-2026-11-10` → `main`), head
-  `68dbf225`. At last check: Format/locales/models, analysis senses,
-  dependency dance and the Geneva multi-layer render all **success**;
-  "Engine tests and lints" **in progress**.
-- All local gates already passed for every unit on the branch (see
-  TEST_EVIDENCE.md).
+- `main` at `573a661`; all seven checks on the latest commit are green
+  (CI `45169594535`, Geneva `45169594539`, Build app `45169594545`).
+- `v0.2.8-funcut.15` is the latest published release: ten assets, all
+  downloadable, checksums matching GitHub's digests, manifest verified,
+  and `install-linux.sh --list` sees `.15` first.
+- The `.15` release workflow (`45163610747`) is red only at its Nix job:
+  the hosted runner lost communication after about 1.5 hours, so the
+  publish job was skipped. The release itself was published manually
+  and verified. Rerun the Nix job to clear the workflow.
+- The latest green engine lane counts 2,286 workspace tests (13 skipped),
+  9 documentation tests and 30 gRPC tests: 2,325 in all. `README.md` and
+  `docs/TESTING.md` now carry that count.
+- Open product work is the target-machine acceptance list in
+  `KNOWN_ISSUES.md`: proxy/Geneva performance, VAAPI on real hardware,
+  motion-clip and AI Director end-to-end runs, and publishing provenance.
+- Branch protection still needs required status checks; the API currently
+  reports none.
 
 ## Resume checklist
 
-1. **PR #78**: when its engine check is green, merge it (merge commit,
-   matching repo convention). If RED: read the failing job's log from
-   the check-run URL first; every unit is locally tested, so a failure
-   is most likely an environment-only lane (the repo's CI has no
-   known gaps against this branch's diff).
-2. **Verify the final main HEAD**: fetch, read its check-runs (all seven
-   must be success), `git log --oneline -8` to see the delivery.
-3. **Final state-file update** on main: mark units merged with their
-   final SHAs, append the CI evidence, commit, push.
-4. **Final report** per mission section 14: starting/final main SHAs,
-   every commit pushed, PRs resolved (#76 merged, #73 proven re-landed,
-   #78 the delivery), the five units, test results, CI evidence,
-   known limitations (KNOWN_ISSUES.md), and the honest statement of
-   what the mission's full A–L scope still holds open.
-
-## The stretch unit, if a future session is authorized
-
-The native `CompEngine` (KNOWN_ISSUES.md #1) is the repo's own declared
-gap and the mission's area-A unblock. Scope it as: a tiny_skia-based
-CPU raster behind a cargo feature in `concat-motion` (tiny_skia is
-already in-tree via concat-media's resvg), drawing Group / Rect /
-Ellipse / Path (fill, stroke, dash draw-on) / Image / nested comps /
-masks, with the 9 blends — text needs the shaped-run path and can
-follow second. Wire it into `EngineKind::Native`'s existing, tested
-fallback plumbing (`engine.rs:99-142`), honour the bake-cache contract
-(`bake_cache_hit`, manifest written last), and update MOTION.md's
-engine table and `lib.rs` to the new truth when it renders. The
-examples/comps family and the golden-frame lanes are the validation
-surface. Do NOT claim area A complete until paths actually render.
+1. **Rerun the `.15` Nix job** and confirm the release workflow. If the
+   publish job runs, restore the release letter plus the `.14.. .15`
+   commit list if the generated notes replace it.
+2. **Verify the final `main` HEAD**: read its check-runs; all seven must
+   be success on the exact SHA.
+3. **Keep the docs honest**: `README.md`, `docs/TESTING.md`,
+   `KNOWN_ISSUES.md`, `AGENT_STATE.md`, `TEST_EVIDENCE.md` and
+   `IMPLEMENTATION_LEDGER.md` must name the same commit, count and
+   release state.
+4. **Configure `main` branch protection** to require the three `ci.yml`
+   checks and enforce admins, matching `AGENTS.md` and
+   `KNOWN_ISSUES.md` item 14.
+5. **Do not claim target-machine acceptance or a real Director run**
+   until one is recorded.
 
 ## Hard-won environment notes
 
-- ALWAYS `git -C /home/z/my-project/FUNCUT ...` — the shell's cwd resets
-  between calls to `/home/z/my-project`, which is a *different* git repo.
-- Background processes are killed when a Bash call returns: run long
-  builds in the foreground with `timeout 600000`; cargo resumes
+- Use the checkout's own path (`git -C /workspace/project/FUNCUT ...` in
+  this sandbox); do not assume the shell cwd.
+- Background processes may be killed when a shell call returns: run long
+  builds in the foreground with a generous timeout; cargo resumes
   incrementally across calls.
 - `source scripts/funcut-env.sh` (repo-relative, after `bash
   scripts/setup-build-env.sh` once) before any cargo command in `src/`.
-- Disk fills at ~5.8 GB of target/ artifacts: run
-  `bash scripts/prune-dupes.sh` (hardlinks byte-identical rlib/rmeta
-  duplicates; reclaimed 2.7 GB once).
+- `src/target` can reach 18 GB and leave little free space: check `df -h`
+  and run `bash scripts/prune-dupes.sh` (hardlinks byte-identical
+  rlib/rmeta duplicates; it reports only with `--dry-run`).
+- This sandbox currently has no `cargo`/`rustc` and no `.ort-shared`;
+  CI is the source of truth until the build environment is restored.
 - Tool-output display can mangle brackets (a `[main]` once read as
   `ain]`): verify surprising bytes with `od -c` before declaring a bug.
 - The token lives in the git credential store file; never write it into

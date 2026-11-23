@@ -32,7 +32,26 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
-## Headless AUTO EDIT (newest)
+## The native 3D scene layer (newest, `.15`)
+
+- **A comp can carry a real 3D scene.** `NodeKind::Scene3D` holds box,
+  plane, sphere, cylinder and torus objects with position, rotation,
+  scale, spin, colour, metalness, roughness and emissive; the comp's own
+  `Camera3D` path supplies `at`, `x`, `y`, `z` and optional pitch, yaw,
+  roll and fov stops.
+- **The renderer is native CPU.** A z-buffer, per-pixel Phong, near-plane
+  clipping and specular from the real eye; no GPU path, browser or
+  JavaScript runtime. The measured cost is about 0.7 seconds per
+  1920x1080 frame for the four-object showcase.
+- **Two authoring ops open it.** `add-scene3d` and `set-scene3d`; the
+  preset shelf grew to 33 with `funcut.scene3d.showcase`, and the
+  authoring vocabulary to 30 ops.
+- **Routing is explicit.** A comp whose only engine-specific feature is
+  `scene3d` resolves to native even when the Geneva sidecar is installed;
+  a comp that also carries markup keeps Geneva and warns that it cannot
+  draw the scene. See section 78 for the full unit.
+
+## Headless AUTO EDIT (`.14`)
 
 - **AUTO EDIT is one MCP call.** `auto_edit` runs the window's fixed
   spine - handoff, audio repair, transcribe, voice signals, understand,

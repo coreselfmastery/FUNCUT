@@ -315,7 +315,7 @@ cargo test                            # the test suite
 cargo fmt --check && cargo clippy --all-targets -- -D warnings   # what CI checks
 ```
 
-CI counts the suite in three lanes — the workspace under `cargo nextest`, the documentation’s examples, and the gRPC feature — **1,393 Rust tests** at the commit this was written, six skipped, each skip named and none of them a platform. [`docs/TESTING.md`](docs/TESTING.md) holds the count, the breakdown and the way to reproduce it.
+CI counts the suite in three lanes — the workspace under `cargo nextest`, the documentation’s examples, and the gRPC feature — **2,325 Rust tests** at the commit this was written: 2,286 workspace tests, 9 documentation tests and 30 gRPC tests, with 13 skipped. Each skip is named and none of them is a platform. [`docs/TESTING.md`](docs/TESTING.md) holds the count, the breakdown and the way to reproduce it.
 
 If you change text the interface shows, run `python3 scripts/locales.py` from the repo root so the string inventory stays in sync. Full details live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

@@ -3,6 +3,22 @@
 Legend: each unit is a coherent implementation with tests, committed and
 pushed separately. Status: done / in-progress / planned / dropped(why).
 
+## Current state — the `.15` release (2026-11-23)
+
+| Item | State | Evidence |
+| --- | --- | --- |
+| `main` at `573a661` | all seven checks green | CI `45169594535`, Geneva `45169594539`, Build app `45169594545` |
+| Native 3D scene layer | shipped in `.15` | commit `61057bb`; `NodeKind::Scene3D`, five geometries, three light types, camera path |
+| `v0.2.8-funcut.15` | published, Latest | ten assets; checksums and manifest verified |
+| Release workflow | red only at Nix | runner lost communication; publish skipped; release published manually |
+| Test count | 2,325 | 2,286 workspace + 9 doc + 30 gRPC; 13 skipped |
+| Branch protection | open | no required status checks; `KNOWN_ISSUES.md` item 14 |
+
+The `.14` tag and its cancelled release run are superseded by `.15`.
+Target-machine proxy/Geneva acceptance, VAAPI on real hardware, motion-clip
+acceptance and a real AI Director brief-to-export run remain open in
+`KNOWN_ISSUES.md`.
+
 ## Verified repository state at baseline `ab7c0704`
 
 Working and CI-proven (7/7 checks green at baseline):

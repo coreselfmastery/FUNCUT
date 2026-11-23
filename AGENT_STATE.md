@@ -1,5 +1,29 @@
 # AGENT_STATE.md — the mission's running state
 
+## Current state — 2026-11-23, the `.15` release
+
+- `main` is at `573a661`; all seven checks on the latest commit are green
+  (CI run `45169594535`, Geneva `45169594539`, Build app `45169594545`).
+- `v0.2.8-funcut.15` is the latest published release: ten assets, all
+  downloadable, `SHA256SUMS` matching GitHub's digests, and a manifest
+  naming x86_64, aarch64 and 23 models. `install-linux.sh --list` sees
+  `.15` first.
+- The `.15` release workflow (`45163610747`) is red only at its Nix job:
+  the hosted runner lost communication after about 1.5 hours, so the
+  publish job was skipped. The release itself was published manually and
+  verified. A rerun of the Nix job is the way to clear the workflow.
+- The test count on the latest green engine lane is 2,286 workspace
+  tests (13 skipped), 9 documentation tests and 30 gRPC tests: 2,325 in
+  all. `README.md` and `docs/TESTING.md` now carry that count.
+- Remaining product work is the target-machine acceptance list in
+  `KNOWN_ISSUES.md`: proxy/Geneva performance, VAAPI on real hardware,
+  motion-clip and AI Director end-to-end runs, and publishing provenance.
+- Branch protection still needs to be configured to require the CI
+  checks; the API currently reports no required status checks.
+
+The session logs below are historical records of the 2026-11-10 to
+2026-11-21 completion passes. They are not the current state.
+
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
 Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88: per-timeline view-state isolation).

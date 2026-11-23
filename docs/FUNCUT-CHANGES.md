@@ -2346,6 +2346,11 @@ vowel-note fixes) rides on `main` and is not in the published bundles;
 `v0.2.8-funcut.14` is owed for it. This corrects `KNOWN_ISSUES.md` item 9 and
 `GENEVA_MASTER_LIST.md`, which had recorded the release as unverified.
 
+> **Correction, 23 November 2026:** `.14` was tagged at `7ef266f` (headless
+> AUTO EDIT and the sandbox path); `.15` adds the native 3D scene layer
+> (`61057bb`) and is the complete latest tree. `.13` remains the last
+> published release until the `.14` package jobs finish.
+
 The audit's full classification of wired-and-proven, wired-but-unproven and
 not-wired is in [`docs/COMPLETION-AUDIT-2026-11-16.md`](COMPLETION-AUDIT-2026-11-16.md).
 

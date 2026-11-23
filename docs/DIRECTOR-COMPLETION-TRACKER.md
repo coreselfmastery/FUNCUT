@@ -10,6 +10,13 @@
 > an ancestor 28+ commits behind `main`; `.14` is owed for everything
 > after it.
 >
+> **Status, 2026-11-23:** `v0.2.8-funcut.14` is tagged at `7ef266f`
+> (headless AUTO EDIT and the sandbox path) and its release workflow passed
+> the required CI lanes before the package jobs. `main` now carries the
+> native CPU 3D scene layer (`61057bb`), so `v0.2.8-funcut.15` is the
+> complete latest tree. `.13` remains the last published release until the
+> `.14` assets finish.
+>
 > **The forward plan is now its own document:**
 > [`docs/DIRECTOR-INTEGRATION-PLAN.md`](DIRECTOR-INTEGRATION-PLAN.md) - a
 > file-by-file plan to connect the subsystems the editor already has

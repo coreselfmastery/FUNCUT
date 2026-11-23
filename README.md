@@ -14,7 +14,7 @@
 > `CONCAT_MCP_ALLOW=all`), the agent's senses (scene cuts, beat grids, dead air,
 > transcription, TTS, loudness), perception (contact-sheet images a model
 > can actually see), an emotion-driven edit pipeline with a validated brand
-> kit, a motion-graphics engine, a director skill that runs a 25-phase
+> kit, a motion-graphics engine with a native CPU 3D scene layer, a director skill that runs a 25-phase
 > measured pipeline, the vendored maestro design judgment and clip-skills
 > editing craft riding beside it, and a Forge page
 > in the editor that starts a whole faceless video with one click. Stock
@@ -27,8 +27,8 @@
 > ledger is [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md), the
 > small-machine notes [docs/FUNCUT.md](docs/FUNCUT.md), the agent
 > guide [docs/MCP.md](docs/MCP.md), the sandbox recipe
-> [docs/SANDBOX.md](docs/SANDBOX.md), the `.14` release letter
-> [docs/RELEASE-LETTER-0.2.8-funcut.14.md](docs/RELEASE-LETTER-0.2.8-funcut.14.md),
+> [docs/SANDBOX.md](docs/SANDBOX.md), the `.15` release letter
+> [docs/RELEASE-LETTER-0.2.8-funcut.15.md](docs/RELEASE-LETTER-0.2.8-funcut.15.md),
 > the small-machine measurements [docs/PERFORMANCE.md](docs/PERFORMANCE.md), every effect's
 > before-and-after card [docs/EFFECTS-GALLERY.md](docs/EFFECTS-GALLERY.md),
 > and twenty of them in motion [docs/SHADER_GALLERY.md](docs/SHADER_GALLERY.md).
@@ -40,7 +40,7 @@
 <p align="center">
   <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
   <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8--funcut.14-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="FUNCUT Version 0.2.8-funcut.14" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8--funcut.15-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="FUNCUT Version 0.2.8-funcut.15" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -93,6 +93,21 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode; the small-machine measurements live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Measured on a 4 GB machine with no GPU at all: 1080p scrubs answer in about half a second, a 1080p30 export runs at 8.9 frames/s (a five-minute video in about seventeen minutes), and the heaviest phase peaks at 1.0 GiB of RAM — a quarter of what the machine has.
 - 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - with [maestro](docs/MAESTRO.md), the design-and-motion judgment skill, riding shotgun, and [clip-skills](docs/CLIPSKILLS.md), the editing-craft skill, beside it - and the editor's Forge page starts one with a click.
 - 🖥️ **Linux.** x86_64 and ARM. 26 languages. Same app, same project files.
+
+## What's new in 0.2.8-funcut.15 (23 November 2026)
+
+- 🧊 **Native CPU 3D scenes.** A comp can carry `NodeKind::Scene3D`: box,
+  plane, sphere, cylinder and torus meshes, per-object material and spin,
+  ambient/directional/point lights, and a camera path. `add-scene3d` and
+  `set-scene3d` author it; `funcut.scene3d.showcase` is the new preset.
+  It draws on the shipped native compositor with a z-buffer and per-pixel
+  Phong shading - no GPU, no browser. The measured cost is about 0.7 s
+  for a 1080p frame of the four-object showcase on a CPU-only box.
+- 🤖 **Everything from `.14`.** Headless `auto_edit` and the sandbox
+  recipe, the one-Geneva-surface routing, remap, cached frames, parallel
+  preview, timeline placement, the creative contract, the fifty-signal
+  consumers, the picture floor, the beat grid, the live timeline, stock
+  redirect hardening and the release security gates.
 
 ## Download
 

@@ -165,7 +165,7 @@ Geneva is ready for a release candidate only when the following evidence is curr
 - [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
 - [x] The pinned sidecar installed and was discovered in the Linux x86_64 and aarch64 package builds on the historical 12 November baseline (run [43236482829](https://github.com/coreselfmastery/FUNCUT/actions/runs/43236482829)); these artifacts do not validate the current main SHA.
 - [ ] Target-machine timing/memory evidence is attached, or release notes clearly state that only hosted correctness—not target-device performance—has been validated.
-- [x] The `v0.2.8-funcut.13` release is published (2026-11-16) with ten recorded assets; its tag `ebfd9e30cf0e321236c4a73e231367289b3f41da` is 249 commits behind current main `fa68c059945e0eef9151d0fd2010134f41620c05`. The `.14` release letter exists, but a lookup for tag `v0.2.8-funcut.14` returned 404; no `.14` tag/release is verified. A `.14` release remains owed after exact-main validation, hardware acceptance and the real-project run.
+- [x] The `v0.2.8-funcut.14` tag is pushed at `7ef266f` (2026-11-23) and its release workflow passed the required CI lanes before the package jobs; `.13` remains the last published release until those jobs finish. `main` now carries the native CPU 3D scene layer (`61057bb`), so `.15` is the complete latest tree. Target-hardware acceptance and a real Director project run remain open, and the release notes say so.
 
 ## 10. Exact-main reconciliation — 23 November 2026
 

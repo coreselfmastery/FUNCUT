@@ -120,6 +120,15 @@ jobs:
     with:
       ref: ${{ needs.check.outputs.tag }}
 
+  # The motion renderer is part of the shipped editor; the same tag must
+  # pass its real sidecar, rendered example, quality floors and dependency dance.
+  geneva:
+    name: Geneva
+    needs: [check, engine]
+    uses: ./.github/workflows/geneva.yml
+    with:
+      ref: ${{ needs.check.outputs.tag }}
+
   # Both builds are told the tag too. Left to themselves they build the
   # ref the run started on, and a run started by hand starts on main:
   # 0.2.6 shipped that way, 35 commits past the tag it was named for.
@@ -148,7 +157,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [check, engine, build, nix, security]
+    needs: [check, engine, build, nix, security, geneva]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

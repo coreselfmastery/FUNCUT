@@ -32,6 +32,114 @@ Version `1.6.0` is what this was written against - the Linux installer fetches e
 by checksum, into `~/.local/bin`. Another **major** version is reported as a risk by the probe and
 **refused at bake with the reason**, never silently used. Every bake records the version it used.
 
+### The one-engine surface
+
+The product has **one engine name**: Geneva. The other two are internal renderers, not choices a
+user or an agent has to make. `EnginePreference::route` answers two questions for every comp:
+
+- `surface` - the engine the product promises (Geneva);
+- `renderer` - the engine that will actually draw it.
+
+They differ when the Geneva surface **delegates** a comp the flattened timeline cannot draw:
+
+```json
+{
+  "surface": "geneva",
+  "renderer": "native",
+  "reason": "native-only",
+  "delegated": ["a vector path", "a track matte"],
+  "note": "Geneva's flattened timeline would drop or approximate a native-only feature; the one engine delegates this comp to the native rasterizer to preserve fidelity"
+}
+```
+
+The reasons are stable words: `simple`, `markup`, `markup-with-unsupported`, `native-only`,
+`lottie`, `sidecar-missing`, `sidecar-failing`, `requested`.
+
+- A **markup comp** stays on Geneva. Native cannot draw markup, so a missing sidecar is a refusal
+  with install instructions, never a silent wrong picture.
+- A comp with **paths, shape gradients, mattes, masks, adjustment layers, 3D transforms, cameras,
+  rigs, audio reactions or supported effects** delegates to the native rasterizer. It still bakes
+  under the one Geneva surface, and the reply says what was delegated.
+- A **Lottie comp** delegates to the native rasterizer's `rasterlottie` player. Geneva has no Lottie
+  player; the native engine draws the vector/solid subset and warns about the rest.
+- A **simple comp** with no sidecar installed falls back to native, and the route says
+  `sidecar-missing`.
+- A **markup comp with a native-only feature** is the honest refusal: Geneva cannot draw the
+  markup and the flattened timeline cannot draw the feature, so the bake refuses with both reasons
+  rather than silently dropping one.
+
+Every `motion_inspect`, `motion_frame`, `motion_preview`, `motion_bake` and `motion_presets` reply
+carries this `route`, so an agent can see the decision before paying for a bake. `motion_presets`
+also carries a `capabilities` inventory - nodes, animation, shapes, effects, graphics, text,
+render and the exact Geneva limits - so an agent can plan against the engine without reading the
+whole format first. The one-engine surface is a contract about *what the caller chooses*, not a
+claim that one binary draws every pixel: the reply is always honest about the renderer underneath.
+
+### Programmatic-video power, without a browser
+
+Remotion's power is not React itself; it is the primitives underneath: compositions with props,
+sequences, `interpolate`, springs, data-driven scenes, a still render and a video render. Geneva
+already carries those primitives in JSON, so the same power is available to an agent without a
+Node runtime or a headless browser:
+
+| Remotion idea | Geneva equivalent |
+| --- | --- |
+| `<Composition>` | a `Comp` (JSON scene graph) with width, height, fps, duration |
+| props | `slots` plus `vars` for template placeholders |
+| `<Sequence>` / `<Series>` | nested comps and the storyboard `reel` |
+| `interpolate()` | `remap` (time or a numeric track into a target range) |
+| `spring()` | `Curve::Spring` on any key |
+| `useCurrentFrame()` | `remap` with `source: "time"`, or a time-driven track |
+| `random()` | seeded `set-noise-track` and the particle field |
+| `<Audio>` / audio-driven motion | audio beds, beat analysis and the pulse engine |
+| `renderStill()` | `motion_frame` |
+| `renderMedia()` | `motion_bake` / `motion_reel` |
+| `<Player>` | the GUI preview and `motion_preview` |
+
+The Hyperframe-style loop is the same idea from the other side: make iteration cheap. Frames are
+cached by comp, engine, size and time; previews are low-resolution; bakes are incremental per
+scene; and `craft_critique` measures the result instead of guessing. That is the performance and
+creativity contract: code-shaped control, measured feedback, and no browser in the loop.
+
+### The next twelve (not shipped yet)
+
+These are the gaps left after `remap`, frame caching, parallel preview, the capability inventory
+and the timeline door. Each one names the surface it would add, so an agent can ask for it
+without guessing at a name.
+
+1. **Expressions.** A `expr` track whose keys are written as a small formula over `t`, `frame`,
+   other tracks and named signals (`sin`, `clamp`, `lerp`, `noise`). `remap` covers range
+   mapping; expressions cover the non-linear cases without a JS runtime.
+2. **Conic and two-radius gradients.** The capability inventory lists both as Geneva limits: a
+   conic sweep for dials, progress rings and light cones, and a radial gradient with independent
+   horizontal and vertical radii for elliptical falloff.
+3. **Variable-font animation.** `font-variation-settings` on a text node, so one font file can
+   animate weight, width or optical size instead of swapping families at a cut. The typography
+   shelf already ramps weight by choosing faces; this animates the axis itself.
+4. **Typographic units in keyframes.** `em` and `%` lengths that resolve against the node's own
+   font size, so a title's travel and blur scale with its type instead of being pinned in pixels.
+5. **A static transform as a base style.** Today a transform is a track; a node that only needs
+   one pose should carry it as a base style, with the track as the override.
+6. **Data-bound scenes.** `data` on a comp plus `bind` on a chart, counter or table, with a
+   transition when the dataset changes. `add-chart` and `add-counter` draw numbers; binding lets
+   JSON or CSV drive them without re-authoring the comp.
+7. **A wider transition shelf.** The storyboard's cuts are whip-pan, zoom-through, inverse-zoom,
+   rack-focus, velocity-match and stagger-exit. Luma-matte, wipe, glass and glitch are the four
+   named cuts still missing, usable on a scene boundary and on a `motion_overlay`.
+8. **3D type.** Extrusion, bevel, per-face lighting and a ground shadow for text, as a native
+   node rather than a baked image. This is the one visual a browser-based engine still wins.
+9. **Particle forces.** Gravity is there; wind, turbulence and attractors are not. With
+   colour-over-life, the seeded field becomes dust, embers, snow and sparks rather than a burst.
+10. **Procedural lens character.** Foreground bokeh, anamorphic flare and halation, seeded and
+    resolution-independent. The native raster has blur, glow and bloom; this is the lens layer
+    that makes a render feel photographed.
+11. **Complex-script shaping.** The native text rasterizer measures glyphs without a shaping
+    engine. Arabic, Indic and Thai need joining, reordering and mark positioning before a
+    caption can be trusted outside Latin.
+12. **A GPU/tile raster path for 4K.** The native engine is CPU-bound by design on small laptops;
+    a tiled path that can use the GPU when present, with the CPU path as the fallback, is the
+    next step for 4K comps and long reels.
+
 ---
 
 ## The document
@@ -177,6 +285,11 @@ Measured in this sandbox — **2 CPU cores, no GPU, bundled OpenH264** (a deskto
 
 A single frame is **32–47 ms**, which is what makes a scrub responsive. Backdrops are the expensive
 case (full-frame radial gradients); bake them once, at the size you need, and reuse.
+
+`motion_frame` and `motion_preview` keep every drawn PNG under `motion/`, keyed by the comp hash,
+the engine, the width and the time. A repeated look is a file read, not a render: the reply says
+`cached: true` and the agent gets the same image. The engine in the key matters - a native frame
+drawn before the sidecar was installed is not the frame Geneva would draw.
 
 **Alpha is PNG only.** Geneva documents its transparent output for the PNG image sequence; ProRes 4444
 and VP9 came back opaque in testing, so a comp bakes to PNG. Use `motion_overlay` to composite those
@@ -867,10 +980,18 @@ document. An operation that fails names its index, so a retry is one step, not a
              [0.6, 1.0, null]] },
   { "op": "set-track-points", "node": "card",
     "keys": [[0, 240, 540, null], [0.7, 960, 540, { "kind": "spring", "stiffness": 170, "damping": 26, "mass": 1 }]] },
+  { "op": "remap", "node": "card", "source": "opacity", "target": "scale",
+    "input": [0, 1], "output": [0.92, 1.04], "clamp": true, "samples": 16 },
   { "op": "add-text", "id": "kicker", "text": "CHAPTER 02", "size": 28, "weight": 700,
     "color": "#22d3c5", "x": 240, "y": 140 }
 ] }
 ```
+
+`remap` is the programmatic-video primitive: it samples `time` (seconds from the node's start)
+or another numeric track, maps the input range onto the output range, and writes a target track.
+`clamp` holds values outside the range, `curve` shapes each segment, and `samples` controls the
+key density. It is how an emotion signal - a measured 0..1 intensity - becomes a real property
+range without hand-written keys.
 
 Two commands get from a transcript to a finished caption video: `captions` breaks the words into lines and
 writes the storyboard, `reel` renders it. The transcript is `[["Make", 0.2, 0.55], …]`, a `{"words": […]}` wrapper,
@@ -995,7 +1116,7 @@ because an override nobody can see the why of is a guess with confidence. The fu
 tested; see `concat-motion/src/route.rs`.
 
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
-`set-noise-track`, `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `add-chart`, `add-counter`,
+`remap`, `set-noise-track`, `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `add-chart`, `add-counter`,
 `add-particles`, `set-camera`, `delete`, `set-blend`, `set-opacity`, `set-duration`, `set-background`.
 
 `set-markup` hands a markup node whole new HTML - the op a data-driven comp needs, where the words
@@ -1250,27 +1371,33 @@ own GPU door" for the whole story.
 Try:
 
 ```
+motion_bake  {project, preset, width, height, place: true, start: 4.0}
+  -> dir, hash, placed: {clip, start, duration}
 motion_bake  {project, preset, width, height}      -> dir, hash
 motion_overlay {project, hash, plate: "<b-roll.mp4>", at: 1.2, fps: 30}
 media_import / clip_add  -> the composited clip
 ```
 
-**`ClipKind::Motion` in an export.** `concat-export/src/flatten.rs` now resolves a motion clip to
+**`ClipKind::Motion` on the timeline.** `edit_apply`'s `addMotionClip` command creates a motion
+clip at a timeline second, referencing the content-addressed comp and recording the engine that
+drew it. The Motion page's Add uses that command, and `motion_bake {place: true}` does the bake
+and the placement in one call - so the comp is visible in the FUNCUT monitor and the export
+immediately. The placed clip takes the comp's own duration by default; `duration` overrides it.
+`motion_bake` opens the project first, so a headless agent can place into a project it has not
+opened yet.
+
+**`ClipKind::Motion` in an export.** `concat-export/src/flatten.rs` resolves a motion clip to
 the **encoded** bake in the project's `motion/` folder (matched by the comp's content hash, `.mp4`
 preferred), and rejoins it as an ordinary video clip with the clip's keys, blend, effects and
 transition carried through. If only the RGBA PNG sequence exists there is no file the exporter can
 decode, so it logs a warning naming the clip and tells you to run `motion_bake {encode:true}` or
 `motion_overlay` rather than silently dropping the comp from the render. Unit-tested in
-`flatten.rs`. Note that no edit command currently creates `ClipKind::Motion` clips, so in normal
-use comps still reach the timeline as media clips; this closes the gap for hand-authored documents
-and the motion agent's output.
+`flatten.rs`.
 
-**Still to come** (nothing here is faked): a Lottie/dotLottie playback
-engine and a timeline edit command that creates `ClipKind::Motion` clips.
-The native compositor is shipped; the PNG-sequence export path this list once named is no longer missing: the exporter resolves
-a transparent bake through an `.ffconcat` script over its RGBA frames
-(`concat-export/src/flatten.rs`), so a comp with alpha exports without an
-intermediate encode.
+**Still to come** (nothing here is faked): full Lottie playback in the GUI and export. The native
+compositor is shipped; the PNG-sequence export path this list once named is no longer missing: the
+exporter resolves a transparent bake through an `.ffconcat` script over its RGBA frames
+(`concat-export/src/flatten.rs`), so a comp with alpha exports without an intermediate encode.
 
 ---
 

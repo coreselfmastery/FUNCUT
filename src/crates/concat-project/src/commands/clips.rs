@@ -230,6 +230,7 @@ pub(super) fn apply(
             comp,
             hash,
             engine,
+            duration,
         } => {
             let comp = comp.trim().to_owned();
             let hash = hash.trim().to_ascii_lowercase();
@@ -237,7 +238,10 @@ pub(super) fn apply(
             if !valid_motion_reference(&comp, &hash, engine) {
                 return Err(CommandError::InvalidMotion);
             }
-            let duration = DEFAULT_LAYER_DURATION.max(MIN_CLIP_DURATION);
+            let duration = duration
+                .filter(|duration| duration.is_finite())
+                .unwrap_or(DEFAULT_LAYER_DURATION)
+                .max(MIN_CLIP_DURATION);
             let start = within_timeline(start);
             let timeline = project.active_mut();
             let track_id = first_free_track_above(timeline, start, duration)
@@ -1536,6 +1540,7 @@ mod motion_clip_tests {
                 comp: "lower-third".into(),
                 hash: hash.clone(),
                 engine: None,
+                duration: None,
             },
         )
         .expect("valid motion clip");
@@ -1569,6 +1574,29 @@ mod motion_clip_tests {
     }
 
     #[test]
+    fn a_motion_clip_can_take_the_comps_own_duration() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        let outcome = apply(
+            &mut project,
+            &mut mint,
+            Command::AddMotionClip {
+                start: 0.0,
+                comp: "sting".into(),
+                hash: "b".repeat(16),
+                engine: None,
+                duration: Some(1.25),
+            },
+        )
+        .expect("valid motion clip");
+        let clip = project
+            .active()
+            .clip(&outcome.created_id.expect("new clip id"))
+            .expect("placed clip");
+        assert!((clip.duration - 1.25).abs() < 1e-9);
+    }
+
+    #[test]
     fn add_motion_clip_rejects_invalid_comp_ids_and_hashes() {
         let mut project = Project::new();
         let mut mint = IdMint::default();
@@ -1586,6 +1614,7 @@ mod motion_clip_tests {
                     comp,
                     hash,
                     engine: None,
+                    duration: None,
                 },
             );
             assert_eq!(result, Err(CommandError::InvalidMotion));
@@ -1609,6 +1638,7 @@ mod motion_clip_tests {
                 comp: "colour-card".into(),
                 hash: "b1b2c3d4e5f60718".into(),
                 engine: Some("native".into()),
+                duration: None,
             },
         )
         .expect("valid motion clip");
@@ -1628,6 +1658,7 @@ mod motion_clip_tests {
                 comp: "colour-card".into(),
                 hash: "c1b2c3d4e5f60718".into(),
                 engine: Some("flash".into()),
+                duration: None,
             },
         );
         assert_eq!(refused, Err(CommandError::InvalidMotion));

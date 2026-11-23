@@ -7,6 +7,28 @@ Scope requested: functional correctness, feature wiring, incomplete implementati
 
 This report supplements `docs/BUG-AUDIT-FINAL.md`. That earlier report was written against `21d136c3972ad87033992968b987b3b0c6ebb5c7`; its statuses for PRs #130–#134 must not be read as current-main truth.
 
+## Current-main status update — 23 November 2026
+
+This update supersedes the 17 November status block and the PR-status snapshot near the end of this file. Current `main` is `fa68c059945e0eef9151d0fd2010134f41620c05`.
+
+| Finding | Current source / PR evidence | Current disposition |
+| --- | --- | --- |
+| FUNCUT-001 queued-proxy race | `src/crates/concat-host/src/startup_io.rs` contains the worker-start guarded recheck and regression test `a_queued_proxy_rechecks_the_gate_when_its_worker_starts`. PR #132 itself was closed unmerged; do not describe that PR as merged. The code and test are present in current main. | Implemented; PR #200 head CI passed; exact-main CI passed. |
+| FUNCUT-002 missing audio-stream verification | PR #134 merged as `b96850accbc378965656fc78d944d9b2a1b0c9ea`; the Director export probe enumerates streams and refuses a silent export. | Implemented and merged. |
+| FUNCUT-003 plan-schema drift | PR #130 merged as `8571b3a6f5acf723edfc38096aa5f7d88365bb53`; generated schemas are checked against plan types. | Implemented and merged; exact-main schema check passed. |
+| FUNCUT-004 clean-clone build scripts | Both portable scripts remain in the tree; current CI runs their shell syntax checks. | Implemented; exact-main CI passed. |
+| FUNCUT-005 Slint `StaticTextures` panic | PR #157 merged as `fa6f566a8bd6193cef9f82112d9a6ad637af8bdb`; current `cached_image.rs` returns `None` for `ImageInner::StaticTextures(_)`, not `todo!()`. | Implemented and merged; no panic arm remains. |
+
+**Licensing findings:** PR #133 merged as `d697e9ca8ff1a47bf49ffe755fc86ec46008ab23`. Current `concat-mcp/src/tools.rs` validates monetized plans before fetching stock, and `concat-api/src/lib.rs` refuses monetized OpenVid imports and non-commercial MobyGratis imports. The source and regression tests are present; this closes the old RISK-01/RISK-02 status in `BUG-AUDIT-FINAL.md`.
+
+**Historical PR status correction:** #130, #133, #134, #135, #136, #138 and #157 are merged. #132 and #137 are closed unmerged; the #132 worker-start behavior is nevertheless present in current main, and the #137 documentation snapshot is superseded by the current Geneva reconciliation PR #201.
+
+**Current validation:** exact-main CI [45047192734](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192734) passed all three jobs. Its engine log records 2,246 workspace tests passed, 13 skipped and one slow; the gRPC suite passed 30/30; Clippy, docs examples and generated-plan schema checks passed. Geneva [45047192665](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192665) passed 2/2 jobs. Build app [45047192666](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192666) passed Linux x86_64 and aarch64. Nix and RustSec have not run on the current merge SHA. The latest successful Nix run is on `c8505e021f72824bfe5f6a08dda141522b2db690`; its RustSec audit had 11 allowed maintenance/yank warnings. The previous PR #202 head failed the fresh audit on `RUSTSEC-2026-0592` in `url 2.5.8`. Updated PR #202 head `53213b2dcec42ab323ef6f87ea14fab4aac36c71` upgrades `url` to `2.5.9` and `form_urlencoded` to `1.2.3`; its RustSec audit passes with 11 allowed warnings. CI format/locales/models and real-fixture analysis pass; engine tests, Nix, Geneva and Build-app remain in progress.
+
+**Repository controls:** the branch API reports `main` protected, but `required_status_checks.enforcement_level=off` and `contexts=[]`; direct protection details returned 403. PR #200 had no formal review submissions or inline review threads, although all seven PR-head check-runs passed. Current open PRs: #201 (documentation reconciliation) and #202 (Nix/RustSec release gates); no open issues were returned by the current API query.
+
+**Still not established by this audit:** a real 1080p long-GOP interactive scrub benchmark on the target machine; a real Director brief-to-final-export project run; a successful Nix/RustSec run on current main (the new `url 2.5.9` validation is still in progress); published `.14` release artifacts; and reconciliation against the private 216-item ledger whose definitions are not in the repository. Do not treat this supplement as proof that the full repository audit is complete.
+
 ## Status update — 2026-11-17 (verified against `main` `c05f743a`)
 
 The findings below are historical. Read against the current tree, they
@@ -138,7 +160,7 @@ Areas mapped for the audit: UI, timeline/project model, media import/decode/prox
 
 The earlier `docs/BUG-AUDIT-FINAL.md` contains the detailed TIME / ENV / XSTAGE / LATENT / DEG / VERIFY ledger reconciliation. It identified a set of IDs that had no definition in the public repository, issues or PR history. Those remain **UNDEFINED** until the original definitions from the private session briefs are supplied; they must not be guessed or silently marked closed.
 
-The earlier audit's PR status snapshot is stale. At the current-main snapshot:
+The earlier audit's PR status snapshot is stale. At the 17 November 2026 snapshot (historical; superseded by the 22 November status update above):
 
 - PR #130 (SCH-02 schema generation): open, unmerged.
 - PR #131 (initial RES-03 gate): merged as the audited main commit.
@@ -147,7 +169,7 @@ The earlier audit's PR status snapshot is stale. At the current-main snapshot:
 - PR #133 (RISK-01/02 monetized licensing): open, licensing-specific and outside the code-defect count in this audit.
 - PR #135 (audit documentation): this report, current-main addendum and clean-clone documentation correction are in this PR.
 - PR #136 (P3-008 archive.org dependency): open; records an external environmental dependency, not a code defect.
-- PR #137 (Geneva master-list reconciliation): open; adds current-main Geneva and workflow evidence.
+- PR #137 (Geneva master-list reconciliation): closed unmerged; superseded by PR #201.
 - PR #138 (Director tracker reconciliation): open; corrects stale integration/revise-loop status.
 
 ## Next audit passes needed to finish the full repository audit

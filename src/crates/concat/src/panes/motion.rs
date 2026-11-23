@@ -76,11 +76,21 @@ impl MotionPane {
             MotionMsg::Refresh => self.refresh(studio),
             MotionMsg::Add { hash, comp } => {
                 let start = f64::from(studio.playhead);
+                // The comp's own length, when the listing knows it: a
+                // one-second sting should not hold five, and a ten-second
+                // card should not be cut off.
+                let duration = self
+                    .comps
+                    .iter()
+                    .find(|row| row.hash == hash)
+                    .map(|row| row.duration)
+                    .filter(|duration| duration.is_finite() && *duration > 0.0);
                 let created = studio.apply(concat_project::Command::AddMotionClip {
                     start,
                     comp,
                     hash,
                     engine: None,
+                    duration,
                 });
                 if let Some(id) = created {
                     studio.selection = vec![id];

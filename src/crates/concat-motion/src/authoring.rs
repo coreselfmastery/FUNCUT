@@ -128,6 +128,37 @@ pub enum Op {
         /// The keys, each `(at, x, y, curve)`.
         keys: Vec<(f64, f64, f64, Option<Curve>)>,
     },
+    /// Remap a source through an input range into an output range, sampled
+    /// into a target track - the `interpolate` primitive a programmatic
+    /// video engine needs.
+    ///
+    /// `source` is `"time"` (seconds from the node's start) or another
+    /// numeric track on the node. The input range is mapped linearly onto
+    /// the output range; `clamp` holds values outside it at the ends, and
+    /// `curve` shapes each sampled segment. This is the op an emotion read
+    /// uses to turn a measured 0..1 signal into a real property range
+    /// without hand-writing keys.
+    Remap {
+        /// The node.
+        node: String,
+        /// `time`, or a numeric property the node already animates.
+        source: String,
+        /// The numeric property to write.
+        target: String,
+        /// The input range.
+        input: (f64, f64),
+        /// The output range.
+        output: (f64, f64),
+        /// Hold values outside the input range at the ends.
+        #[serde(default)]
+        clamp: bool,
+        /// How many keys the remap samples; 16 by default.
+        #[serde(default = "default_samples")]
+        samples: usize,
+        /// The curve each sampled segment rides.
+        #[serde(default)]
+        curve: Option<Curve>,
+    },
     /// Add or replace a colour track: `fill` on a shape, `ink` on the
     /// words, `plate` on the plate behind them, or `stroke-color` on a
     /// stroked path.
@@ -589,6 +620,90 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
             let entry = node_mut(&mut comp, node)?;
             entry.tracks.insert("position".into(), track);
+            Ok(comp)
+        }
+        Op::Remap {
+            node,
+            source,
+            target,
+            input,
+            output,
+            clamp,
+            samples,
+            curve,
+        } => {
+            if target == "position" {
+                return Err(fail(
+                    "remap writes one numeric property, not a position".into(),
+                    "use set-track-points for position, or remap scale, rotation, opacity, blur, dash or param:<key>",
+                ));
+            }
+            if !documented_property(target) {
+                return Err(fail(
+                    format!("{target:?} is not a property this format animates"),
+                    "use scale, rotation, opacity, blur, dash, or param:<key> for an effect parameter",
+                ));
+            }
+            if !input.0.is_finite()
+                || !input.1.is_finite()
+                || !output.0.is_finite()
+                || !output.1.is_finite()
+            {
+                return Err(fail(
+                    "remap ranges must be finite".into(),
+                    "write two finite numbers for input and two for output",
+                ));
+            }
+            if (input.1 - input.0).abs() < 1e-12 {
+                return Err(fail(
+                    "remap input range is empty".into(),
+                    "write two different numbers for input, for example [0, 1]",
+                ));
+            }
+            let span = span_of(&comp, node)?;
+            let source_track = if source == "time" {
+                None
+            } else {
+                Some(
+                    comp.tracks_of(node)
+                        .and_then(|tracks| tracks.get(source))
+                        .cloned()
+                        .ok_or_else(|| {
+                            fail(
+                                format!("node {node:?} has no {source:?} track to remap"),
+                                "use \"time\", or a numeric property the node already animates",
+                            )
+                        })?,
+                )
+            };
+            let samples = (*samples).clamp(2, 120);
+            let mut track = Track::default();
+            for index in 0..samples {
+                let at = index as f64 / (samples - 1) as f64;
+                let value = match &source_track {
+                    None => at * span,
+                    Some(source_track) => source_track
+                        .sample(at)
+                        .and_then(|value| value.as_number())
+                        .ok_or_else(|| {
+                            fail(
+                                format!("the {source:?} track is not numeric"),
+                                "remap reads numbers; use a numeric property",
+                            )
+                        })?,
+                };
+                let mut normalized = (value - input.0) / (input.1 - input.0);
+                if *clamp {
+                    normalized = normalized.clamp(0.0, 1.0);
+                }
+                let mapped = output.0 + (output.1 - output.0) * normalized;
+                track.keys.push(match curve {
+                    Some(curve) => Key::eased(at, Value::number(mapped), curve.clone()),
+                    None => Key::new(at, Value::number(mapped)),
+                });
+            }
+            let entry = node_mut(&mut comp, node)?;
+            entry.tracks.insert(target.to_string(), track);
             Ok(comp)
         }
         Op::SetTrackColors {
@@ -1291,6 +1406,10 @@ fn documented_property(name: &str) -> bool {
         name,
         "position" | "scale" | "rotation" | "opacity" | "blur" | "dash" | "gradient-offset"
     ) || name.starts_with("param:")
+}
+
+fn default_samples() -> usize {
+    16
 }
 
 /// The properties a [`Op::SetTrackColors`] key may drive.
@@ -2497,6 +2616,119 @@ mod tests {
                 && edited.node("league.rule.1").is_some(),
             "the rows, the numbers and the rules are there"
         );
+    }
+
+    #[test]
+    fn remap_turns_time_into_a_property_range() {
+        let comp = lower_third();
+        let span = comp
+            .node("card")
+            .map(|node| (node.end(comp.duration) - node.start).max(0.1))
+            .expect("the card");
+        let edited = apply(
+            &comp,
+            &[Op::Remap {
+                node: "card".into(),
+                source: "time".into(),
+                target: "scale".into(),
+                input: (0.0, span),
+                output: (0.8, 1.2),
+                clamp: true,
+                samples: 3,
+                curve: None,
+            }],
+        )
+        .expect("the remap applies");
+        let track = edited
+            .node("card")
+            .and_then(|node| node.tracks.get("scale"))
+            .expect("the scale track");
+        assert_eq!(track.keys.len(), 3);
+        assert!((track.keys[0].value.as_number().unwrap() - 0.8).abs() < 1e-9);
+        assert!((track.keys[2].value.as_number().unwrap() - 1.2).abs() < 1e-9);
+        assert!((track.sample(0.5).unwrap().as_number().unwrap() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn remap_reads_one_numeric_track_into_another() {
+        let comp = lower_third();
+        let edited = apply(
+            &comp,
+            &[
+                Op::SetTrack {
+                    node: "card".into(),
+                    property: "opacity".into(),
+                    keys: vec![(0.0, 0.0, None), (1.0, 1.0, None)],
+                },
+                Op::Remap {
+                    node: "card".into(),
+                    source: "opacity".into(),
+                    target: "scale".into(),
+                    input: (0.0, 1.0),
+                    output: (0.5, 1.5),
+                    clamp: true,
+                    samples: 3,
+                    curve: None,
+                },
+            ],
+        )
+        .expect("the remap applies");
+        let scale = edited
+            .node("card")
+            .and_then(|node| node.tracks.get("scale"))
+            .expect("the scale track");
+        assert!((scale.sample(0.0).unwrap().as_number().unwrap() - 0.5).abs() < 1e-9);
+        assert!((scale.sample(0.5).unwrap().as_number().unwrap() - 1.0).abs() < 1e-9);
+        assert!((scale.sample(1.0).unwrap().as_number().unwrap() - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn remap_parses_from_json_with_its_defaults() {
+        let comp = lower_third();
+        let document = serde_json::json!({"ops": [{
+            "op": "remap", "node": "card", "source": "time", "target": "scale",
+            "input": [0, 1], "output": [0.8, 1.2]
+        }]});
+        let edited = apply_json(&comp, &document).expect("the documented remap parses");
+        let track = edited
+            .node("card")
+            .and_then(|node| node.tracks.get("scale"))
+            .expect("the scale track");
+        assert_eq!(track.keys.len(), 16, "the default sample count");
+        assert!((track.keys[0].value.as_number().unwrap() - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn remap_refuses_a_missing_source_and_a_position_target() {
+        let comp = lower_third();
+        let missing = apply(
+            &comp,
+            &[Op::Remap {
+                node: "card".into(),
+                source: "nope".into(),
+                target: "scale".into(),
+                input: (0.0, 1.0),
+                output: (0.0, 1.0),
+                clamp: true,
+                samples: 3,
+                curve: None,
+            }],
+        );
+        assert!(missing.is_err(), "a source track the node does not carry");
+        let position = apply(
+            &comp,
+            &[Op::Remap {
+                node: "card".into(),
+                source: "time".into(),
+                target: "position".into(),
+                input: (0.0, 1.0),
+                output: (0.0, 1.0),
+                clamp: true,
+                samples: 3,
+                curve: None,
+            }],
+        );
+        assert!(position.is_err(), "position needs set-track-points");
     }
 
     /// A generated family refuses an id already drawn, and a start outside

@@ -1346,6 +1346,19 @@ impl Comp {
             || self.comps.values().any(Comp::needs_markup)
     }
 
+    /// True when this comp or a nested sub-comp carries a Lottie node.
+    ///
+    /// Geneva has no Lottie player, so a Lottie comp is routed to the native
+    /// compositor even when the sidecar is installed. The native engine draws
+    /// the vector/solid subset `rasterlottie` supports and warns about the
+    /// rest, which is the same contract every other unsupported feature has.
+    pub fn needs_lottie(&self) -> bool {
+        self.nodes
+            .iter()
+            .any(|node| matches!(node.kind, NodeKind::Lottie { .. }))
+            || self.comps.values().any(Comp::needs_lottie)
+    }
+
     /// The capabilities this comp uses that a Geneva timeline cannot draw,
     /// named for the note that says why a bake chose the native engine.
     ///

@@ -13,6 +13,12 @@ name: Dependency security audit
 # in for the migration are gone. Any new advisory fails the audit.
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Ref to audit; release workflow passes the selected tag.
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -39,6 +45,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - name: Read the repository's pinned Rust toolchain
         id: toolchain
         run: echo "channel=$(sed -n 's/^channel = \"\(.*\)\"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"

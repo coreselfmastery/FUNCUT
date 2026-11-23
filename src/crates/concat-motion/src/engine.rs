@@ -109,6 +109,130 @@ impl EnginePreference {
         self.default
     }
 
+    /// The one-engine route for `comp`: the surface the product promises
+    /// (Geneva by default) and the renderer that will actually draw it.
+    ///
+    /// The surface is what the user and the agent see; the renderer is the
+    /// honest internal answer. A Geneva surface delegates native-only
+    /// features to the native compositor instead of exposing a second
+    /// engine choice, so a comp with paths, mattes, 3D, rigs or Lottie still
+    /// bakes under the one engine name.
+    pub fn route(&self, comp: &Comp, sidecar: Sidecar) -> Route {
+        let mut delegated = comp.geneva_inexpressible();
+        let markup = comp.needs_markup();
+        let lottie = comp.needs_lottie();
+        if lottie && !delegated.contains(&"a Lottie asset") {
+            delegated.push("a Lottie asset");
+        }
+
+        if self.default != EngineKind::Geneva {
+            return Route {
+                surface: self.default,
+                renderer: self.default,
+                reason: RouteReason::Requested,
+                delegated: Vec::new(),
+                note: None,
+            };
+        }
+
+        if markup {
+            let reason = if delegated.is_empty() {
+                RouteReason::Markup
+            } else {
+                RouteReason::MarkupWithUnsupported
+            };
+            let note = if !delegated.is_empty() {
+                Some(
+                    "this markup comp also uses features the flattened Geneva timeline cannot \
+                     draw; Geneva will refuse the bake rather than silently degrade the output"
+                        .to_owned(),
+                )
+            } else {
+                match sidecar {
+                    Sidecar::Ready => None,
+                    Sidecar::Missing => Some(
+                        "the geneva sidecar is not installed; this comp needs markup and \
+                         will refuse the bake with its install instructions"
+                            .to_owned(),
+                    ),
+                    Sidecar::Failing { failures } => Some(format!(
+                        "geneva failed {failures} times in the last minute; this comp needs \
+                         markup, so it keeps Geneva and will refuse rather than draw the \
+                         wrong thing"
+                    )),
+                }
+            };
+            return Route {
+                surface: EngineKind::Geneva,
+                renderer: EngineKind::Geneva,
+                reason,
+                delegated,
+                note,
+            };
+        }
+
+        if lottie {
+            return Route {
+                surface: EngineKind::Geneva,
+                renderer: EngineKind::Native,
+                reason: RouteReason::Lottie,
+                delegated,
+                note: Some(
+                    "Geneva has no Lottie player; the one engine delegates this comp to the \
+                     native rasterizer, which draws the vector/solid subset and warns about \
+                     the rest"
+                        .to_owned(),
+                ),
+            };
+        }
+
+        if !delegated.is_empty() {
+            return Route {
+                surface: EngineKind::Geneva,
+                renderer: EngineKind::Native,
+                reason: RouteReason::NativeOnly,
+                delegated,
+                note: Some(
+                    "Geneva's flattened timeline would drop or approximate a native-only \
+                     feature; the one engine delegates this comp to the native rasterizer \
+                     to preserve fidelity"
+                        .to_owned(),
+                ),
+            };
+        }
+
+        match sidecar {
+            Sidecar::Ready => Route {
+                surface: EngineKind::Geneva,
+                renderer: EngineKind::Geneva,
+                reason: RouteReason::Simple,
+                delegated,
+                note: None,
+            },
+            Sidecar::Missing => Route {
+                surface: EngineKind::Geneva,
+                renderer: EngineKind::Native,
+                reason: RouteReason::SidecarMissing,
+                delegated,
+                note: Some(
+                    "the geneva sidecar is not installed; drawing this comp on the native \
+                     engine"
+                        .to_owned(),
+                ),
+            },
+            Sidecar::Failing { failures } => Route {
+                surface: EngineKind::Geneva,
+                renderer: EngineKind::Native,
+                reason: RouteReason::SidecarFailing,
+                delegated,
+                note: Some(format!(
+                    "geneva failed {failures} times in the last minute; drawing this comp \
+                     on the native engine while its circuit breaker is open"
+                )),
+            },
+        }
+    }
+
     /// The engine to draw `comp` with, given the sidecar's state *right
     /// now* - which is [`engine_for`] plus the circuit breaker: a sidecar
     /// that has failed three times in a minute is treated exactly like a
@@ -196,6 +320,66 @@ pub struct Choice {
     /// The engine to draw with.
     pub engine: EngineKind,
     /// Why, when the choice is news: `None` for the ordinary case.
+    pub note: Option<String>,
+}
+
+/// Why a comp was routed to its renderer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RouteReason {
+    /// A comp Geneva draws as written, with the sidecar ready.
+    Simple,
+    /// Markup: Geneva is the only engine that draws it.
+    Markup,
+    /// Markup plus a feature the flattened Geneva timeline cannot draw.
+    MarkupWithUnsupported,
+    /// A native-only feature (path, matte, 3D, rig, adjustment, effect...).
+    NativeOnly,
+    /// A Lottie node: Geneva has no player, native rasterlottie does.
+    Lottie,
+    /// The sidecar is not installed; native takes the comps it can draw.
+    SidecarMissing,
+    /// The sidecar's breaker is open; native takes the comps it can draw.
+    SidecarFailing,
+    /// The preference asked for a specific engine.
+    Requested,
+}
+
+impl RouteReason {
+    /// The stable word a reply or a log carries.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RouteReason::Simple => "simple",
+            RouteReason::Markup => "markup",
+            RouteReason::MarkupWithUnsupported => "markup-with-unsupported",
+            RouteReason::NativeOnly => "native-only",
+            RouteReason::Lottie => "lottie",
+            RouteReason::SidecarMissing => "sidecar-missing",
+            RouteReason::SidecarFailing => "sidecar-failing",
+            RouteReason::Requested => "requested",
+        }
+    }
+}
+
+/// The one-engine answer: what the product promises and what will draw it.
+///
+/// `surface` is the engine the user or agent asked for (Geneva by default).
+/// `renderer` is the engine that will actually bake the comp. When they
+/// differ, the one Geneva surface has delegated the comp to the native
+/// rasterizer, and `reason`/`delegated` say exactly why.
+#[derive(Clone, Debug, Serialize)]
+pub struct Route {
+    /// The product-facing engine.
+    pub surface: EngineKind,
+    /// The renderer that will draw the comp.
+    pub renderer: EngineKind,
+    /// Why this renderer was chosen.
+    pub reason: RouteReason,
+    /// Native-only features the Geneva surface delegated, when any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delegated: Vec<&'static str>,
+    /// A human sentence for the reply, when the route is news.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
@@ -907,5 +1091,115 @@ mod tests {
         let missing = preference.choose(&markup, Sidecar::Missing);
         assert_eq!(missing.engine, EngineKind::Geneva);
         assert_eq!(missing.note, None);
+    }
+
+    #[test]
+    fn the_one_engine_surface_routes_markup_to_geneva() {
+        let comp = comp_with(NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        let route = EnginePreference::default().route(&comp, Sidecar::Ready);
+        assert_eq!(route.surface, EngineKind::Geneva);
+        assert_eq!(route.renderer, EngineKind::Geneva);
+        assert_eq!(route.reason, RouteReason::Markup);
+        assert!(route.delegated.is_empty());
+    }
+
+    #[test]
+    fn a_native_only_feature_is_delegated_under_the_geneva_surface() {
+        let comp = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        });
+        let route = EnginePreference::default().route(&comp, Sidecar::Ready);
+        assert_eq!(route.surface, EngineKind::Geneva);
+        assert_eq!(route.renderer, EngineKind::Native);
+        assert_eq!(route.reason, RouteReason::NativeOnly);
+        assert!(
+            route
+                .delegated
+                .iter()
+                .any(|feature| feature.contains("gradient")),
+            "{:?}",
+            route.delegated
+        );
+    }
+
+    #[test]
+    fn a_lottie_comp_routes_to_the_native_rasterizer() {
+        let comp = comp_with(NodeKind::Lottie {
+            asset: "spinner".into(),
+            r#loop: false,
+        });
+        let route = EnginePreference::default().route(&comp, Sidecar::Ready);
+        assert_eq!(route.surface, EngineKind::Geneva);
+        assert_eq!(route.renderer, EngineKind::Native);
+        assert_eq!(route.reason, RouteReason::Lottie);
+        assert!(
+            route.note.as_deref().unwrap_or_default().contains("Lottie"),
+            "{route:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_sidecar_delegates_only_what_native_can_draw() {
+        let preference = EnginePreference::default();
+        let simple = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
+            radius: 0.0,
+        });
+        let routed = preference.route(&simple, Sidecar::Missing);
+        assert_eq!(routed.surface, EngineKind::Geneva);
+        assert_eq!(routed.renderer, EngineKind::Native);
+        assert_eq!(routed.reason, RouteReason::SidecarMissing);
+
+        let markup = comp_with(NodeKind::Html {
+            markup: "<div>x</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        let kept = preference.route(&markup, Sidecar::Missing);
+        assert_eq!(kept.surface, EngineKind::Geneva);
+        assert_eq!(kept.renderer, EngineKind::Geneva);
+        assert_eq!(kept.reason, RouteReason::Markup);
+        assert!(
+            kept.note.as_deref().unwrap_or_default().contains("refuse"),
+            "{kept:?}"
+        );
+    }
+
+    #[test]
+    fn a_requested_native_surface_is_reported_as_requested() {
+        let comp = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
+            radius: 0.0,
+        });
+        let preference = EnginePreference {
+            default: EngineKind::Native,
+            ..EnginePreference::default()
+        };
+        let route = preference.route(&comp, Sidecar::Ready);
+        assert_eq!(route.surface, EngineKind::Native);
+        assert_eq!(route.renderer, EngineKind::Native);
+        assert_eq!(route.reason, RouteReason::Requested);
     }
 }

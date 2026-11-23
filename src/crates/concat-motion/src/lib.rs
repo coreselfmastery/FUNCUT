@@ -122,7 +122,7 @@ pub use critic::{Fix, Report, score};
 pub use curve::{Curve, Spring, StepPosition};
 pub use engine::{
     BakeRequest, Baked, Choice, CompEngine, EngineKind, EnginePreference, MotionError, Probe,
-    Sidecar,
+    Route, RouteReason, Sidecar,
 };
 pub use footage::{FootagePlan, suggest_footage};
 pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};

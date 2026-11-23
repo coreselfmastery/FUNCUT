@@ -99,6 +99,7 @@ jobs:
       # with the runtime catalogue: no invented aliases, missing readings
       # or stale family counts can reach a creative run.
       - run: python3 scripts/check-signal-matrix.py
+      - run: python3 scripts/ci/check-release-gates.py
         if: ${{ !cancelled() }}
       # The voice-signal reader's own selftest: the catalogue's measured
       # readings, their sources and the conservative fallbacks on a synthetic take.

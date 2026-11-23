@@ -3217,7 +3217,15 @@ mod tests {
         assert_eq!(sent["command"]["op"], "addMotionClip");
         assert_eq!(sent["command"]["start"], 2.0);
         assert_eq!(sent["command"]["duration"], 1.5);
-        assert_eq!(sent["command"]["engine"], "native");
+        // The clip records the engine the bake actually used: Geneva where
+        // the sidecar is installed, native where it is not. The test follows
+        // the machine; the contract is that the two agree.
+        let engine = reply["engine"].as_str().expect("the bake names its engine");
+        assert!(
+            matches!(engine, "geneva" | "native"),
+            "the bake names a renderer: {engine}"
+        );
+        assert_eq!(sent["command"]["engine"].as_str(), Some(engine));
         let comp_file = format!("{}.json", reply["hash"].as_str().unwrap());
         assert_eq!(sent["command"]["comp"].as_str(), Some(comp_file.as_str()));
     }

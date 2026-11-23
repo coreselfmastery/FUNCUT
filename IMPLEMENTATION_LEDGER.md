@@ -7,10 +7,10 @@ pushed separately. Status: done / in-progress / planned / dropped(why).
 
 | Item | State | Evidence |
 | --- | --- | --- |
-| `main` at `573a661` | all seven checks green | CI `45169594535`, Geneva `45169594539`, Build app `45169594545` |
+| `.15` tree at `573a661` | all seven checks green | CI `45169594535`, Geneva `45169594539`, Build app `45169594545` |
 | Native 3D scene layer | shipped in `.15` | commit `61057bb`; `NodeKind::Scene3D`, five geometries, three light types, camera path |
 | `v0.2.8-funcut.15` | published, Latest | ten assets; checksums and manifest verified |
-| Release workflow | red only at Nix | runner lost communication; publish skipped; release published manually |
+| Release workflow | fully green | Nix rerun and publish passed; release body restored |
 | Test count | 2,325 | 2,286 workspace + 9 doc + 30 gRPC; 13 skipped |
 | Branch protection | configured | three `ci.yml` checks required; `enforce_admins` on; PR approval not required |
 

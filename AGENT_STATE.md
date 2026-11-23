@@ -2,16 +2,18 @@
 
 ## Current state — 2026-11-23, the `.15` release
 
-- `main` is at `573a661`; all seven checks on the latest commit are green
-  (CI run `45169594535`, Geneva `45169594539`, Build app `45169594545`).
+- The `.15` release tree is `573a661`; all seven checks on that commit are
+  green (CI run `45169594535`, Geneva `45169594539`, Build app
+  `45169594545`). Docs-only follow-ups on `main` are tracked by their own
+  runs.
 - `v0.2.8-funcut.15` is the latest published release: ten assets, all
   downloadable, `SHA256SUMS` matching GitHub's digests, and a manifest
   naming x86_64, aarch64 and 23 models. `install-linux.sh --list` sees
   `.15` first.
-- The `.15` release workflow (`45163610747`) is red only at its Nix job:
-  the hosted runner lost communication after about 1.5 hours, so the
-  publish job was skipped. The release itself was published manually and
-  verified. A rerun of the Nix job is the way to clear the workflow.
+- The `.15` release workflow (`45163610747`) is fully green after a
+  rerun: the first Nix job lost its hosted runner, the rerun passed Nix
+  and the publish job, and every job is now success. The release body was
+  restored to the letter plus the `.14.. .15` commit list.
 - The test count on the latest green engine lane is 2,286 workspace
   tests (13 skipped), 9 documentation tests and 30 gRPC tests: 2,325 in
   all. `README.md` and `docs/TESTING.md` now carry that count.

@@ -5,12 +5,13 @@ GitHub check-runs API for the exact SHA.
 
 ## `573a661` — the `.15` release tree (2026-11-23)
 
-- **GitHub Actions, latest `main`:** all seven checks **success** on
+- **GitHub Actions, the `.15` tree:** all seven checks **success** on
   `573a6613d937eee7f4c1454ff732bda26fe429a5` — Engine tests and lints
   (`45169594535`), Format/locales/models (`45169594535`), Analysis senses
   (`45169594535`), Dependency dance (`45169594539`), multi-layer example
   (`45169594539`), linux-x86_64 (`45169594545`) and linux-aarch64
-  (`45169594545`).
+  (`45169594545`). Docs-only follow-ups on `main` are tracked by their
+  own runs.
 - **Engine count from that run's own log:** 2,286 workspace tests run,
   2,286 passed, 13 skipped; 9 documentation tests; 30 gRPC tests;
   **2,325 Rust tests in all**. The skipped set is the thirteen
@@ -20,11 +21,12 @@ GitHub check-runs API for the exact SHA.
   stored digests for all nine checksummed files; `manifest.json` names
   tag `.15`, version `0.2.8`, x86_64 and aarch64, and 23 models;
   `install-linux.sh --list` selects `.15`.
-- **Release workflow:** run `45163610747` passed the tag check, CI, the
-  RustSec audit and both build jobs. The Nix job failed with the hosted
-  runner's "lost communication" annotation after about 1.5 hours, and
-  the publish job was skipped. The release was published manually and
-  the assets above were verified; the Nix job rerun is the open item.
+- **Release workflow:** run `45163610747` is fully green. The first
+  attempt passed the tag check, CI, the RustSec audit and both build
+  jobs, then lost its Nix runner to GitHub's "hosted runner lost
+  communication" annotation after about 1.5 hours; the rerun passed Nix
+  and the publish job. The release body was restored to the letter plus
+  the `.14.. .15` commit list after the publish job regenerated it.
 
 ## Baseline `ab7c0704917d6f3181b1fb847fead86dc6392fcf`
 

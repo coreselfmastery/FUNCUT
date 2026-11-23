@@ -26,8 +26,9 @@ git -C /workspace/project/FUNCUT pull --ff-only
 - Open product work is the target-machine acceptance list in
   `KNOWN_ISSUES.md`: proxy/Geneva performance, VAAPI on real hardware,
   motion-clip and AI Director end-to-end runs, and publishing provenance.
-- Branch protection still needs required status checks; the API currently
-  reports none.
+- `main` requires the three `ci.yml` checks with `enforce_admins` on;
+  force pushes and deletions are off. No pull request is required, so the
+  gate covers PR merges rather than every direct push.
 
 ## Resume checklist
 
@@ -40,9 +41,9 @@ git -C /workspace/project/FUNCUT pull --ff-only
    `KNOWN_ISSUES.md`, `AGENT_STATE.md`, `TEST_EVIDENCE.md` and
    `IMPLEMENTATION_LEDGER.md` must name the same commit, count and
    release state.
-4. **Configure `main` branch protection** to require the three `ci.yml`
-   checks and enforce admins, matching `AGENTS.md` and
-   `KNOWN_ISSUES.md` item 14.
+4. **Keep `main` branch protection aligned** with the three `ci.yml`
+   checks and `enforce_admins`, as now configured; decide separately
+   whether to require a pull request before merging.
 5. **Do not claim target-machine acceptance or a real Director run**
    until one is recorded.
 

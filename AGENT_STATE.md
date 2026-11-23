@@ -18,8 +18,11 @@
 - Remaining product work is the target-machine acceptance list in
   `KNOWN_ISSUES.md`: proxy/Geneva performance, VAAPI on real hardware,
   motion-clip and AI Director end-to-end runs, and publishing provenance.
-- Branch protection still needs to be configured to require the CI
-  checks; the API currently reports no required status checks.
+- `main` now requires the three `ci.yml` checks (`Format, locales and
+  models`, `The analysis senses against real fixtures`, `Engine tests and
+  lints`) with `enforce_admins` on; force pushes and deletions stay off.
+  A pull request is not required, so the gate covers PR merges rather
+  than every direct push.
 
 The session logs below are historical records of the 2026-11-10 to
 2026-11-21 completion passes. They are not the current state.

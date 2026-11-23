@@ -568,6 +568,44 @@ something is missing the reply says the exact line to run instead of
 failing silently; `analyze_silence` prefers an `ffmpeg` binary on PATH and
 falls back to librosa when there is none.
 
+### One call: AUTO EDIT
+
+`auto_edit` is the window's AUTO EDIT button as one MCP tool. It needs a
+project whose timeline already carries narration audio (an audio clip
+outside the project's `bgm/` folder); it does not generate a video from
+nothing. By default it edits a sibling copy named `<project> edit`, so
+the source project is never overwritten, then runs the deterministic
+spine: repair the voice, transcribe it, read the voice signals, cut dead
+air, place captions, shop licensed B-roll, grade, add and duck music, add
+sound accents, save the timeline, look at the result and score it.
+
+```json
+{
+  "name": "auto_edit",
+  "arguments": {
+    "path": "/home/me/Videos/MyReel",
+    "script": "optional authoritative wording",
+    "stockProvider": "pexels",
+    "copy": true
+  }
+}
+```
+
+The reply carries `project` (the folder to open next), `copy`, `outcome`
+(`completed`, `completed-with-warnings`, `failed` or `cancelled`) and the
+runner's full `state` with its stage-by-stage receipt. It also writes
+`auto-edit-report.json` and, when the run reached the end,
+`auto-edit-receipt.json` beside the edit. A failed or cancelled run is
+returned as an error outcome with the same state, so an agent can read
+the stage that stopped it instead of guessing.
+
+The fixed spine does not export: it leaves the finished, editable
+timeline. Call `export_start` with the returned `project` when the file
+is wanted. A talking-head video is still the GUI's AUTO EDIT path,
+because extracting its audio and rebuilding its picture is the handoff's
+work; the headless tool refuses a project with no narration audio and
+says so.
+
 ## Set it up
 
 Point your client at the Concat binary with the one argument `--mcp`.
@@ -617,6 +655,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | --- | --- |
 | Projects | `project_list`, `project_create`, `project_open`, `project_save`, `project_close`, `project_set_video` |
 | Reading and plans | `timeline_read` (compact: lanes, clips in time order, media, ids), `timeline_seek` (scrubs the open window's playhead - window mode only; headless refuses), `collision_check` (every place two clips share a lane; `clean` when none), `project_get` (everything), `concat_version`, `plan_validate` (checks a director plan before edits) |
+| Auto Edit | `auto_edit` (the one-click fixed spine over a narration timeline; edits a sibling copy by default, returns the state and receipt, leaves the editable cut without exporting) |
 | Media | `media_probe`, `media_import` |
 | Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_search_batch` (several queries, one call, the CLIP rerank riding along per query unless `rerank: false`), `openvid_get`, `openvid_fetch`, `openvid_import` — and the live rights-cleared shelves: `stock_search`, `stock_fetch`, `stock_import` (Pexels, Pixabay; commercial-use licences, a key each) |
 | Footage planning | `openvid_rank_for_slot` (rank a page against a slot's rich description: the CLIP second pass, the queries blended in at `tag_weight`, used ids and clips under the motion floor never returned, a hero slot asking for thirty), `footage_continuity` (the filled manifest read the way an editor scrubs - colour jumps, reversed travels, repeated scales, one-category runs, clips under their slot's motion floor - each flag naming its slot, rule and remedy) |
@@ -661,7 +700,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 105 of the 113 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the eight left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the composition reads `motion_preview`/`scene_analysis`/`scene_timeline`, `geneva_explain`); `track_subject` is served - a subject path a vertical reframe can follow is a creative tool; `motion_probe` is served because it is what proves an export is a readable file. `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 106 of the 114 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the eight left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the composition reads `motion_preview`/`scene_analysis`/`scene_timeline`, `geneva_explain`); `track_subject` is served - a subject path a vertical reframe can follow is a creative tool; `motion_probe` is served because it is what proves an export is a readable file. `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

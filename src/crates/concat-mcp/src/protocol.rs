@@ -165,6 +165,8 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "timeline_read",
     "collision_check",
     "plan_validate",
+    // The one-click edit, callable headlessly.
+    "auto_edit",
     // Scrubbing the window the agent edits beside, when there is one.
     "timeline_seek",
     // Media in.

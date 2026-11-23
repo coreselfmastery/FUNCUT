@@ -64,7 +64,7 @@ The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-the **113 tools** this build carries - so if the fork has a published
+the **114 tools** this build carries - so if the fork has a published
 release, that is the one you want. (A release the workflows build is
 published by the run itself - `draft: false` in release.yml - so it is
 visible to this script the moment the run goes green; see the note
@@ -191,13 +191,13 @@ arguments. Three changes made the surface one an agent can actually hold:
   `sense_prosody_style`, `sense_audio_repair`, `sense_captions`), the
   `action` argument naming the reading - 133 tools became **105**, and
   not one reading was lost. The footage layer then grew the count to
-  **113 tools** (`openvid_rank_for_slot`, `footage_continuity`,
+  **114 tools** (`openvid_rank_for_slot`, `footage_continuity`,
   `footage_plan_suggest`) and the window's playhead arrived as
   `timeline_seek`.
-- **The default surface is the director's** - 104 of the 113, the creative
+- **The default surface is the director's** - 106 of the 114, the creative
   loop the skill documents plus its remedies; `tools/list` now serves
   what the allowlist serves (a tool off the list is neither listed nor
-  callable). The nine left off are the ones a director never calls by
+  callable). The eight left off are the ones a director never calls by
   surprise; `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow
   all`) serves the whole catalogue. `motion_probe` is served, not left
   off: it is what proves an export is a readable file.

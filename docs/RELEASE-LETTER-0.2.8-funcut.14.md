@@ -15,8 +15,8 @@ what the editor is. It is the same motion engine, the same AUTO EDIT
 button, the same live stock shelves, the same gates. What it adds is the
 front of new work that missed `.13` by hours - a shared-memory frame
 pipe, a streaming playback ring, safe zones and a WCAG gate - the fix
-for the one defect `.13` shipped with, and a small set of connection
-repairs. The details are below.
+for the one defect `.13` shipped with, a small set of connection
+repairs, and the headless door to AUTO EDIT. The details are below.
 
 ## What this release is
 
@@ -70,6 +70,29 @@ not fixes to `.13`, and `.14` is the first release to carry them:
 - **The GSAP grid stagger is bounded** (`geneva-adapter`). A stagger over
   a grid whose cell count ran away could size a work buffer without a
   ceiling; the dimension is bounded now.
+
+## AUTO EDIT is now an API call
+
+The button's fixed spine is exposed as `auto_edit`, the 114th catalogue
+tool and the 106th on the director's default surface. It runs the same
+`auto_edit_program` through the same `Runner` the window uses:
+handoff, audio repair, transcribe, voice signals, understand, plan,
+timeline, B-roll, captions, motion, music, sound, preview, revise, save,
+verify and watch.
+
+The source is not the edit. `copy` defaults to `true`, so the call copies
+the project to `<name> edit`, rewrites its media paths and runs there; a
+second run takes `edit 2`. The reply carries the terminal state, the
+stage receipt, `auto-edit-report.json`, and `auto-edit-receipt.json` on
+success. It leaves an editable timeline and does not export - call
+`export_start` on the returned project for the file.
+
+The call is budgeted at 1200 seconds, refuses a project with no narration
+audio outside `bgm/`, and names the GUI talking-head path when that is
+what the project has. `docs/SANDBOX.md` is the full sandbox recipe:
+release install, `concat --mcp headless`, client config, `auto_edit`,
+export and the failure messages. `README.md` carries the same path at the
+top of its headless section.
 
 ## The wiring repairs
 

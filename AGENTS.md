@@ -11,8 +11,9 @@ FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat) — a
 Rust + Slint video editor (`src/crates/*`, 20+ crates, ~220k lines) —
 tuned for small low-memory Linux laptops and extended with:
 
-- a built-in **MCP server** (`concat --mcp`, 113 tools, 105 served to a
-  director by default) that can edit whole projects end to end;
+- a built-in **MCP server** (`concat --mcp`, 114 tools, 106 served to a
+  director by default, including `auto_edit` - the window's one-click
+  spine as one headless call) that can edit whole projects end to end;
 - the **funcut-director** skill (`.claude/skills/funcut-director/`): a
   25-phase measured pipeline that turns a script or a voiceover into a
   finished video;
@@ -38,6 +39,7 @@ tuned for small low-memory Linux laptops and extended with:
 | Read this | When |
 | --- | --- |
 | [docs/MCP.md](docs/MCP.md) | Connecting to the editor over MCP; every tool area |
+| [docs/SANDBOX.md](docs/SANDBOX.md) | Installing a release in a sandbox, running headless, editing and exporting |
 | [docs/FEATURES.md](docs/FEATURES.md) | The verified inventory: every tool, page, engine, model, with counts |
 | [docs/forge/FORGE.md](docs/forge/FORGE.md) | The Forge harness that drives a director run (any vision-capable model) |
 | [docs/EMOTION.md](docs/EMOTION.md) | The emotion read and the gate that drives easing, colour, sound, duck, stock |

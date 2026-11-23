@@ -81,7 +81,7 @@ built for it. That is the concrete shape of P0-1: a one-line allowlist
 fix plus a preflight that refuses to start when the tools the run will
 need are not served.
 
-**Fixed.** The default surface is now **104 of the 113** catalogued tools
+**Fixed.** The default surface is now **106 of the 114** catalogued tools
 (`DIRECTOR_ALLOWLIST` in `src/crates/concat-mcp/src/protocol.rs`, and the
 same list in `.forge/mcp.toml`), and `DIRECTOR_REQUIRED` names the calls a
 run cannot finish without. `director_ready` refuses the handover when the

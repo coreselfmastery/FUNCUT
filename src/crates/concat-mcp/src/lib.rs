@@ -23,6 +23,7 @@
 //! both committed and drift-tested.
 
 pub mod acceptance;
+pub mod auto_edit;
 pub mod backend;
 pub mod director;
 pub mod director_program;

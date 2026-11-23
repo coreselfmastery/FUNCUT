@@ -6145,6 +6145,98 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
     commands
 }
 
+/// The fixed-spine source an agent's `auto_edit` call is written from:
+/// the project's timeline view supplies every narration clip and its
+/// placement, so the same program the window's button runs can run
+/// headlessly over an MCP call.
+///
+/// A narration clip is audio with real media, outside the project's
+/// `bgm/` folder - the same test the window's handoff makes. A project
+/// with no such clip is refused with a sentence rather than run over
+/// silence; the talking-head door remains the GUI's, because extracting
+/// a video's audio and rebuilding its picture is the handoff's work.
+pub fn auto_edit_source_from_view(
+    project: &str,
+    view: &Value,
+    script: Option<String>,
+    stock_provider: String,
+) -> Result<AutoEditProgramSource, String> {
+    let media = media_paths(view);
+    let clips = view["timeline"]["clips"]
+        .as_array()
+        .ok_or_else(|| "the timeline view carries no clips array".to_owned())?;
+    let mut ordered: Vec<&Value> = clips.iter().collect();
+    ordered.sort_by(|a, b| {
+        a["start"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .total_cmp(&b["start"].as_f64().unwrap_or(0.0))
+    });
+    let mut takes: Vec<TakePaths> = Vec::new();
+    let mut placements: Vec<TakePlacement> = Vec::new();
+    for clip in ordered {
+        if clip["kind"].as_str() != Some("audio") {
+            continue;
+        }
+        let Some(media_id) = clip["media"].as_str() else {
+            continue;
+        };
+        let Some((_, path)) = media.iter().find(|(id, _)| id == media_id) else {
+            continue;
+        };
+        if path.trim().is_empty() || path.contains("/bgm/") {
+            continue;
+        }
+        let (source_in, source_out, speed) = clip_file_span(clip);
+        let take = path.clone();
+        if !takes.iter().any(|known| known.take == take) {
+            let index = takes.len();
+            let name = std::path::Path::new(&take)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("voiceover.wav");
+            let enhanced = std::path::Path::new(project)
+                .join("auto-edit")
+                .join(format!("enhanced-{index:03}-{name}"))
+                .to_string_lossy()
+                .into_owned();
+            takes.push(TakePaths {
+                take: take.clone(),
+                enhanced,
+                aroll: None,
+            });
+        }
+        placements.push(TakePlacement {
+            take,
+            start: clip["start"].as_f64().unwrap_or(0.0),
+            source_in,
+            source_out,
+            speed,
+        });
+    }
+    if takes.is_empty() {
+        return Err(
+            "the project has no narration audio clip on its timeline (an audio clip outside \
+             the project's bgm/ folder); headless auto_edit edits narration audio, while a \
+             talking-head video is the GUI's AUTO EDIT path"
+                .to_owned(),
+        );
+    }
+    Ok(AutoEditProgramSource {
+        project: project.to_owned(),
+        takes,
+        placements,
+        export: std::path::Path::new(project)
+            .join("export")
+            .join("auto-edit.mp4")
+            .to_string_lossy()
+            .into_owned(),
+        sheet: "auto-edit-sheet.png".to_owned(),
+        stock_provider,
+        script: script.filter(|script| !script.trim().is_empty()),
+    })
+}
+
 /// The AUTO EDIT's whole program: every stage the unattended run can run
 /// without a creative brain, each standing on what the run itself
 /// measured. The static spine repairs, transcribes, reads the voice and
@@ -9710,13 +9802,63 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
 mod tests {
     use super::*;
 
+    /// The fixed-spine source an agent's call is built from: narration
+    /// audio only, the bed skipped, takes de-duplicated in first-play
+    /// order, and every placement carrying its file span and rate.
+    #[test]
+    fn a_view_becomes_the_same_takes_and_placements_the_button_builds() {
+        let view = json!({
+            "media": [
+                { "id": "m1", "path": "/edits/Reel/voice/a.wav" },
+                { "id": "m2", "path": "/edits/Reel/bgm/bed.mp3" },
+                { "id": "m3", "path": "/edits/Reel/voice/b.wav" },
+            ],
+            "timeline": { "clips": [
+                { "kind": "audio", "media": "m2", "start": 0.0, "duration": 8.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "kind": "audio", "media": "m1", "start": 1.0, "duration": 2.0, "sourceStart": 0.5, "speed": 1.0 },
+                { "kind": "audio", "media": "m1", "start": 4.0, "duration": 1.0, "sourceStart": 3.0, "speed": 1.5 },
+                { "kind": "audio", "media": "m3", "start": 6.0, "duration": 1.0, "sourceStart": 0.0, "speed": 1.0 },
+            ] }
+        });
+        let source = auto_edit_source_from_view(
+            "/edits/Reel edit",
+            &view,
+            Some("  ".to_owned()),
+            "pixabay".to_owned(),
+        )
+        .expect("the view is a narration timeline");
+        assert_eq!(source.takes.len(), 2);
+        assert_eq!(source.takes[0].take, "/edits/Reel/voice/a.wav");
+        assert_eq!(
+            source.takes[0].enhanced,
+            "/edits/Reel edit/auto-edit/enhanced-000-a.wav"
+        );
+        assert_eq!(source.takes[1].take, "/edits/Reel/voice/b.wav");
+        assert_eq!(source.placements.len(), 3);
+        assert_eq!(source.placements[1].source_in, 3.0);
+        assert_eq!(source.placements[1].source_out, 4.5);
+        assert_eq!(source.placements[1].speed, 1.5);
+        assert_eq!(source.stock_provider, "pixabay");
+        assert_eq!(source.sheet, "auto-edit-sheet.png");
+        assert_eq!(source.script, None, "a blank script is no script");
+
+        let empty = json!({ "media": [], "timeline": { "clips": [] } });
+        let refused =
+            match auto_edit_source_from_view("/edits/Empty", &empty, None, "pexels".to_owned()) {
+                Ok(_) => panic!("no narration is a refusal"),
+                Err(refused) => refused,
+            };
+        assert!(refused.contains("no narration audio"), "{refused}");
+    }
+
     /// The program the button runs: the whole unattended spine in the
     /// runner's register - the static handoff, the fanned repair and
     /// transcription (every take at the same time), the derived tighten,
     /// grade, licensed live-stock B-roll, captions, title entrances,
-    /// music bed and accents, the preview, the export, the verify, the
-    /// watch and the revise. The plan's creative brief, the eye-picked
-    /// stock and the baked motion comps remain the Director agent's.
+    /// music bed and accents, the preview, the revise, the saved
+    /// timeline, the verify and the watch. The plan's creative brief, the
+    /// eye-picked stock and the baked motion comps remain the Director
+    /// agent's.
     #[test]
     fn the_auto_edit_program_is_the_watchers_spine_over_fixed_paths() {
         use concat_director::{ErrorPolicy, FanStep, ProgramStep};

@@ -87,6 +87,8 @@ pub enum Action {
     AudioLevelsDb,
     /// Validate the director's edit plan without changing a project.
     PlanValidate,
+    /// Run the fixed AUTO EDIT spine over a project, or a sibling copy.
+    AutoEdit,
     /// `preview.frame`, as an image.
     PreviewFrame,
     /// The motion library, with the engine's own availability.
@@ -330,6 +332,15 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::PlanValidate,
+        },
+        Tool {
+            name: "auto_edit",
+            title: "Auto Edit a narration timeline",
+            description: "Run the one-click AUTO EDIT spine on narration audio. `copy` defaults true; no export.",
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            action: Action::AutoEdit,
         },
         Tool {
             name: "clip_audio_levels_db",
@@ -1255,6 +1266,10 @@ impl Tool {
             // bound is the net the rarest, slowest batch hits, not the
             // arithmetic of every budget at once.
             "openvid_search_batch",
+            // The whole unattended spine in one call: transcription,
+            // stock fetches, a motion bake and the watch render all run
+            // under it, so the 60 s default would cancel healthy work.
+            "auto_edit",
         ];
         if DEEP.contains(&self.name) {
             1200
@@ -1392,7 +1407,7 @@ impl Toolbox {
                 "invalid arguments: {why}"
             ))));
         }
-        Some(match run(tool, arguments, context) {
+        Some(match run(self, tool, arguments, context) {
             Ok(outcome) => outcome,
             Err(error) => Outcome::error(&error),
         })
@@ -1446,6 +1461,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         Action::Version => schemas.method("version"),
         Action::TimelineRead => schemas.method("project.get"),
         Action::PlanValidate => plan_validate_schema(),
+        Action::AutoEdit => Some(auto_edit_schema()),
         Action::AudioLevelsDb => audio_levels_schema(schemas),
         Action::ExportWait => {
             let mut schema = schemas.method("export.status")?;
@@ -1890,6 +1906,23 @@ fn sense_schema(name: &str) -> Option<Value> {
 /// a hand edit the types do not back.
 fn canonical_plan_schema() -> Option<Value> {
     serde_json::from_str(crate::plan_schema::CANONICAL).ok()
+}
+
+/// `auto_edit`'s inputs: the project, the optional authoritative script,
+/// the live stock shelf the B-roll plan names, and whether to edit a
+/// sibling copy (the default) or the project itself.
+fn auto_edit_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "path": { "type": "string", "description": "Project folder with narration audio." },
+            "script": { "type": "string", "description": "Optional authoritative wording." },
+            "stockProvider": { "type": "string", "enum": ["pexels", "pixabay"], "default": "pexels" },
+            "copy": { "type": "boolean", "default": true, "description": "Edit a sibling copy." },
+        },
+        "required": ["path"],
+        "additionalProperties": false,
+    })
 }
 
 /// The compact MCP input schema, projected from the canonical the
@@ -2660,7 +2693,15 @@ fn edit(op: &str, mut arguments: Value) -> Result<Request, ApiError> {
     request("edit.apply", json!({ "path": path, "command": arguments }))
 }
 
-fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, ApiError> {
+fn run(
+    toolbox: &Toolbox,
+    tool: &Tool,
+    arguments: Value,
+    context: Context<'_>,
+) -> Result<Outcome, ApiError> {
+    if let Action::AutoEdit = tool.action {
+        return crate::auto_edit::run(toolbox, arguments, context);
+    }
     let backend = context.backend;
     match tool.action {
         Action::Method { method, reply } if method == "openvid.search" => {
@@ -2724,6 +2765,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
             Ok(Outcome::json(summary::view(&result)))
         }
         Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
+        Action::AutoEdit => unreachable!("auto_edit is handled before the dispatch match"),
         Action::ExportWait => export_wait(
             tool.name,
             arguments,
@@ -5223,6 +5265,15 @@ mod tests {
                 json!({ "path": "/tmp/Cut", "clipId": "c1", "patch": { "volume": 0.5, "crop": null, "transitionIn": { "id": "cross-fade", "duration": 0.5 }, "videoEffects": [{ "id": "concat.warm", "params": { "amount": 0.4 } }] } }),
             ),
             (
+                "auto_edit",
+                json!({
+                    "path": "/tmp/Cut",
+                    "script": "A short narration.",
+                    "stockProvider": "pexels",
+                    "copy": true
+                }),
+            ),
+            (
                 "clip_audio_levels_db",
                 json!({
                     "path": "/tmp/Cut",
@@ -5554,6 +5605,23 @@ mod tests {
     }
 
     #[test]
+    fn auto_edit_is_a_patient_destructive_tool_on_the_director_surface() {
+        let toolbox = Toolbox::new();
+        let (tool, schema) = toolbox.find("auto_edit").expect("auto_edit is served");
+        assert!(tool.destructive, "it writes the timeline");
+        assert_eq!(
+            tool.timeout_secs(),
+            1200,
+            "transcription and stock are slow"
+        );
+        assert_eq!(schema["properties"]["copy"]["default"], json!(true));
+        assert!(
+            crate::protocol::DIRECTOR_ALLOWLIST.contains(&"auto_edit"),
+            "the director can run the fixed spine"
+        );
+    }
+
+    #[test]
     fn every_tool_has_a_schema_and_a_sample_and_names_are_unique() {
         let toolbox = Toolbox::new();
         let listed = toolbox.list();
@@ -5576,7 +5644,8 @@ mod tests {
             .expect("timeline_read is listed");
         assert_eq!(ordered_names[timeline + 1], "timeline_seek");
         assert_eq!(ordered_names[timeline + 2], "plan_validate");
-        assert_eq!(ordered_names[timeline + 3], "clip_audio_levels_db");
+        assert_eq!(ordered_names[timeline + 3], "auto_edit");
+        assert_eq!(ordered_names[timeline + 4], "clip_audio_levels_db");
         for tool in &listed {
             let name = tool["name"].as_str().expect("named");
             assert!(
@@ -5612,6 +5681,10 @@ mod tests {
                     validate_plan_tool(sample.clone()).expect("valid plan sample");
                     continue;
                 }
+                // auto_edit is a runner over other tools, not one API
+                // request: its schema is checked above, and its sample
+                // is not sent anywhere by this test.
+                Action::AutoEdit => continue,
                 Action::ExportWait => {
                     let mut sample = sample.clone();
                     sample

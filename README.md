@@ -9,8 +9,8 @@
 > **FUNCUT** — this repository is that editor tuned for small, low-memory
 > Linux laptops (4-6 GB of RAM): every cache sizes itself to the machine it
 > is on, and `./install-linux.sh` puts it on one in a single command. On top
-> of the editor it ships an agent stack: a built-in MCP server with **113
-> tools** (105 served to a director by default, the whole catalogue behind
+> of the editor it ships an agent stack: a built-in MCP server with **114
+> tools** (106 served to a director by default, the whole catalogue behind
 > `CONCAT_MCP_ALLOW=all`), the agent's senses (scene cuts, beat grids, dead air,
 > transcription, TTS, loudness), perception (contact-sheet images a model
 > can actually see), an emotion-driven edit pipeline with a validated brand
@@ -26,8 +26,10 @@
 > source — is [docs/FEATURES.md](docs/FEATURES.md); the fork's change
 > ledger is [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md), the
 > small-machine notes [docs/FUNCUT.md](docs/FUNCUT.md), the agent
-> guide [docs/MCP.md](docs/MCP.md), the small-machine measurements
-> [docs/PERFORMANCE.md](docs/PERFORMANCE.md), every effect's
+> guide [docs/MCP.md](docs/MCP.md), the sandbox recipe
+> [docs/SANDBOX.md](docs/SANDBOX.md), the `.14` release letter
+> [docs/RELEASE-LETTER-0.2.8-funcut.14.md](docs/RELEASE-LETTER-0.2.8-funcut.14.md),
+> the small-machine measurements [docs/PERFORMANCE.md](docs/PERFORMANCE.md), every effect's
 > before-and-after card [docs/EFFECTS-GALLERY.md](docs/EFFECTS-GALLERY.md),
 > and twenty of them in motion [docs/SHADER_GALLERY.md](docs/SHADER_GALLERY.md).
 
@@ -38,7 +40,7 @@
 <p align="center">
   <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
   <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8--funcut.13-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="FUNCUT Version 0.2.8-funcut.13" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8--funcut.14-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="FUNCUT Version 0.2.8-funcut.14" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -135,6 +137,68 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings   # what CI check
 CI counts the suite in three lanes - the workspace under `cargo nextest`, the documentation's examples, and the gRPC feature - 1393 Rust tests at the commit this was written, six skipped, each skip named and none of them a platform. [docs/TESTING.md](docs/TESTING.md) holds the count, the breakdown and the way to reproduce it.
 
 If you change text the interface shows, run `python3 scripts/locales.py` from the repo root so the string inventory stays in sync. Full details live in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Run it headless (AI agents and sandboxes)
+
+The editor is also a headless MCP server. A sandbox needs no desktop,
+GPU or build toolchain to install a release and make an edit:
+
+```sh
+git clone https://github.com/coreselfmastery/FUNCUT.git
+cd FUNCUT
+./install-linux.sh                       # AppImage + core models, no root
+export PATH="$HOME/.local/bin:$PATH"
+concat --version && concat --smoke
+export CONCAT_MCP_ALLOW=all CONCAT_MCP_ROOTS=/workspace/video
+concat --mcp headless
+```
+
+Or build it from source:
+
+```sh
+git clone https://github.com/coreselfmastery/FUNCUT.git
+cd FUNCUT
+bash scripts/setup-build-env.sh          # pinned FFmpeg, ONNX Runtime and sherpa-onnx
+cd src
+cargo build --release -p concat          # the binary is target/release/concat
+```
+
+The full sandbox recipe - model sizes, MCP client config, `auto_edit`,
+export and the failure messages - is [docs/SANDBOX.md](docs/SANDBOX.md).
+
+Point an MCP client at it, or speak JSON-RPC over stdio yourself:
+
+```json
+{
+  "mcpServers": {
+    "funcut": {
+      "command": "/absolute/path/to/FUNCUT/src/target/release/concat",
+      "args": ["--mcp", "headless"],
+      "env": {
+        "CONCAT_MCP_ALLOW": "all",
+        "CONCAT_MCP_ROOTS": "/absolute/path/to/work"
+      }
+    }
+  }
+}
+```
+
+The first call an agent should make is `concat_version`; it says
+`mcp.mode: "headless"` and the project roots the server may write to. A
+minimal edit is `project_create` -> `media_import` -> `edit_apply` (one
+command or an atomic `batch`). When narration audio is already on the
+timeline, `auto_edit { "path": "/absolute/path/to/work/MyReel" }` runs the
+whole fixed AUTO EDIT spine - voice repair, transcription, voice signals,
+dead-air tightening, captions, B-roll, grade, music and sound - and
+returns the terminal state, the receipt and the sibling project it
+edited. It edits `<project> edit` by default, so the source is untouched;
+pass `"copy": false` to edit in place. It leaves an editable cut and does
+not export; call `export_start` with the returned `project` for the file.
+
+A headless run writes only under `CONCAT_MCP_ROOTS` (or the directory the
+server was started in). Models download once on first use; `models_list`
+and `models_download` say which are present. The full tool list, the
+safety switches and the AUTO EDIT contract are in [docs/MCP.md](docs/MCP.md).
 
 ## How to Contribute
 

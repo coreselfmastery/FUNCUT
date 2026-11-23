@@ -128,6 +128,50 @@ impl Agent {
 }
 
 #[test]
+fn auto_edit_refuses_a_project_with_no_narration_audio() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let home = scratch.path();
+    let mut agent = Agent::spawn(
+        home,
+        "headless",
+        &[("CONCAT_MCP_ROOTS", home.to_string_lossy().into_owned())],
+    );
+    let (_, welcome) = agent.ask(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": { "name": "e2e", "version": "1" },
+        }),
+    );
+    assert!(welcome["result"]["capabilities"]["tools"].is_object());
+    agent.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+
+    agent.tool(
+        "project_create",
+        json!({
+            "location": home.to_string_lossy(),
+            "name": "Silent Cut",
+            "video": { "width": 320, "height": 180, "rateNum": 30, "rateDen": 1 },
+        }),
+    );
+    let path = home.join("Silent Cut").to_string_lossy().into_owned();
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({
+            "name": "auto_edit",
+            "arguments": { "path": path, "copy": false }
+        }),
+    );
+    let result = &reply["result"];
+    assert_eq!(result["isError"], true, "{result}");
+    let text = result["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("no narration audio"), "{text}");
+    assert!(home.join("Silent Cut").is_dir(), "the source is untouched");
+    agent.end();
+}
+
+#[test]
 fn an_agent_edits_previews_and_exports_a_project_headless() {
     let scratch = tempfile::tempdir().expect("scratch");
     let home = scratch.path();

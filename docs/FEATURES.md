@@ -25,7 +25,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **113 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **114 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs a 25-phase measured pipeline, and maestro, a vendored design and
@@ -36,7 +36,7 @@ with one click.
 
 | What | Count | Where it lives |
 | --- | --- | --- |
-| MCP tools | **113** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
+| MCP tools | **114** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 52 requests + 7 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **55** plus `batch`, the atomic wrapper | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
@@ -193,7 +193,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **113 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **114 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -203,6 +203,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 | Area | Tools |
 | --- | --- |
 | Projects & reading | `concat_version`, `project_list/create/open/save/close/get`, `project_set_video`, `timeline_read`, `collision_check`, `plan_validate` |
+| Auto Edit | `auto_edit` (the one-click fixed spine as one call; a sibling copy by default, the terminal state and receipt back, the editable cut saved without exporting) |
 | Media | `media_probe`, `media_import` |
 | OpenVid stock | `openvid_status/prepare/search/search_batch/get/fetch/import` |
 | Footage planning | `openvid_rank_for_slot` (a slot's rich description ranked against the library, the CLIP second pass with the tags blended in, used ids and under-floor clips never returned), `footage_continuity` (the filled manifest read the way an editor scrubs: colour, motion, scale, monotony, stillness - each flag with its slot, rule and remedy) |
@@ -427,19 +428,22 @@ always win; maestro refines how a floor is met, never lowers it. See
   grades the full runtime, fills narration gaps from the configured
   Pexels/Pixabay live stock shelf, shops a music bed and ducks it under
   the voice, lands sound accents on the measured emphasis peaks, samples
-  the open timeline and scores it, renders, verifies the export, watches
-  it, and answers the critic's measured faults with targeted edits. The
-  provider licence travels in the import reply; without a configured key
-  the gather stage reports the provider's missing-key refusal and leaves
-  the gap empty. It never uses the research-only OpenVid index for
-  unattended B-roll. Seventeen stages run in this order: handoff,
-  audio-repair, transcribe, voice-signals, understand, plan, timeline,
-  gather, captions, motion, music, sfx, preview, revise, export,
-  verify, watch. The **preview** samples the *open timeline* (not the render)
-  before the export is paid for, and the **revise** turns the critic's
-  own numbers into one undoable `edit_apply` batch - a fill for bars, a
-  bounded head trim for a black opening, a push-in on every *other* shot
-  for static cuts - issuing no edit at all on a cut that measured clean.
+  the open timeline and scores it, saves the timeline, verifies the saved
+  cut and watches it once more. It does **not** render or export: the run
+  leaves an editable cut, and Export is the next click when the file is
+  wanted. The provider licence travels in the import reply; without a
+  configured key the gather stage reports the provider's missing-key
+  refusal and leaves the gap empty. It never uses the research-only
+  OpenVid index for unattended B-roll. Seventeen stages run in this
+  order: handoff, audio-repair, transcribe, voice-signals, understand,
+  plan, timeline, gather, captions, motion, music, sfx, preview, revise,
+  timeline-ready, verify, watch. The **preview** samples the *open
+  timeline*, and the **revise** turns the critic's own numbers into one
+  undoable `edit_apply` batch - a fill for bars, a bounded head trim for a
+  black opening, a push-in on every *other* shot for static cuts - issuing
+  no edit at all on a cut that measured clean. The same fixed spine is
+  callable headlessly as the `auto_edit` MCP tool; it edits a sibling
+  copy by default and returns the terminal state and receipt.
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
   --mcp auto`), a 1200-second call timeout for patient work, servers
   allow-listed to `funcut`, and the per-tool allowlist active in the
@@ -541,7 +545,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (113 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
+| The MCP server (114 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

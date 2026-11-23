@@ -66,7 +66,8 @@ rule: surface the pip hint.
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·
 `project_open {path}` · `project_save` ·
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
-`collision_check {path}` · `plan_validate {plan}` · `media_probe {path}` ·
+`collision_check {path}` · `plan_validate {plan}` ·
+`auto_edit {path,copy?,script?,stockProvider?}` · `media_probe {path}` ·
 `media_import {path,file}` · `effects_list {kind}` (the effect/filter/transition/audio
 packages)
 
@@ -90,6 +91,13 @@ packages)
   the director's conscience — read them, then fix the plan, not the wording.
   Run it before asset gathering/editing; fix errors and revalidate. It cannot
   verify asset availability.
+- `auto_edit {path}` is the window's fixed one-click spine as one call:
+  repair, transcribe, voice signals, dead-air tightening, captions, B-roll,
+  grade, music, sfx, preview, revise, save, verify and watch. It edits a
+  sibling copy by default and leaves the editable timeline without
+  exporting. It is not the Director's route - it has no creative brief,
+  no eye-picked stock and no plan - but it is the deterministic baseline
+  an agent can run when the request is "just auto edit this".
 - `media_probe` before cutting anything unfamiliar: duration, streams, frame
   size, rate, codecs. Units: seconds and frames-per-second as floats.
 - The project `path` in every edit tool is the folder `project_open` took.

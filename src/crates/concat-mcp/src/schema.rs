@@ -629,8 +629,12 @@ mod tests {
         // that checks them, and the acceptance's creative gate - is the
         // vocabulary a run that must reach creativeReady cannot spell
         // without; 246,122 measured, function, not prose.
+        // 247,000 -> 249,000, at 106 on the director's surface:
+        // `auto_edit` is the whole fixed spine as one call - the project,
+        // the optional script, the stock shelf and the copy switch -
+        // 247,603 measured after trimming its prose; function, not prose.
         assert!(
-            director < 247_000,
+            director < 249_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

@@ -32,7 +32,38 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
-## The one-engine motion surface (newest)
+## Headless AUTO EDIT (newest)
+
+- **AUTO EDIT is one MCP call.** `auto_edit` runs the window's fixed
+  spine - handoff, audio repair, transcribe, voice signals, understand,
+  plan, timeline, gather, captions, motion, music, sfx, preview, revise,
+  timeline-ready, verify, watch - through the same `Runner` and the same
+  `auto_edit_program` the button uses. It is the 114th catalogue tool and
+  the 106th on the director's default surface.
+- **The source is not the edit.** `copy` defaults to true: the call
+  copies the project to `<name> edit`, rewrites every media path in the
+  copy's `concat.json` (inside files stay inside; outside files are
+  copied into the sibling's `media/`), and runs there. A second run
+  takes `edit 2`, never over the first.
+- **The reply is the run's state.** The tool returns the terminal
+  `state` (`completed`, `completed-with-warnings`, `failed` or
+  `cancelled`), the stage receipt, the report path and the project to
+  open. Failed and cancelled runs are error outcomes carrying the same
+  state, so an agent reads the stage that stopped it.
+- **It leaves a cut, not a file.** The fixed spine has no Export stage:
+  it saves the editable timeline, verifies the saved cut and watches it.
+  `export_start` on the returned project is the next call when a file is
+  wanted.
+- **Narration audio is the door.** The headless tool refuses a project
+  with no audio narration outside `bgm/`; the talking-head extraction
+  remains the GUI handoff's work.
+- **The sandbox path is documented.** README now carries the release
+  installer, clone, native setup, build, MCP config and the `auto_edit`
+  call; [`docs/SANDBOX.md`](SANDBOX.md) is the full recipe - install,
+  headless server, client config, edit, export and the failure messages -
+  and `docs/MCP.md` carries the contract and the tool table.
+
+## The one-engine motion surface
 
 - **One engine name, two internal renderers.** `EnginePreference::route` now
   answers `surface` (Geneva, the product-facing engine) and `renderer` (what
@@ -2577,7 +2608,7 @@ inspectable rather than a toast that faded.
 **The surface is preflighted, and `motion_probe` is served.** The Director
 could not have answered that check: `motion_probe` was left off the
 director's allowlist, and it is the one tool that proves an export is a
-readable file. It is now on the default surface - 104 of the 113 tools -
+readable file. It is now on the default surface - 106 of the 114 tools -
 and `DIRECTOR_REQUIRED` names the twenty calls a run cannot finish
 without. `director_ready` refuses the handover before anything is cut when
 the server's surface does not serve one of them, because a run told to

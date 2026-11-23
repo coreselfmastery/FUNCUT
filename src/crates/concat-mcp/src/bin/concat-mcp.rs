@@ -103,11 +103,13 @@ fn main() -> ExitCode {
         concat_mcp::protocol::Serving {
             read_only: read_only || from_env.read_only,
             allowed: None,
+            timeout_scale: from_env.timeout_scale,
         }
     } else {
         concat_mcp::protocol::Serving {
             read_only: read_only || from_env.read_only,
             allowed: allowed.flatten().or(from_env.allowed),
+            timeout_scale: from_env.timeout_scale,
         }
     };
     match concat_mcp::run_with(mode, serving) {

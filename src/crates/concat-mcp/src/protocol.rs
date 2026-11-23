@@ -138,6 +138,10 @@ pub struct Serving {
     pub read_only: bool,
     /// The only tools served, by name; `None` serves them all.
     pub allowed: Option<Vec<String>>,
+    /// A fraction of each tool's own deadline, read once when the server
+    /// is configured rather than on every request: a test that shrinks
+    /// the clock cannot race another test's `tools/list`.
+    pub timeout_scale: Option<f64>,
 }
 
 /// The tools a director's agent needs: the creative loop the funcut-director
@@ -327,8 +331,9 @@ impl Serving {
 
     /// The switches from the environment the app's own `concat --mcp`
     /// reads, so a server started by the window has the same safety net
-    /// as one started by hand: `CONCAT_MCP_READ_ONLY=1` and
-    /// `CONCAT_MCP_ALLOW=a,b,c`. A list of exactly `all` serves
+    /// as one started by hand: `CONCAT_MCP_READ_ONLY=1`,
+    /// `CONCAT_MCP_ALLOW=a,b,c` and the test-only
+    /// `CONCAT_MCP_TIMEOUT_SCALE`. A list of exactly `all` serves
     /// everything; no list at all serves the director's default.
     pub fn from_environment() -> Serving {
         Serving {
@@ -360,6 +365,10 @@ impl Serving {
                 }
                 Some(names)
             }),
+            timeout_scale: std::env::var("CONCAT_MCP_TIMEOUT_SCALE")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .filter(|scale| scale.is_finite() && *scale > 0.0 && *scale <= 1.0),
         }
         .with_director_default()
     }
@@ -379,6 +388,7 @@ impl Serving {
                         .map(|name| (*name).to_owned())
                         .collect(),
                 ),
+                timeout_scale: self.timeout_scale,
             },
         }
     }
@@ -688,11 +698,7 @@ impl Server {
         let limit = tool
             .and_then(|name| self.toolbox.find(name).map(|(tool, _)| tool.timeout_secs()))
             .unwrap_or(60);
-        let scale = std::env::var("CONCAT_MCP_TIMEOUT_SCALE")
-            .ok()
-            .and_then(|value| value.parse::<f64>().ok())
-            .filter(|scale| scale.is_finite() && *scale > 0.0 && *scale <= 1.0)
-            .unwrap_or(1.0);
+        let scale = self.serving.timeout_scale.unwrap_or(1.0);
         let deadline = Duration::from_millis((limit as f64 * scale * 1000.0) as u64);
         let (reply_tx, reply_rx) = mpsc::channel::<Value>();
         let output = self.output.clone();
@@ -1082,6 +1088,7 @@ mod tests {
         let serving = Serving {
             read_only: true,
             allowed: None,
+            ..Serving::default()
         };
         // One per blocked tool, the ones the net names: an edit, an
         // export, a stock import, and the reel's render half.
@@ -1108,6 +1115,7 @@ mod tests {
         let serving = Serving {
             read_only: true,
             allowed: None,
+            ..Serving::default()
         };
         // A read is served: the timeline is the agent's map.
         let replies = serve_safety(
@@ -1154,6 +1162,7 @@ mod tests {
                 "timeline_read".to_owned(),
                 "concat_version".to_owned(),
             ]),
+            ..Serving::default()
         };
         let served = serve_safety(
             call("timeline_read", json!({ "path": "/tmp/p" })).as_bytes(),
@@ -1311,6 +1320,7 @@ mod tests {
         let serving = Serving {
             read_only: false,
             allowed: Some(vec!["timeline_read".to_owned(), "plan_validate".to_owned()]),
+            ..Serving::default()
         };
         let replies = serve_safety(list, serving);
         let tools = replies[0]["result"]["tools"]
@@ -1386,20 +1396,17 @@ mod tests {
             }
         }
 
-        unsafe {
-            std::env::set_var("CONCAT_MCP_TIMEOUT_SCALE", "0.001");
-        }
         let written = Shared::default();
         let started = std::time::Instant::now();
         serve_with(
             Cursor::new(call("timeline_read", json!({ "path": "/tmp/p" })).into_bytes()),
             written.clone(),
             Box::new(Hangs),
-            Serving::default(),
+            Serving {
+                timeout_scale: Some(0.001),
+                ..Serving::default()
+            },
         );
-        unsafe {
-            std::env::remove_var("CONCAT_MCP_TIMEOUT_SCALE");
-        }
         let elapsed = started.elapsed();
         assert!(
             elapsed < Duration::from_secs(30),

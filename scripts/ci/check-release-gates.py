@@ -47,7 +47,7 @@ call = block(geneva, "  workflow_call:")
 if not re.search(r"(?m)^    inputs:\s*$", call) or not re.search(r"(?m)^      ref:\s*$", call):
     fail("Geneva must accept a reusable-workflow ref input")
 checkouts = re.findall(
-    r"(?ms)^      - uses: actions/checkout@[^\n]+\n((?:        .*\n)*)",
+    r"(?m)^      - uses: actions/checkout@[^\n]+\n((?:        [^\n]*\n)*)",
     geneva,
 )
 if len(checkouts) != 2 or any(

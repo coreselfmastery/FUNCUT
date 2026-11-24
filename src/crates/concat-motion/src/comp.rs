@@ -1193,6 +1193,11 @@ pub struct Word {
     /// When it stops being the current word. `None` means until the next.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<f64>,
+    /// The recogniser's confidence in this word, 0..=1, when the transcript
+    /// carried one. It rides the comp document so an uncertain word is still
+    /// uncertain after grouping, animation, a save and a reopen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
 }
 
 /// A shadow behind glyphs.
@@ -2657,16 +2662,19 @@ mod tests {
                     text: "make".into(),
                     start: 0.0,
                     end: Some(0.5),
+                    confidence: None,
                 },
                 Word {
                     text: "it".into(),
                     start: 0.5,
                     end: None,
+                    confidence: None,
                 },
                 Word {
                     text: "move".into(),
                     start: 1.2,
                     end: None,
+                    confidence: None,
                 },
             ],
             ..default_text()

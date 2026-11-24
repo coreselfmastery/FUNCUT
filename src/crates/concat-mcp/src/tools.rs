@@ -851,7 +851,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "transcribe",
             "Transcribe a recording",
-            "Transcribe a media file's speech; a job returning segments and word timings.",
+            "Transcribe a media file's speech; a job returning segments, word timings and confidences, the detected language, and the take's coverage. A multilingual model is chosen automatically; pass `language` when known.",
             "speech.transcribe",
             Raw,
         ),
@@ -1968,8 +1968,8 @@ fn motion_schema(name: &str) -> Option<Value> {
         json!({
             "type": "array",
             "description": "Authoring operations applied before anything else: set-slot, \
-             set-text, set-words, set-markup, move, retime, set-track, set-track-points, \
-             remap, set-noise-track (seeded), fade-in, slide-to, pop, add-group, add-rect, \
+             set-text, set-words, set-word-confidence, set-markup, move, retime, set-track, \
+             set-track-points, remap, set-noise-track (seeded), fade-in, slide-to, pop, add-group, add-rect, \
              add-text, add-chart, add-counter, add-particles, set-camera, set-blend, \
              set-opacity, set-duration, set-background, delete.",
             "items": { "type": "object" }

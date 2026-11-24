@@ -135,8 +135,12 @@ died with:
   each, the measured per-word times the kinetic captions and the SFX-peak
   placement read (docs claim the words; the engine measured them). The optional language hint is
   passed to Whisper (ISO code or BCP-47 tag; the primary tag is used).
-  English-only models reject explicit non-English hints; choose a multilingual
-  model such as `small` or `base` for other languages. `base.en` is the default.
+  English-only models reject explicit non-English hints; a multilingual model
+  is chosen automatically (`base` by default, `small` when a non-English
+  language is named), so Whisper detects the language instead of transliterating
+  it. The reply also carries `languageDetected`, `wordConfidence`,
+  `uncertainWords`, `coverage` and `glossaryMisses`, so a thin or doubtful
+  reading is visible before the edit is planned.
 - `tts_generate` - a voiceover spoken to a WAV in an open project's own
   audio folder; `output` is its path and length, ready for `media_import`.
   Voices are the same ids the Settings > Speech page shows (Kokoro 0-52);

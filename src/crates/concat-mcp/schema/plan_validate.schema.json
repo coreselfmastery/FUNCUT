@@ -14,7 +14,7 @@
           "type": "string"
         },
         "audio": {
-          "description": "Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
+          "description": "Voiceover and bed. Defaults: multilingual whisperModel base (small for a non-English language), TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
           "properties": {
             "bgm": {
               "properties": {
@@ -90,6 +90,11 @@
                   "type": "integer"
                 },
                 "whisperModel": {
+                  "type": "string",
+                  "description": "The recogniser's model for this take (e.g. base, small, base.en). The multilingual default applies when absent; an English-only model named against a non-English language is replaced by its multilingual counterpart."
+                },
+                "language": {
+                  "description": "The take's language as an ISO code or BCP-47 tag (bn, bn-BD, en, hi). When absent, the runner reads the plan's own script and otherwise lets whisper detect the language. A non-English language never runs on an English-only (.en) model.",
                   "type": "string"
                 }
               },

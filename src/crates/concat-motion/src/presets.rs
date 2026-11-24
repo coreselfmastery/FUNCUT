@@ -552,31 +552,37 @@ pub fn kinetic_caption() -> Comp {
             text: "Make".into(),
             start: 0.0,
             end: Some(0.45),
+            confidence: None,
         },
         Word {
             text: "it".into(),
             start: 0.45,
             end: Some(0.85),
+            confidence: None,
         },
         Word {
             text: "move.".into(),
             start: 0.85,
             end: Some(1.6),
+            confidence: None,
         },
         Word {
             text: "Make".into(),
             start: 1.6,
             end: Some(2.0),
+            confidence: None,
         },
         Word {
             text: "it".into(),
             start: 2.0,
             end: Some(2.4),
+            confidence: None,
         },
         Word {
             text: "yours.".into(),
             start: 2.4,
             end: None,
+            confidence: None,
         },
     ];
     let mut built = comp("funcut.caption.kinetic", "Kinetic caption", 1920, 1080, 4.0);

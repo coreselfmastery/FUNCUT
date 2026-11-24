@@ -107,6 +107,24 @@ fn known(id: &str) -> Option<&'static KnownModel> {
     KNOWN_MODELS.iter().find(|model| model.id == id)
 }
 
+/// Whether a model can only hear English. Whisper names those with an
+/// `.en` suffix, and they cannot refuse non-English audio - they
+/// transliterate it, which is the failure this is here to catch before
+/// the words are spent on captions.
+pub fn is_english_only(model_id: &str) -> bool {
+    known(model_id).map_or_else(|| model_id.ends_with(".en"), |model| model.english_only)
+}
+
+/// The same size model with every language, for an English-only id:
+/// `base.en` -> `base`, `small.en` -> `small`. `None` when the id is not
+/// one of the library's English-only models.
+pub fn multilingual_model(model_id: &str) -> Option<&'static str> {
+    known(model_id)
+        .filter(|model| model.english_only)
+        .and_then(|model| known(model.id.trim_end_matches(".en")))
+        .map(|model| model.id)
+}
+
 /// The file a model arrives as, and what it is called on the mirror.
 fn model_archive(id: &str) -> String {
     format!("ggml-{id}.bin")
@@ -341,6 +359,10 @@ pub struct Segment {
     /// estimates interpolated from them are not timing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub words: Vec<Word>,
+    /// The segment's own recognition confidence, 0..=1, the mean of its
+    /// words' token probabilities. Absent when the engine reported none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
 }
 
 /// One word, measured from the tokens it was made of.
@@ -353,6 +375,26 @@ pub struct Word {
     pub end: f64,
     /// The word itself, without the leading space that began it.
     pub text: String,
+    /// How sure whisper was of this word, 0..=1: the mean probability of
+    /// the tokens it was grouped from. Absent when the engine reported no
+    /// token probabilities. This is the reading an uncertain-word gate
+    /// spends; a word is not made true by being transcribed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+}
+
+/// One transcription's whole answer: the timed words, and the language the
+/// multilingual model heard when it detected one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Transcription {
+    /// The timed segments, relative to the transcribed window's start.
+    pub segments: Vec<Segment>,
+    /// The language whisper detected, as an ISO code, when the model is
+    /// multilingual; `None` for an English-only model or a failed
+    /// detection. A Bengali take read by `base.en` comes back with Latin
+    /// transliteration, so this field is what lets a caller notice that
+    /// the model and the audio disagreed.
+    pub language: Option<String>,
 }
 
 /// What to transcribe.
@@ -628,8 +670,23 @@ impl Transcriber {
         request: &TranscribeRequest,
         language_hint: Option<&str>,
         initial_prompt: Option<&str>,
-        mut progress: impl FnMut(JobStage) + Send + 'static,
+        progress: impl FnMut(JobStage) + Send + 'static,
     ) -> Result<Vec<Segment>, String> {
+        self.transcribe_detailed(dirs, request, language_hint, initial_prompt, progress)
+            .map(|transcription| transcription.segments)
+    }
+
+    /// [`Self::transcribe_with_language`], keeping the language the
+    /// multilingual model detected beside the words. An English-only
+    /// model reports no detection: it heard what it was built to hear.
+    pub fn transcribe_detailed(
+        &self,
+        dirs: &AppDirs,
+        request: &TranscribeRequest,
+        language_hint: Option<&str>,
+        initial_prompt: Option<&str>,
+        mut progress: impl FnMut(JobStage) + Send + 'static,
+    ) -> Result<Transcription, String> {
         let job = self.gate.begin("transcription")?;
         let cancel = job.cancel_handle();
 
@@ -764,7 +821,12 @@ impl Transcriber {
             return Err("transcription cancelled".to_owned());
         }
 
-        Ok(state
+        let language = if context.is_multilingual() {
+            language_code(state.full_lang_id_from_state())
+        } else {
+            None
+        };
+        let segments: Vec<Segment> = state
             .as_iter()
             .filter_map(|segment| {
                 // Whisper's timestamps are centiseconds.
@@ -779,10 +841,12 @@ impl Transcriber {
                 // and panic it, taking the whole transcription job down.
                 keep_segment(start, end, text).map(|mut seg| {
                     seg.words = words_of(&segment, start, end);
+                    seg.confidence = mean_confidence(&seg.words);
                     seg
                 })
             })
-            .collect())
+            .collect();
+        Ok(Transcription { segments, language })
     }
 
     /// Asks the running transcription to stop at its next check.
@@ -808,7 +872,33 @@ fn keep_segment(start: f64, end: f64, text: String) -> Option<Segment> {
         end,
         text,
         words: Vec::new(),
+        confidence: None,
     })
+}
+
+/// The ISO code whisper names a language id by. `None` for the "failed to
+/// detect" id (-1) and for an id whisper has no name for.
+fn language_code(id: i32) -> Option<String> {
+    if id < 0 {
+        return None;
+    }
+    whisper_rs::get_lang_str(id)
+        .filter(|code| !code.is_empty())
+        .map(str::to_owned)
+}
+
+/// A segment's confidence: the mean of its words' token probabilities,
+/// `None` when the engine reported none for any word.
+fn mean_confidence(words: &[Word]) -> Option<f32> {
+    let mut total = 0.0_f32;
+    let mut counted = 0_usize;
+    for word in words {
+        if let Some(confidence) = word.confidence {
+            total += confidence;
+            counted += 1;
+        }
+    }
+    (counted > 0).then(|| total / counted as f32)
 }
 
 /// Groups a segment's tokens into measured words.
@@ -833,16 +923,19 @@ fn words_of(segment: &whisper_rs::WhisperSegment<'_>, start: f64, end: f64) -> V
             .trim_matches('\u{fffd}')
             .to_owned();
         let data = token.token_data();
-        tokens.push((text, data.t0, data.t1));
+        tokens.push((text, data.t0, data.t1, data.p));
     }
     group_words(&tokens, start, end)
 }
 
-/// The grouping itself, on `(text, t0, t1)` in centiseconds - the part a
-/// test can run without a model behind it.
-fn group_words(tokens: &[(String, i64, i64)], start: f64, end: f64) -> Vec<Word> {
+/// The grouping itself, on `(text, t0, t1, probability)` in centiseconds -
+/// the part a test can run without a model behind it. A word's confidence
+/// is the mean probability of the tokens it was grouped from: a word is
+/// only as sure as its pieces, and whisper reports one probability per
+/// token, not per word.
+fn group_words(tokens: &[(String, i64, i64, f32)], start: f64, end: f64) -> Vec<Word> {
     let mut words = Vec::new();
-    let mut current: Option<(String, f64, f64)> = None;
+    let mut current: Option<(String, f64, f64, f32, usize)> = None;
     // A clamp needs low <= high: a hallucinated segment whose end fell
     // before its start must cost the segment, not panic the job - and this
     // must hold even if a future caller measures the words before the
@@ -852,7 +945,8 @@ fn group_words(tokens: &[(String, i64, i64)], start: f64, end: f64) -> Vec<Word>
     } else {
         (end, start)
     };
-    for (text, t0, t1) in tokens {
+    let probability = |p: f32| p.is_finite().then(|| p.clamp(0.0, 1.0));
+    for (text, t0, t1, p) in tokens {
         // Stage directions arrive space-led too (" [BLANK_AUDIO]"), so the
         // bracket check reads the trimmed text.
         let stage = text.trim();
@@ -862,34 +956,47 @@ fn group_words(tokens: &[(String, i64, i64)], start: f64, end: f64) -> Vec<Word>
         let t0 = (*t0 as f64 / 100.0).clamp(lo, hi);
         let t1 = (*t1 as f64 / 100.0).clamp(lo, hi);
         let opens_word = text.starts_with(' ') || current.is_none();
-        if let Some((closed, word_start, word_end)) = current.take_if(|_| opens_word) {
-            push_word(&mut words, closed, word_start, word_end);
+        if let Some((closed, word_start, word_end, sum, count)) = current.take_if(|_| opens_word) {
+            push_word(&mut words, closed, word_start, word_end, sum, count);
         }
-        if let Some((word, _, word_end)) = current.as_mut() {
+        if let Some((word, _, word_end, sum, count)) = current.as_mut() {
             word.push_str(text);
             *word_end = t1;
+            if let Some(p) = probability(*p) {
+                *sum += p;
+                *count += 1;
+            }
         } else {
             let word = text.trim_start();
             if !word.is_empty() {
-                current = Some((word.to_owned(), t0, t1));
+                let (sum, count) = probability(*p).map_or((0.0, 0), |p| (p, 1));
+                current = Some((word.to_owned(), t0, t1, sum, count));
             }
         }
     }
-    if let Some((text, word_start, word_end)) = current.take() {
-        push_word(&mut words, text, word_start, word_end);
+    if let Some((text, word_start, word_end, sum, count)) = current.take() {
+        push_word(&mut words, text, word_start, word_end, sum, count);
     }
     words
 }
 
 /// Closes one word, dropping the empty ones a run of skipped tokens can
 /// leave behind.
-fn push_word(words: &mut Vec<Word>, text: String, start: f64, end: f64) {
+fn push_word(
+    words: &mut Vec<Word>,
+    text: String,
+    start: f64,
+    end: f64,
+    probability_sum: f32,
+    probability_count: usize,
+) {
     let text = text.trim();
     if !text.is_empty() && end > start {
         words.push(Word {
             start,
             end,
             text: text.to_owned(),
+            confidence: (probability_count > 0).then(|| probability_sum / probability_count as f32),
         });
     }
 }
@@ -967,8 +1074,8 @@ mod tests {
     #[test]
     fn an_end_before_its_start_clamps_instead_of_panicking() {
         let tokens = vec![
-            (" backwards".to_owned(), 500, 200),
-            (" span".to_owned(), 200, 100),
+            (" backwards".to_owned(), 500, 200, 0.9),
+            (" span".to_owned(), 200, 100, 0.9),
         ];
         let words = group_words(&tokens, 5.0, 3.0);
         // The swap keeps every timestamp inside 3.0..=5.0 - a wrong but
@@ -980,7 +1087,7 @@ mod tests {
         }
         // The empty and single-token edges clamp quietly too.
         assert!(group_words(&[], 2.0, 1.0).is_empty());
-        let one = group_words(&[(" alone".to_owned(), 0, 50)], 1.0, 0.0);
+        let one = group_words(&[(" alone".to_owned(), 0, 50, 0.9)], 1.0, 0.0);
         assert!(one.is_empty() || one[0].end <= 1.0);
     }
 
@@ -990,14 +1097,14 @@ mod tests {
     #[test]
     fn tokens_group_into_measured_words() {
         let tokens = vec![
-            (" Hello".to_owned(), 0, 30),
-            (" wor".to_owned(), 30, 62),
-            ("ld".to_owned(), 62, 90),
-            ("[_TT_700]".to_owned(), 90, 120),
-            (" 5".to_owned(), 120, 150),
-            (" fall".to_owned(), 150, 200),
-            ("acies".to_owned(), 200, 250),
-            (" [BLANK_AUDIO]".to_owned(), 250, 280),
+            (" Hello".to_owned(), 0, 30, 0.9),
+            (" wor".to_owned(), 30, 62, 0.9),
+            ("ld".to_owned(), 62, 90, 0.9),
+            ("[_TT_700]".to_owned(), 90, 120, 0.9),
+            (" 5".to_owned(), 120, 150, 0.9),
+            (" fall".to_owned(), 150, 200, 0.9),
+            ("acies".to_owned(), 200, 250, 0.9),
+            (" [BLANK_AUDIO]".to_owned(), 250, 280, 0.9),
         ];
         let words = group_words(&tokens, 0.0, 2.8);
         let text = |word: &Word| word.text.clone();
@@ -1013,11 +1120,55 @@ mod tests {
         assert_eq!(words[3].end, 2.5);
         // A token whose attention ran past its segment clamps to it: a
         // caption never ends after the sentence it belongs to.
-        let runaway = vec![(" out".to_owned(), 250, 9999)];
+        let runaway = vec![(" out".to_owned(), 250, 9999, 0.9)];
         let words = group_words(&runaway, 2.5, 2.8);
         assert_eq!(words[0].end, 2.8);
         // Nothing kept but stage directions: no words, no panic.
-        assert!(group_words(&[("[_TT_150]".to_owned(), 0, 150)], 0.0, 1.5).is_empty());
+        assert!(group_words(&[("[_TT_150]".to_owned(), 0, 150, 0.9)], 0.0, 1.5).is_empty());
+    }
+
+    /// A word's confidence is the mean of the token probabilities it was
+    /// grouped from, so a piece the recogniser doubted drags the word's
+    /// confidence down instead of being averaged away at segment level.
+    #[test]
+    fn a_words_confidence_is_the_mean_of_its_token_probabilities() {
+        let tokens = vec![
+            (" sure".to_owned(), 0, 30, 0.98),
+            (" doubt".to_owned(), 30, 60, 0.42),
+            ("ful".to_owned(), 60, 90, 0.52),
+            (" certain".to_owned(), 90, 120, 0.90),
+        ];
+        let words = group_words(&tokens, 0.0, 1.2);
+        let confidence = |word: &Word| word.confidence.expect("whisper reported probabilities");
+        assert!((confidence(&words[0]) - 0.98).abs() < 1e-6);
+        assert!((confidence(&words[1]) - 0.47).abs() < 1e-6);
+        assert!((confidence(&words[2]) - 0.90).abs() < 1e-6);
+        let mean = mean_confidence(&words).expect("the segment has words");
+        assert!((mean - (0.98 + 0.47 + 0.90) / 3.0).abs() < 1e-6);
+    }
+
+    /// A non-finite probability is not a confidence reading: the word is
+    /// kept, its confidence absent, and the segment does not average a
+    /// NaN into every word beside it.
+    #[test]
+    fn a_non_finite_token_probability_leaves_the_word_unrated() {
+        let words = group_words(&[(" odd".to_owned(), 0, 30, f32::NAN)], 0.0, 0.3);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].confidence, None);
+        assert_eq!(mean_confidence(&words), None);
+    }
+
+    /// The `.en` suffix is the model's own word for "English only", and the
+    /// multilingual counterpart is the same size with the suffix dropped.
+    #[test]
+    fn english_only_models_name_their_multilingual_counterpart() {
+        assert!(is_english_only("base.en"));
+        assert!(!is_english_only("base"));
+        assert!(!is_english_only("small"));
+        assert_eq!(multilingual_model("base.en"), Some("base"));
+        assert_eq!(multilingual_model("small.en"), Some("small"));
+        assert_eq!(multilingual_model("tiny.en"), Some("tiny"));
+        assert_eq!(multilingual_model("base"), None);
     }
 
     #[test]

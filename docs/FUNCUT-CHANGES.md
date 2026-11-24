@@ -32,6 +32,30 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## YouTube package (2026-11-24)
+
+- **The AUTO EDIT plan carries a publishing half.** A `youtube` object
+  names the mode (`short`, `reel` or `longform`), the creative profile
+  the narration's words support, five title directions tied to the
+  brief's actual payoff, three thumbnail concepts with the `frameAt`
+  second to sample, up to three transcript-backed Short windows with
+  their measured scores, and a section-by-section retention map with the
+  one fix the edit vocabulary can apply. See
+  [`docs/YOUTUBE.md`](YOUTUBE.md).
+- **The Short finder measures instead of guessing.** It slides whole
+  transcript lines to the target length and scores the opening question,
+  the delivery intensity, a payoff phrase, the spoken coverage and the
+  duration band. It keeps the top three and refuses two candidates that
+  start within five seconds of each other.
+- **The package is honest about its limits.** Titles carry the brief's
+  promise, not a new claim. Thumbnails are frames and text, not rendered
+  images. Short scores rank candidates inside one run; they do not
+  predict views or retention.
+- **The plan test covers the package.** It asserts the mode, profile,
+  five titles, three thumbnail frames, a non-empty Short list and one
+  retention entry per section. The plan remains valid to `plan_validate`,
+  which accepts the additional section without requiring it.
+
 ## Hardening pass (2026-11-24)
 
 - **The panic save runs once.** A panic inside the last-chance save used to

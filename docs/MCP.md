@@ -633,10 +633,16 @@ The reply carries `project` (the folder to open next), `copy`, `outcome`
 runner's full `state` with its stage-by-stage receipt. Every stage record
 carries `elapsedMs` - the wall-clock time that stage spent - and the
 resumed stages carry `0`, so a slow run names its slow stage instead of
-leaving it to guesswork. It also writes `auto-edit-report.json` and, when
-the run reached the end, `auto-edit-receipt.json` beside the edit. A
-failed or cancelled run is returned as an error outcome with the same
-state, so an agent can read the stage that stopped it instead of guessing.
+leaving it to guesswork. The plan also carries a `youtube` package: the
+mode and creative profile, five title directions, three thumbnail
+`frameAt` concepts, up to three transcript-backed Short windows with
+their scores, and a section-by-section retention map. See
+[docs/YOUTUBE.md](YOUTUBE.md); no thumbnail image is rendered, and the
+`frameAt` times are `preview_frame` targets. It also writes
+`auto-edit-report.json` and, when the run reached the end,
+`auto-edit-receipt.json` beside the edit. A failed or cancelled run is
+returned as an error outcome with the same state, so an agent can read
+the stage that stopped it instead of guessing.
 
 The fixed spine does not export: it leaves the finished, editable
 timeline. Call `export_start` with the returned `project` when the file

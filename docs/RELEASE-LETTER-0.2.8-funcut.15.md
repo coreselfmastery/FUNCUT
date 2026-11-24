@@ -2,8 +2,9 @@
 
 To whoever installs this build,
 
-This is the note that accompanies `v0.2.8-funcut.15`, cut on 23 November
-2026. It carries everything `.14` carries - the headless AUTO EDIT tool,
+This is the note that accompanies `v0.2.8-funcut.15`, first cut on 23
+November 2026 and re-cut on 24 November 2026 with the side-branch work.
+It carries everything `.14` carries - the headless AUTO EDIT tool,
 the sandbox install path, the one-Geneva-surface work, the creative
 contract, the signal consumers, the stock-redirect hardening and the
 `.14` CI fixes - plus the work that was still on side branches when `.14`

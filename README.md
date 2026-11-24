@@ -46,7 +46,7 @@
 
 ---
 
-## What's new in `0.2.8-funcut.15` — 23 November 2026
+## What's new in `0.2.8-funcut.15` — 24 November 2026
 
 `.15` is `.14` plus the native 3D scene layer, a directed AUTO EDIT fallback and a multilingual transcription repair.
 

@@ -17069,7 +17069,7 @@ mod tests {
         assert!(
             youtube["quality"]["checks"]
                 .as_array()
-                .is_some_and(|checks| checks.len() >= 5
+                .is_some_and(|checks| checks.len() >= 7
                     && checks.iter().all(|check| {
                         check["check"].is_string()
                             && check["verdict"].is_string()
@@ -17077,6 +17077,20 @@ mod tests {
                     })),
             "every quality check names what it measured"
         );
+        let checks = youtube["quality"]["checks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for named in [
+            "every segment has a picture",
+            "the timeline is covered",
+            "every Short inside the runtime",
+        ] {
+            assert!(
+                checks.iter().any(|check| check["check"] == json!(named)),
+                "the quality report names {named}"
+            );
+        }
         let checked =
             crate::tools::validate_plan_tool(ask.arguments.clone()).expect("the plan validates");
         assert_eq!(

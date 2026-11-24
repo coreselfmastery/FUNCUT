@@ -48,7 +48,7 @@
 
 ## What's new in `0.2.8-funcut.15` — 23 November 2026
 
-`.15` is `.14` plus the native 3D scene layer.
+`.15` is `.14` plus the native 3D scene layer, a directed AUTO EDIT fallback and a multilingual transcription repair.
 
 ### Native CPU 3D scenes
 
@@ -66,6 +66,20 @@ Two authoring ops open it: `add-scene3d` and `set-scene3d`. The preset shelf gre
 Measured on the reference CPU-only box: **~0.7 seconds per 1920×1080 frame** for the four-object showcase. An 8-second, 30 fps scene is roughly **2.8 minutes**; `samples: 2` costs about **4×** that. Keep scenes to a few dozen objects at 1080p.
 
 Engine routing is explicit: a comp whose only engine-specific feature is `scene3d` resolves to **native** even when the Geneva sidecar is installed; a comp that also carries markup keeps **Geneva** and warns that it cannot draw the scene.
+
+### Directed AUTO EDIT
+
+The one-click fallback now auditions three visual directions — documentary, kinetic explainer and cinematic essay — from the transcript’s topic words, frame, runtime and measured delivery. The strongest sets the style bible, grade, captions, motion, sound and B-roll vocabulary; all three stay in `retention.creativeAlternatives` with scores and reasons.
+
+It writes a five-beat story — hook, curiosity gap, progression, payoff, ending — plus intro, re-hook, CTA and outro for longform. A retention pass names boring stretches, repeated explanations and weak transitions and moves a pattern break to each. A variety pass rotates shot scale, entrance and B-roll category so neighbours do not repeat.
+
+Beat-aware editing lands each segment’s entrance on the strongest measured stressed word inside its source span; two stressed neighbours alternate punch and whip. The Director prompt carries the same contract even for a one-line request.
+
+### Multilingual transcription
+
+The transcriber no longer runs English-only Whisper on a non-English take. It reads the plan’s language or lets Whisper detect it, swaps an English-only `.en` model for its multilingual counterpart, and checks both the script and the detected language.
+
+The reply carries word confidences, uncertain-word flags, the detected language, duration-aware coverage, the glossary and its misses. The planner gets the full verified transcript, and transcript-to-timeline verification checks the words the render actually speaks.
 
 ### Everything from `.14`
 

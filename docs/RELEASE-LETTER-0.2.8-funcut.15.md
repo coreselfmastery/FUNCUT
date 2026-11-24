@@ -6,11 +6,14 @@ This is the note that accompanies `v0.2.8-funcut.15`, cut on 23 November
 2026. It carries everything `.14` carries - the headless AUTO EDIT tool,
 the sandbox install path, the one-Geneva-surface work, the creative
 contract, the signal consumers, the stock-redirect hardening and the
-`.14` CI fixes - plus the one piece of Geneva work that was still on a
-side branch when `.14` was tagged: the native 3D scene layer.
+`.14` CI fixes - plus the work that was still on side branches when `.14`
+was tagged: the native 3D scene layer, the AUTO EDIT direction pass and
+the multilingual transcription repair.
 
 If you are here for the short version: `.15` is `.14` with a real 3D
-scene node. The rest of the editor is unchanged.
+scene node, an AUTO EDIT fallback that directs the film from the material,
+and a transcriber that no longer runs English-only Whisper on a
+non-English take.
 
 ## What this release is
 
@@ -54,6 +57,46 @@ a `scene3d` node resolves to native even when the Geneva sidecar is
 installed. A comp that also carries markup keeps Geneva, and the bake
 warns that Geneva cannot draw the scene rather than dropping it
 silently.
+
+## The AUTO EDIT direction pass
+
+The one-click fallback no longer fills a timeline from whatever the
+transcript happened to say. It auditions three films - an evidence-first
+documentary, a kinetic explainer and a cinematic essay - from the
+transcript's topic words, the frame, the runtime and the measured
+delivery. The strongest sets the style bible, grade family, caption
+hand, motion hand, sound world and B-roll vocabulary; all three stay in
+`retention.creativeAlternatives` with their scores and the reason.
+
+The plan writes a five-beat skeleton - hook, curiosity gap, progression,
+payoff and ending - and a longform cut gets an intro, a re-hook at the
+retention dip, a CTA and an outro. A retention pass names long low-energy
+stretches, repeated three-word explanations and weak transitions, then
+moves a pattern break, a cut or a new visual to each. A variety pass
+rotates shot scale, entrance and B-roll category so no two neighbours
+repeat, and records `visualVariety`.
+
+Where `voice_signals` measured an emphasis peak inside a segment's source
+span, the segment carries the beat and its entrance lands on that word.
+Two stressed neighbours alternate punch and whip, so the accent never
+repeats by accident. The Director prompt carries the same contract even
+when the user's request is one line.
+
+## Multilingual transcription
+
+The transcriber no longer runs English-only Whisper on a non-English
+take. It reads the plan's language, or lets Whisper detect it, and
+replaces an English-only `.en` model with its multilingual counterpart
+when the language is not English. A script check and a detected-language
+check catch the same-script cases a model name alone cannot.
+
+The reply now carries word confidences, uncertain-word flags, the
+detected language, duration-aware speech coverage, the glossary and the
+terms it did not carry. The planner receives the full verified
+transcript, and transcript-to-timeline verification compares the words
+the render actually speaks. The plan schema names `language` and the
+multilingual model defaults, so a Bengali, Hindi or mixed-language take
+is not quietly forced through an English-only path.
 
 ## Everything `.14` carries
 

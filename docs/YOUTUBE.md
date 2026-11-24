@@ -22,7 +22,7 @@ applied.
 | `thumbnails` | Three concepts, each with `frameAt`, `subject`, `text`, `composition` and `reason`. |
 | `shorts` | Up to three transcript windows, each with `start`, `end`, `duration`, `hook`, `payoff`, `score`, `scoreBreakdown`, `standalone`, `standaloneWhy`, `thumbnailAt`, `reframe`, `captions`, `title`, `why` and `text`. |
 | `retentionMap` | One entry per story section: `role`, `start`, `end`, `risk`, `score`, `reason` and the one `fix` the edit vocabulary can apply. |
-| `quality` | A plan-level report: `verdict` (`pass`, `warn` or `fail`) and the `checks` behind it - hook length, payoff position, retention risks, neighbour repeats, title count, thumbnail frames and Short bounds. |
+| `quality` | A plan-level report: `verdict` (`pass`, `warn` or `fail`) and the `checks` behind it - hook length, payoff position, retention risks, neighbour repeats, title count, thumbnail frames, Short bounds, every segment's picture and the timeline's measured coverage. |
 | `publishingChecklist` | The checks a person still owes before publishing. |
 
 `frameAt` and every Short time are seconds on the finished timeline. The
@@ -87,7 +87,9 @@ the second door, not the measured hook, turn, payoff or retention risk.
 - Thumbnail text is a starting composition. It is not a designed image.
 - Short scores rank candidates inside one run. They are not a prediction
   of views, retention or click-through rate.
-- `quality` checks the plan, not the rendered file. Black frames,
+- `quality` checks the plan, not the rendered file. It does check that
+  every segment names a picture and that the segments cover at least 95%
+  of the runtime; black frames,
   clipping, caption placement and audio balance belong to `watch_render`
   and `craft_critique`, which see pixels and samples.
 - Real YouTube Studio retention can only improve this later. No plan

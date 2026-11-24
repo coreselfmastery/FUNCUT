@@ -4989,6 +4989,7 @@ fn youtube_quality(
     titles: &Value,
     thumbnails: &Value,
     shorts: &[Value],
+    segments: &[Value],
     runtime: f64,
 ) -> Value {
     let section = |role: &str| {
@@ -5093,6 +5094,49 @@ fn youtube_quality(
             true,
             format!("{} Short windows", shorts.len()),
         ),
+        quality_check(
+            "every segment has a picture",
+            segments.iter().all(|segment| {
+                segment
+                    .pointer("/visual/type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| !kind.is_empty())
+            }),
+            false,
+            format!("{} segments carry a visual type", segments.len()),
+        ),
+        quality_check(
+            "the timeline is covered",
+            runtime <= 0.0
+                || segments
+                    .iter()
+                    .map(|segment| {
+                        let start = segment["start"].as_f64().unwrap_or_default();
+                        let end = segment["end"].as_f64().unwrap_or(start);
+                        (end - start).max(0.0)
+                    })
+                    .sum::<f64>()
+                    / runtime
+                    >= 0.95,
+            false,
+            format!(
+                "{:.1}% of the runtime is inside a segment",
+                if runtime > 0.0 {
+                    segments
+                        .iter()
+                        .map(|segment| {
+                            let start = segment["start"].as_f64().unwrap_or_default();
+                            let end = segment["end"].as_f64().unwrap_or(start);
+                            (end - start).max(0.0)
+                        })
+                        .sum::<f64>()
+                        / runtime
+                        * 100.0
+                } else {
+                    100.0
+                }
+            ),
+        ),
     ];
     let verdict = if checks.iter().any(|check| check["verdict"] == "fail") {
         "fail"
@@ -5191,6 +5235,7 @@ fn youtube_package(
     aspect: &str,
     runtime: f64,
     sections: &Value,
+    segments: &[Value],
     brief: &serde_json::Map<String, Value>,
     subjects: &[String],
     moments: &[(f64, f64, String)],
@@ -5247,6 +5292,7 @@ fn youtube_package(
         &titles,
         &thumbnails,
         &shorts,
+        segments,
         runtime,
     );
     json!({
@@ -5868,6 +5914,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         aspect,
         runtime,
         &sections,
+        &segments,
         &brief,
         &subjects,
         &transcript_moments,

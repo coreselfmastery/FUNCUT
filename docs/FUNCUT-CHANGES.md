@@ -51,6 +51,10 @@ playback cache.
   promise, not a new claim. Thumbnails are frames and text, not rendered
   images. Short scores rank candidates inside one run; they do not
   predict views or retention.
+- **The quality report also checks the spine.** Two more plan-level
+  checks: every segment names a visual type, and the segments cover at
+  least 95% of the measured runtime. They sit beside the hook, payoff,
+  retention, repeat, title, thumbnail and Short checks.
 - **Each Short is an actionable package, not a window.** A Short now
   carries the parts of its score, a standalone check with its reason,
   the frame to sample for its thumbnail, its vertical reframe, its

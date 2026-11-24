@@ -32,6 +32,33 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The sound reader (`sound_sense.py`)
+
+- **The shelf now has an ear.** `concat-mcp/sense/sound_sense.py` decodes a
+  sound and measures what it is - duration, peak and RMS level, crest,
+  attack, body, decay, transients, band balance, spectral centroid,
+  flatness (noise against tone), spectral flux (does the spectrum move),
+  level climb - then scores six cut-time roles from those numbers with the
+  evidence returned beside each fit, and reports where a manifest's
+  `syncAt` disagrees with the file's real peak. Four tools:
+  `describe_sound`, `rank_sounds`, `check_placement`, `index_library`; 24
+  stdlib selftest checks in CI.
+- **What it found in the bundled 530.** One pass in 111 s, 17 MB peak RSS.
+  Against `syncAt`: 30% of the files are off by more than 100 ms and 15%
+  by more than 300 ms - a maximum of 3.02 s - so an accent chosen for a cut
+  was landing up to three seconds from it, and nothing downstream could
+  tell. Roles over the shelf's own categories: Impact → `action_impact`
+  30/83, UI → `gentle_entrance` 47/81, Ambience → `cinematic_reveal`
+  15/27, Notification → `gentle_entrance` 25/28.
+- **Where it is weak, said plainly.** `quick_transition` scores 1.7x the
+  uniform baseline at P@64 against the curator's labels (foley and digital
+  sweeps measure like whooshes); every other role is 2.4x to 6.1x. The
+  reasoned audit, the measurement glossary and the per-category table are
+  [`docs/SOUND-SENSE.md`](SOUND-SENSE.md).
+- **Not wired yet.** No Rust call site invokes it; §6 of the audit names
+  the exact places that would (`sounds.rs::search`, `bgm_search`,
+  `sfx_queries_for_emotion`, and the critic's audio stage).
+
 ## AUTO EDIT's direction pass (`.15` tree)
 
 - **The one-click edit auditions three films.** The deterministic fallback

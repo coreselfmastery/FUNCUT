@@ -4720,7 +4720,15 @@ fn vary_segments(segments: &mut [Value], direction: VisualDirection) {
             segment["visual"]["queries"] = json!([query, decorated.clone()]);
             segment["visual"]["query"] = json!(decorated);
         }
-        let mut anim = direction.entrance(index, &act).to_owned();
+        let mut anim = if segment.get("beat").is_some() {
+            if last_anim.as_deref() == Some("punch") {
+                "whip".to_owned()
+            } else {
+                "punch".to_owned()
+            }
+        } else {
+            direction.entrance(index, &act).to_owned()
+        };
         if last_anim.as_deref() == Some(anim.as_str()) {
             anim = direction.next_entrance(&anim).to_owned();
         }
@@ -4776,6 +4784,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         return None;
     }
     let read = emotion_lines(log, takes);
+    let reads = voice_reads(log, takes);
     // The segments are the spine as the handoff left it: one span per
     // placed clip, MERGED where clips overlap - an a-roll handoff places
     // the voice and its face together, and one span of timeline cannot
@@ -4967,6 +4976,14 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 segment["colourTemp"] = json!(line.temperature);
                 segment["act"] = json!(line.act);
                 segment["duckDb"] = json!(line.duck_db);
+                if let Some(at) = emphasis_moment(&reads, &line.take, start, end) {
+                    segment["beat"] = json!({
+                        "at": round3(at),
+                        "signal": "emphasisWords",
+                        "why": "the strongest stressed word inside the span; the entrance lands on it",
+                    });
+                    segment["in"]["anim"] = json!("punch");
+                }
             }
             segment
         })
@@ -5086,7 +5103,6 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // built from the reading it stands on, and an entry with nothing
     // measured behind it is left out rather than dressed in a plausible
     // signal name.
-    let reads = voice_reads(log, takes);
     let measured_pauses = reads.iter().any(|read| !read.pauses.is_empty());
     // The words are the transcript's, not the profile's: the caption
     // stage sets the timed words whether or not the voice reading ran,
@@ -11412,6 +11428,22 @@ mod tests {
         );
         assert!(!analysis["boringStretches"].as_array().unwrap().is_empty());
         assert!(!analysis["weakTransitions"].as_array().unwrap().is_empty());
+    }
+
+    /// A measured stress inside a span outranks the direction's rotation:
+    /// the entrance lands on the word, and two stressed neighbours
+    /// alternate accents instead of repeating one.
+    #[test]
+    fn a_stressed_word_keeps_the_entrance_on_the_beat() {
+        let mut segments = vec![
+            json!({ "start": 0.0, "end": 2.0, "act": "body",
+                    "beat": { "at": 1.0 }, "in": { "anim": "pop" } }),
+            json!({ "start": 2.0, "end": 4.0, "act": "body",
+                    "beat": { "at": 3.0 }, "in": { "anim": "pop" } }),
+        ];
+        vary_segments(&mut segments, VisualDirection::Cinematic);
+        assert_eq!(segments[0]["in"]["anim"], json!("punch"));
+        assert_eq!(segments[1]["in"]["anim"], json!("whip"));
     }
 
     /// The variety pass never lets two neighbours share a shot scale or

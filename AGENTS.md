@@ -164,6 +164,15 @@ one has:
   launching the binary. `CARGO_PROFILE_DEV_DEBUG: "0"` aligns the dev
   artifacts with the ones the test build already produced, and the
   headless binaries' own Slint codegen and link get a step of their own.
+  Cargo resolves features per invocation, so the later `-p concat-cli`
+  build unified them differently and recompiled the tree again; the smoke
+  and the 4 GiB benchmark now run the binaries that step built.
+- **A benchmark with no ffmpeg to make its clip with.** The 4 GiB step
+  generates its source clip with `ffmpeg`, and the engine job installs the
+  BtbN bundle for its *libraries* only - no CLI on the PATH - so the step
+  died on `no --video and no ffmpeg`. The pinned bundle carries the
+  executables too; `ffmpeg-dev/bin` joins the PATH now, with a `test -x`
+  in the install step so a bundle without them fails there instead.
 - **A retry that gives up too early.** `scripts/ci/fetch.sh` retried the
   release CDN five times over 62 seconds while the CDN was returning 500s
   for 61 of them. Backoff is 2/4/8/16/32s per attempt, digest re-verified

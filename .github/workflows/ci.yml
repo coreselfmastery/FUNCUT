@@ -254,16 +254,20 @@ jobs:
 
       # Ubuntu's packaged FFmpeg is older than the 7 the engine needs, so the
       # libraries come from BtbN, and FFMPEG_DIR tells the bindings where.
+      # The same bundle carries the binaries, and the 4 GB benchmark generates
+      # its own clip with them, so bin joins the PATH here rather than apt
+      # pulling a second, older FFmpeg for one step. The `test -x` names a
+      # bundle that stopped shipping them here, not forty minutes later.
       - name: FFmpeg development libraries
         run: |
           set -euo pipefail
           scripts/ci/fetch.sh ffmpeg-linux64 ffmpeg.tar.xz
           mkdir -p ffmpeg-dev
           tar -xf ffmpeg.tar.xz -C ffmpeg-dev --strip-components=1
-          echo "FFMPEG_DIR=$PWD/ffmpeg-dev" >> "$GITHUB_ENV"
-          # The 4 GB benchmark generates its own clip with the binary, not
-          # just the libraries the bindings link.
+          test -x ffmpeg-dev/bin/ffmpeg
+          ffmpeg-dev/bin/ffmpeg -version | head -n 1
           echo "$PWD/ffmpeg-dev/bin" >> "$GITHUB_PATH"
+          echo "FFMPEG_DIR=$PWD/ffmpeg-dev" >> "$GITHUB_ENV"
 
       # ONNX Runtime as a shared library, linked dynamically, for the reason
       # build-app.yml gives: a static one beside sherpa-onnx's is the same
@@ -367,7 +371,9 @@ jobs:
       # as a test harness: its own Slint codegen and its link are still
       # cold here, and they are the slowest single unit in the workspace.
       # Build both headless binaries once, so the smoke and the 4 GiB
-      # benchmark below run rather than compile.
+      # benchmark run the artifacts rather than build their own: cargo
+      # resolves features per invocation, so a later `-p concat-cli` on its
+      # own would unify them differently and recompile the tree again.
       - name: Build the headless binaries
         timeout-minutes: 45
         working-directory: src
@@ -376,24 +382,20 @@ jobs:
       # app; running it here too means a change that breaks the headless
       # launch is named on the pull request, not after a release tag.
       - name: The headless smoke runs on every change
-        # The headless binaries are built in their own step now, so this
-        # is a run rather than a compile. The ceiling stays above the
-        # measured smoke and leaves room for a cache miss.
+        # The binaries are the ones the step above built; this is a run,
+        # and the ceiling is a hang guard well above the measured seconds.
         timeout-minutes: 60
         working-directory: src
-        run: cargo run -j 1 -p concat -- --smoke
+        run: ./target/debug/concat --smoke
       # The 4 GB laptop is the target, so a small run is held to that
       # ceiling here: a generated 1080p clip, a few random preview frames
       # and a short render, with each child's address space capped at 4 GiB.
       - name: The small-machine run fits a 4 GB memory cap
         # concat-cli is built in the headless step; this ceiling is for
-        # the generated clip, previews and render, with room for a cache
-        # miss on the build.
+        # the generated clip, the previews and the render.
         timeout-minutes: 40
         working-directory: src
-        run: |
-          cargo build -j 1 -p concat-cli
-          python3 ../scripts/benchmark.py --cli target/debug/concat-cli --scrubs 5 --render-frames 3 --memory-limit-mb 4096
+        run: python3 ../scripts/benchmark.py --cli target/debug/concat-cli --scrubs 5 --render-frames 3 --memory-limit-mb 4096
       # SCH-02: the two committed plan schemas are generated from the
       # plan types and the template, never hand-edited. The drift test in
       # concat-mcp's own suite answers the same question; this step puts

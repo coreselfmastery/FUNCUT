@@ -4,7 +4,7 @@
 > [docs/FEATURES.md](docs/FEATURES.md). This page carries Geneva's own
 > dated detail.
 
-**Last reconciled:** 23 November 2026  
+**Last reconciled:** 24 November 2026  
 **Repository:** `coreselfmastery/FUNCUT`  
 **Canonical implementation:** `src/crates/concat-motion`  
 **Sidecar contract:** Geneva 1.6.0, pinned by the installer and CI dependency lock  
@@ -14,11 +14,11 @@
 
 Geneva is a substantial, integrated motion-rendering path, not a placeholder. The four pillars—Creative, Performance, Reliability and Agent—are implemented in the repository. The ten findings in the original 1 November register are recorded as closed in the 3 November postscript. The current Geneva workflow also exercises the real sidecar, rendered output, scene-quality floors and golden-frame comparisons.
 
-**Do not interpret this as proof that every FUNCUT release requirement is complete.** This page is scoped to Geneva. It does not certify the separate full AI Director workflow, target-laptop performance, or the editor's general release readiness. The latest observed `main` commit is `fa68c059945e0eef9151d0fd2010134f41620c05`, which merged PR #200 on 22 November 2026. PR #200's head `84f553d09a8a7885f43f8395a4643123bf2a3ff0` passed all seven PR-head check-runs (CI 3/3, Geneva 2/2 and Build app 2/2); the PR changed 85 files and had no formal review submissions or inline review threads. All seven CI/Geneva/Build-app check-runs on the exact merge SHA have now also completed successfully; Nix and RustSec remain on a previous SHA.
+**Do not interpret this as proof that every FUNCUT release requirement is complete.** This page is scoped to Geneva. It does not certify the separate full AI Director workflow, target-laptop performance, or the editor's general release readiness.
 
-**Exact-main validation on `fa68c059945e0eef9151d0fd2010134f41620c05` completed successfully for the workflows triggered by this source change.** CI run [45047192734](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192734) passed all three jobs: Format/locales/models, real-fixture analysis and Engine tests/lints. The engine log records 2,246 workspace tests passed, 13 skipped and one slow; the gRPC suite passed 30/30; workspace and gRPC Clippy, documentation examples and generated-plan schema checks passed. Geneva run [45047192665](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192665) passed both jobs, and Build app run [45047192666](https://github.com/coreselfmastery/FUNCUT/actions/runs/45047192666) passed Linux x86_64 and aarch64. The earlier Nix and RustSec successes are on `c8505e021f72824bfe5f6a08dda141522b2db690`, not this merge SHA. A fresh RustSec run on the previous PR #202 head found `RUSTSEC-2026-0592` in `url 2.5.8`. Updated PR #202 head `53213b2dcec42ab323ef6f87ea14fab4aac36c71` upgrades `url` to `2.5.9` and its compatible `form_urlencoded` lock to `1.2.3`. RustSec passes on that head in [run 45053366735](https://github.com/coreselfmastery/FUNCUT/actions/runs/45053366735), with 11 allowed warnings (nine unmaintained crates and two yanked versions); Format/locales/models and real-fixture analysis pass in [run 45053366739](https://github.com/coreselfmastery/FUNCUT/actions/runs/45053366739). Engine tests, both Geneva jobs, both Linux package jobs and Nix remain in progress on the updated head. These are PR-head checks, not current-main evidence.
+**Exact-main validation on `bd1de9d073e5ba198bffe1c837dcee806db0f777` (24 November 2026).** This commit merges PR #209. The exact-main CI run [45394932229](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932229) passed all three jobs: Format/locales/models, real-fixture analysis and Engine tests/lints. The Build app run [45394932347](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932347) passed Linux x86_64 and aarch64 builds, packaging and clean-distribution smoke tests. The Geneva run [45394932160](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932160) passed both the multi-layer rendered/inspected example and the pinned dependency-dance job. The release workflow run [45395003098](https://github.com/coreselfmastery/FUNCUT/actions/runs/45395003098) ran on this same commit for tag `v0.2.8-funcut.15`; tag validation, all three CI jobs, both Geneva jobs, both Linux package jobs, Nix, RustSec and Publish release all completed successfully. GitHub reports 18 check-runs on this SHA, all successful. This is CI and release-pipeline evidence; it is not a substitute for real target-hardware or real-project acceptance.
 
-GitHub reports `main` as `protected=true`, but the branch API currently reports `required_status_checks.enforcement_level=off` and an empty `contexts` list: no status checks are enforced by that branch-protection object. The direct protection-details request returned HTTP 403, so required-review rules remain unverified. PR #200 had no formal review submissions; its PR-head checks did pass before merge.
+The branch API reports `main` protected and currently exposes these required status-check contexts with `enforcement_level=everyone`: `Format, locales and models`, `The analysis senses against real fixtures`, and `Engine tests and lints`. The detailed branch-protection endpoint was not readable through the connected GitHub access, so approval/conversation-resolution rules are not independently certified here.
 
 ## 1. Creative pillar — implemented
 
@@ -188,3 +188,27 @@ The original ten Geneva audit findings remain closed; the items above are valida
 
 **Release finding:** `.13` remains the latest verified published tag. The `.14` release-note file is not evidence of a published `.14` tag; GitHub did not find that tag. Keep the target-machine and real-project acceptance blockers open.
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.
+
+
+## 11. Exact-main reconciliation — 24 November 2026
+
+This section supersedes the older “current main” and release-status statements in Sections 7, 9 and 10. Earlier SHAs and run links remain historical evidence only.
+
+| Gate | Exact evidence on `bd1de9d073e5ba198bffe1c837dcee806db0f777` | Status |
+| --- | --- | --- |
+| Geneva sidecar, motion tests and dependency environment | Geneva run [45394932160](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932160), both jobs passed. | CI-verified on main |
+| Rendered multi-layer example, scene-quality floors and golden-frame DSSIM | The “multi-layer example, rendered and inspected” job in [45394932160](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932160) passed all steps. | CI-verified on main |
+| Format, locales, models and signal self-tests | CI run [45394932229](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932229), job passed. | CI-verified on main |
+| Real-fixture analysis and Director safety self-test | CI run [45394932229](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932229), job passed. This is fixture/self-test coverage, not a real Director production. | CI-verified on main |
+| Workspace tests, Clippy, docs and gRPC | Engine job in [45394932229](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932229) completed successfully, including workspace tests, workspace/gRPC Clippy, doctests, plan-schema check and gRPC tests. | CI-verified on main |
+| Linux x86_64 and aarch64 packages | Build app run [45394932347](https://github.com/coreselfmastery/FUNCUT/actions/runs/45394932347), both architecture jobs passed package and clean-distribution smoke steps. | CI-verified on main |
+| Nix package and binary links | Release run [45395003098](https://github.com/coreselfmastery/FUNCUT/actions/runs/45395003098), Nix job passed on the same SHA. | CI-verified on main |
+| RustSec dependency audit | Release run [45395003098](https://github.com/coreselfmastery/FUNCUT/actions/runs/45395003098), audit step passed on the same SHA. | CI-verified on main |
+| Release assembly | Release run [45395003098](https://github.com/coreselfmastery/FUNCUT/actions/runs/45395003098), manifest, checksums, desktop-entry check, notes and publish steps passed. The published `v0.2.8-funcut.15` release lists ten assets. | CI-verified / published |
+| Required main checks | Branch API exposes the three required contexts listed above with enforcement level `everyone`. | API-verified |
+| Target-machine timing and memory | No real antiX/laptop Geneva timing or memory capture is attached. Hosted render benchmarks do not establish target-device speed. | Not verified |
+| 1080p long-GOP proxy scrubbing | Proxy defaults and the 250 ms pause/original-frame restoration path are implemented and unit-tested; no measured interactive target-laptop before/after result is attached. | Implemented and unit-tested; product performance not verified |
+| Full AI Director production | Real-media brief/script through footage, motion, sound, editable timeline and final export still needs an end-to-end acceptance run. | Not verified |
+| Motion-clip editing acceptance | Metadata edit, save/reopen, in-page preview and final-export round-trip acceptance remain open in `KNOWN_ISSUES.md`. | Not verified |
+
+The Geneva implementation boundaries remain unchanged: mixed markup/native-only cases are refused rather than silently degraded; animated parent transforms and inherited scale/rotation are not fully represented by the Geneva bridge; the sidecar is still required for its version/cache contract. These are documented limitations, not silently completed features. Keep the native fallback/refusal behaviour and its tests intact.

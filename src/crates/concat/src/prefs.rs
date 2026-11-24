@@ -44,7 +44,7 @@ pub struct Preferences {
     /// place the moment the choice is made.
     /// https://github.com/jub0t/Concat/issues/320
     pub ui_scale: Option<u32>,
-    /// The chosen transcriber model id, e.g. "base.en".
+    /// The chosen transcriber model id, e.g. "base".
     pub transcriber_model: Option<String>,
     /// The chosen speech model id.
     pub tts_model: Option<String>,

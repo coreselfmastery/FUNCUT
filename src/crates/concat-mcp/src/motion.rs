@@ -2234,7 +2234,7 @@ fn read_words(document: &Value) -> Result<Vec<concat_motion::captions::Word>, Ap
             Some(Value::Array(list)) => list,
             _ => {
                 return Err(ApiError::invalid(
-                    "invalid arguments: `words` is an array of [text, start, end] triples",
+                    "invalid arguments: `words` is an array of [text, start, end, confidence?] entries",
                 ));
             }
         },
@@ -2263,7 +2263,11 @@ fn read_words(document: &Value) -> Result<Vec<concat_motion::captions::Word>, Ap
                     ))
                 })?;
                 let end = parts.get(2).and_then(Value::as_f64).unwrap_or(start + 0.25);
-                Word::new(text, start, end)
+                let confidence = parts
+                    .get(3)
+                    .and_then(Value::as_f64)
+                    .map(|value| value as f32);
+                Word::new(text, start, end).with_confidence(confidence)
             }
             Value::Object(fields) => {
                 let text = fields
@@ -2281,7 +2285,11 @@ fn read_words(document: &Value) -> Result<Vec<concat_motion::captions::Word>, Ap
                     .get("end")
                     .and_then(Value::as_f64)
                     .unwrap_or(start + 0.25);
-                Word::new(text, start, end)
+                let confidence = fields
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .map(|value| value as f32);
+                Word::new(text, start, end).with_confidence(confidence)
             }
             _ => {
                 return Err(ApiError::invalid(format!(

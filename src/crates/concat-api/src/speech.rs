@@ -51,18 +51,30 @@ fn rounded(
 }
 
 /// The whisper model a transcription gets when the caller says nothing:
-/// the fast English one. `small` is the multilingual choice.
-const DEFAULT_TRANSCRIBER: &str = "base.en";
+/// the multilingual base model, so whisper's own language detection runs.
+/// An English-only default read Bengali as transliterated English and no
+/// caller could tell; the multilingual model costs the same download and
+/// can hear every language the app offers.
+const DEFAULT_TRANSCRIBER: &str = "base";
+/// The model a known non-English take gets when the caller names none:
+/// the multilingual small model, the best quality the library offers.
+/// Bengali and the other non-Latin scripts are where base's wording is
+/// weakest, and the transcript is the edit's source of truth.
+const DEFAULT_TRANSCRIBER_NON_ENGLISH: &str = "small";
+/// A word below this recognition confidence is flagged as uncertain. The
+/// transcript still carries it - the planner and the captions need the
+/// whole narration - but no downstream stage may treat it as certain.
+const UNCERTAIN_WORD_FLOOR: f32 = 0.5;
 /// The voice model a generation gets when the caller says nothing: the one
 /// that fits a 4 GB laptop.
 const DEFAULT_SPEECH: &str = "kokoro-int8-multi-lang-v1_0";
 
 /// The writing system a stretch of transcribed text is dominated by
-/// (DEG-09). Script, not language: Latin cannot tell English from French,
-/// so the mismatch flag below is raised only for what a script scan can
-/// honestly catch - the cross-script cases, and an English-only model
+/// (DEG-09). Script is the first net: it catches an English-only model
 /// handed non-Latin audio, which whisper reads as transliterated garbage
-/// either way. Same-script mismatches stay out of scope, on purpose.
+/// either way. The second net is the language whisper itself detected on
+/// a multilingual model, which catches the same-script cases a script
+/// scan cannot - English audio read as French, Bengali read as Hindi.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Script {
     Latin,
@@ -193,33 +205,188 @@ fn script_of_code(code: &str) -> Script {
     }
 }
 
-/// Whether the transcription's own script disagrees with what was asked
-/// for: a language hint written in another script, or an English-only
-/// model handed non-Latin audio (it cannot refuse; it transliterates).
-/// Japanese answers for Han - Japanese text is Han-dominant whenever
-/// the kanji outnumber the kana, so a ja hint over Han is agreement, not
-/// error - but Han does not answer for Japanese: kana under a Chinese
-/// hint is writing the Chinese hint never asked for.
-fn language_mismatch(hint: Option<&str>, english_only_model: bool, script: Script) -> bool {
-    if english_only_model && script != Script::Latin {
-        return true;
+/// The primary subtag of an ISO code or BCP-47 tag, lowercased. `None`
+/// for absent, empty and `auto`: those ask whisper to choose.
+fn primary_language(code: Option<&str>) -> Option<String> {
+    let code = code?.trim();
+    if code.is_empty() || code.eq_ignore_ascii_case("auto") {
+        return None;
     }
-    let Some(hint) = hint else {
-        return false;
-    };
-    let primary = hint
-        .trim()
+    let primary = code
         .split(&['-', '_'][..])
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    if primary.is_empty() || primary == "auto" {
-        return false;
+    (!primary.is_empty()).then_some(primary)
+}
+
+/// The model a request should run, given what it named and the language
+/// it says the take speaks. A known non-English take gets a multilingual
+/// model by default; an English-only model named against a non-English
+/// hint is refused rather than allowed to transliterate. The explicit
+/// model always wins when it can actually hear the language.
+fn resolve_transcriber(model: Option<String>, language: Option<&str>) -> Result<String, ApiError> {
+    let non_english = primary_language(language).is_some_and(|primary| primary != "en");
+    let named = model
+        .map(|model| model.trim().to_owned())
+        .filter(|model| !model.is_empty());
+    match named {
+        Some(model) => {
+            if non_english && concat_speech::transcribe::is_english_only(&model) {
+                let better = concat_speech::transcribe::multilingual_model(&model)
+                    .map(|counterpart| format!("; use {counterpart}"))
+                    .unwrap_or_default();
+                return Err(ApiError::new(
+                    ErrorCode::Invalid,
+                    format!(
+                        "{model} is English-only and cannot transcribe `{}`{better}",
+                        language.unwrap_or_default().trim()
+                    ),
+                ));
+            }
+            Ok(model)
+        }
+        None => Ok(if non_english {
+            DEFAULT_TRANSCRIBER_NON_ENGLISH
+        } else {
+            DEFAULT_TRANSCRIBER
+        }
+        .to_owned()),
     }
-    match (script_of_code(&primary), script) {
+}
+
+/// Whether the transcription disagrees with what was asked for: a
+/// language hint written in another script, an English-only model handed
+/// non-Latin audio (it cannot refuse; it transliterates), or a language
+/// whisper detected that differs from the hint - the same-script net a
+/// script scan cannot throw. Japanese answers for Han - Japanese text is
+/// Han-dominant whenever the kanji outnumber the kana, so a ja hint over
+/// Han is agreement, not error - but Han does not answer for Japanese:
+/// kana under a Chinese hint is writing the Chinese hint never asked for.
+fn language_mismatch(
+    hint: Option<&str>,
+    english_only_model: bool,
+    script: Script,
+    detected: Option<&str>,
+) -> bool {
+    if english_only_model && script != Script::Latin {
+        return true;
+    }
+    let Some(hint) = primary_language(hint) else {
+        return false;
+    };
+    if let Some(detected) = primary_language(detected)
+        && detected != hint
+    {
+        return true;
+    }
+    match (script_of_code(&hint), script) {
         (Script::Japanese, Script::Han) => false,
         (expected, detected) => expected != detected,
     }
+}
+
+/// Every word the recogniser was less than [`UNCERTAIN_WORD_FLOOR`] sure
+/// of, in transcript order. The words stay in the transcript; this is the
+/// list a planner or a person checks before trusting them.
+fn uncertain_words(
+    segments: &[concat_speech::transcribe::Segment],
+    floor: f32,
+) -> Vec<serde_json::Value> {
+    segments
+        .iter()
+        .flat_map(|segment| segment.words.iter())
+        .filter(|word| word.confidence.is_some_and(|confidence| confidence < floor))
+        .map(|word| {
+            serde_json::json!({
+                "text": word.text,
+                "start": word.start,
+                "end": word.end,
+                "confidence": word.confidence,
+            })
+        })
+        .collect()
+}
+
+/// The transcript's confidence as one reading: how many words were rated,
+/// their mean and weakest, and how many fell under the floor.
+fn confidence_summary(segments: &[concat_speech::transcribe::Segment]) -> serde_json::Value {
+    let rated: Vec<f32> = segments
+        .iter()
+        .flat_map(|segment| segment.words.iter())
+        .filter_map(|word| word.confidence)
+        .collect();
+    let mean = (!rated.is_empty()).then(|| rated.iter().sum::<f32>() / rated.len() as f32);
+    let weakest = rated.iter().copied().reduce(f32::min);
+    serde_json::json!({
+        "words": rated.len(),
+        "mean": mean,
+        "min": weakest,
+        "uncertain": rated.iter().filter(|confidence| **confidence < UNCERTAIN_WORD_FLOOR).count(),
+    })
+}
+
+/// How much of the recording the transcript actually covers: speech
+/// seconds over the probed audio duration, plus the word count. A
+/// transcript with one word and a ten-minute file is not covered, and a
+/// word count alone never proved that it was.
+fn transcript_coverage(
+    segments: &[concat_speech::transcribe::Segment],
+    audio_seconds: f64,
+) -> serde_json::Value {
+    let speech: f64 = segments
+        .iter()
+        .map(|segment| (segment.end - segment.start).max(0.0))
+        .sum();
+    let words: usize = segments.iter().map(|segment| segment.words.len()).sum();
+    let ratio = if audio_seconds > 0.0 {
+        (speech / audio_seconds).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    serde_json::json!({
+        "speechSeconds": speech,
+        "audioSeconds": audio_seconds,
+        "ratio": ratio,
+        "segments": segments.len(),
+        "words": words,
+    })
+}
+
+/// The glossary terms the transcript did not carry, compared with case
+/// and punctuation ignored. A miss is not proof of a misheard word - the
+/// term may be inflected or the take may not say it - so this is a flag
+/// for the planner, not a refusal.
+fn glossary_misses(glossary: Option<&str>, text: &str) -> Vec<String> {
+    let Some(glossary) = glossary else {
+        return Vec::new();
+    };
+    let haystack = normalize_words(text);
+    glossary
+        .split([',', ';', '\n'])
+        .map(str::trim)
+        .filter(|term| term.chars().count() > 1)
+        .filter(|term| !haystack.contains(&normalize_words(term)))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Lowercase, punctuation to spaces, runs of whitespace collapsed: the
+/// comparison `glossary_misses` makes.
+fn normalize_words(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || character.is_whitespace() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl Api {
@@ -271,7 +438,7 @@ impl Api {
             audio_stream: None,
             source_start: 0.0,
             window: duration,
-            model_id: model.unwrap_or_else(|| DEFAULT_TRANSCRIBER.to_owned()),
+            model_id: resolve_transcriber(model, language.as_deref())?,
         };
         self.begin_speech(
             path,
@@ -503,35 +670,54 @@ impl SpeechJob {
                 prompt,
             } => self
                 .transcriber
-                .transcribe_with_language(
+                .transcribe_detailed(
                     &self.dirs,
                     request,
                     language.as_deref(),
                     prompt.as_deref(),
                     |_| {},
                 )
-                .map(|segments| {
+                .map(|transcription| {
                     // DEG-09: the reply says what ran, what script the
-                    // words came back in, and whether that disagrees with
-                    // the ask - a wrong-language transcript discovered at
-                    // the captions is three phases too late.
+                    // words came back in, what language whisper heard, and
+                    // whether that disagrees with the ask - a wrong-language
+                    // transcript discovered at the captions is three phases
+                    // too late. It also says how sure the recogniser was and
+                    // how much of the recording it covered, so a single
+                    // transcribed word cannot pass for a whole take.
+                    let concat_speech::transcribe::Transcription {
+                        segments,
+                        language: detected_language,
+                    } = transcription;
                     let words: String = segments
                         .iter()
                         .map(|segment| segment.text.as_str())
                         .collect::<Vec<_>>()
                         .join(" ");
                     let script = dominant_script(&words);
+                    let detected = detected_language.as_deref();
                     let mismatch = language_mismatch(
                         language.as_deref(),
-                        request.model_id.ends_with(".en"),
+                        concat_speech::transcribe::is_english_only(&request.model_id),
                         script,
+                        detected,
                     );
+                    let uncertain = uncertain_words(&segments, UNCERTAIN_WORD_FLOOR);
+                    let confidence = confidence_summary(&segments);
+                    let coverage = transcript_coverage(&segments, request.window);
+                    let misses = glossary_misses(prompt.as_deref(), &words);
                     serde_json::json!({
                         "segments": rounded(segments),
                         "language": language,
+                        "languageDetected": detected,
                         "model": request.model_id,
                         "scriptDetected": script.name(),
                         "languageMismatch": mismatch,
+                        "wordConfidence": confidence,
+                        "uncertainWords": uncertain,
+                        "coverage": coverage,
+                        "glossary": prompt,
+                        "glossaryMisses": misses,
                     })
                     .to_string()
                 }),
@@ -606,7 +792,11 @@ fn delivery_preset(name: &str) -> Option<(f32, Option<f32>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Script, delivery_preset, dominant_script, language_mismatch};
+    use super::{
+        DEFAULT_TRANSCRIBER, DEFAULT_TRANSCRIBER_NON_ENGLISH, Script, UNCERTAIN_WORD_FLOOR,
+        confidence_summary, delivery_preset, dominant_script, glossary_misses, language_mismatch,
+        resolve_transcriber, transcript_coverage, uncertain_words,
+    };
 
     #[test]
     fn delivery_names_a_pacing_not_a_fake_emotion() {
@@ -652,21 +842,156 @@ mod tests {
     #[test]
     fn a_wrong_language_transcript_is_flagged_not_swallowed() {
         // An English-only model handed non-Latin audio.
-        assert!(language_mismatch(None, true, Script::Cyrillic));
-        assert!(!language_mismatch(None, true, Script::Latin));
+        assert!(language_mismatch(None, true, Script::Cyrillic, None));
+        assert!(!language_mismatch(None, true, Script::Latin, None));
         // A hint the transcript's own script contradicts.
-        assert!(language_mismatch(Some("ru"), false, Script::Latin));
-        assert!(language_mismatch(Some("en"), false, Script::Hangul));
-        assert!(!language_mismatch(Some("fr"), false, Script::Latin));
+        assert!(language_mismatch(Some("ru"), false, Script::Latin, None));
+        assert!(language_mismatch(Some("en"), false, Script::Hangul, None));
+        assert!(!language_mismatch(Some("fr"), false, Script::Latin, None));
         // Japanese answers for Han and back: kanji-heavy text is still
         // Japanese, and a zh hint over kana-less Han is agreed.
-        assert!(!language_mismatch(Some("ja"), false, Script::Han));
-        assert!(!language_mismatch(Some("zh"), false, Script::Han));
-        assert!(language_mismatch(Some("zh"), false, Script::Japanese));
+        assert!(!language_mismatch(Some("ja"), false, Script::Han, None));
+        assert!(!language_mismatch(Some("zh"), false, Script::Han, None));
+        assert!(language_mismatch(Some("zh"), false, Script::Japanese, None));
         // No hint, multilingual model, any script: whisper's own choice.
-        assert!(!language_mismatch(None, false, Script::Cyrillic));
-        assert!(!language_mismatch(Some("auto"), false, Script::Greek));
+        assert!(!language_mismatch(None, false, Script::Cyrillic, None));
+        assert!(!language_mismatch(Some("auto"), false, Script::Greek, None));
         // A BCP-47 tag reads by its primary subtag.
-        assert!(language_mismatch(Some("en-US"), false, Script::Thai));
+        assert!(language_mismatch(Some("en-US"), false, Script::Thai, None));
+        // The same-script net: whisper heard a different language than the
+        // hint, even though both are written in Latin.
+        assert!(language_mismatch(
+            Some("en"),
+            false,
+            Script::Latin,
+            Some("fr")
+        ));
+        assert!(!language_mismatch(
+            Some("fr-CA"),
+            false,
+            Script::Latin,
+            Some("fr")
+        ));
+        assert!(!language_mismatch(None, false, Script::Latin, Some("fr")));
+    }
+
+    #[test]
+    fn a_non_english_take_never_defaults_to_an_english_only_model() {
+        // No hint: the multilingual base, so whisper can detect the language.
+        assert_eq!(
+            resolve_transcriber(None, None).expect("a default"),
+            DEFAULT_TRANSCRIBER
+        );
+        assert_eq!(
+            resolve_transcriber(None, Some("auto")).expect("a default"),
+            DEFAULT_TRANSCRIBER
+        );
+        // An empty model name is no name at all.
+        assert_eq!(
+            resolve_transcriber(Some("  ".to_owned()), Some("bn")).expect("a default"),
+            DEFAULT_TRANSCRIBER_NON_ENGLISH
+        );
+        // A known non-English take gets the multilingual small model.
+        assert_eq!(
+            resolve_transcriber(None, Some("bn")).expect("a model"),
+            DEFAULT_TRANSCRIBER_NON_ENGLISH
+        );
+        assert_eq!(
+            resolve_transcriber(None, Some("bn-BD")).expect("a model"),
+            DEFAULT_TRANSCRIBER_NON_ENGLISH
+        );
+        // English still keeps the fast default.
+        assert_eq!(
+            resolve_transcriber(None, Some("en-US")).expect("a model"),
+            DEFAULT_TRANSCRIBER
+        );
+        // An explicit English-only model against Bengali is refused, and
+        // the error names the multilingual counterpart.
+        let refused = resolve_transcriber(Some("base.en".to_owned()), Some("bn"))
+            .expect_err("base.en cannot hear Bengali");
+        assert!(refused.to_string().contains("base"), "{refused}");
+        assert!(resolve_transcriber(Some("base".to_owned()), Some("bn")).is_ok());
+        // An explicit English-only model for English is allowed.
+        assert_eq!(
+            resolve_transcriber(Some("base.en".to_owned()), Some("en")).expect("a model"),
+            "base.en"
+        );
+    }
+
+    #[test]
+    fn a_one_word_transcript_does_not_cover_a_long_recording() {
+        let segment = |start: f64, end: f64, text: &str, confidence: Option<f32>| {
+            concat_speech::transcribe::Segment {
+                start,
+                end,
+                text: text.to_owned(),
+                words: vec![concat_speech::transcribe::Word {
+                    start,
+                    end,
+                    text: text.to_owned(),
+                    confidence,
+                }],
+                confidence,
+            }
+        };
+        let covered = transcript_coverage(&[segment(0.0, 4.0, "four", Some(0.9))], 4.0);
+        assert_eq!(covered["ratio"].as_f64(), Some(1.0));
+        assert_eq!(covered["words"].as_u64(), Some(1));
+        let thin = transcript_coverage(&[segment(0.0, 0.2, "one", Some(0.9))], 60.0);
+        assert!(thin["ratio"].as_f64().is_some_and(|ratio| ratio < 0.01));
+        let empty = transcript_coverage(&[], 60.0);
+        assert_eq!(empty["ratio"].as_f64(), Some(0.0));
+        assert_eq!(empty["words"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn uncertain_words_are_listed_and_the_certain_ones_stay_in_the_transcript() {
+        let segments = [concat_speech::transcribe::Segment {
+            start: 0.0,
+            end: 2.0,
+            text: "sure doubtful".to_owned(),
+            words: vec![
+                concat_speech::transcribe::Word {
+                    start: 0.0,
+                    end: 0.5,
+                    text: "sure".to_owned(),
+                    confidence: Some(0.96),
+                },
+                concat_speech::transcribe::Word {
+                    start: 0.5,
+                    end: 1.2,
+                    text: "doubtful".to_owned(),
+                    confidence: Some(0.31),
+                },
+                concat_speech::transcribe::Word {
+                    start: 1.2,
+                    end: 1.6,
+                    text: "unrated".to_owned(),
+                    confidence: None,
+                },
+            ],
+            confidence: Some(0.635),
+        }];
+        let flagged = uncertain_words(&segments, UNCERTAIN_WORD_FLOOR);
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0]["text"], "doubtful");
+        let summary = confidence_summary(&segments);
+        assert_eq!(summary["words"].as_u64(), Some(2));
+        assert_eq!(summary["uncertain"].as_u64(), Some(1));
+        assert!(
+            summary["min"]
+                .as_f64()
+                .is_some_and(|min| (min - 0.31).abs() < 1e-6)
+        );
+    }
+
+    #[test]
+    fn a_glossary_term_the_transcript_missed_is_named() {
+        let glossary = Some("FUNCUT, Jareer Abdullah; whisper.cpp");
+        let misses = glossary_misses(glossary, "funcut is jareer abdullah's editor");
+        assert_eq!(misses, vec!["whisper.cpp"]);
+        assert!(glossary_misses(None, "anything").is_empty());
+        // Case and punctuation do not make a term miss.
+        assert!(glossary_misses(Some("FUNCUT"), "FunCut!").is_empty());
     }
 }

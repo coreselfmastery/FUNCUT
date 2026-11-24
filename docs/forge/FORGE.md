@@ -274,7 +274,7 @@ home (or `CONCAT_MCP_ROOTS`), never touching the window's open projects.
 | `forge mcp` shows funcut "failed: the Concat window is not serving the API" | Open FUNCUT > Settings > Automation > turn on **Scripts and apps**; or use `--mcp headless` |
 | `analysis.scenes` returns "python3 not found" / a pip hint | `pip install -r ~/.local/share/app.concat.editor/analysis/requirements.txt` (scenedetect, opencv-headless, librosa) |
 | A tool call times out | This repo's `.forge/mcp.toml` sets `call_timeout_secs = 1200`; if you declared the server yourself, raise yours (default 60) |
-| `transcribe` says a model is not downloaded | Settings > Transcriber, download `base.en` (fast, English) or `small` (multilingual) |
+| `transcribe` says a model is not downloaded | Settings > Transcriber, download `base` (multilingual default, auto-detects language) or `small` for a non-English take |
 | `tts_generate` says a model is not downloaded | Settings > Speech, download Kokoro int8 (the 4 GB-laptop choice) |
 | Agent "done" but the video looks wrong | The skill's quality loop is mandatory: `watch_render` (whole cut as one image) -> `craft_critique` (six craft scores) -> revise at least once -> `watch_render` again -> `watch_render {path}` on the exported file. `plan_validate` must also say `creativeReady: true`. Never accept "done" without an export `export_wait` says succeeded AND a measured score >= 7 |
 | Low memory with big projects | Close other apps; keep proxy scrubbing on; use headless for overnight; prefer Kokoro int8 over Chatterbox |

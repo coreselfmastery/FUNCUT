@@ -985,6 +985,8 @@ document. An operation that fails names its index, so a retry is one step, not a
   { "op": "set-slot", "slot": "Name", "value": "Grace Hopper" },
   { "op": "set-words", "node": "caption",
     "words": [["Make", 0, 0.45], ["it", 0.45, 0.85], ["move.", 0.85, null]] },
+  { "op": "set-word-confidence", "node": "caption",
+    "confidences": [0.98, 0.91, 0.42] },
   { "op": "move", "node": "card", "start": 3.5 },
   { "op": "fade-in", "node": "card", "seconds": 0.8,
     "curve": { "kind": "bezier", "x1": 0.16, "y1": 1, "x2": 0.3, "y2": 1 } },
@@ -1130,7 +1132,7 @@ the director's override rides along with the reason it was taken (`Decision::ove
 because an override nobody can see the why of is a guess with confidence. The full matrix is
 tested; see `concat-motion/src/route.rs`.
 
-Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
+Operations: `set-slot`, `set-text`, `set-words`, `set-word-confidence`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
 `remap`, `set-noise-track`, `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `add-chart`, `add-counter`,
 `add-particles`, `set-camera`, `delete`, `set-blend`, `set-opacity`, `set-duration`, `set-background`.
 

@@ -173,11 +173,13 @@ the project's own `audio/` folder is synthesized; the runner records
 the chain it ran), and only a plan that names a full-precision model
 may skip it.
 If narration exists as audio/video,
-`transcribe` it with an ISO language hint when known; the default `base.en`
-model is English-only, so choose a multilingual model for non-English. Each
-segment returns with its `words` — MEASURED `{text,start,end}` triples from
-whisper's token timestamps; cache them, they are what `captions_animate`
-takes. Then `analyze_silence` on the voiceover; `analyze_scenes` on
+`transcribe` it with an ISO language hint when known; the default `base` is
+multilingual and detects the language, and an English-only `.en` model is never
+used for a non-English take. Each segment returns with its `words` — MEASURED
+`{text,start,end,confidence?}` entries from whisper's token timestamps; cache
+them, they are what `captions_animate` takes. The reply's `languageDetected`,
+`wordConfidence`, `uncertainWords`, `coverage` and `glossaryMisses` say how far
+the reading can be trusted. Then `analyze_silence` on the voiceover; `analyze_scenes` on
 any footage that will be cut; `analyze_beats` when there is music (or on the
 BGM after it is fetched). On a machine without the Python analysis extras,
 `suggest_cuts {path}` gives a BPM estimate and beat-aligned `cutTimes` with

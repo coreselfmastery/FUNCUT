@@ -109,7 +109,8 @@ Kebab-case `op` tag, one JSON object each.
 | --- | --- | --- |
 | `set-slot` | `slot` (label or node id), `value` | filling a template — name, headline, number |
 | `set-text` | `node`, `text` | plain text nodes only (refused on `html` nodes) |
-| `set-words` | `node`, `words: [[word, start, end?], …]` | **karaoke captions from a transcript** |
+| `set-words` | `node`, `words: [[word, start, end?, confidence?], …]` | **karaoke captions from a transcript**; the optional fourth value is the recogniser's 0–1 confidence |
+| `set-word-confidence` | `node`, `confidences: [0.97, 0.31, null, …]` | attaches per-word confidence after `set-words`, one value per word |
 | `move` | `node`, `start` | when it happens |
 | `retime` | `node`, `duration` (`0` = to the end) | how long it lasts |
 | `set-track` | `node`, `property`, `keys: [[at, value, curve?], …]` | anything precise; `at` is a **fraction of the node's span**. For `position` the one value lands on both axes — the diagonal — so a real move uses `set-track-points` |

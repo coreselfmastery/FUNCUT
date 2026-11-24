@@ -305,6 +305,7 @@ fn apply_one(
                         text: (*word).to_string(),
                         start: delay + each * place as f64,
                         end: None,
+                        confidence: None,
                     })
                     .collect();
             }

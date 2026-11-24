@@ -49,6 +49,8 @@ pub struct Word {
     pub start: f64,
     /// When it ends.
     pub end: f64,
+    /// The recogniser's confidence, when the transcript carried one.
+    pub confidence: Option<f32>,
 }
 
 impl Word {
@@ -58,7 +60,16 @@ impl Word {
             text: text.into(),
             start,
             end: end.max(start),
+            confidence: None,
         }
+    }
+
+    /// The same word with the recogniser's confidence attached.
+    pub fn with_confidence(mut self, confidence: Option<f32>) -> Word {
+        self.confidence = confidence
+            .filter(|value| value.is_finite())
+            .map(|value| value.clamp(0.0, 1.0));
+        self
     }
 
     /// Read words from `(text, start, end)` triples, which is the shape a
@@ -130,10 +141,11 @@ pub struct Line {
 
 impl Line {
     /// The words as `(text, start, end)` with `None` for the last word, which
-    /// holds to the end of the comp.
-    fn ops(&self, node: &str) -> Op {
+    /// holds to the end of the comp - and, when the recogniser reported
+    /// confidences, the per-word confidences as a second op.
+    fn ops(&self, node: &str) -> Vec<Op> {
         let last = self.words.len().saturating_sub(1);
-        Op::SetWords {
+        let mut ops = vec![Op::SetWords {
             node: node.into(),
             words: self
                 .words
@@ -147,7 +159,14 @@ impl Line {
                     )
                 })
                 .collect(),
+        }];
+        if self.words.iter().any(|word| word.confidence.is_some()) {
+            ops.push(Op::SetWordConfidence {
+                node: node.into(),
+                confidences: self.words.iter().map(|word| word.confidence).collect(),
+            });
         }
+        ops
     }
 }
 
@@ -181,6 +200,7 @@ pub fn lay_out(words: &[Word], caps: &Captions) -> Vec<Line> {
                 text: word.text.clone(),
                 start: round((word.start - at).max(0.0)),
                 end: round((word.end - at).max(0.0)),
+                confidence: word.confidence,
             })
             .collect();
         let text = group
@@ -310,7 +330,7 @@ pub fn sequence(words: &[Word], caps: &Captions, width: u32, height: u32, fps: f
             None => Scene::new(comp.clone())
                 .starting_at(line.at)
                 .holding(line.hold)
-                .with_ops(vec![line.ops(&caps.node)]),
+                .with_ops(line.ops(&caps.node)),
         };
         reel.push(scene);
     }
@@ -337,6 +357,7 @@ fn kinetic_line(base: &Comp, line: &Line, caps: &Captions, width: u32) -> Comp {
                 text: word.text.clone(),
                 start: word.start,
                 end: Some(word.end),
+                confidence: word.confidence,
             })
             .collect::<Vec<_>>();
         let kinetic = caps.kinetic.clone().unwrap_or_default();
@@ -461,13 +482,44 @@ mod tests {
     fn the_last_word_of_a_line_holds_to_the_end_of_its_comp() {
         let transcript = words(&[("last", 1.0, 1.4)]);
         let lines = lay_out(&transcript, &Captions::default());
-        match lines[0].ops("caption") {
+        match &lines[0].ops("caption")[0] {
             Op::SetWords { words, .. } => {
                 assert_eq!(words.len(), 1);
                 assert_eq!(words[0].2, None);
             }
             other => panic!("expected word timing, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_words_confidence_reaches_the_comp_and_keeps_its_place() {
+        let transcript = vec![
+            Word::new("sure", 0.0, 0.4).with_confidence(Some(0.97)),
+            Word::new("doubtful", 0.4, 0.9).with_confidence(Some(0.31)),
+            Word::new("unrated", 0.9, 1.2),
+        ];
+        let caps = Captions {
+            words_per_line: 3,
+            ..Captions::default()
+        };
+        let lines = lay_out(&transcript, &caps);
+        assert_eq!(lines[0].words.len(), 3);
+        assert_eq!(lines[0].words[1].confidence, Some(0.31));
+        assert_eq!(lines[0].words[2].confidence, None);
+        let ops = lines[0].ops("caption");
+        assert_eq!(ops.len(), 2);
+        match &ops[1] {
+            Op::SetWordConfidence { confidences, .. } => {
+                assert_eq!(confidences, &vec![Some(0.97), Some(0.31), None]);
+            }
+            other => panic!("expected word confidence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_non_finite_confidence_is_dropped_not_carried() {
+        let word = Word::new("odd", 0.0, 0.3).with_confidence(Some(f32::NAN));
+        assert_eq!(word.confidence, None);
     }
 
     #[test]

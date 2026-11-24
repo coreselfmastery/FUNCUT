@@ -188,7 +188,8 @@ _RETRYABLE_MARKERS = (
 )
 
 # FALL-07/08/09, the defaults this runner stands on and the knobs that
-# turn them. The transcriber is base.en (the fast English one) unless the
+# turn them. The transcriber is multilingual base (or small for a non-English
+# take) unless the
 # plan names audio.voiceover.whisperModel or the operator pins
 # FUNCUT_WHISPER_MODEL - a multilingual take on the default is exactly the
 # wrong-language transcript the reply's languageMismatch flag names. The
@@ -712,7 +713,381 @@ def _retimed(transcript: Any, speed: float) -> Any:
                 ]
             retimed_segments.append(moved)
         out["segments"] = retimed_segments
+    if isinstance(transcript.get("uncertainWords"), list):
+        out["uncertainWords"] = [
+            {
+                **word,
+                "start": onto(word.get("start")),
+                "end": onto(word.get("end")),
+            }
+            if isinstance(word, dict)
+            else word
+            for word in transcript["uncertainWords"]
+        ]
     return out
+
+
+# ---------------------------------------------------------------- transcript
+# The transcript is the edit's source of truth, so the readings that say how
+# far it can be trusted travel beside its words: the model that heard them,
+# the language whisper detected, the words it was unsure of, how much of the
+# take they cover, and the glossary terms they missed. Every stage below reads
+# the same record; a reading the runner cannot stand behind is logged and
+# recorded, not silently spent.
+
+#: A word below this confidence is uncertain. Kept word-for-word with the
+#: API's own floor (concat-api/src/speech.rs, UNCERTAIN_WORD_FLOOR).
+UNCERTAIN_WORD_FLOOR = 0.5
+
+#: The share of a take the transcript must cover before the run treats it as
+#: a reading of the whole take. Below this it still edits - silence can be
+#: intentional - but every downstream stage is told the reading is thin.
+TRANSCRIPT_COVERAGE_FLOOR = 0.35
+
+#: The Unicode blocks that name a language by their script alone. Latin is
+#: absent on purpose: a Latin transcript cannot tell English from French, so
+#: it leaves the choice to whisper's own detection.
+_SCRIPT_LANGUAGES: tuple[tuple[int, int, str], ...] = (
+    (0x0980, 0x09FF, "bn"),
+    (0x0900, 0x097F, "hi"),
+    (0x0A00, 0x0A7F, "pa"),
+    (0x0A80, 0x0AFF, "gu"),
+    (0x0B00, 0x0B7F, "or"),
+    (0x0B80, 0x0BFF, "ta"),
+    (0x0C00, 0x0C7F, "te"),
+    (0x0C80, 0x0CFF, "kn"),
+    (0x0D00, 0x0D7F, "ml"),
+    (0x0D80, 0x0DFF, "si"),
+    (0x0E00, 0x0E7F, "th"),
+    (0x0590, 0x05FF, "he"),
+    (0x0600, 0x06FF, "ar"),
+    (0x0750, 0x077F, "ar"),
+    (0x0370, 0x03FF, "el"),
+    (0x0400, 0x04FF, "ru"),
+    (0x3040, 0x30FF, "ja"),
+    (0x4E00, 0x9FFF, "zh"),
+    (0x3400, 0x4DBF, "zh"),
+    (0x1100, 0x11FF, "ko"),
+    (0xAC00, 0xD7A3, "ko"),
+)
+
+
+def _primary_language(code: Any) -> str | None:
+    """The primary subtag of an ISO code or BCP-47 tag, lowercased; `auto`
+    and an empty value mean whisper chooses."""
+    if not isinstance(code, str):
+        return None
+    code = code.strip()
+    if not code or code.lower() == "auto":
+        return None
+    primary = re.split(r"[-_]", code)[0].strip().lower()
+    return primary or None
+
+
+def _language_from_text(text: Any) -> str | None:
+    """The language a text's own script names, when the script is not
+    Latin. Bengali prose is Bengali whichever model is asked; Latin prose
+    is left to whisper's detection. A stray non-Latin name in an English
+    plan is not a language, so the mapped script has to be a real share of
+    the text."""
+    if not isinstance(text, str):
+        return None
+    counts: dict[str, int] = {}
+    for character in text:
+        point = ord(character)
+        for low, high, code in _SCRIPT_LANGUAGES:
+            if low <= point <= high:
+                counts[code] = counts.get(code, 0) + 1
+                break
+    if not counts:
+        return None
+    best = max(counts.values())
+    visible = sum(1 for character in text if not character.isspace())
+    if best < 4 or visible == 0 or best / visible < 0.15:
+        return None
+    return max(counts, key=lambda code: (counts[code], code))
+
+
+def _plan_language(plan: Any) -> str | None:
+    """The language the plan itself names, or the one its own writing is in.
+    The explicit `audio.voiceover.language` wins; otherwise the plan's text
+    is scanned, so a Bengali script or glossary is not read by an English
+    model by accident. A Latin plan names no language - the runner leaves
+    the choice to whisper, which is the only thing that can tell English
+    from French."""
+    if not isinstance(plan, dict):
+        return None
+    voiceover = ((plan.get("audio") or {}).get("voiceover") or {})
+    if isinstance(voiceover, dict):
+        named = _primary_language(voiceover.get("language"))
+        if named:
+            return named
+    texts: list[str] = []
+    # Identifiers, paths and model names say nothing about the take's
+    # language; reading them lets one Bengali filename choose the model.
+    skip = {
+        "id", "mediaId", "clipId", "trackId", "effectId", "path", "output",
+        "file", "model", "whisperModel", "query", "preset", "assetId",
+        "source", "codec", "format", "kind", "type",
+    }
+
+    def collect(value: Any, depth: int, key: str = "") -> None:
+        if depth > 6:
+            return
+        if isinstance(value, str):
+            texts.append(value)
+        elif isinstance(value, dict):
+            for name, child in value.items():
+                if name in skip or name.endswith("Id") or name.endswith("Path"):
+                    continue
+                collect(child, depth + 1, name)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child, depth + 1, key)
+
+    collect(plan, 0)
+    return _language_from_text(" ".join(texts))
+
+
+def _english_only_model(model: str) -> bool:
+    """Whisper names its English-only models with an `.en` suffix."""
+    return model.strip().lower().endswith(".en")
+
+
+def _multilingual_model(model: str) -> str:
+    """The same size model with every language: `base.en` -> `base`."""
+    return model.strip()[:-3] if _english_only_model(model) else model.strip()
+
+
+def _resolve_whisper(
+    named: Any, env_model: Any, language: str | None
+) -> tuple[str, str | None, str | None]:
+    """The recogniser this take runs, as `(model, language, note)`.
+
+    The default is multilingual `base`, so whisper detects the language;
+    a known non-English take gets multilingual `small`, the best quality
+    offered. A named or environment model wins, except that an English-only
+    model against a non-English take is upgraded to its multilingual
+    counterpart rather than allowed to transliterate. The note is what the
+    run says when it overrode a choice."""
+    non_english = language is not None and language != "en"
+    chosen = None
+    if isinstance(named, str) and named.strip():
+        chosen = named.strip()
+    elif isinstance(env_model, str) and env_model.strip():
+        chosen = env_model.strip()
+    if chosen:
+        if non_english and _english_only_model(chosen):
+            better = _multilingual_model(chosen)
+            return (
+                better,
+                language,
+                f"{chosen} is English-only; {language} needs the multilingual "
+                f"{better}, which the run used instead",
+            )
+        return chosen, language, None
+    if non_english:
+        return "small", language, None
+    return "base", language, None
+
+
+def _transcript_words(transcript: Any) -> list[dict[str, Any]]:
+    """Every measured word, in transcript order, with its confidence when
+    the recogniser reported one."""
+    words: list[dict[str, Any]] = []
+    if not isinstance(transcript, dict):
+        return words
+    for segment in transcript.get("segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        for word in segment.get("words") or []:
+            if not isinstance(word, dict):
+                continue
+            text = word.get("text")
+            start = word.get("start")
+            end = word.get("end")
+            if (
+                isinstance(text, str)
+                and text.strip()
+                and isinstance(start, (int, float))
+                and not isinstance(start, bool)
+                and isinstance(end, (int, float))
+                and not isinstance(end, bool)
+                and float(end) > float(start)
+            ):
+                words.append(
+                    {
+                        "text": text.strip(),
+                        "start": float(start),
+                        "end": float(end),
+                        "confidence": word.get("confidence")
+                        if isinstance(word.get("confidence"), (int, float))
+                        and not isinstance(word.get("confidence"), bool)
+                        else None,
+                    }
+                )
+    return words
+
+
+def _transcript_text(transcript: Any) -> str:
+    """The narration as one string: every segment's own text, in order."""
+    if not isinstance(transcript, dict):
+        return ""
+    return " ".join(
+        str(segment.get("text") or "").strip()
+        for segment in transcript.get("segments") or []
+        if isinstance(segment, dict) and str(segment.get("text") or "").strip()
+    )
+
+
+def _uncertain_words(
+    transcript: Any, floor: float = UNCERTAIN_WORD_FLOOR
+) -> list[dict[str, Any]]:
+    """The words the recogniser was less than `floor` sure of. The words
+    stay in the transcript; this is the list the run flags."""
+    return [
+        word
+        for word in _transcript_words(transcript)
+        if isinstance(word.get("confidence"), (int, float))
+        and float(word["confidence"]) < floor
+    ]
+
+
+def _transcript_confidence(transcript: Any) -> dict[str, Any]:
+    """The transcript's confidence as one reading: rated words, their mean
+    and weakest, and how many fell under the floor."""
+    rated = [
+        float(word["confidence"])
+        for word in _transcript_words(transcript)
+        if isinstance(word.get("confidence"), (int, float))
+        and not isinstance(word.get("confidence"), bool)
+    ]
+    return {
+        "words": len(rated),
+        "mean": (sum(rated) / len(rated)) if rated else None,
+        "min": min(rated) if rated else None,
+        "uncertain": sum(1 for confidence in rated if confidence < UNCERTAIN_WORD_FLOOR),
+    }
+
+
+def _transcript_coverage(transcript: Any, duration: Any) -> dict[str, Any]:
+    """How much of the take the transcript covers: speech seconds over the
+    probed duration, plus the word count. One transcribed word in a ten
+    minute file is not a reading of the take, and a word count alone never
+    proved that it was."""
+    words = _transcript_words(transcript)
+    speech = 0.0
+    segments = 0
+    if isinstance(transcript, dict):
+        for segment in transcript.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            start = segment.get("start")
+            end = segment.get("end")
+            if (
+                isinstance(start, (int, float))
+                and not isinstance(start, bool)
+                and isinstance(end, (int, float))
+                and not isinstance(end, bool)
+                and float(end) > float(start)
+            ):
+                speech += float(end) - float(start)
+                segments += 1
+    audio = float(duration) if isinstance(duration, (int, float)) and duration > 0 else 0.0
+    ratio = min(1.0, speech / audio) if audio > 0 else 0.0
+    return {
+        "speechSeconds": round(speech, 3),
+        "audioSeconds": round(audio, 3),
+        "ratio": round(ratio, 3),
+        "segments": segments,
+        "words": len(words),
+    }
+
+
+def _normalized_words(text: Any) -> str:
+    if not isinstance(text, str):
+        return ""
+    return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+
+def _glossary_misses(transcript: Any, glossary: Any) -> list[str]:
+    """The glossary terms the transcript did not carry, compared with case
+    and punctuation ignored. A miss is a flag, not proof: the take may not
+    say the term, and the recogniser may have inflected it."""
+    if not isinstance(glossary, str) or not glossary.strip():
+        return []
+    haystack = _normalized_words(_transcript_text(transcript))
+    misses: list[str] = []
+    for term in re.split(r"[,;\n]", glossary):
+        term = term.strip()
+        if len(term) > 1 and _normalized_words(term) not in haystack:
+            misses.append(term)
+    return misses
+
+
+def _placed_words(
+    transcript: Any,
+    start: float,
+    source_in: float,
+    source_out: float,
+    speed: float,
+) -> list[dict[str, Any]]:
+    """The transcript's words on the timeline: clipped to the placed span
+    and mapped through the clip's start, source in-point and rate. This is
+    the expected side of the transcript-to-timeline check, measured from
+    the same take the export carries - not a second reading of the render
+    standing in for the edit."""
+    speed = speed if isinstance(speed, (int, float)) and speed > 0 else 1.0
+    placed: list[dict[str, Any]] = []
+    for word in _transcript_words(transcript):
+        if word["end"] <= source_in or word["start"] >= source_out:
+            continue
+        placed.append(
+            {
+                "text": word["text"],
+                "start": round(start + (max(word["start"], source_in) - source_in) / speed, 3),
+                "end": round(start + (min(word["end"], source_out) - source_in) / speed, 3),
+                "confidence": word["confidence"],
+            }
+        )
+    return placed
+
+
+def _clip_span(
+    clip: Any, default_speed: float = 1.0
+) -> tuple[float, float, float, float] | None:
+    """A timeline clip's `(start, sourceIn, sourceOut, speed)` from the view
+    the editor returned. Missing fields take the values a plain placement
+    has: start 0, source in 0, and the run's own speed."""
+    if not isinstance(clip, dict):
+        return None
+    try:
+        start = float(clip.get("start") or 0.0)
+        source_in = float(clip.get("sourceStart") or 0.0)
+        duration = float(clip.get("duration") or 0.0)
+        speed = float(clip.get("speed") or default_speed or 1.0)
+    except (TypeError, ValueError):
+        return None
+    if duration <= 0 or speed <= 0:
+        return None
+    return start, source_in, source_in + duration * speed, speed
+
+
+def _audio_duration(path: str) -> float | None:
+    """A take's duration, video or audio: ffprobe's format duration."""
+    if not shutil.which("ffprobe") or not os.path.isfile(path):
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", path,
+            ],
+            capture_output=True, text=True, timeout=60, check=True,
+        )
+        return float(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 # ------------------------------------------------------- the plan field audit
@@ -1919,25 +2294,30 @@ def run_pipeline(
 
     # ---- 3-5. The readings, on the repaired take.
     transcribe_args: dict[str, Any] = {"path": audio}
+    # The language the plan names or writes in: a Bengali script or glossary
+    # is enough to know an English-only model cannot read the take. When the
+    # plan says nothing in a non-Latin script, the hint is None and the
+    # multilingual model's own detection decides.
+    language_hint = _plan_language(plan)
+    glossary = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
+    glossary_text = glossary.strip()[:200] if isinstance(glossary, str) and glossary.strip() else None
+    named_model = voiceover_plan.get("whisperModel") if isinstance(voiceover_plan, dict) else None
+    whisper_model, language_hint, whisper_note = _resolve_whisper(
+        named_model, os.environ.get("FUNCUT_WHISPER_MODEL"), language_hint
+    )
     # IDEM: the transcript is a function of the take's bytes AND the
     # recogniser's ask - the same repaired file under the same ask needs
     # its words read once, not again per run; a different ask (model,
-    # glossary) is a different reading. The reply is recorded whole, and
-    # reuse re-derives every check the fresh path makes (DEG-09's
+    # language, glossary) is a different reading. The reply is recorded
+    # whole, and reuse re-derives every check the fresh path makes (DEG-09's
     # mismatch flag included) from the recorded reply.
     _transcribe_prior = _stage_prior("transcribe")
     _transcribe_sha = _file_sha256(audio) or ""
-    _transcribe_ask: dict[str, Any] = {}
-    if isinstance(voiceover_plan, dict):
-        _named_model = voiceover_plan.get("whisperModel")
-        if isinstance(_named_model, str) and _named_model.strip():
-            _transcribe_ask["model"] = _named_model.strip()
-    _env_model = os.environ.get("FUNCUT_WHISPER_MODEL")
-    if _env_model:
-        _transcribe_ask["envModel"] = _env_model
-    _glossary_ask = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
-    if isinstance(_glossary_ask, str) and _glossary_ask.strip():
-        _transcribe_ask["glossary"] = _glossary_ask.strip()[:200]
+    _transcribe_ask: dict[str, Any] = {"model": whisper_model}
+    if language_hint:
+        _transcribe_ask["language"] = language_hint
+    if glossary_text:
+        _transcribe_ask["glossary"] = glossary_text
     if (
         isinstance(_transcribe_prior, dict)
         and _transcribe_prior.get("audioSha256") == _transcribe_sha
@@ -1954,22 +2334,19 @@ def run_pipeline(
     else:
         # FALL-07: the recogniser is a knob, not a constant - the plan names a
         # model, the operator pins one, and only when neither speaks does the
-        # server's base.en default answer (fast, English-only; the wrong
-        # choice for any other language, which DEG-09's flag will name).
-        whisper_model = None
-        if isinstance(voiceover_plan, dict):
-            named_model = voiceover_plan.get("whisperModel")
-            if isinstance(named_model, str) and named_model.strip():
-                whisper_model = named_model.strip()
-        whisper_model = whisper_model or os.environ.get("FUNCUT_WHISPER_MODEL") or None
-        if whisper_model:
-            transcribe_args["model"] = whisper_model
-            log(f"transcriber: {whisper_model} (named; base.en is the server's default)")
-        glossary = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
-        if isinstance(glossary, str) and glossary.strip():
+        # multilingual default answer. An English-only model is never allowed
+        # to read a non-English take: it cannot refuse, it transliterates.
+        transcribe_args["model"] = whisper_model
+        if language_hint:
+            transcribe_args["language"] = language_hint
+        if glossary_text:
             # The spelling the whole run keeps: the proper nouns and jargon
             # the recogniser mishears, named before the first window.
-            transcribe_args["initialPrompt"] = glossary.strip()[:200]
+            transcribe_args["initialPrompt"] = glossary_text
+        log(
+            f"transcriber: {whisper_model} "
+            f"(language {language_hint or 'detected by whisper'})"
+        )
         source_job = advance("transcribe", transcribe_args)
         source_job_id = source_job.get("job") if isinstance(source_job, dict) else None
         if not source_job_id:
@@ -1993,6 +2370,63 @@ def run_pipeline(
             "transcribe", audioSha256=_transcribe_sha,
             ask=_transcribe_ask, transcript=transcript,
         )
+    if whisper_note:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.model", whisper_note,
+        )
+    # The take's own transcript, kept before the speed retime: the verify's
+    # expected side maps it through the placed clip's start, in-point and
+    # rate, so the comparison is against the narration the edit carries.
+    take_transcript = transcript
+    take_duration = _audio_duration(audio)
+    coverage = _transcript_coverage(take_transcript, take_duration)
+    confidence = _transcript_confidence(take_transcript)
+    uncertain = _uncertain_words(take_transcript)
+    glossary_misses = _glossary_misses(take_transcript, glossary_text)
+    # A transcript with no timed segments is not a reading of the take. A
+    # word count of one proves nothing either: coverage is the duration-aware
+    # measure, and a thin reading is named before its gaps are planned.
+    if coverage["segments"] == 0:
+        raise PipelineError(
+            "source transcription returned no timed segments; the edit would "
+            "have no narration to cut, caption or plan against"
+        )
+    if coverage["words"] == 0:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.wordTiming",
+            "the transcript carries no word timings; captions fall back to "
+            "segment timing and word confidence is unmeasured",
+        )
+    if coverage["audioSeconds"] > 0 and coverage["ratio"] < 0.05:
+        raise PipelineError(
+            "source transcription covers "
+            f"{coverage['ratio']:.0%} of the take "
+            f"({coverage['speechSeconds']:g}s of {coverage['audioSeconds']:g}s); "
+            "the recogniser heard almost none of it"
+        )
+    if coverage["audioSeconds"] > 0 and coverage["ratio"] < TRANSCRIPT_COVERAGE_FLOOR:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.coverage",
+            f"the transcript covers {coverage['ratio']:.0%} of the take "
+            f"({coverage['speechSeconds']:g}s of {coverage['audioSeconds']:g}s); "
+            "the planner and the verify read a thin narration",
+            confidence=coverage["ratio"],
+        )
+    if uncertain:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.wordConfidence",
+            f"{len(uncertain)} of {confidence['words']} rated word(s) are below "
+            f"{UNCERTAIN_WORD_FLOOR:g} confidence "
+            f"(weakest {confidence['min']:.2f}); they stay in the transcript "
+            "and are flagged, not treated as correct",
+            confidence=confidence["mean"],
+        )
+    if glossary_misses:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.glossary",
+            f"the transcript did not carry {len(glossary_misses)} glossary "
+            f"term(s): {', '.join(glossary_misses[:6])}",
+        )
     # The transcript's own times are the take's; the placed clip is sped by
     # the plan's voiceover speed below, so a word `t` seconds into the take
     # lands at `t / speed` on the timeline. Every later reader - the footage
@@ -2012,15 +2446,17 @@ def run_pipeline(
     if _voiceover_speed and _voiceover_speed != 1.0:
         transcript = _retimed(transcript, _voiceover_speed)
         log(f"transcript re-read onto the sped timeline: 1/{_voiceover_speed:g}x")
-    # DEG-09: the transcribe reply carries what ran and what script the
-    # words came back in; a wrong-language transcript is flagged here, at
-    # the reading, not discovered three phases later in the captions.
+    # DEG-09: the transcribe reply carries what ran, what script the words
+    # came back in and what language whisper heard; a wrong-language
+    # transcript is flagged here, at the reading, not discovered three
+    # phases later in the captions.
     if transcript.get("languageMismatch") is True:
         record_fallback(
             "transcribe", "transcript", "transcribe.language",
-            "the transcription's script disagrees with the ask: model "
+            "the transcription disagrees with the ask: model "
             f"{transcript.get('model') or 'unknown'}, script "
-            f"{transcript.get('scriptDetected') or 'unknown'}, hint "
+            f"{transcript.get('scriptDetected') or 'unknown'}, heard "
+            f"{transcript.get('languageDetected') or 'unknown'}, hint "
             f"{transcript.get('language') or 'none'} - the words may not "
             "be the take's words",
         )
@@ -2096,8 +2532,19 @@ def run_pipeline(
     # said plainly, not lost in a log line.
     planner_spans: list[tuple[float, float, str]] = []
     if "footage_plan_suggest" in served:
+        # The planner gets the whole narration, not a reduced slice: every
+        # timed segment, the text as one string, the language it was heard
+        # in, the words the recogniser doubted and the glossary it was given.
+        # The tool reads `segments`; the rest is context for a planner that
+        # reads more, and nothing downstream is left to guess the story from
+        # a handful of lines.
+        planner_transcript = dict(transcript)
+        planner_transcript["text"] = _transcript_text(transcript)
+        planner_transcript["languageDetected"] = transcript.get("languageDetected")
+        planner_transcript["uncertainWords"] = _uncertain_words(transcript)
+        planner_transcript["glossary"] = glossary_text
         footage_plan = advance("footage_plan_suggest", {
-            "transcript": {"segments": transcript.get("segments", [])},
+            "transcript": planner_transcript,
         })
         if isinstance(footage_plan, dict):
             gaps = footage_plan.get("gaps") or []
@@ -3595,7 +4042,14 @@ def run_pipeline(
                     if isinstance(text, str) and text.strip() and isinstance(start, (int, float)) \
                             and isinstance(end, (int, float)) and float(end) > float(start) \
                             and _captions_wanted(float(start)):
-                        words.append([text, float(start), float(end)])
+                        entry: list[Any] = [text, float(start), float(end)]
+                        # The confidence travels with the word into the
+                        # caption comp, so an uncertain word is still
+                        # uncertain after grouping, animation and a save.
+                        if isinstance(word.get("confidence"), (int, float)) \
+                                and not isinstance(word.get("confidence"), bool):
+                            entry.append(float(word["confidence"]))
+                        words.append(entry)
             if not words:
                 log(
                     "kinetic captions wanted, but the transcript carried no word "
@@ -3636,8 +4090,13 @@ def run_pipeline(
                 # screen (VERIFY-02), the same as it measures the
                 # timeline's own.
                 placed_captions = [
-                    {"start": start, "end": end, "text": text}
-                    for text, start, end in words
+                    {
+                        "start": entry[1],
+                        "end": entry[2],
+                        "text": entry[0],
+                        **({"confidence": entry[3]} if len(entry) > 3 else {}),
+                    }
+                    for entry in words
                 ]
                 if baked_file:
                     # The reel lands where the graphics do: the overlay
@@ -4219,11 +4678,36 @@ def run_pipeline(
     frames = _sample_frames(rendered, (probe or {}).get("duration"))
     verify_entries.extend(_probe_checks(rendered, plan, export, probe, frames))
 
+    # The expected side on the final timeline: the take's words mapped
+    # through the placed clip's start, in-point and rate. A voiceover at
+    # zero with unity speed reads exactly as before; one placed later or
+    # trimmed must not be compared at zero, and the take's own words are
+    # the expected side - not the retimed copy that already assumes start 0.
+    expected_words = None
+    read_back_clips = read_back.get("clips") if isinstance(read_back, dict) else None
+    placed_audio = next(
+        (
+            clip for clip in read_back_clips or []
+            if isinstance(clip, dict)
+            and str(clip.get("id")) == str(audio_clip_id)
+        ),
+        None,
+    )
+    span = _clip_span(placed_audio, _voiceover_speed or 1.0)
+    if span is not None and isinstance(take_transcript, dict):
+        expected_words = _placed_words(take_transcript, *span)
+    expected_for_verify = expected_words if expected_words else transcript
+    if not expected_words:
+        record_fallback(
+            "verify", "transcript-sync", "transcribe.expectedTiming",
+            "the placed voiceover clip's span could not be read from the "
+            "timeline; the sync check compares the transcript in take time",
+        )
     verification = advance(
         "emotion",
         {
             "action": "verify",
-            "expected": transcript,
+            "expected": expected_for_verify,
             "actual": exported_transcript,
             "toleranceMs": VERIFICATION_SYNC_TOLERANCE_MS,
         },
@@ -4882,7 +5366,7 @@ def run_pipeline(
         else:
             verify_entries.append(_sync_entry(advance("emotion", {
                 "action": "verify",
-                "expected": transcript,
+                "expected": expected_for_verify,
                 "actual": rev_words,
                 "toleranceMs": VERIFICATION_SYNC_TOLERANCE_MS,
             })))
@@ -6364,13 +6848,32 @@ def self_test() -> int:
     # A plan that asks for captions but has none to place: the entry says
     # so, and the refusal names it.
     _scenario_state_clear(project)
+    # The transcript is real - one measured word - but it sits in a span
+    # the plan flagged no-captions, so the caption step places none and
+    # VERIFY-02 is the check that has to catch it. An empty transcript is
+    # refused earlier now, at the reading, and never reaches this gate.
     no_caption_transcript = selftest_world()
     no_caption_transcript["analysis_wait"] = {
         "state": "done",
-        'output': '{"segments":[]}',
+        "output": json.dumps({
+            "segments": [{
+                "start": 0.0,
+                "end": 1.0,
+                "text": "one",
+                "words": [{"text": "one", "start": 0.0, "end": 1.0, "confidence": 0.9}],
+            }],
+            "languageDetected": "en",
+            "wordConfidence": {"words": 1, "mean": 0.9, "min": 0.9, "uncertain": 0},
+            "uncertainWords": [],
+            "coverage": {"speechSeconds": 1.0, "audioSeconds": 12.0, "ratio": 0.083, "segments": 1, "words": 1},
+        }),
     }
+    no_caption_plan = copy.deepcopy(SELF_TEST_PLAN)
+    for index, segment in enumerate(no_caption_plan.get("segments") or []):
+        if isinstance(segment, dict):
+            segment["captions"] = index == len(no_caption_plan["segments"]) - 1
     try:
-        run_pipeline(MockMcp(no_caption_transcript), project, audio, SELF_TEST_PLAN)
+        run_pipeline(MockMcp(no_caption_transcript), project, audio, no_caption_plan)
         print("FAIL: a captionless export shipped without a refusal")
         return 1
     except PipelineError as error:
@@ -6970,6 +7473,24 @@ def self_test() -> int:
         print(f"FAIL: the plan's whisperModel did not reach the transcriber: {asked}")
         return 1
     print("FALL-07 ok: the plan's whisper model is the transcriber's ask")
+
+    # FALL-08: a non-English take is never read by an English-only model,
+    # even when the plan names one, and an unnamed take gets multilingual
+    # small rather than the English default.
+    fall08_plan = copy.deepcopy(SELF_TEST_PLAN)
+    fall08_voiceover = fall08_plan.setdefault("audio", {}).setdefault("voiceover", {})
+    fall08_voiceover["language"] = "bn"
+    fall08_voiceover["whisperModel"] = "base.en"
+    fall08 = deg_project("fall-08")
+    fall08_calls = run_pipeline(MockMcp(selftest_world()), fall08, audio, fall08_plan)
+    asked = next(args for tool, args in fall08_calls if tool == "transcribe")
+    if asked.get("model") != "base" or asked.get("language") != "bn":
+        print(f"FAIL: an English-only model was allowed to read Bengali: {asked}")
+        return 1
+    if _resolve_whisper(None, None, "bn")[0] != "small":
+        print("FAIL: an unnamed Bengali take did not get multilingual small")
+        return 1
+    print("FALL-08 ok: Bengali gets a multilingual model, never an English-only one")
 
     # FALL-09: a plan that names only a mood shops its bed with the mood.
     fall09_plan = copy.deepcopy(SELF_TEST_PLAN)

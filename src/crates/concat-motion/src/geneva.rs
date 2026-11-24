@@ -2276,11 +2276,13 @@ mod tests {
                             text: "make".into(),
                             start: 0.0,
                             end: Some(0.5),
+                            confidence: None,
                         },
                         Word {
                             text: "it".into(),
                             start: 0.5,
                             end: None,
+                            confidence: None,
                         },
                     ],
                     highlight: Some(crate::comp::TextStyle {

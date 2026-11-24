@@ -55,9 +55,9 @@
 //!
 //! // A caption: the words a recogniser timed, each lit when it is spoken.
 //! let words = vec![
-//!     Word { text: "Make".into(), start: 0.0, end: Some(0.45) },
-//!     Word { text: "it".into(), start: 0.45, end: Some(0.85) },
-//!     Word { text: "move.".into(), start: 0.85, end: None },
+//!     Word { text: "Make".into(), start: 0.0, end: Some(0.45), confidence: Some(0.98) },
+//!     Word { text: "it".into(), start: 0.45, end: Some(0.85), confidence: Some(0.91) },
+//!     Word { text: "move.".into(), start: 0.85, end: None, confidence: None },
 //! ];
 //! let caption = concat_motion::typography::karaoke(&words, 2.4, "caption", &style, &kinetic);
 //! # let _ = caption;
@@ -272,8 +272,18 @@ pub fn karaoke(words: &[Word], span: f64, id: &str, style: &TextNode, kinetic: &
         let weight = unit_weight(kinetic, index, words.len())
             .map(|weight| format!("; font-weight: {weight}"))
             .unwrap_or_default();
+        // The recogniser's confidence rides the span as a data attribute:
+        // it does not change the drawing, but it survives into the comp
+        // document, so an uncertain word can still be found after the
+        // captions are baked, placed and reopened.
+        let confidence = word
+            .confidence
+            .filter(|value| value.is_finite())
+            .map(|value| format!(" data-confidence=\"{:.3}\"", value.clamp(0.0, 1.0)))
+            .unwrap_or_default();
         spans.push_str(&format!(
-            "<span style=\"animation: kk-word {:.3}s {} {:.3}s both{}\">{}</span>",
+            "<span{} style=\"animation: kk-word {:.3}s {} {:.3}s both{}\">{}</span>",
+            confidence,
             spoken,
             kinetic.curve.css(),
             word.start.max(0.0),
@@ -882,6 +892,7 @@ mod tests {
             text: "Heavy".into(),
             start: 0.0,
             end: Some(0.4),
+            confidence: None,
         }];
         let node = karaoke(&words, 1.0, "caption", &heavy, &Kinetic::words());
         let css = css_of(&node);
@@ -1027,16 +1038,19 @@ mod tests {
                 text: "Make".into(),
                 start: 0.0,
                 end: Some(0.45),
+                confidence: None,
             },
             Word {
                 text: "it".into(),
                 start: 0.45,
                 end: Some(0.85),
+                confidence: None,
             },
             Word {
                 text: "move.".into(),
                 start: 0.85,
                 end: None,
+                confidence: None,
             },
         ];
         let kinetic = Kinetic::words();
@@ -1072,16 +1086,19 @@ mod tests {
                 text: "Make".into(),
                 start: 0.0,
                 end: Some(0.45),
+                confidence: None,
             },
             Word {
                 text: "it".into(),
                 start: 0.45,
                 end: Some(0.85),
+                confidence: None,
             },
             Word {
                 text: "move.".into(),
                 start: 0.85,
                 end: None,
+                confidence: None,
             },
         ];
         let kinetic = Kinetic::words().flexing_weight(100, 900);
@@ -1100,9 +1117,46 @@ mod tests {
             text: "R&D".into(),
             start: 0.0,
             end: Some(0.4),
+            confidence: None,
         }];
         let node = karaoke(&words, 1.0, "caption", &style(), &Kinetic::words());
         assert!(markup_of(&node).contains("R&amp;D"));
+    }
+
+    /// A word's confidence rides its own span, and an unrated word says
+    /// nothing rather than claiming certainty.
+    #[test]
+    fn a_words_confidence_rides_its_span() {
+        let words = vec![
+            Word {
+                text: "sure".into(),
+                start: 0.0,
+                end: Some(0.4),
+                confidence: Some(0.97),
+            },
+            Word {
+                text: "doubt".into(),
+                start: 0.4,
+                end: Some(0.8),
+                confidence: Some(0.31),
+            },
+            Word {
+                text: "plain".into(),
+                start: 0.8,
+                end: None,
+                confidence: None,
+            },
+        ];
+        let markup = markup_of(&karaoke(
+            &words,
+            1.2,
+            "caption",
+            &style(),
+            &Kinetic::words(),
+        ));
+        assert!(markup.contains("data-confidence=\"0.970\""), "{markup}");
+        assert!(markup.contains("data-confidence=\"0.310\""), "{markup}");
+        assert_eq!(markup.matches("data-confidence").count(), 2, "{markup}");
     }
 
     /// Everything this module writes passes its own guard: no static
@@ -1116,11 +1170,13 @@ mod tests {
                 text: "Make".into(),
                 start: 0.0,
                 end: Some(0.45),
+                confidence: None,
             },
             Word {
                 text: "it".into(),
                 start: 0.45,
                 end: Some(0.85),
+                confidence: None,
             },
         ];
         let caption_node = karaoke(&words, 1.5, "caption", &style(), &kinetic);
@@ -1169,16 +1225,19 @@ mod tests {
                 text: "Make".into(),
                 start: 0.4,
                 end: Some(0.85),
+                confidence: None,
             },
             Word {
                 text: "it".into(),
                 start: 0.85,
                 end: Some(1.25),
+                confidence: None,
             },
             Word {
                 text: "yours.".into(),
                 start: 1.25,
                 end: None,
+                confidence: None,
             },
         ];
         let mut caption_node = karaoke(&words, 2.4, "caption", &style(), &kinetic);

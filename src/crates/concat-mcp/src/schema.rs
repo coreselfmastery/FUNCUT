@@ -528,7 +528,7 @@ mod tests {
         // minted - and both waits carry the field; function. And once
         // more, 247,000 -> 248,000, still at 110: the plan schema's
         // audio block says the runner's defaults aloud - the
-        // transcriber's base.en, the voice's kokoro-int8, the bed's
+        // transcriber's base, the voice's kokoro-int8, the bed's
         // -12 duck, every knob a plan names when it wants another
         // answer - the block bone-dry, its one hint a maxLength the
         // runtime already enforced; schema the catalogue carries for

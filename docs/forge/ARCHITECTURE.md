@@ -123,7 +123,7 @@ English-only lexicon.
 ## The 4 GB laptop
 
 Forge is a single native binary (no Node/Python runtime of its own). FUNCUT
-with Kokoro int8 and whisper `base.en` fits comfortably; Chatterbox (~1 GB) is
+with Kokoro int8 and whisper `base` fits comfortably; Chatterbox (~1 GB) is
 opt-in only. For heavy sessions: keep the window open with proxy scrubbing on
 (it is by default), prefer `--mcp headless` for overnight queues, and stack two
 or three free provider keys instead of paying for one.

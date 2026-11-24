@@ -229,7 +229,7 @@ All captions are JSON in the `Caption` type from `@remotion/captions`:
 type Caption = { text: string; startMs: number; endMs: number; timestampMs: number | null; confidence: number | null; pageBreakAfter?: boolean };
 ```
 
-**Transcribe** (`@remotion/install-whisper-cpp`): Node script — `installWhisperCpp({to, version: "1.5.5"})` → `downloadWhisperModel({model: "medium.en", folder})` → convert audio to 16kHz wav (`ffmpeg -i in.mp4 -ar 16000 out.wav -y`) → `transcribe({model, whisperPath, inputPath, tokenLevelTimestamps: true})` → `toCaptions({whisperCppOutput})` → write JSON to `public/`. Transcribe each clip individually, one JSON per video. Existing `.srt`: fetch text and `parseSrt({input})`.
+**Transcribe** (`@remotion/install-whisper-cpp`): Node script — `installWhisperCpp({to, version: "1.5.5"})` → `downloadWhisperModel({model: "medium", folder})` → convert audio to 16kHz wav (`ffmpeg -i in.mp4 -ar 16000 out.wav -y`) → `transcribe({model, whisperPath, inputPath, tokenLevelTimestamps: true})` → `toCaptions({whisperCppOutput})` → write JSON to `public/`. Transcribe each clip individually, one JSON per video. Existing `.srt`: fetch text and `parseSrt({input})`.
 
 **Display** (`@remotion/captions`), in a dedicated component file:
 

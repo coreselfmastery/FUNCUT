@@ -210,7 +210,7 @@ pub fn compact() -> Value {
         if let Some(audio) = properties.get_mut("audio").and_then(Value::as_object_mut) {
             audio.insert(
                 "description".to_owned(),
-                json!("Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood."),
+                json!("Voiceover and bed. Defaults: multilingual whisperModel base (small for a non-English language), TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood."),
             );
         }
         if let Some(audio_clip_id) = properties

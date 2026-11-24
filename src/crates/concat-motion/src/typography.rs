@@ -55,9 +55,9 @@
 //!
 //! // A caption: the words a recogniser timed, each lit when it is spoken.
 //! let words = vec![
-//!     Word { text: "Make".into(), start: 0.0, end: Some(0.45) },
-//!     Word { text: "it".into(), start: 0.45, end: Some(0.85) },
-//!     Word { text: "move.".into(), start: 0.85, end: None },
+//!     Word { text: "Make".into(), start: 0.0, end: Some(0.45), confidence: Some(0.98) },
+//!     Word { text: "it".into(), start: 0.45, end: Some(0.85), confidence: Some(0.91) },
+//!     Word { text: "move.".into(), start: 0.85, end: None, confidence: None },
 //! ];
 //! let caption = concat_motion::typography::karaoke(&words, 2.4, "caption", &style, &kinetic);
 //! # let _ = caption;

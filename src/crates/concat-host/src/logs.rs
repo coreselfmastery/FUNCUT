@@ -128,10 +128,9 @@ pub fn save_on_panic(save: impl Fn() + Send + Sync + 'static) {
 }
 
 fn run_panic_save() {
-    let save = PANIC_SAVE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
+    // Never wait on the lock in a panic hook: a panic while the callback
+    // is being replaced would hang the process instead of aborting it.
+    let save = PANIC_SAVE.try_lock().ok().and_then(|guard| guard.clone());
     if let Some(save) = save {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| save()));
     }

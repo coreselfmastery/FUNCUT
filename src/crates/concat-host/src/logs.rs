@@ -29,7 +29,7 @@
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::dirs::AppDirs;
 
@@ -116,6 +116,27 @@ fn install(sink: Option<Sink>, extra: Option<Box<dyn log::Log>>) -> Result<(), S
     Ok(())
 }
 
+/// Work that must run before a panic aborts the process. The window
+/// installs a save here; the hook calls it before the process dies.
+static PANIC_SAVE: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
+
+/// Registers the last-chance save. Replaces any previous one.
+pub fn save_on_panic(save: impl Fn() + Send + Sync + 'static) {
+    *PANIC_SAVE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(save));
+}
+
+fn run_panic_save() {
+    let save = PANIC_SAVE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if let Some(save) = save {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| save()));
+    }
+}
+
 /// Sends panics to the log before they reach wherever they were going.
 ///
 /// A panic is the one failure that never passes through a `Result`, and in a
@@ -126,6 +147,7 @@ fn install(sink: Option<Sink>, extra: Option<Box<dyn log::Log>>) -> Result<(), S
 pub fn catch_panics() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        run_panic_save();
         let where_ = info
             .location()
             .map_or_else(|| "somewhere".to_owned(), |at| at.to_string());
@@ -392,6 +414,18 @@ fn civil(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn the_panic_hook_runs_the_registered_save() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hits);
+        save_on_panic(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+        });
+        run_panic_save();
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn the_epoch_and_a_leap_day_come_out_right() {

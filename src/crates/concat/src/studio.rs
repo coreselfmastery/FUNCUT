@@ -3187,6 +3187,18 @@ impl Studio {
         );
     }
 
+    /// Writes the document on this thread, for the panic hook: the
+    /// process is about to abort, so a worker would never finish.
+    pub fn save_now(&mut self) -> Result<(), String> {
+        let Some(session) = self.session.as_mut() else {
+            return Ok(());
+        };
+        self.autosave.stop();
+        session.save(None)?;
+        self.dirty = false;
+        Ok(())
+    }
+
     /// Writes the document, on a worker. `announce` says so on success;
     /// a failure is always said.
     pub fn save(&mut self, announce: bool) {

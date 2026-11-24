@@ -555,7 +555,7 @@
       "type": "object"
     },
     "sections": {
-      "description": "The piece's structure, by role. Reel: hook + body + cta. Longform: hook + intro + body(chapters) + cta + outro. Boundaries align to segments.",
+      "description": "The piece's structure, by role. Reel: hook + curiosity + progression + payoff + ending. Longform: hook + intro + curiosity + progression + rehook + payoff + cta + ending. Boundaries align to segments.",
       "items": {
         "properties": {
           "end": {
@@ -570,10 +570,14 @@
             "enum": [
               "hook",
               "intro",
+              "curiosity",
+              "progression",
               "body",
               "chapter",
               "rehook",
+              "payoff",
               "cta",
+              "ending",
               "outro"
             ],
             "type": "string"

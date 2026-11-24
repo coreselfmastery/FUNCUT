@@ -32,7 +32,48 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
-## The native 3D scene layer (newest, `.15`)
+## AUTO EDIT's direction pass (`.15` tree)
+
+- **The one-click edit auditions three films.** The deterministic fallback
+  scores an evidence-first documentary, a kinetic explainer and a cinematic
+  essay from the transcript's topic words, the frame, the runtime and the
+  measured delivery; the strongest sets the style bible, grade family,
+  caption hand, motion hand, sound world and B-roll vocabulary, and all
+  three stay in `retention.creativeAlternatives` with their scores and the
+  reason.
+- **The five-beat skeleton is written, not implied.** Hook, curiosity gap,
+  progression, payoff and ending become the plan's `sections`; a longform
+  cut gets an intro, a re-hook at the retention dip, a CTA and an outro.
+  The curiosity gap prefers the first measured question over the first
+  sentence.
+- **Retention is measured.** The pass names long low-energy stretches,
+  repeated three-word explanations and cuts that keep the same act and
+  mood in `retention.analysis`, then moves pattern breaks to those times.
+- **Variety is rotated.** The plan records `visualVariety` (shot scales,
+  entrances and B-roll categories actually used) and rotates shot scale,
+  entrance and query style so no two neighbours repeat; the gather stage's
+  clip-id, frame-hash and transition no-repeat rules still own the pixels.
+- **The Director prompt carries the same contract.** Story architecture,
+  retention analysis, visual variety, beat-aware cuts, three directions and
+  topic-specific direction are named in the AUTO EDIT prompt even when the
+  user's request is one line.
+
+## Crash safety and installer honesty (`.15` re-cut)
+
+- **A panic saves before it aborts.** The shipping profile is
+  `panic = "abort"`, so a worker save can never finish. The panic hook now
+  calls a registered save callback, and `Studio::save_now` writes the
+  document synchronously on the panicking thread. A failed save is logged,
+  not raised from the hook; the hook never waits on the callback lock.
+- **The installer no longer installs another project by accident.**
+  `install-linux.sh` leaves the upstream fallback empty unless
+  `--use-upstream` asks for it, and a fork with no release fails with that
+  instruction instead of silently taking Concat's build.
+- **The audit is checked in.** `docs/AUDIT-2026-11-24.md` records the
+  findings from the second pass and what remains, and `KNOWN_ISSUES.md`
+  links to it.
+
+## The native 3D scene layer (`.15`)
 
 - **A comp can carry a real 3D scene.** `NodeKind::Scene3D` holds box,
   plane, sphere, cylinder and torus objects with position, rotation,

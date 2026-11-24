@@ -251,10 +251,14 @@
                 "enum": [
                   "hook",
                   "intro",
+                  "curiosity",
+                  "progression",
                   "body",
                   "chapter",
                   "rehook",
+                  "payoff",
                   "cta",
+                  "ending",
                   "outro"
                 ],
                 "type": "string"

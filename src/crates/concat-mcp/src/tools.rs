@@ -1854,7 +1854,7 @@ fn sense_schema(name: &str) -> Option<Value> {
             "lines": { "type": "array", "description": "Lines as [{text, start, end}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } },
             "script": string("Raw narration text; split into sentences when no transcript or lines are given."),
             "brief": { "type": "object", "description": "The creative brief; its emotionalArc is checked against the states the lines actually visit." },
-            "sections": { "type": "array", "description": "The plan's sections [{role, start, end}]; a line inside a hook/cta/outro section inherits that act.", "items": { "type": "object" } },
+            "sections": { "type": "array", "description": "The plan's sections [{role, start, end}]; hook, curiosity, progression, payoff, ending, plus longform intro, rehook and cta.", "items": { "type": "object" } },
             "brand": { "type": "object", "description": "The brand guide (action 'template' returns one to copy): id, name, vibe, palette, type, grade, taboos, and optional motion, sfx, bgm, voice." },
             "apiKey": string("A HuggingFace token for the hosted emotion model; FUNCUT_EMOTION_API_KEY / HF_TOKEN otherwise. Without one the English-only lexicon engine answers."),
             "model": string("Override the default emotion model id (tabularisai/multilingual-emotion-classification)."),
@@ -3390,10 +3390,11 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
         let rank = |role: &str| match role {
             "hook" => 0,
             "intro" => 1,
-            "body" | "chapter" => 2,
-            "rehook" => 3,
-            "cta" => 4,
-            _ => 5, // outro
+            "curiosity" => 2,
+            "body" | "chapter" | "progression" | "rehook" => 3,
+            "payoff" => 5,
+            "cta" => 6,
+            _ => 7, // ending, outro
         };
         let mut previous: Option<(&str, f64, f64)> = None;
         for (index, section) in sections.iter().enumerate() {
@@ -3444,7 +3445,7 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 }
                 if rank(role) < rank(previous_role) {
                     return Err(format!(
-                        "sections[{index}] is a {role} after a {previous_role}; the order is hook, intro, body/chapters, rehook, cta, outro"
+                        "sections[{index}] is a {role} after a {previous_role}; the order is hook, intro, curiosity, progression/body/chapters/rehook, payoff, cta, ending/outro"
                     ));
                 }
             }
@@ -4320,9 +4321,13 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         blockers.push("the first section must be a hook".to_owned());
         score -= 1.0;
     }
-    if runtime > 12.0 && !roles.iter().any(|r| matches!(*r, "cta" | "outro")) {
+    if runtime > 12.0
+        && !roles
+            .iter()
+            .any(|r| matches!(*r, "cta" | "outro" | "payoff" | "ending"))
+    {
         blockers.push(
-            "a piece over 12 s needs a cta or outro section: the payoff has to land somewhere"
+            "a piece over 12 s needs a payoff, ending, cta or outro section: the story has to land somewhere"
                 .to_owned(),
         );
         score -= 0.5;

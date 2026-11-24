@@ -7,8 +7,9 @@
 #   ./install-linux.sh --pacman        the Arch package, through pacman (sudo)
 #   ./install-linux.sh --list          show what the releases hold, install nothing
 #   ./install-linux.sh --repo o/r      a fork to prefer over this one
-#   ./install-linux.sh --use-upstream  take Concat's own releases when the fork
-#                                       has none; OWNER/NAME after it, for a fork of a fork
+#   ./install-linux.sh --use-upstream  take Concat's own releases instead of
+#                                       failing when the fork has none; OWNER/NAME
+#                                       after it, for a fork of a fork
 #
 # What comes down beside the app. The default is everything a first run
 # needs: the core models (whisper base.en for captions, Kokoro int8 for
@@ -26,15 +27,16 @@
 #   --with-openvid   also the ~435 MB OpenVid stock index, so the stock
 #                    shelf is ready the first time it is opened
 #
-# It looks for a published release on this repository first, and falls
-# back to the upstream Concat releases when the fork has none - the two
-# are the same program, built by the same workflows. A release built by
-# the Release workflow publishes itself: CI passes on the tag first, and
-# every bundle is launched where it was built before it uploads, so what
-# this script finds is already public - nothing waits on a person to
-# click Publish. (Drafts and pre-releases are still skipped below, the
-# way they always were - a hand-made draft is none of this script's
-# business until a person publishes it.)
+# It looks for a published release on this repository first. A fork with
+# no release of its own fails loudly rather than silently installing
+# upstream Concat: the two are the same program, but only one is this
+# build. Pass --use-upstream to take upstream's release on purpose. A
+# release built by the Release workflow publishes itself: CI passes on
+# the tag first, and every bundle is launched where it was built before
+# it uploads, so what this script finds is already public - nothing waits
+# on a person to click Publish. (Drafts and pre-releases are still skipped
+# below, the way they always were - a hand-made draft is none of this
+# script's business until a person publishes it.)
 #
 # Beside the app it offers the motion sidecar - Geneva v1.6.0, pinned by
 # checksum - into ~/.local/bin: the editor runs without it (a comp with
@@ -43,8 +45,8 @@
 #
 # A repository can be private (a fork only its owner can see): the
 # anonymous API is refused there, which reads to this script as "no
-# releases" - and it would fall back to upstream, the same program but
-# not this one. GITHUB_TOKEN (or GH_TOKEN, the gh CLI's own name for it)
+# releases" - and the install fails rather than taking a different
+# build. GITHUB_TOKEN (or GH_TOKEN, the gh CLI's own name for it)
 # in the environment fixes that: a fine-grained token with read access
 # to the repository is enough, and it is sent only to the API listings
 # and the downloads of the repositories named here - never to a
@@ -57,13 +59,13 @@ set -euo pipefail
 
 # ── where from ────────────────────────────────────────────────────────
 # The repository this script came from, and the upstream it is a fork
-# of. Override the first with --repo; the fallback is what --use-upstream
-# reaches for, and it is also the default: a fork with no releases of its
-# own should still end with the program installed.
+# of. Override the first with --repo. The fallback stays empty unless
+# --use-upstream asks for it: installing another project's build because
+# this fork has no release is the failure this script must not hide.
 FORK_REPO="coreselfmastery/FUNCUT"
 UPSTREAM_REPO="jub0t/Concat"
 REPO="$FORK_REPO"
-FALLBACK="$UPSTREAM_REPO"
+FALLBACK=""
 
 # ── what to install ───────────────────────────────────────────────────
 KIND="appimage"
@@ -129,12 +131,15 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+WHERE="$REPO"
+[ -z "$FALLBACK" ] || WHERE="$REPO or $FALLBACK"
+
 CURL=""
 command -v curl >/dev/null 2>&1 && CURL="yes"
 
 # A token for GitHub, when the repository this installs from is private:
 # the anonymous API answers 403/404 for it, which this script would
-# otherwise read as "no releases" and fall back to upstream. GITHUB_TOKEN
+# otherwise read as "no releases" and fail. GITHUB_TOKEN
 # or GH_TOKEN; sent only where the calls below say `auth` - the release
 # listings and the downloads of the repositories named here, never a
 # third-party URL. A fine-grained token with read access to the
@@ -433,8 +438,9 @@ for repo in "$REPO" "$FALLBACK"; do
     # The primary repository is asked with the token when there is one:
     # it is the one that can be private, and a token that cannot read it
     # is a mistake to stop for, not to fall back from - the fallback is
-    # the same program, but not this one. Without a token the fall-back
-    # stands: a public fork needs none, and a private one is said below.
+    # the same program, but not this one, and only --use-upstream names
+    # it. Without a token a public fork needs none; a private one is
+    # said below.
     STREAM=$(release_assets "$repo" auth) || {
         if [ "$repo" = "$REPO" ] && [ -n "$GH_TOKEN_VALUE" ]; then
             die "the releases of $repo could not be read with the token given -
@@ -459,9 +465,8 @@ it may be refused (check its access and expiry), or the network is down"
         # - the sound library's 430 files, the sticker index, the OpenVid
         # index - are shelves the app fetches for itself, so a release with
         # no package in it is not printed at all (and a release is named once,
-        # not once per file). Listing stops at neither repo: a fork whose only
-        # published releases are shelves still wants to show what upstream
-        # can install, which is what the script itself would fall back to.
+        # not once per file). An explicitly chosen upstream is listed too, so
+        # --use-upstream --list shows both.
         LISTED=$(printf '%s\n' "$STREAM" | awk -F'\t' -v limit=3 '
             $1 == "RELEASE" {
                 tag = $2
@@ -515,13 +520,14 @@ it may be refused (check its access and expiry), or the network is down"
 done
 
 if [ "$LIST_ONLY" = "yes" ]; then
-    [ -n "$SEEN" ] || say "nothing to install: no $KIND for $ARCH in $REPO or $FALLBACK"
+    [ -n "$SEEN" ] || say "nothing to install: no $KIND for $ARCH in $WHERE"
     exit 0
 fi
 
-[ -n "${ASSET_URL:-}" ] || die "nothing to install: no $KIND for $ARCH in $REPO or $FALLBACK.
+[ -n "${ASSET_URL:-}" ] || die "nothing to install: no $KIND for $ARCH in $WHERE.
 If this fork has no published release yet, see docs/FUNCUT.md - one push
-of a version tag builds one."
+of a version tag builds one. To install upstream Concat's build instead,
+rerun with --use-upstream."
 
 say "found: $ASSET_NAME (from $FROM_REPO)"
 
@@ -648,11 +654,11 @@ DESKTOP
         for SIZE in 16 32 64 128 256 512; do
             mkdir -p "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps"
             # The repository this script installs from carries the marks;
-            # the upstream it falls back to carries the same ones.
+            # an explicitly chosen upstream carries the same ones.
             fetch "https://raw.githubusercontent.com/$REPO/main/assets/icons/concat_logo_${SIZE}.png" \
                 "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png" \
-                || fetch "https://raw.githubusercontent.com/$FALLBACK/main/assets/icons/concat_logo_${SIZE}.png" \
-                "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png" \
+                || { [ -n "$FALLBACK" ] && fetch "https://raw.githubusercontent.com/$FALLBACK/main/assets/icons/concat_logo_${SIZE}.png" \
+                    "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png"; } \
                 || rm -f "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png"
         done
         command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true

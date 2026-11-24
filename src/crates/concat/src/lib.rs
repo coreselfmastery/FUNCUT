@@ -406,6 +406,20 @@ fn start(
     });
     Shell::install(shell.clone());
 
+    // The shipping profile aborts on panic, so the hook is the last
+    // moment a project can reach disk. It saves synchronously and says
+    // nothing to the window: the process is already leaving.
+    concat_host::logs::save_on_panic(|| {
+        Shell::with(|shell, _| {
+            if let Ok(mut studio) = shell.studio.try_borrow_mut() {
+                match studio.save_now() {
+                    Ok(()) => log::info!("panic: the project was saved before exit"),
+                    Err(error) => log::error!("panic: the project could not be saved: {error}"),
+                }
+            }
+        });
+    });
+
     // The machine's fonts, for the Text inspector's picker. Read on a
     // worker: on a machine with a few thousand faces it is a moment, and
     // the window should not open a moment late for a list nobody is

@@ -4489,31 +4489,49 @@ fn story_sections(runtime: f64, mode: &str, turn_at: f64, payoff_at: f64) -> Val
     if runtime <= 4.0 {
         return json!([{ "role": "hook", "start": 0.0, "end": round3(runtime) }]);
     }
-    if runtime <= 12.0 {
-        return json!([
-            { "role": "hook", "start": 0.0, "end": 3.0 },
-            { "role": "body", "start": 3.0, "end": round3(runtime) },
-        ]);
+    let hook_end = 3.0_f64.min(runtime * 0.25);
+    let curiosity_end = if mode == "longform" {
+        (runtime * 0.2).clamp(5.0, 12.0).min(runtime * 0.35)
+    } else {
+        (runtime * 0.2).clamp(5.0, 12.0).min(runtime * 0.45)
     }
-    if mode == "longform" {
-        let rehook = turn_at.clamp(8.0, (runtime - 10.0).max(8.0));
-        let rehook_end = (rehook + 2.0).min(runtime - 8.0).max(rehook);
-        let cta_start = (runtime - 8.0).max(rehook_end);
-        let outro_start = (runtime - 2.0).max(cta_start);
+    .max(hook_end + 0.3)
+    .min(runtime - 0.5);
+    if mode == "longform" && runtime > 20.0 {
+        let rehook = turn_at
+            .clamp(8.0, (runtime - 8.0).max(8.0))
+            .max(curiosity_end + 0.5);
+        let rehook_end = (rehook + 2.0).min(runtime - 4.0).max(rehook + 0.25);
+        let payoff_floor = rehook_end + 0.5;
+        let payoff_start = payoff_at.clamp(payoff_floor, (runtime - 3.0).max(payoff_floor));
+        let payoff_end = (payoff_start + 2.5)
+            .min(runtime - 1.5)
+            .max(payoff_start + 0.25);
+        let ending_start = (runtime - 2.0).max(payoff_end + 0.25).min(runtime - 0.5);
         return json!([
-            { "role": "hook", "start": 0.0, "end": 3.0 },
-            { "role": "intro", "start": 3.0, "end": 8.0 },
-            { "role": "body", "start": 8.0, "end": round3(rehook) },
+            { "role": "hook", "start": 0.0, "end": round3(hook_end) },
+            { "role": "intro", "start": round3(hook_end), "end": 8.0 },
+            { "role": "curiosity", "start": 8.0, "end": round3(curiosity_end) },
+            { "role": "progression", "start": round3(curiosity_end), "end": round3(rehook) },
             { "role": "rehook", "start": round3(rehook), "end": round3(rehook_end) },
-            { "role": "cta", "start": round3(rehook_end), "end": round3(outro_start) },
-            { "role": "outro", "start": round3(outro_start), "end": round3(runtime) },
+            { "role": "progression", "start": round3(rehook_end), "end": round3(payoff_start) },
+            { "role": "payoff", "start": round3(payoff_start), "end": round3(payoff_end) },
+            { "role": "cta", "start": round3(payoff_end), "end": round3(ending_start) },
+            { "role": "ending", "start": round3(ending_start), "end": round3(runtime) },
         ]);
     }
-    let payoff = payoff_at.clamp(3.0, runtime - 2.0).max(3.0);
+    let payoff_floor = curiosity_end + 0.5;
+    let payoff_start = payoff_at.clamp(payoff_floor, (runtime - 1.0).max(payoff_floor));
+    let payoff_end = (payoff_start + (runtime * 0.08).max(0.5))
+        .min(runtime - 0.2)
+        .max(payoff_start + 0.1)
+        .min(runtime);
     json!([
-        { "role": "hook", "start": 0.0, "end": 3.0 },
-        { "role": "body", "start": 3.0, "end": round3(payoff) },
-        { "role": "cta", "start": round3(payoff), "end": round3(runtime) },
+        { "role": "hook", "start": 0.0, "end": round3(hook_end) },
+        { "role": "curiosity", "start": round3(hook_end), "end": round3(curiosity_end) },
+        { "role": "progression", "start": round3(curiosity_end), "end": round3(payoff_start) },
+        { "role": "payoff", "start": round3(payoff_start), "end": round3(payoff_end) },
+        { "role": "ending", "start": round3(payoff_end), "end": round3(runtime) },
     ])
 }
 
@@ -11411,13 +11429,38 @@ mod tests {
             }
         }
         let longform = story_sections(90.0, "longform", 49.5, 81.0);
-        assert!(
-            longform
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|section| section["role"] == json!("rehook"))
-        );
+        let longform_roles: Vec<&str> = longform
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|section| section["role"].as_str())
+            .collect();
+        assert!(longform_roles.contains(&"rehook"));
+        for role in [
+            "hook",
+            "intro",
+            "curiosity",
+            "progression",
+            "rehook",
+            "payoff",
+            "cta",
+            "ending",
+        ] {
+            assert!(
+                longform_roles.contains(&role),
+                "longform carries a {role} section"
+            );
+        }
+        let short_sections = story_sections(30.0, "reel", 16.5, 27.0);
+        let short: Vec<&str> = short_sections
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|section| section["role"].as_str())
+            .collect();
+        for role in ["hook", "curiosity", "progression", "payoff", "ending"] {
+            assert!(short.contains(&role), "a reel carries a {role} section");
+        }
     }
 
     /// The retention pass names the three failure modes the button is

@@ -16099,6 +16099,33 @@ mod tests {
             ask = (plan.next)(&log).expect("the stage keeps going");
         }
         assert_eq!(ask.tool, "plan_validate");
+        let plan = &ask.arguments;
+        let roles: Vec<&str> = plan["sections"]
+            .as_array()
+            .expect("the plan has story sections")
+            .iter()
+            .filter_map(|section| section["role"].as_str())
+            .collect();
+        for role in ["hook", "curiosity", "progression", "payoff", "ending"] {
+            assert!(
+                roles.contains(&role),
+                "the story skeleton is missing {role}: {roles:?}"
+            );
+        }
+        assert!(
+            plan["retention"]["analysis"]["boringStretches"].is_array(),
+            "the retention pass writes its analysis"
+        );
+        assert!(
+            plan["visualVariety"]["consecutiveShotScaleRepeats"].is_number(),
+            "the variety pass writes its repeat counts"
+        );
+        assert!(
+            plan["signalLog"]
+                .as_array()
+                .is_some_and(|log| !log.is_empty()),
+            "the plan names the signals behind its decisions"
+        );
         let checked =
             crate::tools::validate_plan_tool(ask.arguments.clone()).expect("the plan validates");
         assert_eq!(

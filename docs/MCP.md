@@ -630,11 +630,13 @@ sound accents, save the timeline, look at the result and score it.
 
 The reply carries `project` (the folder to open next), `copy`, `outcome`
 (`completed`, `completed-with-warnings`, `failed` or `cancelled`) and the
-runner's full `state` with its stage-by-stage receipt. It also writes
-`auto-edit-report.json` and, when the run reached the end,
-`auto-edit-receipt.json` beside the edit. A failed or cancelled run is
-returned as an error outcome with the same state, so an agent can read
-the stage that stopped it instead of guessing.
+runner's full `state` with its stage-by-stage receipt. Every stage record
+carries `elapsedMs` - the wall-clock time that stage spent - and the
+resumed stages carry `0`, so a slow run names its slow stage instead of
+leaving it to guesswork. It also writes `auto-edit-report.json` and, when
+the run reached the end, `auto-edit-receipt.json` beside the edit. A
+failed or cancelled run is returned as an error outcome with the same
+state, so an agent can read the stage that stopped it instead of guessing.
 
 The fixed spine does not export: it leaves the finished, editable
 timeline. Call `export_start` with the returned `project` when the file

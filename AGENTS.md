@@ -139,10 +139,11 @@ restarted mid-build at higher parallelism.
 
 ## The report card: what runs, and how each lane fails
 
-Seven workflows. Three checks are required on `main` by branch protection
-(`enforce_admins` is on, force pushes and deletions are off), all from
-`ci.yml`: `Format, locales and models`, `The analysis senses against real
-fixtures`, `Engine tests and lints`. The rest - `Build app`, `Geneva`,
+Seven workflows. `main` requires a pull request (zero approvals, so one
+maintainer can merge their own) and three checks, all from `ci.yml`:
+`Format, locales and models`, `The analysis senses against real fixtures`,
+`Engine tests and lints`. `enforce_admins` is on, conversation resolution
+is required, and force pushes and deletions are off. The rest - `Build app`, `Geneva`,
 `Nix`, `Dependency security audit`, `Release` - are the lanes that turn
 red without blocking a merge, so read them before calling `main` green.
 

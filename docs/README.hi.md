@@ -1,13 +1,15 @@
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
+  <img src="https://cdn.jsdelivr.net/gh/coreselfmastery/FUNCUT@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
 </p>
 
 <h1 align="center">Concat</h1>
 <h3 align="center">Linux के लिए CapCut का मुफ़्त, ओपन-सोर्स विकल्प।</h3>
 
+<p align="center"><strong>FUNCUT</strong> is a fork of <a href="https://github.com/jub0t/Concat">Concat</a>. Downloads, releases and issue reports for this build live on the <a href="https://github.com/coreselfmastery/FUNCUT">FUNCUT repository</a>; this translation is inherited from upstream.</p>
+
 <div align="center">
 
-<img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
+<img src="https://cdn.jsdelivr.net/gh/coreselfmastery/FUNCUT@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
   <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
@@ -18,9 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="https://www.star-history.com/jub0t/concat"><img src="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" alt="Star History Rank" height="62" /></a>
+  <a href="https://www.star-history.com/coreselfmastery/FUNCUT"><img src="https://api.star-history.com/badge?repo=coreselfmastery/FUNCUT&type=rank" alt="Star History Rank" height="62" /></a>
   <a href="https://trendshift.io/repositories/191379?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-191379" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/191379/daily?language=Rust" alt="jub0t%2FConcat | Trendshift" width="250" height="55"/></a>
-  <a href="https://concatenate.pages.dev/#download"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
 </p>
 
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · **🇮🇳 हिन्दी** · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
@@ -62,10 +64,10 @@ Concat Linuxके लिए एक मुफ़्त, ओपन-सोर्�
 
 दो रास्ते:
 
-1. **[वेबसाइट](https://concatenate.pages.dev/#download)** आपकी मशीन के लिए सही बिल्ड देती है। यहीं से शुरू करें।
+1. **[वेबसाइट](https://github.com/coreselfmastery/FUNCUT/releases)** आपकी मशीन के लिए सही बिल्ड देती है। यहीं से शुरू करें।
 2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** पर हर प्लेटफ़ॉर्म की हर बिल्ड है, इंस्टॉलर, पैकेज और चेकसम के साथ। जब आप खुद चुनना चाहें।
 
-Concat **बीटा** में है: यह काम करता है, और इसमें अभी कुछ खुरदरापन है। कोई मिले तो [बताइए](https://github.com/jub0t/Concat/issues)।
+Concat **बीटा** में है: यह काम करता है, और इसमें अभी कुछ खुरदरापन है। कोई मिले तो [बताइए](https://github.com/coreselfmastery/FUNCUT/issues)।
 
 **प्लेटफ़ॉर्म**
 
@@ -82,18 +84,18 @@ Concat **बीटा** में है: यह काम करता है, 
 > [!IMPORTANT]
 > योगदान का सबसे अच्छा तरीका है [Releases](https://github.com/coreselfmastery/FUNCUT/releases) पेज से एक बिल्ड लेकर उसे इस्तेमाल करना: पता लगाएँ कहाँ टूटता है, और बताएँ कहाँ बेहतर हो सकता है।
 >
-> कोड लिखने को तैयार हैं? [CONTRIBUTING.md](../CONTRIBUTING.md) में सेटअप, ट्री की बनावट, चलाई जाने वाली जाँचें और योगदान के लाइसेंस की जानकारी है। किसी स्क्रिप्ट, सर्विस या एजेंट से Concat चला रहे हैं? [डेवलपर डॉक्स](https://concatenate.pages.dev/docs) में Concat API और उसके ट्रांसपोर्ट हैं: JSON-RPC और gRPC। प्रोजेक्ट की घोषणा [इस Discussion](https://github.com/jub0t/Concat/discussions/3) में हुई थी।
+> कोड लिखने को तैयार हैं? [CONTRIBUTING.md](../CONTRIBUTING.md) में सेटअप, ट्री की बनावट, चलाई जाने वाली जाँचें और योगदान के लाइसेंस की जानकारी है। किसी स्क्रिप्ट, सर्विस या एजेंट से Concat चला रहे हैं? [डेवलपर डॉक्स](https://concatenate.pages.dev/docs) में Concat API और उसके ट्रांसपोर्ट हैं: JSON-RPC और gRPC। प्रोजेक्ट की घोषणा [इस Discussion](https://github.com/coreselfmastery/FUNCUT/discussions/3) में हुई थी।
 > 
 > योगदानकर्ता Discord सर्वर पर `@Contributor` रोल ले सकते हैं: बस माँग लें।
 
 ## स्टार इतिहास
 
-<a href="https://www.star-history.com/?repos=jub0t%2Fconcat&type=date&releases=&legend=bottom-right">
- <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jub0t/concat&type=date&legend=bottom-right" />
+<a href="https://www.star-history.com/?repos=coreselfmastery%2FFUNCUT&type=date&releases=&legend=bottom-right">
+ <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=coreselfmastery/FUNCUT&type=date&legend=bottom-right" />
 </a>
 
 ## योगदानकर्ता
 
-<a href="https://github.com/jub0t/Concat/graphs/contributors">
-  <img alt="Contributors" src="https://contrib.rocks/image?repo=jub0t/concat">
+<a href="https://github.com/coreselfmastery/FUNCUT/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=coreselfmastery/FUNCUT">
 </a>

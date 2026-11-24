@@ -59,6 +59,10 @@ jobs:
       - run: python3 -m py_compile scripts/motion/check-geneva-pins.py
       - run: python3 scripts/motion/check-geneva-pins.py
       - run: python3 scripts/ci/check-ort-pins.py
+      # The audit's unsafe-block count is only honest while every block
+      # says why it is sound; this fails the job when one does not.
+      - run: python3 scripts/ci/check-unsafe-safety.py
+      - run: python3 -m py_compile scripts/benchmark.py
       - run: python3 -m py_compile scripts/motion/benchmark-geneva.py
       - run: python3 scripts/motion/benchmark-geneva.py --help >/dev/null
       - run: python3 scripts/motion/test-benchmark-geneva.py
@@ -348,6 +352,22 @@ jobs:
         timeout-minutes: 15
         working-directory: src
         run: cargo test --workspace --doc -j 1
+      # The release and build lanes already run this against the bundled
+      # app; running it here too means a change that breaks the headless
+      # launch is named on the pull request, not after a release tag.
+      - name: The headless smoke runs on every change
+        timeout-minutes: 20
+        working-directory: src
+        run: cargo run -j 1 -p concat -- --smoke
+      # The 4 GB laptop is the target, so a small run is held to that
+      # ceiling here: a generated 1080p clip, a few random preview frames
+      # and a short render, with each child's address space capped at 4 GiB.
+      - name: The small-machine run fits a 4 GB memory cap
+        timeout-minutes: 20
+        working-directory: src
+        run: |
+          cargo build -j 1 -p concat-cli
+          python3 ../scripts/benchmark.py --cli target/debug/concat-cli --scrubs 5 --render-frames 3 --memory-limit-mb 4096
       # SCH-02: the two committed plan schemas are generated from the
       # plan types and the template, never hand-edited. The drift test in
       # concat-mcp's own suite answers the same question; this step puts

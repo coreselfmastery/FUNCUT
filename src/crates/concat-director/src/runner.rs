@@ -449,6 +449,7 @@ impl Runner {
                 outcome: StageOutcome::NotReached,
                 calls: Vec::new(),
                 failure: None,
+                elapsed_ms: None,
             })
             .collect();
 
@@ -507,6 +508,7 @@ impl Runner {
                     ),
                 );
                 records[index].outcome = StageOutcome::Skipped;
+                records[index].elapsed_ms = Some(0);
                 for (call, reply) in &prior {
                     log.push(reply.clone());
                     observed.push((call.clone(), reply.clone()));
@@ -884,6 +886,7 @@ impl Runner {
                 }
             }
 
+            let stage_elapsed_ms = stage_started.elapsed().as_millis() as u64;
             match failure {
                 None => {
                     // The stage's calls all landed: it joins the resume
@@ -891,6 +894,7 @@ impl Runner {
                     // run on this runner skips it (IDEM) and replays its
                     // evidence into its own log.
                     records[index].outcome = StageOutcome::Completed;
+                    records[index].elapsed_ms = Some(stage_elapsed_ms);
                     self.shared
                         .completed
                         .lock()
@@ -918,11 +922,13 @@ impl Runner {
                 }
                 Some(error) if policy == ErrorPolicy::Warn => {
                     records[index].outcome = StageOutcome::Warned;
+                    records[index].elapsed_ms = Some(stage_elapsed_ms);
                     records[index].failure = Some(error.line());
                     warnings.push(error.line());
                 }
                 Some(error) => {
                     records[index].outcome = StageOutcome::Failed;
+                    records[index].elapsed_ms = Some(stage_elapsed_ms);
                     records[index].failure = Some(error.line());
                     self.emit(
                         AutoEditState::Failed {
@@ -1829,6 +1835,10 @@ mod tests {
         assert_eq!(receipt.schema, crate::receipt::SCHEMA);
         assert_eq!(receipt.stages.len(), 3);
         assert!(receipt.stages.iter().all(|stage| stage.outcome.landed()));
+        assert!(
+            receipt.stages.iter().all(|stage| stage.elapsed_ms.is_some()),
+            "every stage that ran reports its wall-clock time"
+        );
         assert!(receipt.capabilities.iter().any(|area| area.consumed));
 
         let received: Vec<AutoEditEvent> = events.try_iter().collect();

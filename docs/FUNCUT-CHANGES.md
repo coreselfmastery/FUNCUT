@@ -32,6 +32,34 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## Hardening pass (2026-11-24)
+
+- **The panic save runs once.** A panic inside the last-chance save used to
+  re-enter the panic hook and recurse; `logs::run_panic_save` now guards
+  with `IN_PANIC_SAVE` and logs the second entry. The save still cannot
+  survive `panic = "abort"` itself, and the comment says so instead of
+  implying `catch_unwind` can.
+- **AUTO EDIT names its slow stage.** `StageRecord` carries `elapsedMs`;
+  the runner fills it for completed, warned and failed stages, and a
+  resumed stage reports `0`. `docs/MCP.md` tells the agent to read it.
+- **The plan test checks the plan's shape.** `the_plan_the_run_writes_validates`
+  now asserts the five story roles, the retention analysis, the variety
+  counts and a non-empty `signalLog`, not only that the validator accepts
+  the document.
+- **Every unsafe block has a SAFETY comment.** The count is 108 blocks and
+  108 comments; `scripts/ci/check-unsafe-safety.py` fails the format job
+  when a new block arrives without one.
+- **CI runs the headless smoke and a 4 GB cap.** `cargo run -p concat --
+  --smoke` now runs on every change, and `scripts/benchmark.py
+  --memory-limit-mb 4096` holds a generated preview and render to the
+  target laptop's address space.
+- **Translated READMEs point at this fork.** Downloads, releases, issues,
+  discussions, star history and contributors now name
+  `coreselfmastery/FUNCUT`, with a line crediting upstream Concat.
+- **`main` requires a pull request.** Branch protection now requires a PR
+  (zero approvals), the three `ci.yml` checks, admins, conversation
+  resolution, and still refuses force pushes and deletions.
+
 ## The sound model layer (`sound_model.py`)
 
 The reader measures; this layer names. YAMNet (521 AudioSet classes, 3.7 M

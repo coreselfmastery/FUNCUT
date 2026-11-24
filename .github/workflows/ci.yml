@@ -261,6 +261,9 @@ jobs:
           mkdir -p ffmpeg-dev
           tar -xf ffmpeg.tar.xz -C ffmpeg-dev --strip-components=1
           echo "FFMPEG_DIR=$PWD/ffmpeg-dev" >> "$GITHUB_ENV"
+          # The 4 GB benchmark generates its own clip with the binary, not
+          # just the libraries the bindings link.
+          echo "$PWD/ffmpeg-dev/bin" >> "$GITHUB_PATH"
 
       # ONNX Runtime as a shared library, linked dynamically, for the reason
       # build-app.yml gives: a static one beside sherpa-onnx's is the same

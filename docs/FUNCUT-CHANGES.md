@@ -105,7 +105,9 @@ playback cache.
   pays the window binary's Slint codegen and link once. The smoke and the
   4 GB benchmark reuse that build. Their ceilings are 60 and 40 minutes,
   with room for a cache miss; a timeout is a failure, so the number is for
-  hangs, not for a slow compile.
+  hangs, not for a slow compile. The engine job also puts the fetched
+  FFmpeg's `bin` on `PATH`, so the 4 GB benchmark can generate the clip it
+  measures instead of stopping with "no --video and no ffmpeg".
 - **Translated READMEs point at this fork.** Downloads, releases, issues,
   discussions, star history and contributors now name
   `coreselfmastery/FUNCUT`, with a line crediting upstream Concat.

@@ -155,7 +155,15 @@ one has:
   fixtures` had a 15-minute ceiling and needed 15m16s; a timeout counts as
   a failure, so the lane was red on a working tree. Ceilings are for hangs,
   so they sit well above the measured worst case now (30 minutes there,
-  200 for the engine job, whose cold build has run 2h31m58s).
+  240 for the engine job, whose cold build has run 2h31m58s).
+- **A step that spends its whole budget compiling.** The engine job builds
+  its test binaries with debug information off (`CARGO_PROFILE_TEST_DEBUG`
+  and `CARGO_PROFILE_DOCTEST_DEBUG`), which made the dev profile a
+  different artifact set - so the smoke step's `cargo run` recompiled the
+  whole dependency graph and hit its 20-minute ceiling without ever
+  launching the binary. `CARGO_PROFILE_DEV_DEBUG: "0"` aligns the dev
+  artifacts with the ones the test build already produced, and the
+  headless binaries' own Slint codegen and link get a step of their own.
 - **A retry that gives up too early.** `scripts/ci/fetch.sh` retried the
   release CDN five times over 62 seconds while the CDN was returning 500s
   for 61 of them. Backoff is 2/4/8/16/32s per attempt, digest re-verified

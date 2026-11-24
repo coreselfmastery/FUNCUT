@@ -72,6 +72,10 @@
               "maxLength": 200,
               "type": "string"
             },
+            "language": {
+              "description": "The take's language as an ISO code or BCP-47 tag (bn, bn-BD, en, hi). When absent, the runner reads the plan's own script and otherwise lets whisper detect the language. A non-English language never runs on an English-only (.en) model.",
+              "type": "string"
+            },
             "model": {
               "default": "kokoro-int8-multi-lang-v1_0",
               "type": "string"
@@ -99,10 +103,6 @@
             },
             "whisperModel": {
               "description": "The recogniser's model for this take (e.g. base, small, base.en). The multilingual default applies when absent; an English-only model named against a non-English language is replaced by its multilingual counterpart.",
-              "type": "string"
-            },
-            "language": {
-              "description": "The take's language as an ISO code or BCP-47 tag (bn, bn-BD, en, hi). When absent, the runner reads the plan's own script and otherwise lets whisper detect the language. A non-English language never runs on an English-only (.en) model.",
               "type": "string"
             }
           },

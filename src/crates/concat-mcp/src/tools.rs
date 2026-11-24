@@ -851,7 +851,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "transcribe",
             "Transcribe a recording",
-            "Transcribe a media file's speech; a job returning segments, word timings and confidences, the detected language, and the take's coverage. A multilingual model is chosen automatically; pass `language` when known.",
+            "Transcribe a media file's speech; returns segments, word timings and confidences, the detected language and coverage. A multilingual model is chosen automatically; pass `language` when known.",
             "speech.transcribe",
             Raw,
         ),
@@ -2255,7 +2255,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                             "kinetic",
                             json!({
                                 "type": ["boolean", "object"], "default": false,
-                                "description": "The kinetic typography hand: true takes the word-staggered default (80 ms, slide-up, the settle curve); an object spells it out - stagger (word|char), delay seconds, entrance (blur-in|slide-up|scale-in), seconds, curve, weight {from, to} for a static weight ramp across the words (the engine cannot animate a weight: a static font-weight per word is the one it draws). The caption becomes markup whose per-word spans appear, light and settle on the recogniser's own word times.",
+                                "description": "Kinetic typography: true staggers words with the default (80 ms, slide-up, settle); an object sets stagger, delay, entrance, seconds, curve and a static weight ramp. Markup is timed to the recogniser's words.",
                                 "properties": {
                                     "stagger": { "type": "string", "enum": ["word", "char"], "default": "word" },
                                     "delay": { "type": "number", "minimum": 0, "default": 0.08 },
@@ -2565,7 +2565,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "layers": { "type": "array", "items": layer },
                         "ops": { "type": "array", "items": {} },
                         "grade": { "type": "object",
-                                   "description": "The scene's colour grade: one of the emotion read's temperatures (hot, sickly, cold, warm, balanced, cool, split) with its own tuning, `amount` 0-1 scaling the cast, optional saturate/contrast/brightness overrides, a `hue` turn in degrees (-360..360) that rotates the whole palette, and a brand `tint` as #rrggbb worn instead of the stock cast. Baked in under the comp's own words as backdrop-filter (saturate, hue-rotate, contrast, brightness) plus a soft-light cast - the LUT approximation a comp carries." },
+                                   "description": "The scene's colour grade: an emotion temperature (hot, sickly, cold, warm, balanced, cool, split), `amount` 0-1, optional saturate/contrast/brightness, a `hue` turn in degrees and a brand `tint` as #rrggbb. Baked as backdrop-filter plus a soft-light cast." },
                         "look": { "type": "object",
                                   "description": "The texture the scene wears over its picture: grain (amount 0-1, size 2-8 px, seed) - a seeded field of motes over everything, ink included; glass (blur 0-24, saturate 0.5-2) - a frost under the comp's own words, over the plate; chromatic (amount 0-1) - the warm-left cool-right edge fringe over everything; vignette (amount 0-1) - the corners' dark fall-off from all four edges over everything; letterbox (ratio 1-3) - the cinema bars holding the frame to a wider ratio, 2.39 the scope screen, a ratio under the comp's own the pillarbox." },
                         "style": { "type": "string", "enum": ["calm", "punchy", "editorial"],

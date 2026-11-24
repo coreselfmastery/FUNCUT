@@ -45,8 +45,8 @@
 #
 # A repository can be private (a fork only its owner can see): the
 # anonymous API is refused there, which reads to this script as "no
-# releases" - and it would fall back to upstream, the same program but
-# not this one. GITHUB_TOKEN (or GH_TOKEN, the gh CLI's own name for it)
+# releases" - and the install fails rather than taking a different
+# build. GITHUB_TOKEN (or GH_TOKEN, the gh CLI's own name for it)
 # in the environment fixes that: a fine-grained token with read access
 # to the repository is enough, and it is sent only to the API listings
 # and the downloads of the repositories named here - never to a
@@ -438,8 +438,9 @@ for repo in "$REPO" "$FALLBACK"; do
     # The primary repository is asked with the token when there is one:
     # it is the one that can be private, and a token that cannot read it
     # is a mistake to stop for, not to fall back from - the fallback is
-    # the same program, but not this one. Without a token the fall-back
-    # stands: a public fork needs none, and a private one is said below.
+    # the same program, but not this one, and only --use-upstream names
+    # it. Without a token a public fork needs none; a private one is
+    # said below.
     STREAM=$(release_assets "$repo" auth) || {
         if [ "$repo" = "$REPO" ] && [ -n "$GH_TOKEN_VALUE" ]; then
             die "the releases of $repo could not be read with the token given -
@@ -464,9 +465,8 @@ it may be refused (check its access and expiry), or the network is down"
         # - the sound library's 430 files, the sticker index, the OpenVid
         # index - are shelves the app fetches for itself, so a release with
         # no package in it is not printed at all (and a release is named once,
-        # not once per file). Listing stops at neither repo: a fork whose only
-        # published releases are shelves still wants to show what upstream
-        # can install, which is what the script itself would fall back to.
+        # not once per file). An explicitly chosen upstream is listed too, so
+        # --use-upstream --list shows both.
         LISTED=$(printf '%s\n' "$STREAM" | awk -F'\t' -v limit=3 '
             $1 == "RELEASE" {
                 tag = $2

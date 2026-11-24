@@ -636,7 +636,8 @@ resumed stages carry `0`, so a slow run names its slow stage instead of
 leaving it to guesswork. The plan also carries a `youtube` package: the
 mode and creative profile, five title directions, three thumbnail
 `frameAt` concepts, up to three transcript-backed Short windows with
-their scores, and a section-by-section retention map. See
+their scores, a section-by-section retention map and a plan-level
+`quality` report. See
 [docs/YOUTUBE.md](YOUTUBE.md); no thumbnail image is rendered, and the
 `frameAt` times are `preview_frame` targets. It also writes
 `auto-edit-report.json` and, when the run reached the end,

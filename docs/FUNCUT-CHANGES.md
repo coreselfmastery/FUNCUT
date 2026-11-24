@@ -51,6 +51,12 @@ playback cache.
   promise, not a new claim. Thumbnails are frames and text, not rendered
   images. Short scores rank candidates inside one run; they do not
   predict views or retention.
+- **The package carries a plan-level quality report.** `youtube.quality`
+  checks the hook length, payoff position, measured retention risks,
+  neighbour repeats, title count, thumbnail frames and Short bounds, and
+  returns `pass`, `warn` or `fail` with the value behind each check. It
+  says it cannot see a black frame or a clipped sample; `watch_render`
+  and `craft_critique` do that.
 - **The plan test covers the package.** It asserts the mode, profile,
   five titles, three thumbnail frames, a non-empty Short list and one
   retention entry per section. The plan remains valid to `plan_validate`,

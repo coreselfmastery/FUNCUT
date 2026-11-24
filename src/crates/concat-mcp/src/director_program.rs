@@ -4942,6 +4942,152 @@ fn thumbnail_concepts(
     )
 }
 
+/// One plan-level quality check: `pass`, `warn` or `fail`, with the
+/// measured value that decided it.
+fn quality_check(name: &str, ok: bool, warn_only: bool, detail: String) -> Value {
+    json!({
+        "check": name,
+        "verdict": if ok {
+            "pass"
+        } else if warn_only {
+            "warn"
+        } else {
+            "fail"
+        },
+        "detail": detail,
+    })
+}
+
+/// The plan-level quality report: the structure the edit promised, checked
+/// before a frame is rendered. It cannot see a black frame or a clipped
+/// sample - `watch_render` and `craft_critique` do that - so it says only
+/// what the plan can prove.
+fn youtube_quality(
+    sections: &Value,
+    findings: &Value,
+    variety: &Value,
+    titles: &Value,
+    thumbnails: &Value,
+    shorts: &[Value],
+    runtime: f64,
+) -> Value {
+    let section = |role: &str| {
+        sections.as_array().and_then(|list| {
+            list.iter()
+                .find(|entry| entry["role"].as_str() == Some(role))
+        })
+    };
+    let span = |role: &str| -> f64 {
+        section(role)
+            .map(|entry| {
+                let start = entry["start"].as_f64().unwrap_or_default();
+                let end = entry["end"].as_f64().unwrap_or(start);
+                (end - start).max(0.0)
+            })
+            .unwrap_or(0.0)
+    };
+    let payoff_at = section("payoff")
+        .and_then(|entry| entry["start"].as_f64())
+        .unwrap_or_default();
+    let risk_count = findings["boringStretches"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or_default()
+        + findings["repeatedExplanations"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default()
+        + findings["weakTransitions"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default();
+    let repeats = variety["consecutiveShotScaleRepeats"]
+        .as_u64()
+        .unwrap_or_default()
+        + variety["consecutiveEntranceRepeats"]
+            .as_u64()
+            .unwrap_or_default()
+        + variety["consecutiveCategoryRepeats"]
+            .as_u64()
+            .unwrap_or_default();
+    let title_count = titles.as_array().map(Vec::len).unwrap_or_default();
+    let thumbnail_count = thumbnails.as_array().map(Vec::len).unwrap_or_default();
+    let thumbs_inside = thumbnails.as_array().is_some_and(|frames| {
+        frames.iter().all(|frame| {
+            frame["frameAt"]
+                .as_f64()
+                .is_some_and(|at| (0.0..=runtime + 0.05).contains(&at))
+        })
+    });
+    let shorts_inside = shorts.iter().all(|short| {
+        short["start"].as_f64().is_some_and(|at| at >= 0.0)
+            && short["end"].as_f64().is_some_and(|at| at <= runtime + 0.05)
+    });
+    let checks = vec![
+        quality_check(
+            "hook within 3.5 s",
+            span("hook") <= 3.5,
+            true,
+            format!("the hook section is {:.2} s", span("hook")),
+        ),
+        quality_check(
+            "payoff after the turn",
+            runtime <= 0.0 || (0.55..=0.99).contains(&(payoff_at / runtime)),
+            true,
+            format!(
+                "the payoff starts at {:.1}% of the runtime",
+                if runtime > 0.0 {
+                    payoff_at / runtime * 100.0
+                } else {
+                    0.0
+                }
+            ),
+        ),
+        quality_check(
+            "no measured retention risk",
+            risk_count == 0,
+            true,
+            format!("{risk_count} measured risk entries remain"),
+        ),
+        quality_check(
+            "no repeated neighbour",
+            repeats == 0,
+            true,
+            format!("{repeats} consecutive scale, entrance or category repeats"),
+        ),
+        quality_check(
+            "five title directions",
+            title_count == 5,
+            false,
+            format!("{title_count} titles are present"),
+        ),
+        quality_check(
+            "three thumbnail frames inside the runtime",
+            thumbnail_count == 3 && thumbs_inside,
+            false,
+            format!("{thumbnail_count} frames, all inside the timeline: {thumbs_inside}"),
+        ),
+        quality_check(
+            "every Short inside the runtime",
+            shorts_inside && (runtime < 5.0 || !shorts.is_empty()),
+            true,
+            format!("{} Short windows", shorts.len()),
+        ),
+    ];
+    let verdict = if checks.iter().any(|check| check["verdict"] == "fail") {
+        "fail"
+    } else if checks.iter().any(|check| check["verdict"] == "warn") {
+        "warn"
+    } else {
+        "pass"
+    };
+    json!({
+        "verdict": verdict,
+        "checks": checks,
+        "note": "plan-level checks only; black frames, clipping and caption placement are watch_render and craft_critique's business",
+    })
+}
+
 /// The YouTube package the plan carries: mode, creative profile, title
 /// and thumbnail directions, the Shorts the transcript supports, and the
 /// section-by-section retention map. It is derived from the same
@@ -4957,6 +5103,7 @@ fn youtube_package(
     moments: &[(f64, f64, String)],
     read: &[EmotionLine],
     findings: &Value,
+    variety: &Value,
 ) -> Value {
     let profile = youtube_profile(moments);
     let youtube_mode = if aspect == "9:16" {
@@ -4987,6 +5134,15 @@ fn youtube_package(
     let titles = title_concepts(subjects, brief, &shorts);
     let thumbnails = thumbnail_concepts(sections, subjects, &titles, runtime);
     let retention = retention_map(sections, findings, runtime);
+    let quality = youtube_quality(
+        sections,
+        findings,
+        variety,
+        &titles,
+        &thumbnails,
+        &shorts,
+        runtime,
+    );
     json!({
         "mode": youtube_mode,
         "editMode": mode,
@@ -4996,6 +5152,7 @@ fn youtube_package(
         "thumbnails": thumbnails,
         "shorts": shorts,
         "retentionMap": retention,
+        "quality": quality,
         "publishingChecklist": [
             "render each thumbnail's frameAt with preview_frame and choose one",
             "check the chosen title against the video's actual payoff",
@@ -5607,6 +5764,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         &transcript_moments,
         &read,
         &retention_findings,
+        &variety,
     );
     brief.insert(
         "platform".to_owned(),
@@ -16696,6 +16854,23 @@ mod tests {
                         && frame["text"].as_str().is_some_and(|text| !text.is_empty())
                 })),
             "each thumbnail names a frame and its text"
+        );
+        assert_eq!(
+            youtube["quality"]["verdict"],
+            json!("pass"),
+            "the plan-level quality report passes a clean plan: {}",
+            youtube["quality"]
+        );
+        assert!(
+            youtube["quality"]["checks"]
+                .as_array()
+                .is_some_and(|checks| checks.len() >= 5
+                    && checks.iter().all(|check| {
+                        check["check"].is_string()
+                            && check["verdict"].is_string()
+                            && check["detail"].is_string()
+                    })),
+            "every quality check names what it measured"
         );
         let checked =
             crate::tools::validate_plan_tool(ask.arguments.clone()).expect("the plan validates");

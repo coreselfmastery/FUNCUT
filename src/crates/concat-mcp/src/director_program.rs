@@ -3991,6 +3991,744 @@ fn frame_of(view: &Value) -> FrameOf {
     FrameOf { width, height }
 }
 
+/// The three visual directions the one-click edit auditions before it
+/// commits. They are deliberately different films, not three grades of the
+/// same film: the documentary trusts evidence and archive, the kinetic
+/// explainer trusts motion and detail, and the cinematic essay trusts
+/// atmosphere and performance. The topic, the frame and the measured
+/// delivery pick the strongest; the plan keeps all three and the reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VisualDirection {
+    Documentary,
+    Kinetic,
+    Cinematic,
+}
+
+impl VisualDirection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Documentary => "evidence-first documentary",
+            Self::Kinetic => "kinetic explainer",
+            Self::Cinematic => "cinematic essay",
+        }
+    }
+
+    fn tone(self) -> &'static str {
+        match self {
+            Self::Documentary => "measured, investigative, plain-spoken",
+            Self::Kinetic => "urgent, clear, forward-leaning",
+            Self::Cinematic => "reflective, atmospheric, intimate",
+        }
+    }
+
+    fn reference(self) -> &'static str {
+        match self {
+            Self::Documentary => {
+                "archive-led public-service documentary: evidence on screen, cuts on the claim"
+            }
+            Self::Kinetic => {
+                "modern explainer channel: one idea per shot, motion carrying the beat"
+            }
+            Self::Cinematic => {
+                "observational film essay: long looks, natural sound, a held emotional turn"
+            }
+        }
+    }
+
+    fn grade(self) -> &'static str {
+        match self {
+            Self::Documentary => "concat.cool-blue",
+            Self::Kinetic => "concat.teal-orange",
+            Self::Cinematic => "concat.warm",
+        }
+    }
+
+    fn palette(self, look: &str) -> [&'static str; 3] {
+        match self {
+            Self::Documentary => match look {
+                "concat.warm" | "concat.golden" => ["#14100b", "#d8c3a5", "#b5763a"],
+                "concat.mono" | "concat.noir" => ["#080808", "#e8e4da", "#9a8c7a"],
+                "concat.cold" | "concat.blue" => ["#071018", "#c9d6df", "#c08a4e"],
+                _ => ["#0b0d12", "#d9d2c3", "#b08d57"],
+            },
+            Self::Kinetic => match look {
+                "concat.warm" | "concat.golden" => ["#1a0f08", "#ffd08a", "#ff5c39"],
+                "concat.mono" | "concat.noir" => ["#08080a", "#f2f2f2", "#ff5c39"],
+                "concat.cold" | "concat.blue" => ["#08111f", "#9fd3ff", "#ff5c39"],
+                _ => ["#08111f", "#9fd3ff", "#ff5c39"],
+            },
+            Self::Cinematic => match look {
+                "concat.warm" | "concat.golden" => ["#1a0f08", "#f2c078", "#d96c4a"],
+                "concat.mono" | "concat.noir" => ["#0a0a0a", "#e8e8e8", "#b9a58f"],
+                "concat.cold" | "concat.blue" => ["#071018", "#b8d8e8", "#c08a4e"],
+                _ => ["#140f0b", "#e8c9a0", "#c96a3a"],
+            },
+        }
+    }
+
+    fn caption_font(self) -> &'static str {
+        match self {
+            Self::Documentary => "Hanken Grotesk",
+            Self::Kinetic => "Inter",
+            Self::Cinematic => "Hanken Grotesk",
+        }
+    }
+
+    fn caption_weight(self) -> i64 {
+        match self {
+            Self::Documentary => 700,
+            Self::Kinetic => 800,
+            Self::Cinematic => 600,
+        }
+    }
+
+    fn motion_language(self) -> &'static str {
+        match self {
+            Self::Documentary => {
+                "observational push-ins, evidence cards and clean cuts that follow the claim"
+            }
+            Self::Kinetic => "measured push-ins, snap entrances and one accent per beat",
+            Self::Cinematic => {
+                "slow push-ins, held frames and dissolves that let the performance breathe"
+            }
+        }
+    }
+
+    fn motion_easing(self) -> &'static str {
+        match self {
+            Self::Documentary => "editorial-settle",
+            Self::Kinetic => "spring-pop",
+            Self::Cinematic => "soft-ease",
+        }
+    }
+
+    fn motion_intensity(self) -> f64 {
+        match self {
+            Self::Documentary => 0.45,
+            Self::Kinetic => 0.75,
+            Self::Cinematic => 0.35,
+        }
+    }
+
+    fn sound_texture(self) -> &'static str {
+        match self {
+            Self::Documentary => "dry room, low evidence-bed, clean transition swells",
+            Self::Kinetic => "dry room, low pulse, airy transitions",
+            Self::Cinematic => "room tone, sparse low end, long reverb tails",
+        }
+    }
+
+    fn footage_continuity(self) -> &'static str {
+        match self {
+            Self::Documentary => {
+                "one camera height per section, evidence inserts matched to the claim, no letterbox"
+            }
+            Self::Kinetic => "one camera height, no letterbox, colour temperature follows the act",
+            Self::Cinematic => {
+                "one camera height, slow movement, colour temperature follows the performance"
+            }
+        }
+    }
+
+    fn continuity_rules(self) -> [&'static str; 4] {
+        [
+            "fill every frame; never letterbox a vertical reel",
+            "one accent colour per section",
+            "no two consecutive shots share a camera height",
+            match self {
+                Self::Documentary => "every claim's shot changes the evidence, not only the angle",
+                Self::Kinetic => {
+                    "no B-roll style, camera move, caption animation or transition repeats twice running"
+                }
+                Self::Cinematic => {
+                    "hold a shot only while the performance changes; never repeat a move for filler"
+                }
+            },
+        ]
+    }
+
+    fn query_suffix(self, index: usize) -> &'static str {
+        let suffixes = match self {
+            Self::Documentary => [
+                "archival evidence",
+                "observational wide",
+                "detail insert",
+                "location establishing",
+            ],
+            Self::Kinetic => [
+                "macro detail",
+                "fast tracking",
+                "graphic close-up",
+                "wide establishing",
+            ],
+            Self::Cinematic => [
+                "cinematic wide",
+                "slow push",
+                "intimate close-up",
+                "atmospheric detail",
+            ],
+        };
+        suffixes[index % suffixes.len()]
+    }
+
+    fn category(self, index: usize) -> &'static str {
+        let categories = match self {
+            Self::Documentary => ["evidence", "place", "detail", "archive"],
+            Self::Kinetic => ["detail", "motion", "graphic", "establishing"],
+            Self::Cinematic => ["atmosphere", "performance", "detail", "place"],
+        };
+        categories[index % categories.len()]
+    }
+
+    fn shot_scale(self, index: usize, act: &str) -> &'static str {
+        match act {
+            "hook" => "wide",
+            "turn" | "reveal" => "close_up",
+            "tension" => "medium",
+            _ => match (index + self as usize) % 3 {
+                0 => "wide",
+                1 => "medium",
+                _ => "close_up",
+            },
+        }
+    }
+
+    fn entrance(self, index: usize, act: &str) -> &'static str {
+        match act {
+            "hook" | "reveal" | "turn" => "punch",
+            "tension" => "whip",
+            _ => {
+                let entrances = match self {
+                    Self::Documentary => ["dissolve", "slide", "pop", "punch"],
+                    Self::Kinetic => ["punch", "slide", "pop", "whip"],
+                    Self::Cinematic => ["dissolve", "pop", "slide", "punch"],
+                };
+                entrances[index % entrances.len()]
+            }
+        }
+    }
+
+    fn next_entrance(self, current: &str) -> &'static str {
+        let entrances = match self {
+            Self::Documentary => ["dissolve", "slide", "pop", "punch"],
+            Self::Kinetic => ["punch", "slide", "pop", "whip"],
+            Self::Cinematic => ["dissolve", "pop", "slide", "punch"],
+        };
+        let at = entrances
+            .iter()
+            .position(|entrance| *entrance == current)
+            .unwrap_or(0);
+        entrances[(at + 1) % entrances.len()]
+    }
+}
+
+fn keyword_hits(text: &str, words: &[&str]) -> f64 {
+    words
+        .iter()
+        .map(|word| {
+            if word.contains(' ') {
+                text.matches(word).count()
+            } else {
+                text.split(|character: char| !character.is_alphanumeric())
+                    .filter(|token| *token == *word)
+                    .count()
+            }
+        })
+        .sum::<usize>() as f64
+}
+
+/// Score the three directions on the material the run actually has: the
+/// transcript's topic words, the frame, the runtime and the measured
+/// delivery. A long, evidence-heavy piece is not directed like a vertical
+/// tech explainer, and a story with a wide emotional arc is not directed
+/// like a finance brief.
+fn direction_scores(
+    spoken: &[String],
+    subjects: &[String],
+    read: &[EmotionLine],
+    runtime: f64,
+    aspect: &str,
+) -> [(VisualDirection, f64); 3] {
+    let text = format!("{} {}", spoken.join(" "), subjects.join(" ")).to_lowercase();
+    let evidence = keyword_hits(
+        &text,
+        &[
+            "evidence",
+            "archive",
+            "investigation",
+            "witness",
+            "report",
+            "documentary",
+            "case",
+            "found",
+            "hidden",
+            "secret",
+        ],
+    );
+    let history = keyword_hits(
+        &text,
+        &[
+            "history",
+            "ancient",
+            "century",
+            "war",
+            "empire",
+            "king",
+            "queen",
+            "revolution",
+            "artifact",
+            "archaeology",
+            "civilization",
+        ],
+    );
+    let science = keyword_hits(
+        &text,
+        &[
+            "space",
+            "planet",
+            "ocean",
+            "sea",
+            "physics",
+            "biology",
+            "chemistry",
+            "brain",
+            "climate",
+            "species",
+            "energy",
+            "star",
+            "universe",
+            "experiment",
+            "research",
+        ],
+    );
+    let finance = keyword_hits(
+        &text,
+        &[
+            "money",
+            "market",
+            "invest",
+            "stock",
+            "price",
+            "cost",
+            "profit",
+            "revenue",
+            "economy",
+            "bank",
+            "loan",
+            "salary",
+            "wage",
+            "tax",
+            "debt",
+            "budget",
+            "inflation",
+        ],
+    );
+    let technology = keyword_hits(
+        &text,
+        &[
+            "ai",
+            "software",
+            "code",
+            "computer",
+            "algorithm",
+            "robot",
+            "machine",
+            "data",
+            "model",
+            "internet",
+            "app",
+            "device",
+            "chip",
+            "quantum",
+            "program",
+            "system",
+        ],
+    );
+    let how_to = keyword_hits(
+        &text,
+        &[
+            "how to", "step", "guide", "tutorial", "learn", "build", "make", "start", "beginner",
+            "tip", "mistake", "fix", "setup",
+        ],
+    );
+    let gaming = keyword_hits(
+        &text,
+        &[
+            "game", "player", "level", "quest", "boss", "speedrun", "console", "graphics",
+        ],
+    );
+    let fitness = keyword_hits(
+        &text,
+        &[
+            "body", "muscle", "workout", "training", "run", "diet", "weight", "health", "sleep",
+            "habit",
+        ],
+    );
+    let story = keyword_hits(
+        &text,
+        &[
+            "story",
+            "journey",
+            "character",
+            "dream",
+            "fear",
+            "love",
+            "loss",
+            "remember",
+            "childhood",
+            "family",
+            "home",
+            "hope",
+            "heart",
+        ],
+    );
+    let luxury = keyword_hits(
+        &text,
+        &[
+            "luxury",
+            "watch",
+            "car",
+            "fashion",
+            "brand",
+            "design",
+            "expensive",
+            "gold",
+            "premium",
+        ],
+    );
+    let horror = keyword_hits(
+        &text,
+        &[
+            "haunted", "ghost", "dark", "night", "scream", "blood", "dead", "curse", "monster",
+            "shadow",
+        ],
+    );
+    let vertical = matches!(aspect, "9:16" | "4:5" | "1:1");
+    let punchy = read.iter().filter(|line| line.pace == "punchy").count() as f64;
+    let slow = read.iter().filter(|line| line.pace == "slow").count() as f64;
+    let distinct_emotions = read
+        .iter()
+        .map(|line| line.emotion.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len() as f64;
+    let documentary = 1.0
+        + evidence * 2.0
+        + history * 1.6
+        + science * 1.1
+        + finance * 0.5
+        + slow * 0.6
+        + if runtime > 60.0 { 2.0 } else { 0.0 }
+        + if vertical { 0.0 } else { 0.6 };
+    let kinetic = 1.0
+        + technology * 1.7
+        + finance * 1.2
+        + how_to * 1.7
+        + gaming * 1.2
+        + fitness * 1.1
+        + punchy * 0.7
+        + if vertical { 2.2 } else { 0.0 }
+        + if runtime <= 60.0 { 1.0 } else { 0.0 };
+    let cinematic = 1.0
+        + story * 1.8
+        + history * 1.0
+        + science * 1.2
+        + luxury * 1.2
+        + horror * 1.2
+        + distinct_emotions * 0.7
+        + if runtime > 30.0 { 1.0 } else { 0.0 }
+        + if vertical { 0.0 } else { 1.0 };
+    [
+        (VisualDirection::Documentary, documentary),
+        (VisualDirection::Kinetic, kinetic),
+        (VisualDirection::Cinematic, cinematic),
+    ]
+}
+
+fn choose_direction(
+    spoken: &[String],
+    subjects: &[String],
+    read: &[EmotionLine],
+    runtime: f64,
+    aspect: &str,
+) -> VisualDirection {
+    direction_scores(spoken, subjects, read, runtime, aspect)
+        .into_iter()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .map(|(direction, _)| direction)
+        .unwrap_or(VisualDirection::Kinetic)
+}
+
+fn direction_alternatives(
+    spoken: &[String],
+    subjects: &[String],
+    read: &[EmotionLine],
+    runtime: f64,
+    aspect: &str,
+) -> Vec<Value> {
+    let chosen = choose_direction(spoken, subjects, read, runtime, aspect);
+    direction_scores(spoken, subjects, read, runtime, aspect)
+        .into_iter()
+        .map(|(direction, score)| {
+            json!({
+                "name": direction.label(),
+                "score": round3(score),
+                "selected": direction == chosen,
+                "why": direction.reference(),
+            })
+        })
+        .collect()
+}
+
+/// The five-beat skeleton a one-click edit owes: hook, curiosity gap,
+/// progression, payoff and ending. The hook is the opening three seconds;
+/// the turn is the strongest measured act; the payoff is the last spoken
+/// line; the ending is the short landing after it. A reel keeps the shape
+/// compact; a longform cut gets an intro, a re-hook at the retention dip,
+/// a CTA and an outro.
+fn story_sections(runtime: f64, mode: &str, turn_at: f64, payoff_at: f64) -> Value {
+    if runtime <= 4.0 {
+        return json!([{ "role": "hook", "start": 0.0, "end": round3(runtime) }]);
+    }
+    if runtime <= 12.0 {
+        return json!([
+            { "role": "hook", "start": 0.0, "end": 3.0 },
+            { "role": "body", "start": 3.0, "end": round3(runtime) },
+        ]);
+    }
+    if mode == "longform" {
+        let rehook = turn_at.clamp(8.0, (runtime - 10.0).max(8.0));
+        let rehook_end = (rehook + 2.0).min(runtime - 8.0).max(rehook);
+        let cta_start = (runtime - 8.0).max(rehook_end);
+        let outro_start = (runtime - 2.0).max(cta_start);
+        return json!([
+            { "role": "hook", "start": 0.0, "end": 3.0 },
+            { "role": "intro", "start": 3.0, "end": 8.0 },
+            { "role": "body", "start": 8.0, "end": round3(rehook) },
+            { "role": "rehook", "start": round3(rehook), "end": round3(rehook_end) },
+            { "role": "cta", "start": round3(rehook_end), "end": round3(outro_start) },
+            { "role": "outro", "start": round3(outro_start), "end": round3(runtime) },
+        ]);
+    }
+    let payoff = payoff_at.clamp(3.0, runtime - 2.0).max(3.0);
+    json!([
+        { "role": "hook", "start": 0.0, "end": 3.0 },
+        { "role": "body", "start": 3.0, "end": round3(payoff) },
+        { "role": "cta", "start": round3(payoff), "end": round3(runtime) },
+    ])
+}
+
+/// The retention pass: find the stretches a viewer would leave, the
+/// explanations the script repeats, and the cuts that keep the same act
+/// and mood so they read as a continuation rather than a turn. The plan
+/// turns the findings into extra pattern breaks and keeps them for the
+/// critic; nothing is invented where the measurements are silent.
+fn retention_analysis(
+    spoken: &[String],
+    segments: &[Value],
+    read: &[EmotionLine],
+    runtime: f64,
+) -> Value {
+    let mut boring: Vec<Value> = Vec::new();
+    let mut repeated: Vec<Value> = Vec::new();
+    let mut weak: Vec<Value> = Vec::new();
+    for (index, segment) in segments.iter().enumerate() {
+        let start = segment["start"].as_f64().unwrap_or(0.0);
+        let end = segment["end"].as_f64().unwrap_or(start);
+        let intensity = read
+            .iter()
+            .filter(|line| line.start >= start - 0.05 && line.start < end)
+            .map(|line| line.intensity)
+            .fold(0.0_f64, f64::max);
+        let same_as_previous = index > 0
+            && segments[index - 1]["act"] == segment["act"]
+            && segments[index - 1]["emotion"] == segment["emotion"];
+        if end - start >= 8.0 && (intensity < 0.55 || same_as_previous) {
+            boring.push(json!({
+                "start": round3(start),
+                "end": round3(end),
+                "why": if same_as_previous {
+                    "a long stretch that keeps the same act and mood as the shot before it"
+                } else {
+                    "a long, low-intensity stretch with no measured lift"
+                },
+            }));
+        }
+    }
+    const STOP_WORDS: &[&str] = &[
+        "the", "and", "that", "this", "with", "from", "because", "have", "were", "was", "are",
+        "for", "but", "not", "you", "your", "they", "their", "them", "its", "into", "over",
+        "under", "about", "when", "what", "which", "who", "how", "why", "will", "can", "just",
+        "then", "than", "there", "here", "also", "very", "more", "most", "some", "such",
+    ];
+    let normalize = |word: &str| {
+        word.trim_matches(|character: char| !character.is_alphanumeric())
+            .to_lowercase()
+    };
+    let lines: Vec<Vec<String>> = spoken
+        .iter()
+        .map(|line| {
+            line.split_whitespace()
+                .map(normalize)
+                .filter(|word| word.len() > 2 && !STOP_WORDS.contains(&word.as_str()))
+                .collect()
+        })
+        .collect();
+    let mut counts: std::collections::BTreeMap<String, (usize, f64)> =
+        std::collections::BTreeMap::new();
+    for (index, line) in lines.iter().enumerate() {
+        if line.len() < 3 {
+            continue;
+        }
+        let at = if lines.is_empty() {
+            0.0
+        } else {
+            runtime * (index as f64 + 0.5) / lines.len() as f64
+        };
+        for window in line.windows(3) {
+            let entry = counts.entry(window.join(" ")).or_insert((0, at));
+            entry.0 += 1;
+        }
+    }
+    for (phrase, (count, at)) in counts {
+        if count > 1 {
+            repeated.push(json!({
+                "phrase": phrase,
+                "count": count,
+                "at": round3(at),
+                "why": "the same three-word idea returns, so the second telling needs a new image or a cut",
+            }));
+        }
+    }
+    repeated.sort_by_key(|entry| std::cmp::Reverse(entry["count"].as_u64().unwrap_or_default()));
+    repeated.truncate(5);
+    for pair in segments.windows(2) {
+        let left = &pair[0];
+        let right = &pair[1];
+        if left["act"] == right["act"] && left["emotion"] == right["emotion"] {
+            weak.push(json!({
+                "at": right["start"],
+                "why": "the cut keeps the same act and mood, so it reads as a continuation rather than a turn",
+            }));
+        }
+    }
+    boring.truncate(6);
+    weak.truncate(6);
+    json!({
+        "boringStretches": boring,
+        "repeatedExplanations": repeated,
+        "weakTransitions": weak,
+        "summary": format!(
+            "{} long stretches, {} repeated explanations and {} weak transitions were found",
+            boring.len(),
+            repeated.len(),
+            weak.len()
+        ),
+    })
+}
+
+/// The variety check the plan carries: the shot scales, entrances and
+/// B-roll categories the cut actually uses, and how often two neighbours
+/// repeat. A repeated category is a motif only when the plan says so; the
+/// default is a bug.
+fn visual_variety(segments: &[Value]) -> Value {
+    let mut scales = std::collections::BTreeSet::new();
+    let mut entrances = std::collections::BTreeSet::new();
+    let mut categories = std::collections::BTreeSet::new();
+    let mut repeated_scales = 0usize;
+    let mut repeated_entrances = 0usize;
+    let mut repeated_categories = 0usize;
+    let mut last_scale: Option<&str> = None;
+    let mut last_entrance: Option<&str> = None;
+    let mut last_category: Option<&str> = None;
+    for segment in segments {
+        let scale = segment
+            .pointer("/visual/shotScale")
+            .and_then(Value::as_str)
+            .unwrap_or("medium");
+        let entrance = segment
+            .pointer("/in/anim")
+            .and_then(Value::as_str)
+            .unwrap_or("pop");
+        let category = segment
+            .pointer("/visual/category")
+            .and_then(Value::as_str)
+            .unwrap_or("footage");
+        scales.insert(scale);
+        entrances.insert(entrance);
+        categories.insert(category);
+        if last_scale == Some(scale) {
+            repeated_scales += 1;
+        }
+        if last_entrance == Some(entrance) {
+            repeated_entrances += 1;
+        }
+        if last_category == Some(category) {
+            repeated_categories += 1;
+        }
+        last_scale = Some(scale);
+        last_entrance = Some(entrance);
+        last_category = Some(category);
+    }
+    json!({
+        "shotScales": scales.into_iter().collect::<Vec<_>>(),
+        "entrances": entrances.into_iter().collect::<Vec<_>>(),
+        "categories": categories.into_iter().collect::<Vec<_>>(),
+        "consecutiveShotScaleRepeats": repeated_scales,
+        "consecutiveEntranceRepeats": repeated_entrances,
+        "consecutiveCategoryRepeats": repeated_categories,
+        "note": "the plan rotates shot scale, entrance and B-roll category; a repeat is only allowed when the motif is the point",
+    })
+}
+
+fn next_scale(current: &str) -> &'static str {
+    match current {
+        "wide" => "medium",
+        "medium" => "close_up",
+        _ => "wide",
+    }
+}
+
+/// Rotate the plan's visual choices so no two neighbouring segments wear
+/// the same shot scale or entrance, and give every B-roll query a
+/// direction-specific second door. The gather stage's own no-repeat rule
+/// still owns the clip ids, frame hashes and transitions.
+fn vary_segments(segments: &mut [Value], direction: VisualDirection) {
+    let mut last_anim: Option<String> = None;
+    let mut last_scale: Option<&str> = None;
+    for (index, segment) in segments.iter_mut().enumerate() {
+        let act = segment
+            .get("act")
+            .and_then(Value::as_str)
+            .unwrap_or("body")
+            .to_owned();
+        let mut scale = direction.shot_scale(index, &act);
+        if last_scale == Some(scale) {
+            scale = next_scale(scale);
+        }
+        last_scale = Some(scale);
+        segment["visual"]["shotScale"] = json!(scale);
+        if index == 0 {
+            segment["visual"]["hero"] = json!(true);
+        }
+        if let Some(query) = segment
+            .pointer("/visual/query")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
+            let decorated = format!("{query}, {}", direction.query_suffix(index));
+            segment["visual"]["category"] = json!(direction.category(index));
+            segment["visual"]["queries"] = json!([query, decorated.clone()]);
+            segment["visual"]["query"] = json!(decorated);
+        }
+        let mut anim = direction.entrance(index, &act).to_owned();
+        if last_anim.as_deref() == Some(anim.as_str()) {
+            anim = direction.next_entrance(&anim).to_owned();
+        }
+        segment["in"]["anim"] = json!(anim);
+        last_anim = Some(anim);
+    }
+}
+
 /// The plan the run can write from what it measured - the spine it is
 /// about to cut, the sections its runtime falls into, and a `signalLog`
 /// that names the signal behind every decision. This is the blueprint
@@ -4154,7 +4892,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             _ => windows.push(span),
         }
     }
-    let segments: Vec<Value> = windows
+    let mut segments: Vec<Value> = windows
         .iter()
         .enumerate()
         .map(|(index, (start, end, visual, mood, spoken))| {
@@ -4234,24 +4972,22 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         })
         .collect();
 
-    // The sections the runtime falls into. A piece over 12 s owes a payoff
-    // somewhere, so it gets a cta; a 4-12 s piece is hook and body (the
-    // hook inside 3 s, or the creative gate names it); a very short one
-    // is all hook.
-    let sections = if runtime > 12.0 {
-        json!([
-            { "role": "hook", "start": 0.0, "end": 3.0 },
-            { "role": "body", "start": 3.0, "end": round3(runtime - 2.0) },
-            { "role": "cta", "start": round3(runtime - 2.0), "end": round3(runtime) },
-        ])
-    } else if runtime > 4.0 {
-        json!([
-            { "role": "hook", "start": 0.0, "end": 3.0 },
-            { "role": "body", "start": 3.0, "end": round3(runtime) },
-        ])
-    } else {
-        json!([{ "role": "hook", "start": 0.0, "end": round3(runtime) }])
-    };
+    // The story skeleton: hook, curiosity gap, progression, payoff and
+    // ending. The turn is the strongest measured act, the payoff is the
+    // last spoken line, and a longform cut gets the intro and the re-hook
+    // at the retention dip the validator asks for.
+    let mode = if runtime > 60.0 { "longform" } else { "reel" };
+    let turn_at = segments
+        .iter()
+        .find(|segment| segment.get("act").and_then(Value::as_str) == Some("turn"))
+        .and_then(|segment| segment.get("start").and_then(Value::as_f64))
+        .unwrap_or(runtime * 0.55);
+    let payoff_at = read
+        .iter()
+        .map(|line| line.end)
+        .fold(0.0_f64, f64::max)
+        .clamp(runtime * 0.75, runtime);
+    let sections = story_sections(runtime, mode, turn_at, payoff_at);
     // The brief, only where the narration answers it: the opening line is
     // the claim, the closing line its payoff, the ordered emotions the
     // arc. The GOAL is the button's own - a one-click edit is a retention
@@ -4294,8 +5030,16 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         .filter_map(|line| line["text"].as_str().map(str::to_owned))
         .collect();
     if let Some(first) = spoken.first() {
+        // The opening line is the thesis; the first real question the
+        // narration asks is the curiosity gap when one was measured, and
+        // the opening line stands in when the script never asked.
+        let gap = question_acts(log, takes)
+            .into_iter()
+            .next()
+            .map(|question| question.text)
+            .unwrap_or_else(|| first.clone());
         brief.insert("thesis".to_owned(), json!(first));
-        brief.insert("curiosityGap".to_owned(), json!(first));
+        brief.insert("curiosityGap".to_owned(), json!(gap));
     }
     if let Some(last) = spoken.last().filter(|_| spoken.len() > 1) {
         brief.insert("payoff".to_owned(), json!(last));
@@ -4312,6 +5056,19 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     if arc.len() >= 3 {
         brief.insert("emotionalArc".to_owned(), json!(arc));
     }
+    // The three-direction bake-off: score the material against a
+    // documentary, a kinetic explainer and a cinematic essay, then let
+    // the strongest direct the one look, the motion hand, the sound world
+    // and the B-roll vocabulary. The plan keeps all three, so the choice
+    // is inspectable rather than a mood in the code.
+    let aspect = aspect_of(view);
+    let direction = choose_direction(&spoken, &subjects, &read, runtime, aspect);
+    let alternatives = direction_alternatives(&spoken, &subjects, &read, runtime, aspect);
+    brief.insert("referenceStyle".to_owned(), json!(direction.reference()));
+    brief.insert("tone".to_owned(), json!(direction.tone()));
+    vary_segments(&mut segments, direction);
+    let retention_findings = retention_analysis(&spoken, &segments, &read, runtime);
+    let variety = visual_variety(&segments);
     brief.insert(
         "platform".to_owned(),
         json!(if aspect_of(view) == "9:16" {
@@ -4394,6 +5151,57 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         .iter()
         .any(|read| !read.take_wide.speaker_turns.is_empty());
     let mut signal_log: Vec<Value> = Vec::new();
+    // The retention pass is a decision, not a report: the plan's pattern
+    // breaks moved to the stretches the analysis flagged, and the critic
+    // is told which signals found them.
+    if measured_words || !read.is_empty() {
+        let mut signals: Vec<&str> = Vec::new();
+        if measured_words {
+            signals.push("words");
+        }
+        if !read.is_empty() {
+            signals.push("emotion");
+        }
+        if measured_tempo {
+            signals.push("rhythmLayers");
+        }
+        signal_log.push(json!({
+            "at": retention_findings["boringStretches"]
+                .as_array()
+                .and_then(|risks| risks.first())
+                .and_then(|risk| risk["start"].as_f64())
+                .unwrap_or(0.0),
+            "decision": "pacing",
+            "signals": signals,
+            "note": format!(
+                "the retention pass found {}; the plan's pattern breaks moved to those stretches",
+                retention_findings["summary"].as_str().unwrap_or("no retention risk")
+            ),
+        }));
+    }
+    // The variety pass: the plan rotates shot scale, entrance and B-roll
+    // category, and the transition stage's no-repeat rule owns the moves.
+    if measured_words || !read.is_empty() {
+        let mut signals: Vec<&str> = Vec::new();
+        if measured_words {
+            signals.push("words");
+        }
+        if !read.is_empty() {
+            signals.push("emotion");
+        }
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "motion",
+            "signals": signals,
+            "note": format!(
+                "the {} direction rotates {} shot scales, {} entrances and {} B-roll categories; no two neighbours repeat",
+                direction.label(),
+                variety["shotScales"].as_array().map(Vec::len).unwrap_or(0),
+                variety["entrances"].as_array().map(Vec::len).unwrap_or(0),
+                variety["categories"].as_array().map(Vec::len).unwrap_or(0),
+            ),
+        }));
+    }
     // A cut names the signal that put it there. Every boundary is a gap
     // between two clips of the voiceover, so the word boundary always
     // drove it; the pause reading adds the class when the profile
@@ -5141,72 +5949,98 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             .unwrap_or_default();
         entry["confidence"] = json!(round3(confidence));
     }
+    // The emotional read owns the temperature; when it is neutral (or
+    // never measured) the direction's own grade gives the film its topic-
+    // specific look instead of a generic teal-and-orange.
     let look = dominant(&read)
+        .filter(|line| {
+            !matches!(
+                line.temperature.trim(),
+                "" | "neutral" | "balanced" | "unknown"
+            )
+        })
         .map(|line| look_for_temperature(&line.temperature))
-        .unwrap_or("concat.teal-orange");
+        .unwrap_or_else(|| direction.grade());
     let (intensity_key, intensity) = grade_param(look);
-    let mode = if runtime > 60.0 { "longform" } else { "reel" };
-    let aspect = aspect_of(view);
     let orientation = match aspect {
         "9:16" | "4:5" => "vertical",
         "1:1" => "square",
         _ => "horizontal",
     };
-    let palette = match look {
-        "concat.cold" | "concat.blue" => ["#08111f", "#9fd3ff", "#f4f8ff"],
-        "concat.warm" | "concat.golden" => ["#1a0f08", "#f2c078", "#fff7e8"],
-        "concat.mono" | "concat.noir" => ["#0a0a0a", "#e8e8e8", "#8a8a8a"],
-        _ => ["#0b0d12", "#f2e9dc", "#c96a3a"],
-    };
+    let palette = direction.palette(look);
+    let caption_font = reads
+        .iter()
+        .map(|read| read.take_wide.font.as_str())
+        .find(|font| !font.trim().is_empty() && *font != "Inter")
+        .map(bundled_font)
+        .unwrap_or_else(|| direction.caption_font());
     // The one look the whole fixed edit wears. The Director writes a
     // richer style bible; this is the floor the deterministic fallback
     // can prove, so the same validator can judge both paths.
     let style = json!({
-        "name": format!("{look} / {orientation}"),
+        "name": format!("{} / {look} / {orientation}", direction.label()),
         "palette": palette,
         "grade": look,
         "captions": {
-            "font": "Inter",
-            "weight": 700,
+            "font": caption_font,
+            "weight": direction.caption_weight(),
             "emphasisColor": palette[1],
             "position": if orientation == "vertical" { "center" } else { "lower-third" },
         },
         "motion": {
-            "language": "measured push-ins, one accent and clean entrances",
-            "easing": "spring-pop",
-            "intensity": 0.6,
+            "language": direction.motion_language(),
+            "easing": direction.motion_easing(),
+            "intensity": direction.motion_intensity(),
         },
         "sound": {
             "duckDb": duck,
-            "texture": "dry room, low pulse, airy transitions",
+            "texture": direction.sound_texture(),
         },
         "footage": {
             "orientation": orientation,
             "treatment": "fill",
-            "continuity": "one camera height, no letterbox, colour temperature follows the act",
+            "continuity": direction.footage_continuity(),
         },
-        "continuityRules": [
-            "fill every frame; never letterbox a vertical reel",
-            "one accent colour per section",
-            "no two consecutive shots share a camera height",
-        ],
+        "continuityRules": direction.continuity_rules(),
     });
     // The retention contract: the hook is the first spoken line, the turn
     // is the strongest measured act (or the middle of the cut), and the
-    // payoff is the last line. Pattern breaks are spread across the cut
-    // plus the turn, so a clean fallback still has a rhythm a viewer can
+    // payoff is the last line. Pattern breaks are spread across the cut,
+    // the turn and the retention pass's own boring stretches and repeated
+    // explanations, so a clean fallback still has a rhythm a viewer can
     // feel - and a longform cut gets enough of them to pass its own gate.
-    let turn_at = segments
-        .iter()
-        .find(|segment| segment.get("act").and_then(Value::as_str) == Some("turn"))
-        .and_then(|segment| segment.get("start").and_then(Value::as_f64))
-        .unwrap_or(runtime * 0.55);
     let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
     let mut pattern_breaks: Vec<f64> = (1..=wanted_breaks)
         .map(|index| round3(runtime * index as f64 / (wanted_breaks + 1) as f64))
         .collect();
     pattern_breaks.push(round3(turn_at));
+    for risk in retention_findings["boringStretches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|risk| risk["start"].as_f64())
+    {
+        pattern_breaks.push(round3(risk));
+    }
+    for risk in retention_findings["repeatedExplanations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|risk| risk["at"].as_f64())
+    {
+        pattern_breaks.push(round3(risk));
+    }
+    for risk in retention_findings["weakTransitions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|risk| risk["at"].as_f64())
+    {
+        pattern_breaks.push(round3(risk));
+    }
+    pattern_breaks.retain(|at| *at > 0.0 && *at < runtime);
     pattern_breaks.sort_by(|left, right| left.total_cmp(right));
+    pattern_breaks.dedup_by(|left, right| (*left - *right).abs() < 0.25);
     let hook = spoken
         .first()
         .cloned()
@@ -5214,12 +6048,14 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     let retention = json!({
         "hook": hook,
         "turnAt": round3(turn_at.clamp(runtime * 0.2, runtime * 0.8)),
-        "payoffAt": round3(runtime * 0.9),
+        "payoffAt": round3(payoff_at.clamp(runtime * 0.75, runtime)),
         "patternBreaks": pattern_breaks,
         "openLoops": [
             brief.get("curiosityGap").and_then(Value::as_str).unwrap_or("what is the claim?"),
             brief.get("payoff").and_then(Value::as_str).unwrap_or("what proves it?"),
         ],
+        "analysis": retention_findings,
+        "creativeAlternatives": alternatives,
     });
     Some(json!({
         "title": source
@@ -5228,7 +6064,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             .next()
             .unwrap_or("Auto edit"),
         "mode": mode,
-        "aspect": aspect_of(view),
+        "aspect": aspect,
         "sections": sections,
         "segments": segments,
         "creativeBrief": brief,
@@ -5248,6 +6084,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         },
         "style": style,
         "retention": retention,
+        "visualVariety": variety,
         "signalLog": signal_log,
         "export": {
             "output": source.export,
@@ -10490,6 +11327,112 @@ mod tests {
             .expect("AUTO EDIT's own plan passes the schema plan_validate enforces");
     }
 
+    /// The direction audition is a decision, not a label: a vertical tech
+    /// explainer, a long evidence-led documentary and a wide emotional
+    /// story must choose different films.
+    #[test]
+    fn the_direction_audition_picks_the_frame_and_topic() {
+        let kinetic = vec!["the ai model runs on a chip".to_owned()];
+        assert_eq!(
+            choose_direction(&kinetic, &[], &[], 30.0, "9:16"),
+            VisualDirection::Kinetic
+        );
+        let documentary = vec!["the archive evidence from the war".to_owned()];
+        assert_eq!(
+            choose_direction(&documentary, &[], &[], 120.0, "16:9"),
+            VisualDirection::Documentary
+        );
+        let cinematic = vec!["her story of love and loss".to_owned()];
+        assert_eq!(
+            choose_direction(&cinematic, &[], &[], 45.0, "16:9"),
+            VisualDirection::Cinematic
+        );
+        let alternatives = direction_alternatives(&cinematic, &[], &[], 45.0, "16:9");
+        assert_eq!(alternatives.len(), 3);
+        assert_eq!(
+            alternatives
+                .iter()
+                .filter(|choice| choice["selected"] == json!(true))
+                .count(),
+            1
+        );
+    }
+
+    /// The story skeleton covers the runtime without a gap, starts with
+    /// the hook, and adds the longform intro/re-hook/outro the validator
+    /// asks for.
+    #[test]
+    fn the_story_skeleton_covers_the_runtime_in_order() {
+        for (runtime, mode) in [
+            (3.0, "reel"),
+            (10.0, "reel"),
+            (30.0, "reel"),
+            (90.0, "longform"),
+        ] {
+            let sections = story_sections(runtime, mode, runtime * 0.55, runtime * 0.9);
+            let sections = sections.as_array().expect("sections");
+            assert_eq!(sections[0]["role"], json!("hook"));
+            assert_eq!(sections[0]["start"], json!(0.0));
+            assert!(
+                (sections.last().unwrap()["end"].as_f64().unwrap() - runtime).abs() < 0.06,
+                "the sections end where the plan does"
+            );
+            for pair in sections.windows(2) {
+                let left = pair[0]["end"].as_f64().unwrap();
+                let right = pair[1]["start"].as_f64().unwrap();
+                assert!((left - right).abs() < 0.06, "no gap or overlap");
+            }
+        }
+        let longform = story_sections(90.0, "longform", 49.5, 81.0);
+        assert!(
+            longform
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|section| section["role"] == json!("rehook"))
+        );
+    }
+
+    /// The retention pass names the three failure modes the button is
+    /// meant to catch: long low-energy stretches, repeated explanations
+    /// and cuts that keep the same act and mood.
+    #[test]
+    fn the_retention_pass_names_repeats_and_boring_stretches() {
+        let spoken = vec!["the ocean holds salt and the ocean holds salt".to_owned()];
+        let segments = vec![
+            json!({ "start": 0.0, "end": 10.0, "act": "body", "emotion": "neutral" }),
+            json!({ "start": 10.0, "end": 20.0, "act": "body", "emotion": "neutral" }),
+        ];
+        let analysis = retention_analysis(&spoken, &segments, &[], 20.0);
+        assert!(
+            !analysis["repeatedExplanations"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!analysis["boringStretches"].as_array().unwrap().is_empty());
+        assert!(!analysis["weakTransitions"].as_array().unwrap().is_empty());
+    }
+
+    /// The variety pass never lets two neighbours share a shot scale or
+    /// entrance, and the plan records what the pass actually used.
+    #[test]
+    fn the_variety_pass_never_repeats_a_neighbour() {
+        let mut segments = vec![
+            json!({ "start": 0.0, "end": 2.0, "act": "body",
+                    "visual": { "query": "a" }, "in": { "anim": "pop" } }),
+            json!({ "start": 2.0, "end": 4.0, "act": "body",
+                    "visual": { "query": "b" }, "in": { "anim": "pop" } }),
+            json!({ "start": 4.0, "end": 6.0, "act": "body",
+                    "visual": { "query": "c" }, "in": { "anim": "pop" } }),
+        ];
+        vary_segments(&mut segments, VisualDirection::Kinetic);
+        let variety = visual_variety(&segments);
+        assert_eq!(variety["consecutiveShotScaleRepeats"], json!(0));
+        assert_eq!(variety["consecutiveEntranceRepeats"], json!(0));
+        assert!(variety["shotScales"].as_array().unwrap().len() >= 2);
+    }
+
     /// The alias reaches production, not just the helper: a `cut` entry
     /// names `pause.class=dead_air`, which the profile rates under
     /// `pauses`. Rated under the log's own name it would read 0 - the
@@ -11440,6 +12383,13 @@ mod tests {
                 .into_iter()
                 .flatten()
                 .filter(|row| row["decision"] == json!("pacing"))
+                .filter(|row| {
+                    row["signals"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|signal| signal == "speechRate")
+                })
                 .cloned()
                 .collect::<Vec<_>>()
         };

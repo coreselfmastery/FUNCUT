@@ -173,6 +173,32 @@ states that the repair, the transcription and the voice-signal/emotion
 reads are the Director's own to run, in the skill's order, and that a
 decision which never read the voice is a guess.
 
+The prompt also carries the button's own quality contract, so a short
+request still gets a directed film:
+
+- **Story architecture** — hook, curiosity gap, progression, payoff and
+  ending, written before the plan and carried in `retention`.
+- **Retention analysis** — boring stretches, repeated explanations and
+  weak transitions named with their times in `retention.analysis`, and a
+  pattern break, cut or new visual moved to each one.
+- **Visual variety** — no B-roll style, camera movement, caption
+  animation or transition twice running; the rotation is recorded in
+  `visualVariety`.
+- **Beat-aware editing** — cuts, motion and sound land on measured speech
+  beats (emphasis, sentence ends, topic boundaries, music downbeats), not
+  arbitrary seconds.
+- **Three directions** — a documentary, a kinetic explainer and a
+  cinematic essay are auditioned, one is chosen for a stated reason, and
+  the other two stay in the plan as rejected alternatives.
+- **Topic-specific direction** — the material, not a default preset,
+  chooses the look, pace and stock vocabulary.
+
+The deterministic fallback runs the same pass: it scores the three
+directions from the transcript's topic words, the frame, the runtime and
+the measured delivery; it writes the five-beat skeleton; it records the
+retention findings and rotates shot scale, entrance and B-roll category
+so no two neighbours repeat.
+
 Progress is read from the harness's own output. Each line that names one
 of the skill's twenty-five phase headings (1 through 25) moves the pane's
 stage and bar to that phase - and only forward; a

@@ -300,6 +300,20 @@ and a real gap is not left uncovered. The map is an artifact, not a mood
 board: if a claim has no evidence, cut the claim or find the evidence before
 you write the plan. No edit tool is called in this phase.
 
+Run the **retention pass** on the map before the plan: name the long
+low-energy stretches (where a viewer would leave), the explanations the
+script repeats (the same idea told twice without a new image) and the cuts
+that keep the same act, mood and angle (weak transitions). Put them in
+`retention.analysis` with their times, and move a pattern break, a cut or a
+new visual to each finding. Then run the **variety pass**: no B-roll style,
+camera movement, caption animation or transition repeats twice running;
+rotate shot scale, camera move, B-roll category and caption entrance, and
+record what the cut actually uses in `visualVariety`. A repeat is only
+allowed when the motif is the point, and the plan says why. Match the cuts,
+motion and sound to meaningful speech beats (emphasis peaks, sentence ends,
+topic boundaries, music downbeats), not to arbitrary seconds; name the beat
+each decision spent in `signalLog`.
+
 **Phase 6 — Scene, beat and transition map.** Turn the story map into a
 technical grid: `analyze_scenes` for real shot boundaries, `suggest_cuts`
 for voice/beat candidates, `analyze_silence` for the pauses that can carry a

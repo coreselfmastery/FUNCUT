@@ -289,8 +289,9 @@ impl SettingsPane {
                 self.playhead_stops = studio.prefs.playhead_stops_at_end;
                 // Not a choice: the app decodes on whatever hardware the
                 // platform has, and a file the hardware will not take opens
-                // in software (concat_media::hardware). Linux has no default
-                // device, so there this is software as before.
+                // in software (concat_media::hardware). That is NVIDIA's
+                // NVDEC on a data-centre part; VAAPI stays opt-in and a
+                // desktop card stays on the CPU, as the module explains.
                 concat_media::set_hardware_decode(true);
                 self.download_source = Self::download_source(studio).0;
                 self.download_base = studio.prefs.download_base.clone().unwrap_or_default();

@@ -25,9 +25,18 @@
 //! the chip's rate or better. A reader can insist on software or on a named
 //! device instead, which is what the tests do.
 //!
-//! VAAPI is never chosen by default and only ever by name, because on an
-//! Intel i915 it has hung the GPU for every process on the machine until a
+//! Two devices exist. NVIDIA's NVDEC is chosen unasked on a data-centre
+//! part - a T4, an A100, an L4 and the rest of the `Tesla` line - whose
+//! Linux driver is the one the app will open a CUDA context on at start;
+//! the model is read from `/proc/driver/nvidia/gpus`, so no driver is
+//! loaded to answer the question, and a desktop or hybrid laptop's NVIDIA
+//! card stays on the CPU unless `CONCAT_HARDWARE_DECODE` names it. VAAPI
+//! is never chosen by default and only ever by name, because on an Intel
+//! i915 it has hung the GPU for every process on the machine until a
 //! reboot (issue #70).
+//!
+//! `CONCAT_HARDWARE_DECODE` overrides the choice for the process: `auto`
+//! (the default), `cuda`, `vaapi`, or `off`/`0` for software.
 //!
 //! ## What happens when it does not work
 //!
@@ -42,7 +51,7 @@
 use std::collections::HashMap;
 use std::ptr;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Mutex, Once};
+use std::sync::{Mutex, Once, OnceLock};
 
 use ffmpeg_the_third as ffmpeg;
 use ffmpeg_the_third::codec::decoder;
@@ -53,6 +62,10 @@ use ffmpeg_the_third::util::frame::video::Video;
 /// A platform's video decode hardware, as libavcodec names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HwDevice {
+    /// NVIDIA's own decoder, NVDEC, driven through libavcodec's CUDA
+    /// device. The shipped FFmpeg carries it, and a data-centre part is
+    /// the machine it is chosen on unasked; see [`HwDevice::platform_default`].
+    Cuda,
     /// The Linux video acceleration API. Never the default; see the module
     /// doc and issue #70.
     Vaapi,
@@ -60,17 +73,48 @@ pub enum HwDevice {
 
 impl HwDevice {
     /// Every device, in the order a menu would list them.
-    pub const ALL: [HwDevice; 1] = [HwDevice::Vaapi];
+    pub const ALL: [HwDevice; 2] = [HwDevice::Cuda, HwDevice::Vaapi];
 
-    /// The device this binary's platform has, or `None` where there is no
-    /// device worth choosing unasked: Linux, whose VAAPI is opt-in only.
+    /// The device this machine will decode on unasked: NVIDIA's NVDEC on a
+    /// data-centre part, and nothing else. The model comes from the
+    /// driver's own `/proc` entry, so answering loads no driver; VAAPI
+    /// stays opt-in (issue #70) and is reached with
+    /// `CONCAT_HARDWARE_DECODE=vaapi`. Answered once per process.
     pub fn platform_default() -> Option<Self> {
-        None
+        static DEFAULT: OnceLock<Option<HwDevice>> = OnceLock::new();
+        *DEFAULT.get_or_init(|| {
+            let requested = std::env::var("CONCAT_HARDWARE_DECODE").ok();
+            let cuda = HwDevice::Cuda.linked() && !cuda_hidden();
+            let choice = default_from(
+                requested.as_deref(),
+                cuda,
+                HwDevice::Vaapi.linked(),
+                &nvidia_models(),
+            );
+            if let Some(requested) = requested
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                match choice {
+                    Some(device) => {
+                        log::info!(
+                            "CONCAT_HARDWARE_DECODE={requested}: video decode on {}",
+                            device.label()
+                        );
+                    }
+                    None => {
+                        log::info!("CONCAT_HARDWARE_DECODE={requested}: video decode in software");
+                    }
+                }
+            }
+            choice
+        })
     }
 
     /// What the device is called on a label.
     pub fn label(self) -> &'static str {
         match self {
+            HwDevice::Cuda => "NVDEC",
             HwDevice::Vaapi => "VAAPI",
         }
     }
@@ -78,6 +122,7 @@ impl HwDevice {
     /// What libavcodec calls the device: the name `-hwaccel` takes.
     pub fn name(self) -> &'static str {
         match self {
+            HwDevice::Cuda => "cuda",
             HwDevice::Vaapi => "vaapi",
         }
     }
@@ -102,9 +147,87 @@ impl HwDevice {
 
     fn av_type(self) -> sys::AVHWDeviceType {
         match self {
+            HwDevice::Cuda => sys::AVHWDeviceType::CUDA,
             HwDevice::Vaapi => sys::AVHWDeviceType::VAAPI,
         }
     }
+}
+
+/// The device the process will decode on unasked, from the environment's
+/// request (`None` when unset), whether the linked FFmpeg carries each
+/// device, and the model names the NVIDIA driver reports. Pure, so the
+/// choice can be tested without a GPU.
+///
+/// `auto`, and anything not understood, is the conservative answer: NVDEC
+/// on a data-centre part only. `cuda` and `vaapi` name a device outright,
+/// for a machine whose driver the person knows; `off`, `0`, `software`,
+/// `false` and `no` keep everything on the CPU.
+fn default_from(
+    requested: Option<&str>,
+    cuda: bool,
+    vaapi: bool,
+    models: &[String],
+) -> Option<HwDevice> {
+    let automatic =
+        || (cuda && models.iter().any(|model| trusted_cuda_model(model))).then_some(HwDevice::Cuda);
+    match requested
+        .map(str::trim)
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" | "auto" => automatic(),
+        "off" | "0" | "false" | "no" | "software" => None,
+        "cuda" | "nvdec" | "nvidia" => cuda.then_some(HwDevice::Cuda),
+        "vaapi" => vaapi.then_some(HwDevice::Vaapi),
+        _ => automatic(),
+    }
+}
+
+/// Whether a model name from the NVIDIA driver is a data-centre part: the
+/// line whose Linux driver the app opens a CUDA context on unasked. A
+/// desktop card or a hybrid laptop's GPU is not - libcuda's context
+/// creation has taken such machines down (#309) - and is reached only when
+/// `CONCAT_HARDWARE_DECODE` names it.
+fn trusted_cuda_model(model: &str) -> bool {
+    const PARTS: [&str; 16] = [
+        "Tesla", "T4", "V100", "A100", "A10", "A10G", "A16", "A30", "A40", "H100", "H200", "L4",
+        "L40", "L40S", "B100", "B200",
+    ];
+    model
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| PARTS.iter().any(|part| word.eq_ignore_ascii_case(part)))
+}
+
+/// The models of the NVIDIA GPUs the driver reports, one per card, read
+/// from `/proc/driver/nvidia/gpus/<bus>/information`. Empty where there is
+/// no NVIDIA driver, which is every machine without one.
+fn nvidia_models() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir("/proc/driver/nvidia/gpus") else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("information")).ok())
+        .filter_map(|information| {
+            information.lines().find_map(|line| {
+                line.strip_prefix("Model:")
+                    .map(|model| model.trim().to_owned())
+            })
+        })
+        .filter(|model| !model.is_empty())
+        .collect()
+}
+
+/// Whether the environment hides every CUDA device: `CUDA_VISIBLE_DEVICES`
+/// set but empty, or leading with `-1`. The same rule the encoders follow
+/// (see `encode::switched_on`), and the usual way to say "not this card" on
+/// a machine whose driver is not to be loaded.
+fn cuda_hidden() -> bool {
+    std::env::var("CUDA_VISIBLE_DEVICES").is_ok_and(|devices| {
+        let first = devices.split(',').next().unwrap_or("").trim();
+        first.is_empty() || first == "-1"
+    })
 }
 
 /// How a reader chooses between the hardware and the CPU.
@@ -144,9 +267,8 @@ impl HwPolicy {
 
 /// Whether the hardware decodes a stream of `codec` in `format` faster
 /// than the CPU does, counting the copy back to memory every hardware
-/// frame still pays (see the module doc). The one device the app ships
-/// with, VAAPI, is named by whoever asks; the rule itself is the same
-/// for any device of this shape.
+/// frame still pays (see the module doc). The rule is the same for every
+/// device of this shape - VAAPI and NVDEC alike.
 ///
 /// The measurements that shaped the rule were VideoToolbox's, on an M5,
 /// 4K frames a second, software on every core: H.264 114 against 56,
@@ -173,9 +295,9 @@ static PREFERENCE: AtomicU8 = AtomicU8::new(0);
 
 /// Turns hardware decode on or off for every reader opened from now on
 /// that follows the preference, which is all of them unless they say
-/// otherwise. On means the platform's own device, so on Linux it means
-/// nothing until [`set_hardware_device`] names one. Readers already open
-/// keep whatever they opened with.
+/// otherwise. On means [`HwDevice::platform_default`], which is NVIDIA's
+/// NVDEC on a data-centre part and nothing on a machine without one.
+/// Readers already open keep whatever they opened with.
 pub fn set_hardware_decode(on: bool) {
     set_hardware_device(if on {
         HwDevice::platform_default()
@@ -190,7 +312,8 @@ pub fn hardware_decode() -> bool {
 }
 
 /// Names the device readers that follow the preference should use, or
-/// `None` for software. The way to opt into VAAPI.
+/// `None` for software. The way to opt into VAAPI, or into NVDEC on a card
+/// the default does not trust.
 pub fn set_hardware_device(device: Option<HwDevice>) {
     let code = device.map_or(0, |device| {
         HwDevice::ALL
@@ -458,8 +581,66 @@ mod tests {
     }
 
     #[test]
-    fn there_is_no_platform_default() {
-        assert_eq!(HwDevice::platform_default(), None);
+    fn a_data_centre_part_is_trusted_and_a_desktop_one_is_not() {
+        for model in [
+            "Tesla T4",
+            "Tesla V100-SXM2-16GB",
+            "NVIDIA A100-SXM4-40GB",
+            "NVIDIA H100 PCIe",
+            "NVIDIA L4",
+            "NVIDIA L40S",
+        ] {
+            assert!(trusted_cuda_model(model), "{model}");
+        }
+        for model in [
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce GTX 1660 Ti",
+            "Quadro RTX 5000",
+            "NVIDIA RTX A4000",
+            "Quadro T400",
+            "",
+        ] {
+            assert!(!trusted_cuda_model(model), "{model}");
+        }
+    }
+
+    /// Unasked, the app takes NVDEC on a data-centre part and nothing
+    /// else: VAAPI is never the default (#70), and a desktop card is not
+    /// opened without being named.
+    #[test]
+    fn the_default_is_nvdec_on_a_data_centre_part_only() {
+        let t4 = vec!["Tesla T4".to_owned()];
+        assert_eq!(default_from(None, true, false, &t4), Some(HwDevice::Cuda));
+        assert_eq!(
+            default_from(Some("auto"), true, true, &t4),
+            Some(HwDevice::Cuda)
+        );
+        assert_eq!(default_from(None, true, false, &[]), None);
+        assert_eq!(
+            default_from(None, true, false, &["NVIDIA GeForce RTX 4090".to_owned()]),
+            None
+        );
+        assert_eq!(default_from(None, false, true, &t4), None);
+    }
+
+    /// The environment can name a device the default would not take, or
+    /// put everything back on the CPU.
+    #[test]
+    fn the_environment_names_the_device_or_switches_it_off() {
+        let t4 = vec!["Tesla T4".to_owned()];
+        for off in ["off", "0", "software", "no", "false", " OFF "] {
+            assert_eq!(default_from(Some(off), true, true, &t4), None, "{off}");
+        }
+        assert_eq!(
+            default_from(Some("cuda"), true, false, &[]),
+            Some(HwDevice::Cuda)
+        );
+        assert_eq!(default_from(Some("cuda"), false, false, &t4), None);
+        assert_eq!(
+            default_from(Some("vaapi"), true, true, &[]),
+            Some(HwDevice::Vaapi)
+        );
+        assert_eq!(default_from(Some("vaapi"), true, false, &[]), None);
     }
 
     #[test]

@@ -108,8 +108,8 @@ pub struct ExportPane {
     pub codec: usize,
     /// Who makes the file: 0 the lists' own order (the hardware leads
     /// where it wins), 1 the machine's own video hardware by name
-    /// (VAAPI), 2 the CPU. The picker greys the GPU row on a machine
-    /// without it.
+    /// (VAAPI, NVENC, Quick Sync or AMF), 2 the CPU. The picker greys the
+    /// GPU row on a machine without it.
     pub encoder: usize,
     pub ten_bit: bool,
     /// An HDR timeline written tone-mapped to SDR rather than as it is.
@@ -195,7 +195,7 @@ impl ExportPane {
                 // A GPU choice a machine without the video hardware cannot
                 // keep is the automatic one, not a greyed row the sheet
                 // opens on with no way off it.
-                if self.encoder == 1 && !concat_media::vaapi_encode_available() {
+                if self.encoder == 1 && !concat_media::hardware_encode_available() {
                     self.encoder = 0;
                 }
             }
@@ -229,7 +229,7 @@ impl ExportPane {
             // a greyed press is refused the same way a codec's is.
             ExportMsg::EncoderChanged(index) => {
                 let index = (index.max(0) as usize).min(2);
-                if index != 1 || concat_media::vaapi_encode_available() {
+                if index != 1 || concat_media::hardware_encode_available() {
                     self.encoder = index;
                 }
             }
@@ -827,7 +827,7 @@ impl ExportPane {
                 ModelRc::new(VecModel::from(names))
             },
             encoder_details: {
-                let gpu = if concat_media::vaapi_encode_available() {
+                let gpu = if concat_media::hardware_encode_available() {
                     t("export.encoderGpuDetail")
                 } else {
                     t("export.notOnThisDevice")
@@ -839,7 +839,7 @@ impl ExportPane {
                 ];
                 ModelRc::new(VecModel::from(names))
             },
-            encoder_available: concat_media::vaapi_encode_available(),
+            encoder_available: concat_media::hardware_encode_available(),
             ten_bit: self.ten_bit,
             hdr_timeline: timeline.video.color_space.is_hdr(),
             hdr: self.hdr(timeline),

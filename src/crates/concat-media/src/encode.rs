@@ -321,11 +321,13 @@ pub struct EncodeOptions {
     /// Let the platform's hardware encoder lead where there is one; see
     /// [`VideoCodec::encoders`].
     pub hardware: bool,
-    /// The person named the machine's own video hardware: the VAAPI
+    /// The person named the machine's own video hardware: the hardware
     /// encoders lead every codec's list, H.264's included, and the
     /// software encoder that follows is the fallback for a chip that
-    /// refuses this export's size or depth. Default false: the lists'
-    /// own order, which keeps H.264 on x264.
+    /// refuses this export's size or depth. VAAPI leads where its render
+    /// node exists and NVENC where it does not, so the choice means the
+    /// GPU on Intel, AMD and NVIDIA machines alike. Default false: the
+    /// lists' own order, which keeps H.264 on x264.
     pub vaapi_first: bool,
     /// Threads the encoder may use, or zero to let it count the cores.
     /// Zero for an export; a few for a proxy written while the editor is
@@ -581,6 +583,34 @@ pub fn vaapi_encode_available() -> bool {
             && crate::hardware::device(crate::HwDevice::Vaapi).is_some()
             && opens(VideoCodec::H264, "h264_vaapi")
     })
+}
+
+/// Whether this machine has video hardware an export could encode on:
+/// VAAPI where its render node and encoders are there, or NVIDIA's NVENC
+/// where the driver's control node is. The export sheet asks this once per
+/// process to say whether its "GPU" choice is the machine's to make.
+///
+/// Nothing is opened to answer: VAAPI is safe to probe through the Mesa
+/// driver, but NVENC's libcuda is not (see [`Family::vendor_driver`]), so
+/// on an NVIDIA machine the answer is the driver's presence and the linked
+/// encoder, not a trial. An export that reaches NVENC and finds it will
+/// not open falls through to the next encoder in its list.
+pub fn hardware_encode_available() -> bool {
+    static KNOWN: OnceLock<bool> = OnceLock::new();
+    *KNOWN.get_or_init(|| vaapi_encode_available() || nvenc_available())
+}
+
+/// Whether NVIDIA's NVENC is reachable here: the linked FFmpeg carries it,
+/// the driver's control node exists, and the environment leaves it on.
+/// A machine whose `CUDA_VISIBLE_DEVICES` hides every card says no, as it
+/// does for the decoder.
+fn nvenc_available() -> bool {
+    ffi::init();
+    let driver = std::path::Path::new("/dev/nvidiactl").exists()
+        || std::path::Path::new("/dev/nvidia0").exists();
+    driver
+        && encoder::find_by_name("h264_nvenc").is_some()
+        && switched_on("h264_nvenc", |key| std::env::var_os(key))
 }
 
 /// Whether each hardware encoder opens here, as a probe found or an export
@@ -1420,11 +1450,13 @@ impl Encoder {
             .filter_map(|name| encoder::find_by_name(name).map(|codec| (name, codec)))
             .collect();
         if options.vaapi_first {
-            // The person named the machine's own video hardware: its
-            // encoders lead every list, H.264's included, and the
-            // software encoder that follows is the fallback for a chip
-            // that refuses this export's size or depth.
-            candidates.sort_by_key(|(name, _)| !name.ends_with("_vaapi"));
+            // The person named the machine's own video hardware: every
+            // hardware family leads, H.264's included, and the software
+            // encoder that follows is the fallback for a chip that refuses
+            // this export's size or depth. VAAPI leads where its render
+            // node exists; on a machine without one - a T4, say - NVENC is
+            // the encoder that opens, and it leads instead.
+            candidates.sort_by_key(|(name, _)| !Family::of(name).hardware());
         }
         if candidates.is_empty() {
             return Err(Error::Missing {
@@ -2359,10 +2391,11 @@ mod tests {
 
     /// An export that names the machine's own video hardware gets it
     /// where the machine has it, and falls back to the software encoder
-    /// where it does not - a machine with no VAAPI device, or a runner
-    /// with none, still exports, on x264.
+    /// where it does not - a machine with no VAAPI device or NVENC, or a
+    /// runner with neither, still exports, on x264. Every hardware family
+    /// leads, not only VAAPI, so a T4 reaches NVENC.
     #[test]
-    fn an_export_preferring_vaapi_takes_it_or_falls_back() {
+    fn an_export_preferring_hardware_takes_it_or_falls_back() {
         let path = std::env::temp_dir().join("concat-encode-vaapi-preferred.mp4");
         let options = EncodeOptions {
             preset: "ultrafast".to_owned(),
@@ -2373,12 +2406,15 @@ mod tests {
         };
         let mut encoder =
             Encoder::create(&path, 320, 180, FrameRate::THIRTY, &options).expect("encodes");
-        let expected = if vaapi_encode_available() {
-            "h264_vaapi"
+        if hardware_encode_available() {
+            assert!(
+                Family::of(encoder.encoder_name()).hardware(),
+                "the GPU was asked for, and {} is the CPU's",
+                encoder.encoder_name()
+            );
         } else {
-            "libx264"
-        };
-        assert_eq!(encoder.encoder_name(), expected);
+            assert_eq!(encoder.encoder_name(), "libx264");
+        }
         let frame = Frame::black(320, 180);
         for _ in 0..4 {
             encoder.write_frame(&frame).expect("writes");

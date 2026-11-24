@@ -1836,7 +1836,10 @@ mod tests {
         assert_eq!(receipt.stages.len(), 3);
         assert!(receipt.stages.iter().all(|stage| stage.outcome.landed()));
         assert!(
-            receipt.stages.iter().all(|stage| stage.elapsed_ms.is_some()),
+            receipt
+                .stages
+                .iter()
+                .all(|stage| stage.elapsed_ms.is_some()),
             "every stage that ran reports its wall-clock time"
         );
         assert!(receipt.capabilities.iter().any(|area| area.consumed));

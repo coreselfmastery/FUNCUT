@@ -4800,12 +4800,15 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // that is the a-roll's own grammar.
     /// One clip's contribution to the spine: when it opens and closes,
     /// the picture it puts on screen (if it puts one), the read's own
-    /// mood at the moment it opens, and the words it plays.
+    /// mood at the moment it opens, the strongest stressed word inside
+    /// its source span (mapped to timeline seconds), and the words it
+    /// plays.
     type Span = (
         f64,
         f64,
         Option<(String, String)>,
         Option<EmotionLine>,
+        Option<f64>,
         String,
     );
     let span_of = |clip: &Value| -> Span {
@@ -4831,12 +4834,16 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         // narration says while the shot plays is what the shot should
         // show. A span too short to carry the description floor states
         // the measured arc it sits in instead - never a padded fake.
-        let (source_in, source_out, _) = clip_file_span(clip);
+        let (source_in, source_out, speed) = clip_file_span(clip);
         let clip_path = clip["media"].as_str().and_then(|id| {
             media
                 .iter()
                 .find(|(mid, _)| mid == id)
                 .map(|(_, path)| path.clone())
+        });
+        let beat = clip_path.as_deref().and_then(|path| {
+            emphasis_moment(&reads, path, source_in, source_out)
+                .map(|at| start + (at - source_in) / speed)
         });
         let spoken: String = transcripts_of(log, takes)
             .into_iter()
@@ -4860,7 +4867,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 kind.clone(),
             )
         });
-        (start, end, visual, mood, spoken)
+        (start, end, visual, mood, beat, spoken)
     };
     let mut spans: Vec<Span> = clips.iter().map(|clip| span_of(clip)).collect();
     spans.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -4891,11 +4898,14 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 if window.2.is_none() || (real_footage && window_is_overlay) {
                     window.2 = span.2.clone();
                 }
-                if !span.4.trim().is_empty() {
-                    if !window.4.trim().is_empty() {
-                        window.4.push(' ');
+                if window.4.is_none() {
+                    window.4 = span.4;
+                }
+                if !span.5.trim().is_empty() {
+                    if !window.5.trim().is_empty() {
+                        window.5.push(' ');
                     }
-                    window.4.push_str(span.4.trim());
+                    window.5.push_str(span.5.trim());
                 }
             }
             _ => windows.push(span),
@@ -4904,9 +4914,10 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     let mut segments: Vec<Value> = windows
         .iter()
         .enumerate()
-        .map(|(index, (start, end, visual, mood, spoken))| {
+        .map(|(index, (start, end, visual, mood, beat, spoken))| {
             let start = *start;
             let end = *end;
+            let beat = *beat;
             let spoken = spoken.trim().to_owned();
             let mood = mood.clone();
             let visual = visual.clone();
@@ -4976,14 +4987,14 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 segment["colourTemp"] = json!(line.temperature);
                 segment["act"] = json!(line.act);
                 segment["duckDb"] = json!(line.duck_db);
-                if let Some(at) = emphasis_moment(&reads, &line.take, start, end) {
-                    segment["beat"] = json!({
-                        "at": round3(at),
-                        "signal": "emphasisWords",
-                        "why": "the strongest stressed word inside the span; the entrance lands on it",
-                    });
-                    segment["in"]["anim"] = json!("punch");
-                }
+            }
+            if let Some(at) = beat {
+                segment["beat"] = json!({
+                    "at": round3(at),
+                    "signal": "emphasisWords",
+                    "why": "the strongest stressed word inside the span; the entrance lands on it",
+                });
+                segment["in"]["anim"] = json!("punch");
             }
             segment
         })

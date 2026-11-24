@@ -58,6 +58,7 @@ engine. Other shapes:
 ./install-linux.sh --deb      # through apt, asks for sudo
 ./install-linux.sh --rpm      # through dnf, asks for sudo
 ./install-linux.sh --list     # show what the releases hold, install nothing
+./install-linux.sh --bin-dir DIR   # the launcher into DIR, not ~/.local/bin
 ```
 
 The script looks for a release **on this fork first**, and falls back to

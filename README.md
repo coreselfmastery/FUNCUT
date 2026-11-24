@@ -150,7 +150,7 @@ A machine with no GPU still runs: Mesa’s lavapipe is a software Vulkan rendere
 
 ### Headless
 
-The editor is also an MCP server. A sandbox needs no desktop, GPU or build toolchain:
+The editor is also an MCP server. A sandbox or a Kaggle notebook needs no desktop, GPU or build toolchain:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"

@@ -2,6 +2,9 @@
 # FUNCUT - the one-line Linux installer.
 #
 #   ./install-linux.sh                 AppImage into ~/.local/bin (no root)
+#   ./install-linux.sh --bin-dir DIR   the same, the launcher into DIR: a
+#                                       notebook's /kaggle/working/bin, say,
+#                                       so the install survives the session
 #   ./install-linux.sh --deb           the .deb, through apt (asks for sudo)
 #   ./install-linux.sh --rpm           the .rpm, through dnf (asks for sudo)
 #   ./install-linux.sh --pacman        the Arch package, through pacman (sudo)
@@ -70,6 +73,10 @@ FALLBACK=""
 # ── what to install ───────────────────────────────────────────────────
 KIND="appimage"
 LIST_ONLY="no"
+# Where the AppImage launcher goes; empty means ~/.local/bin. A notebook
+# whose home folder is thrown away when the session ends names a folder
+# it keeps instead (see docs/SANDBOX.md's Kaggle section).
+BIN_DIR_OPT=""
 # Which of the app's own downloads come down now, at install time,
 # rather than on the first run that needs them: "core" (the default),
 # "all" or "none".
@@ -88,6 +95,12 @@ while [ $# -gt 0 ]; do
         --rpm) KIND="rpm" ;;
         --pacman) KIND="pacman" ;;
         --list) LIST_ONLY="yes" ;;
+        --bin-dir)
+            [ $# -ge 2 ] || die "--bin-dir needs a directory after it"
+            [ -n "$2" ] || die "--bin-dir needs a directory after it"
+            BIN_DIR_OPT="$2"
+            shift
+            ;;
         --no-models) MODELS="none" ;;
         --all-models) MODELS="all" ;;
         --models)
@@ -133,6 +146,12 @@ done
 
 WHERE="$REPO"
 [ -z "$FALLBACK" ] || WHERE="$REPO or $FALLBACK"
+
+# A package installs where the distribution says; only the AppImage has a
+# folder to choose, so a --bin-dir beside --deb would be silently lost.
+if [ -n "$BIN_DIR_OPT" ] && [ "$KIND" != appimage ]; then
+    die "--bin-dir applies to --appimage; a package installs where the distribution says"
+fi
 
 CURL=""
 command -v curl >/dev/null 2>&1 && CURL="yes"
@@ -579,8 +598,13 @@ fi
 
 case "$KIND" in
     appimage)
-        BIN_DIR="$HOME/.local/bin"
-        mkdir -p "$BIN_DIR"
+        case "$BIN_DIR_OPT" in
+            "") BIN_DIR="$HOME/.local/bin" ;;
+            /*) BIN_DIR="$BIN_DIR_OPT" ;;
+            *) BIN_DIR="$PWD/$BIN_DIR_OPT" ;;
+        esac
+        mkdir -p "$BIN_DIR" \
+            || die "could not make $BIN_DIR - pass --bin-dir with a folder this account can write"
         # A stable name, whatever the version in the file is: this is
         # what a person types, and what the desktop entry's Exec says.
         DEST="$BIN_DIR/concat"
@@ -664,6 +688,13 @@ DESKTOP
         command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
         say "start menu: $APPS_DIR/concat.desktop"
         say ""
+        if [ -n "$BIN_DIR_OPT" ]; then
+            # A chosen folder is usually a notebook's persistent one; the
+            # data folder has to be named the same way on every run or the
+            # app installs its models again on the first use.
+            say "note: the app's data folder is ${XDG_DATA_HOME:-$HOME/.local/share}"
+            say "      export XDG_DATA_HOME that way too where you run concat"
+        fi
         case ":$PATH:" in
             *":$BIN_DIR:"*) ;;
             *) say "note: $BIN_DIR is not on your PATH - add it to use 'concat' from a terminal" ;;

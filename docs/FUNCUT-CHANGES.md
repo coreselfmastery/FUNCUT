@@ -58,6 +58,21 @@ playback cache.
   topic-specific direction are named in the AUTO EDIT prompt even when the
   user's request is one line.
 
+## Crash safety and installer honesty (`.15` re-cut)
+
+- **A panic saves before it aborts.** The shipping profile is
+  `panic = "abort"`, so a worker save can never finish. The panic hook now
+  calls a registered save callback, and `Studio::save_now` writes the
+  document synchronously on the panicking thread. A failed save is logged,
+  not raised from the hook; the hook never waits on the callback lock.
+- **The installer no longer installs another project by accident.**
+  `install-linux.sh` leaves the upstream fallback empty unless
+  `--use-upstream` asks for it, and a fork with no release fails with that
+  instruction instead of silently taking Concat's build.
+- **The audit is checked in.** `docs/AUDIT-2026-11-24.md` records the
+  findings from the second pass and what remains, and `KNOWN_ISSUES.md`
+  links to it.
+
 ## The native 3D scene layer (`.15`)
 
 - **A comp can carry a real 3D scene.** `NodeKind::Scene3D` holds box,

@@ -127,6 +127,22 @@ the rest of the tree. In short:
   RUSTSEC-2026-0592 upgrade, release audits gated on Nix and RustSec,
   and the non-cancelling workflow queue.
 
+## Crash safety and installer honesty
+
+The shipping profile still uses `panic = "abort"`, but a panic no longer
+throws away the edit. The panic hook now asks the window for a
+synchronous save before the process dies; a failed save is written to
+the log rather than raised from the hook. This is the last-chance path,
+not a replacement for the autosave.
+
+`install-linux.sh` no longer falls back to upstream Concat when this
+fork has no release. It fails loudly and names `--use-upstream`, so a
+missing fork build cannot install a different project by accident.
+
+The second-pass audit is in `docs/AUDIT-2026-11-24.md`; it records the
+findings this re-cut did not fix, including target-hardware measurements
+and the larger refactors.
+
 ## What this release does not prove
 
 - **No target-hardware acceptance.** The AUTO EDIT button, the 3D

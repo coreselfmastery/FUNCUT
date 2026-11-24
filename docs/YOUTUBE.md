@@ -17,6 +17,7 @@ applied.
 | `editMode` | The story skeleton's own mode (`longform` or `reel`). |
 | `profile` | The creative profile the narration's words support: `finance`, `education`, `storytelling`, `technology`, `news`, `motivation` or `general`. |
 | `profileWhy` | The words that chose the profile. |
+| `profilePlan` | What the profile changes in the measured edit: `pacing.targetShotSeconds` and `pacing.patternBreakEvery`, `motion.intensity`, `captions.weight`, and the `broll.qualifier` added as a second query door. |
 | `titles` | Five title directions, each with `title`, `angle`, `promise`, `basis` and `honest`. `promise` is the brief's payoff or thesis, never a new claim. |
 | `thumbnails` | Three concepts, each with `frameAt`, `subject`, `text`, `composition` and `reason`. |
 | `shorts` | Up to three transcript windows, each with `start`, `end`, `duration`, `hook`, `payoff`, `score`, `why` and `text`. |
@@ -47,7 +48,22 @@ audit: a window is not sold as viral, only as measured.
 
 ## What the profile changes
 
-The profile is a lens on the same measured edit, not a new pipeline:
+The profile is a lens on the same measured edit, not a new pipeline. It
+changes four things the plan actually spends:
+
+- **pacing** - the pattern-break density (`pacing.patternBreakEvery`):
+  news and motivation every 14-15 seconds, storytelling every 30, the
+  rest every 16-20;
+- **motion** - the style's motion intensity moves by the profile's own
+  delta (news and motivation push harder, storytelling holds longer);
+- **captions** - the weight the caption style asks for (600 for
+  storytelling, 800 for technology, news and motivation);
+- **B-roll** - a profile qualifier is added as a second query door and
+  appended to the semantic description, so the shelf still ranks the
+  spoken meaning first and the profile's visual language second.
+
+The packaging lens also changes the title angles and thumbnail
+compositions:
 
 - **finance** leans on stakes, numbers and a payoff title;
 - **education** leans on the how-to title and a clean middle frame;
@@ -57,8 +73,8 @@ The profile is a lens on the same measured edit, not a new pipeline:
 - **motivation** leans on the mindset promise;
 - **general** is the honest fallback when the narration names no subject.
 
-Pacing, B-roll queries and motion still come from the measured direction,
-emotion and voice signals. The profile never overrides a measurement.
+The profile never overrides a measurement: it changes the density and
+the second door, not the measured hook, turn, payoff or retention risk.
 
 ## Limits
 

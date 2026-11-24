@@ -51,6 +51,12 @@ playback cache.
   promise, not a new claim. Thumbnails are frames and text, not rendered
   images. Short scores rank candidates inside one run; they do not
   predict views or retention.
+- **The profile is spent, not labelled.** `youtube.profilePlan` records
+  the pattern-break density, motion intensity, caption weight and B-roll
+  qualifier the creative profile chose, and the plan applies them: the
+  style's motion intensity, the caption weight, the pattern-break count
+  and a third stock query all come from it. The measured hook, turn,
+  payoff and retention risk still win.
 - **The package carries a plan-level quality report.** `youtube.quality`
   checks the hook length, payoff position, measured retention risks,
   neighbour repeats, title count, thumbnail frames and Short bounds, and

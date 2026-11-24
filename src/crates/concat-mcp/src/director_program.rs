@@ -5088,6 +5088,79 @@ fn youtube_quality(
     })
 }
 
+/// What a creative profile changes in the measured edit: how often a
+/// pattern break lands, how hard the motion hand pushes, how heavy the
+/// captions sit, and which second query the stock shelf sees. The
+/// profile is a lens on the same signals, never a replacement for them.
+fn youtube_profile_plan(
+    moments: &[(f64, f64, String)],
+    direction: VisualDirection,
+    runtime: f64,
+) -> Value {
+    let (profile, why) = youtube_profile(moments);
+    let (motion_delta, breaks_every, qualifier, caption_weight, target_shot_seconds) = match profile
+    {
+        "finance" => (0.05, 18.0, "financial documentary detail", 750, 3.5),
+        "education" => (0.0, 18.0, "clean explanatory visual", 700, 3.0),
+        "storytelling" => (-0.05, 30.0, "cinematic story detail", 600, 4.5),
+        "technology" => (0.05, 16.0, "technology product detail", 800, 2.8),
+        "news" => (0.1, 14.0, "newsroom evidence", 800, 2.5),
+        "motivation" => (0.1, 15.0, "motivational cinematic", 800, 2.5),
+        _ => (0.0, 20.0, "cinematic establishing detail", 700, 3.5),
+    };
+    let motion = (direction.motion_intensity() + motion_delta).clamp(0.2, 0.9);
+    json!({
+        "profile": profile,
+        "why": why,
+        "pacing": {
+            "targetShotSeconds": target_shot_seconds,
+            "patternBreakEvery": breaks_every,
+            "measuredRuntime": round3(runtime),
+        },
+        "motion": {
+            "intensity": round3(motion),
+            "reason": format!("{profile} adds {motion_delta:+.2} to the measured direction's own motion hand"),
+        },
+        "captions": { "weight": caption_weight },
+        "broll": { "qualifier": qualifier },
+    })
+}
+
+/// Give every B-roll query the profile's own second door. The first
+/// query stays the words the span plays, so the shelf still ranks the
+/// meaning first; the profile's qualifier is an additional candidate,
+/// not a replacement for what the narration said.
+fn apply_profile_queries(segments: &mut [Value], profile_plan: &Value) {
+    let profile = profile_plan["profile"].as_str().unwrap_or("general");
+    let qualifier = profile_plan["broll"]["qualifier"]
+        .as_str()
+        .unwrap_or("cinematic establishing detail");
+    for segment in segments {
+        let Some(query) = segment
+            .pointer("/visual/query")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let mut queries: Vec<Value> = segment
+            .pointer("/visual/queries")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        queries.push(json!(format!("{query}, {qualifier}")));
+        segment["visual"]["queries"] = json!(queries);
+        segment["visual"]["profile"] = json!(profile);
+        if let Some(description) = segment
+            .pointer("/visual/description")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
+            segment["visual"]["description"] = json!(format!("{description}; {qualifier}"));
+        }
+    }
+}
+
 /// The YouTube package the plan carries: mode, creative profile, title
 /// and thumbnail directions, the Shorts the transcript supports, and the
 /// section-by-section retention map. It is derived from the same
@@ -5104,8 +5177,14 @@ fn youtube_package(
     read: &[EmotionLine],
     findings: &Value,
     variety: &Value,
+    profile_plan: &Value,
 ) -> Value {
-    let profile = youtube_profile(moments);
+    let profile = (
+        profile_plan["profile"].as_str().unwrap_or("general"),
+        profile_plan["why"]
+            .as_str()
+            .unwrap_or("the narration names no subject narrow enough to profile"),
+    );
     let youtube_mode = if aspect == "9:16" {
         "short"
     } else if runtime > 60.0 {
@@ -5148,6 +5227,7 @@ fn youtube_package(
         "editMode": mode,
         "profile": profile.0,
         "profileWhy": profile.1,
+        "profilePlan": profile_plan.clone(),
         "titles": titles,
         "thumbnails": thumbnails,
         "shorts": shorts,
@@ -5749,9 +5829,11 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     let aspect = aspect_of(view);
     let direction = choose_direction(&spoken, &subjects, &read, runtime, aspect);
     let alternatives = direction_alternatives(&spoken, &subjects, &read, runtime, aspect);
+    let profile_plan = youtube_profile_plan(&transcript_moments, direction, runtime);
     brief.insert("referenceStyle".to_owned(), json!(direction.reference()));
     brief.insert("tone".to_owned(), json!(direction.tone()));
     vary_segments(&mut segments, direction);
+    apply_profile_queries(&mut segments, &profile_plan);
     let retention_findings = retention_analysis(&spoken, &segments, &read, runtime);
     let variety = visual_variety(&segments);
     let youtube = youtube_package(
@@ -5765,6 +5847,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         &read,
         &retention_findings,
         &variety,
+        &profile_plan,
     );
     brief.insert(
         "platform".to_owned(),
@@ -6674,19 +6757,25 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // richer style bible; this is the floor the deterministic fallback
     // can prove, so the same validator can judge both paths.
     let style = json!({
-        "name": format!("{} / {look} / {orientation}", direction.label()),
+        "name": format!(
+            "{} / {} / {look} / {orientation}",
+            direction.label(),
+            profile_plan["profile"].as_str().unwrap_or("general")
+        ),
         "palette": palette,
         "grade": look,
         "captions": {
             "font": caption_font,
-            "weight": direction.caption_weight(),
+            "weight": profile_plan["captions"]["weight"]
+                .as_i64()
+                .unwrap_or_else(|| direction.caption_weight()),
             "emphasisColor": palette[1],
             "position": if orientation == "vertical" { "center" } else { "lower-third" },
         },
         "motion": {
             "language": direction.motion_language(),
             "easing": direction.motion_easing(),
-            "intensity": direction.motion_intensity(),
+            "intensity": profile_plan["motion"]["intensity"].clone(),
         },
         "sound": {
             "duckDb": duck,
@@ -6705,7 +6794,12 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // the turn and the retention pass's own boring stretches and repeated
     // explanations, so a clean fallback still has a rhythm a viewer can
     // feel - and a longform cut gets enough of them to pass its own gate.
-    let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
+    let wanted_breaks = ((runtime
+        / profile_plan["pacing"]["patternBreakEvery"]
+            .as_f64()
+            .unwrap_or(20.0))
+    .ceil() as usize)
+        .max(2);
     let mut pattern_breaks: Vec<f64> = (1..=wanted_breaks)
         .map(|index| round3(runtime * index as f64 / (wanted_breaks + 1) as f64))
         .collect();
@@ -16825,6 +16919,30 @@ mod tests {
         let youtube = &plan["youtube"];
         assert_eq!(youtube["mode"], json!("reel"));
         assert_eq!(youtube["profile"], json!("storytelling"));
+        assert_eq!(
+            youtube["profilePlan"]["profile"], youtube["profile"],
+            "the profile plan names the same profile the package does"
+        );
+        assert!(
+            youtube["profilePlan"]["pacing"]["patternBreakEvery"].is_number()
+                && youtube["profilePlan"]["motion"]["intensity"].is_number()
+                && youtube["profilePlan"]["broll"]["qualifier"].is_string(),
+            "the profile plan names its pacing, motion and B-roll qualifier"
+        );
+        assert_eq!(
+            plan["style"]["motion"]["intensity"], youtube["profilePlan"]["motion"]["intensity"],
+            "the style's motion hand is the profile plan's own intensity"
+        );
+        assert_eq!(
+            plan["segments"][0]["visual"]["profile"], youtube["profile"],
+            "the B-roll query carries the profile it was shopped for"
+        );
+        assert!(
+            plan["segments"][0]["visual"]["queries"]
+                .as_array()
+                .is_some_and(|queries| queries.len() >= 3),
+            "the profile adds its own query door beside the direction's"
+        );
         assert_eq!(
             youtube["titles"].as_array().map(Vec::len),
             Some(5),

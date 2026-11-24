@@ -20,7 +20,7 @@ applied.
 | `profilePlan` | What the profile changes in the measured edit: `pacing.targetShotSeconds` and `pacing.patternBreakEvery`, `motion.intensity`, `captions.weight`, and the `broll.qualifier` added as a second query door. |
 | `titles` | Five title directions, each with `title`, `angle`, `promise`, `basis` and `honest`. `promise` is the brief's payoff or thesis, never a new claim. |
 | `thumbnails` | Three concepts, each with `frameAt`, `subject`, `text`, `composition` and `reason`. |
-| `shorts` | Up to three transcript windows, each with `start`, `end`, `duration`, `hook`, `payoff`, `score`, `why` and `text`. |
+| `shorts` | Up to three transcript windows, each with `start`, `end`, `duration`, `hook`, `payoff`, `score`, `scoreBreakdown`, `standalone`, `standaloneWhy`, `thumbnailAt`, `reframe`, `captions`, `title`, `why` and `text`. |
 | `retentionMap` | One entry per story section: `role`, `start`, `end`, `risk`, `score`, `reason` and the one `fix` the edit vocabulary can apply. |
 | `quality` | A plan-level report: `verdict` (`pass`, `warn` or `fail`) and the `checks` behind it - hook length, payoff position, retention risks, neighbour repeats, title count, thumbnail frames and Short bounds. |
 | `publishingChecklist` | The checks a person still owes before publishing. |
@@ -44,7 +44,11 @@ already measured:
 
 It keeps the top three and drops a candidate whose start is within five
 seconds of one already kept. The score and the `why` string are the
-audit: a window is not sold as viral, only as measured.
+audit: a window is not sold as viral, only as measured. Each window also
+carries the parts of its score (`scoreBreakdown`), a `standalone` check
+with its reason, the frame to sample for its thumbnail, the vertical
+treatment (`9:16 fill, subject-aware crop`), the caption treatment
+(`word-level, centered`) and the title direction that fits it.
 
 ## What the profile changes
 

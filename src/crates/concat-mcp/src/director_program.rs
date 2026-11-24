@@ -4672,6 +4672,13 @@ fn short_candidates(
         if (20.0..=55.0).contains(&duration) {
             score += 0.05;
         }
+        let words = spoken.split_whitespace().count();
+        let standalone = words >= 20 && !hook.is_empty() && !payoff.is_empty();
+        let standalone_why = if standalone {
+            format!("the window opens with a hook and lands a payoff in {words} words")
+        } else {
+            format!("the window has {words} words; check that it still makes sense alone")
+        };
         let why = format!(
             "{} seconds, {:.0}% spoken, delivery {:.2}{}{}",
             duration.round(),
@@ -4695,6 +4702,19 @@ fn short_candidates(
             "hook": hook,
             "payoff": payoff,
             "score": round3(score.min(1.0)),
+            "scoreBreakdown": {
+                "base": 0.15,
+                "spokenCoverage": round3(coverage.min(1.0) * 0.25),
+                "delivery": round3(intensity * 0.25),
+                "question": if question { 0.15 } else { 0.0 },
+                "payoff": if payoff_signal { 0.15 } else { 0.0 },
+                "durationBand": if (20.0..=55.0).contains(&duration) { 0.05 } else { 0.0 },
+            },
+            "standalone": standalone,
+            "standaloneWhy": standalone_why,
+            "thumbnailAt": round3(*start + duration / 2.0),
+            "reframe": "9:16 fill, subject-aware crop",
+            "captions": "word-level, centered",
             "why": why,
             "text": spoken,
         }));
@@ -5211,6 +5231,13 @@ fn youtube_package(
         }));
     }
     let titles = title_concepts(subjects, brief, &shorts);
+    if let Some(list) = titles.as_array() {
+        for (index, short) in shorts.iter_mut().enumerate() {
+            if let Some(title) = list.get(index % list.len()) {
+                short["title"] = title["title"].clone();
+            }
+        }
+    }
     let thumbnails = thumbnail_concepts(sections, subjects, &titles, runtime);
     let retention = retention_map(sections, findings, runtime);
     let quality = youtube_quality(
@@ -16953,11 +16980,24 @@ mod tests {
             Some(3),
             "three thumbnail frames are offered"
         );
+        let shorts = youtube["shorts"]
+            .as_array()
+            .filter(|shorts| !shorts.is_empty())
+            .expect("the transcript supports at least one Short window");
+        let short = &shorts[0];
         assert!(
-            youtube["shorts"]
-                .as_array()
-                .is_some_and(|shorts| !shorts.is_empty()),
-            "the transcript supports at least one Short window"
+            short["scoreBreakdown"].is_object()
+                && short["standalone"].is_boolean()
+                && short["title"].is_string()
+                && short["reframe"].is_string()
+                && short["captions"].is_string(),
+            "each Short names its score, standalone check and vertical treatment: {short}"
+        );
+        assert!(
+            short["thumbnailAt"].as_f64().is_some_and(
+                |at| at >= 0.0 && at <= plan["segments"][0]["end"].as_f64().unwrap_or(0.0)
+            ),
+            "the Short's thumbnail frame sits inside the cut"
         );
         assert_eq!(
             youtube["retentionMap"].as_array().map(Vec::len),

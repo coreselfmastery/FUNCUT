@@ -51,6 +51,12 @@ playback cache.
   promise, not a new claim. Thumbnails are frames and text, not rendered
   images. Short scores rank candidates inside one run; they do not
   predict views or retention.
+- **Each Short is an actionable package, not a window.** A Short now
+  carries the parts of its score, a standalone check with its reason,
+  the frame to sample for its thumbnail, its vertical reframe, its
+  caption treatment and the title direction that fits it. None of these
+  is a rendered Short; they are the decisions a Short project starts
+  from.
 - **The profile is spent, not labelled.** `youtube.profilePlan` records
   the pattern-break density, motion intensity, caption weight and B-roll
   qualifier the creative profile chose, and the plan applies them: the

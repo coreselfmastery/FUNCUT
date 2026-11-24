@@ -99,6 +99,13 @@ playback cache.
   --smoke` now runs on every change, and `scripts/benchmark.py
   --memory-limit-mb 4096` holds a generated preview and render to the
   target laptop's address space.
+- **The smoke runs, it does not compile.** The dev profile now carries the
+  same `debug = 0` as the test and doctest profiles, so its artifacts are
+  the ones nextest already built, and a `Build the headless binaries` step
+  pays the window binary's Slint codegen and link once. The smoke and the
+  4 GB benchmark reuse that build. Their ceilings are 60 and 40 minutes,
+  with room for a cache miss; a timeout is a failure, so the number is for
+  hangs, not for a slow compile.
 - **Translated READMEs point at this fork.** Downloads, releases, issues,
   discussions, star history and contributors now name
   `coreselfmastery/FUNCUT`, with a line crediting upstream Concat.

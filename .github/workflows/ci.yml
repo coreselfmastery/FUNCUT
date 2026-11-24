@@ -373,14 +373,20 @@ jobs:
       # app; running it here too means a change that breaks the headless
       # launch is named on the pull request, not after a release tag.
       - name: The headless smoke runs on every change
-        timeout-minutes: 20
+        # The headless binaries are built in their own step now, so this
+        # is a run rather than a compile. The ceiling stays above the
+        # measured smoke and leaves room for a cache miss.
+        timeout-minutes: 60
         working-directory: src
         run: cargo run -j 1 -p concat -- --smoke
       # The 4 GB laptop is the target, so a small run is held to that
       # ceiling here: a generated 1080p clip, a few random preview frames
       # and a short render, with each child's address space capped at 4 GiB.
       - name: The small-machine run fits a 4 GB memory cap
-        timeout-minutes: 20
+        # concat-cli is built in the headless step; this ceiling is for
+        # the generated clip, previews and render, with room for a cache
+        # miss on the build.
+        timeout-minutes: 40
         working-directory: src
         run: |
           cargo build -j 1 -p concat-cli

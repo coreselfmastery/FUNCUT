@@ -81,6 +81,10 @@ The transcriber no longer runs English-only Whisper on a non-English take. It re
 
 The reply carries word confidences, uncertain-word flags, the detected language, duration-aware coverage, the glossary and its misses. The planner gets the full verified transcript, and transcript-to-timeline verification checks the words the render actually speaks.
 
+### Crash safety and installer honesty
+
+The shipping build aborts on panic, but the panic hook now saves the open project synchronously before the process dies; a failed save goes to the log instead of being raised from the hook. The installer no longer falls back to upstream Concat when this fork has no release — it fails loudly and points at `--use-upstream`.
+
 ### Everything from `.14`
 
 - **Headless AUTO EDIT** — `auto_edit` runs the fixed spine as one MCP call, copies the project to a sibling by default, returns the receipt, and leaves an editable timeline.
@@ -119,7 +123,7 @@ curl -fsSL https://raw.githubusercontent.com/coreselfmastery/FUNCUT/main/install
 ./install-linux.sh --list     # show what the releases hold, install nothing
 ```
 
-If the newest tag is still building, the script picks the newest **published** build. The release workflow publishes a release itself when the tag’s CI, Geneva, package, Nix and RustSec jobs pass.
+If the newest tag is still building, the script picks the newest **published** build. The release workflow publishes a release itself when the tag’s CI, Geneva, package, Nix and RustSec jobs pass. If this fork has no published release, the script stops instead of installing upstream Concat; add `--use-upstream` only when you deliberately want that build.
 
 ### Packages
 

@@ -1092,11 +1092,13 @@ mod tests {
                         text: "ONE".into(),
                         start: 0.0,
                         end: Some(0.5),
+                        confidence: None,
                     },
                     crate::comp::Word {
                         text: "TWO".into(),
                         start: 0.5,
                         end: None,
+                        confidence: None,
                     },
                 ],
                 font: "Bebas Neue".into(),

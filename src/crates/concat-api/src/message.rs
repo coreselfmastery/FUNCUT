@@ -828,8 +828,10 @@ pub enum Request {
     SpeechTranscribe {
         /// The media to hear.
         path: String,
-        /// The whisper model, "base.en" when absent; "small" for other
-        /// languages.
+        /// The whisper model. Multilingual "base" when absent, so Whisper
+        /// detects the language; "small" when the request names a
+        /// non-English language. An English-only ".en" model is refused
+        /// against a non-English language.
         #[serde(default)]
         model: Option<String>,
         /// Optional Whisper language hint: an ISO language code or BCP-47

@@ -80,7 +80,7 @@ description: >
 
 ### 4.5 字幕（对接 `13`）
 - `captions_add` 只做段落级 `{start,end,text}`，**不做词对齐**；逐词 kinetic 必须 `captions_animate` 且只吃 transcribe 的实测 `words`。
-- 转写模型选择：默认 `base.en` 只支持英文，非英文选多语言模型（`small`）；先 `models_list` 后 `models_download`，**不要循环重试"not downloaded"**。
+- 转写模型选择：默认 `base` 是多语言模型，由 whisper 自动检测语言；英文短稿可用 `base.en`，非英文用 `small`（或更大的多语言模型）。先 `models_list` 后 `models_download`，**不要循环重试"not downloaded"**。
 - 字幕安全区/字号：`title_add` 的 `fontSize` 是**帧高分数**（0.04 默认，短视频 0.05–0.06）；`offsetY 0.35`≈下三分之一。字幕别贴边、别盖脸。
 
 ### 4.6 变速（对接 `08`）

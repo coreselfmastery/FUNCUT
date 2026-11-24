@@ -14,7 +14,7 @@
           "type": "string"
         },
         "audio": {
-          "description": "Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
+          "description": "Voiceover and bed. Defaults: multilingual whisperModel base (small for a non-English language), TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
           "properties": {
             "bgm": {
               "properties": {
@@ -65,6 +65,9 @@
               "properties": {
                 "glossary": {
                   "maxLength": 200,
+                  "type": "string"
+                },
+                "language": {
                   "type": "string"
                 },
                 "model": {

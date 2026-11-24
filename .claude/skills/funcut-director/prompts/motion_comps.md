@@ -127,6 +127,7 @@ measured and verified against the audio:
 2. inspect funcut.caption.kinetic → node "caption", slot "Transcript line"
 3. one comp clip per readable phrase:
    {"op":"set-words","node":"caption","words":[[w,s,e], …]}
+   {"op":"set-word-confidence","node":"caption","confidences":[0.97,null,…]}
    - two-element [word, start] holds until the next word
    - a null end on the last word holds to the end of the comp
 4. frame at actual word boundaries; verify the highlight follows the audio

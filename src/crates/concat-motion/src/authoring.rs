@@ -72,6 +72,16 @@ pub enum Op {
         /// `(word, start, end)` in seconds; `None` holds until the next word.
         words: Vec<(String, f64, Option<f64>)>,
     },
+    /// Attach the recogniser's per-word confidence to the words a
+    /// [`Op::SetWords`] set, one value per word in the same order. An
+    /// uncertain word stays in the comp and stays uncertain through a save
+    /// and a reopen, instead of being averaged away at segment level.
+    SetWordConfidence {
+        /// The node.
+        node: String,
+        /// One per word; `None` leaves that word unrated.
+        confidences: Vec<Option<f32>>,
+    },
     /// Replace a markup node's HTML wholesale.
     ///
     /// The op a data-driven comp needs, where the words alone cannot say
@@ -576,6 +586,7 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                         text: word.clone(),
                         start: *start,
                         end: *end,
+                        confidence: None,
                     })
                     .collect();
                 // An open-ended last word is the author's way of saying "hold
@@ -588,6 +599,28 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 text.text.clear();
             } else {
                 return Err(not_text(node));
+            }
+            Ok(comp)
+        }
+        Op::SetWordConfidence { node, confidences } => {
+            let entry = node_mut(&mut comp, node)?;
+            let NodeKind::Text(text) = &mut entry.kind else {
+                return Err(not_text(node));
+            };
+            if confidences.len() != text.words.len() {
+                return Err(fail(
+                    format!(
+                        "{node:?} has {} word(s) but {} confidence value(s)",
+                        text.words.len(),
+                        confidences.len()
+                    ),
+                    "set-word-confidence takes one value per word, in the order set-words wrote them",
+                ));
+            }
+            for (word, confidence) in text.words.iter_mut().zip(confidences) {
+                word.confidence = confidence
+                    .filter(|value| value.is_finite())
+                    .map(|value| value.clamp(0.0, 1.0));
             }
             Ok(comp)
         }
@@ -2211,6 +2244,40 @@ mod tests {
             }
             other => panic!("expected text, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn word_confidence_rides_beside_the_words_that_carry_it() {
+        let comp = presets::build("funcut.caption.kinetic").expect("a preset");
+        let edited = apply(
+            &comp,
+            &[
+                Op::SetWords {
+                    node: "caption".into(),
+                    words: vec![("hello".into(), 0.0, None), ("world".into(), 0.6, None)],
+                },
+                Op::SetWordConfidence {
+                    node: "caption".into(),
+                    confidences: vec![Some(1.4), Some(f32::NAN)],
+                },
+            ],
+        )
+        .expect("applies");
+        let NodeKind::Text(text) = &edited.node("caption").expect("the caption").kind else {
+            panic!("expected text");
+        };
+        assert_eq!(text.words[0].confidence, Some(1.0), "clamped into 0..=1");
+        assert_eq!(text.words[1].confidence, None, "NaN is not a reading");
+
+        let short = apply(
+            &comp,
+            &[Op::SetWordConfidence {
+                node: "caption".into(),
+                confidences: vec![Some(0.5)],
+            }],
+        )
+        .expect_err("one value for no words is refused");
+        assert!(short.to_string().contains("confidence"), "{short}");
     }
 
     #[test]

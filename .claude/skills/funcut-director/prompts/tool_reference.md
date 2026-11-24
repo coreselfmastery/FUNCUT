@@ -24,7 +24,7 @@ analyses and transcription arrive as JSON in the waited status's `output`;
 Traps: a "not downloaded" model error is one `models_download {kind,id}` call
 away — run `models_list` first, download what the plan needs, wait with
 `analysis_wait`, and never retry the failing tool in a loop (`tiny.en` fastest
-English whisper, `base.en` the default sweet spot, `small` multilingual;
+English whisper, `base` the multilingual default, `small` for a non-English take;
 `kokoro-int8-multi-lang-v1_0` the default voice). Analysis tools need the
 Python extras installed (`scenedetect`, `opencv-headless`, `librosa`) — same
 rule: surface the pip hint.
@@ -41,7 +41,7 @@ rule: surface the pip hint.
   `ops` batch → `motion_frame` at 2-3 moments → `motion_bake {encode: true}` →
   `media_import` the file → `clip_add` at the cut.
 - `ops` is the full authoring vocabulary: set-slot, set-text, set-words,
-  set-markup, move, retime, set-track, set-track-points, set-noise-track
+  set-word-confidence, set-markup, move, retime, set-track, set-track-points, set-noise-track
   (seeded drift), fade-in, slide-to, pop, add-group, add-rect, add-text,
   add-chart (data-driven bar/line/area/donut/dot/compare/progress/
   candlestick/timeline/table, any domain), add-counter

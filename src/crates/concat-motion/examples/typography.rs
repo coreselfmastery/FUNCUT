@@ -52,16 +52,19 @@ fn main() {
             text: "Make".into(),
             start: 0.4,
             end: Some(0.85),
+            confidence: None,
         },
         Word {
             text: "it".into(),
             start: 0.85,
             end: Some(1.25),
+            confidence: None,
         },
         Word {
             text: "yours.".into(),
             start: 1.25,
             end: None,
+            confidence: None,
         },
     ];
     let caption_style = TextNode {

@@ -102,3 +102,7 @@ check/
 # The sound reader's cache: `sound_sense.py index_library` writes it beside
 # the shelf it measured, and a measurement is not source.
 audio/sound-index.json
+
+# The model layer's cache: `sound_model.py index` writes one record per asset
+# beside the shelf. It is a cached inference, not source.
+audio/sound-model-index.json

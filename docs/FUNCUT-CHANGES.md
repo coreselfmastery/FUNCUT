@@ -32,6 +32,45 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The sound model layer (`sound_model.py`)
+
+The reader measures; this layer names. YAMNet (521 AudioSet classes, 3.7 M
+weights, 16 MB as ONNX) says what a file contains, and CLAP puts audio and
+text in one 512-d space so the Director's written description can be
+compared with the audio itself. Both are Apache-2.0 and both are optional:
+numpy and ONNX Runtime are used when installed, never required, so a stock
+install behaves exactly as before and says `model: absent` when asked.
+
+The upgrade was measured before it was believed. On the 530 shipped sounds,
+same labels, P@64, CLAP beats the measurements on transitions (0.62 against
+0.38 - the role the reader was weakest at) and loses where physics is the
+point: risers 0.31 against 0.44, textures 0.31 against 0.42. The fused
+ranking therefore weights the two **per role**, fitted on that table, and on
+transitions the weight on the measurements is zero, because there they drag
+the model from 0.62 down to 0.42.
+
+Cost, measured on this box: 530 assets indexed in **136-140 s** (0.26 s per
+file, including the measurement pass and two decodes), a 3.2 MB index, and
+**0.1 s** to rank all 530 from the cache - one text embedding and a matrix
+multiply, no inference on the playback path. The cache is stamped with the
+model files' size and mtime and with `MODEL_INDEX_VERSION`, which had to be
+bumped mid-session when the YAMNet aggregation changed meaning: a cache that
+cannot see a change lies.
+
+The CLAP front-end is reimplemented in numpy and verified against the
+reference extractor to **1e-5**. Three details cost a debugging session
+each and are documented in `docs/SOUND-MODEL.md` §8 for anyone porting it:
+`10*log10` floored at -100 (not `log10`), the slaney filterbank (not the
+torchaudio one), and tiling `floor(10 s / length)` then zero-padding (not
+tiling to length and truncating).
+
+Not wired yet, and named so the next change is mechanical: the sidecar is not
+registered in `concat-mcp/src/sense.rs`, the Director does not consume the
+ranking, the settings sheet has no CLAP row (`ModelData` in
+`src/crates/concat/ui/dialogs/settings.slint` already has every field that
+row needs), and the music join - beat grid and sections from the Rust
+analysis beside the CLAP music embedding - is not made.
+
 ## The sound reader (`sound_sense.py`)
 
 - **The shelf now has an ear.** `concat-mcp/sense/sound_sense.py` decodes a

@@ -13,6 +13,7 @@ use concat_director::{
 };
 use serde_json::{Value, json};
 
+use crate::visual_read::{VisualRead, visual_read_of, visual_reads};
 use crate::voice_read::{Entity, LineRead, Motif, VoiceRead};
 
 /// One voiceover file's fixed paths inside the sibling, as the AUTO
@@ -1002,6 +1003,12 @@ enum GatherPhase {
     Sheet,
     /// The sheet reply is in: rank, choose and record the slot.
     ReadSheet,
+    /// About to measure the ranked candidates' pictures, not just their
+    /// frames: motion, camera travel, scale, quality and scene cuts.
+    Visual,
+    /// The visual reply is in: a candidate the frames refuse sinks, then
+    /// the emotion gate weighs the register.
+    ReadVisual,
     /// The sheet's choice is ranked: the emotion gate weighs the
     /// register before the choice is spent.
     Gate,
@@ -1040,6 +1047,10 @@ struct SlotChoice {
     /// A slot the continuity pass downgraded: the A-roll holds its span
     /// and nothing is imported for it.
     held: bool,
+    /// The continuity gate found the clip too still for its slot. The
+    /// drift is the remedy, so the shot pushes even though the visual
+    /// read would otherwise leave an already-moving frame alone.
+    force_push: bool,
 }
 
 impl SlotChoice {
@@ -1084,7 +1095,7 @@ impl SlotChoice {
 /// query words as its category - the plan's vocabulary, the same thing
 /// the watcher's manifest carries. Nothing the pixels did not say is
 /// written: an unmeasured warmth is omitted, never a neutral zero.
-fn continuity_manifest(shopped: &[SlotChoice]) -> Vec<Value> {
+fn continuity_manifest(shopped: &[SlotChoice], reads: &[VisualRead]) -> Vec<Value> {
     shopped
         .iter()
         .filter(|shop| !shop.held)
@@ -1098,9 +1109,60 @@ fn continuity_manifest(shopped: &[SlotChoice]) -> Vec<Value> {
             if let Some(warmth) = candidate.warmth() {
                 entry["colorTemperature"] = json!(warmth);
             }
+            // The picture's own read fills the three fields the manifest
+            // used to leave empty because a contact sheet measures one
+            // frame: how much moves, which way it travels and how wide
+            // the shot is. The gate's motion, scale and stillness rules
+            // stand on these; without them it could only judge colour.
+            if let Some(read) = visual_read_of(reads, &candidate.local_path) {
+                if let Some(mean) = read.motion_mean {
+                    // The library's own motion scale is 0-131; the read's
+                    // mean is a fraction of the work width per frame.
+                    entry["motion"] = json!(round3((mean * 131.0).clamp(0.0, 131.0)));
+                    // Below 4 of 131 is a still frame by the library's own
+                    // scale: the gate flags it and the drift answers. A
+                    // clip nobody measured keeps the gate's floor at zero
+                    // rather than being judged as still.
+                    entry["motionMin"] = json!(4.0);
+                }
+                if let Ok(direction) = serde_json::to_value(read.direction()) {
+                    entry["dominantDirection"] = direction;
+                }
+                if let Some(scale) = read.shot_scale()
+                    && let Ok(scale) = serde_json::to_value(scale)
+                {
+                    entry["shotScale"] = scale;
+                }
+            }
             entry
         })
         .collect()
+}
+
+/// Where the eye lands in the picture under a timeline second: the video
+/// clip covering the moment, joined to its media path and the visual
+/// read the gather measured. `None` when no measured clip covers it, so
+/// the caption keeps the band the frame's aspect gave it rather than
+/// guessing from a shot nobody read.
+fn visual_focus_at(log: &[Value], at: f64) -> Option<String> {
+    let view = latest_view(log)?;
+    let media = media_paths(view);
+    let reads = visual_reads(log);
+    let clip = view["timeline"]["clips"].as_array()?.iter().find(|clip| {
+        let start = clip["start"].as_f64().unwrap_or(0.0);
+        let duration = clip["duration"].as_f64().unwrap_or(0.0);
+        clip["kind"].as_str() == Some("video") && start <= at + 0.05 && at < start + duration
+    })?;
+    let id = clip["media"].as_str()?;
+    let path = media
+        .iter()
+        .find(|(media_id, _)| media_id == id)
+        .map(|(_, path)| path.as_str())?;
+    reads
+        .iter()
+        .find(|read| read.path == path)
+        .and_then(|read| read.saliency_focus())
+        .map(str::to_owned)
 }
 
 /// A query's coarse category: the longest word the plan shopped the slot
@@ -7241,6 +7303,17 @@ fn decision_for(family: &str) -> &'static [&'static str] {
         // into keyframes, entries, holds and texture; every one of its
         // twenty readings informs that single decision.
         "motion" => &["motion"],
+        // The picture's own families. Motion picks the in-point and vetoes
+        // the redundant push; scale sets the drift and the cut rhythm; the
+        // camera's travel is the continuity gate's direction; the verdict
+        // is the stock veto; saliency moves the caption band; and a clip
+        // that cuts inside itself is a montage the stock veto sinks.
+        "visualMotion" => &["cut", "motion", "sfx"],
+        "shotScale" => &["cut", "motion", "caption"],
+        "camera" => &["cut", "transition", "motion"],
+        "visualQuality" => &["cut", "motion"],
+        "saliency" => &["cut", "caption", "motion"],
+        "scene" => &["cut", "transition"],
         _ => &[],
     }
 }
@@ -7387,6 +7460,43 @@ fn signal_brief(log: &[Value]) -> Value {
     let measured = measured_values(log);
     if measured.as_object().is_some_and(|map| !map.is_empty()) {
         brief.insert("measured".to_owned(), measured);
+    }
+    // The picture's own read, as the critic's evidence: how many
+    // candidates the frames measured, how many moved, how many passed the
+    // technical read, how many were montages the stock veto sank, and the
+    // scales the cut actually plays. The names the log can carry are the
+    // families the visual vocabulary added, so a critic reading a
+    // confidence can see which picture signal it stands on.
+    let reads = visual_reads(log);
+    if !reads.is_empty() {
+        let mut scales: Vec<String> = Vec::new();
+        for read in &reads {
+            if let Some(scale) = read.shot_scale()
+                && let Ok(word) = serde_json::to_value(scale)
+                && let Some(word) = word.as_str()
+                && !scales.iter().any(|known| known == word)
+            {
+                scales.push(word.to_owned());
+            }
+        }
+        brief.insert(
+            "picture".to_owned(),
+            json!({
+                "clips": reads.len(),
+                "moving": reads.iter().filter(|read| read.moves()).count(),
+                "passing": reads.iter().filter(|read| read.passes()).count(),
+                "montages": reads.iter().filter(|read| read.montage()).count(),
+                "scales": scales,
+                "signals": [
+                    "visualMotion",
+                    "shotScale",
+                    "camera",
+                    "visualQuality",
+                    "saliency",
+                    "scene",
+                ],
+            }),
+        );
     }
     Value::Object(brief)
 }
@@ -9046,7 +9156,60 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // "gate included" - which the one-click path
                             // never ran, so a candidate no line's register
                             // allowed took the slot on looks alone).
+                            // The picture's own read rides between the
+                            // sheet and the gate: the sheet judged one
+                            // frame per candidate, and the frames a clip
+                            // actually plays are the ones the cut spends.
                             pending_gate = candidates;
+                            phase = GatherPhase::Visual;
+                            continue;
+                        }
+                        GatherPhase::Visual => {
+                            let paths: Vec<Value> = pending_gate
+                                .iter()
+                                .map(|candidate| json!(candidate.local_path))
+                                .collect();
+                            phase = GatherPhase::ReadVisual;
+                            return Some(call(
+                                "sense_visual",
+                                json!({
+                                    "action": "measure_clips",
+                                    "paths": paths,
+                                    "intent": "cut",
+                                    "samples": 6,
+                                    "width": 64,
+                                    "maxClips": 3,
+                                }),
+                            ));
+                        }
+                        GatherPhase::ReadVisual => {
+                            let reads = visual_reads(log);
+                            // A candidate the picture refused - soft,
+                            // noisy, letterboxed, flat, dark, blown, or a
+                            // montage that cuts inside itself - sinks
+                            // behind one it passed, when a passing
+                            // alternative exists. The sheet's own order
+                            // survives inside each class: this is a veto,
+                            // not a re-ranking.
+                            let refused = |candidate: &StockCandidate| {
+                                visual_read_of(&reads, &candidate.local_path)
+                                    .is_some_and(|read| !read.passes() || read.montage())
+                            };
+                            let any_pass = pending_gate.iter().any(|candidate| !refused(candidate));
+                            if any_pass {
+                                pending_gate.sort_by(|left, right| {
+                                    let class = refused(left).cmp(&refused(right));
+                                    class.then_with(|| {
+                                        let left = visual_read_of(&reads, &left.local_path)
+                                            .and_then(|read| read.score())
+                                            .unwrap_or(0.0);
+                                        let right = visual_read_of(&reads, &right.local_path)
+                                            .and_then(|read| read.score())
+                                            .unwrap_or(0.0);
+                                        right.total_cmp(&left)
+                                    })
+                                });
+                            }
                             phase = GatherPhase::Gate;
                             continue;
                         }
@@ -9133,13 +9296,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 })
                                 .map(|(index, _)| index)
                                 .collect();
+                            // The picture's veto stands again at the
+                            // choice: a candidate the frames refused never
+                            // takes the slot while one they passed is on
+                            // the page, whatever the gate's order says.
+                            let reads = visual_reads(log);
+                            let picture_ok = |index: usize| {
+                                visual_read_of(&reads, &pending_gate[index].local_path)
+                                    .is_none_or(|read| read.passes() && !read.montage())
+                            };
+                            let any_picture_ok = (0..pending_gate.len()).any(picture_ok);
                             let chosen = if gate_answered {
                                 passing
                                     .into_iter()
                                     .filter(|index| visual.contains(index))
+                                    .filter(|index| !any_picture_ok || picture_ok(*index))
                                     .min()
                             } else {
-                                visual.into_iter().min()
+                                visual
+                                    .into_iter()
+                                    .filter(|index| !any_picture_ok || picture_ok(*index))
+                                    .min()
                             };
                             if let Some(chosen) = chosen {
                                 let best = &pending_gate[chosen];
@@ -9155,6 +9332,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     candidates: std::mem::take(&mut pending_gate),
                                     chosen,
                                     held: false,
+                                    force_push: false,
                                 });
                             }
                             // Every candidate rejected (or no gate answer):
@@ -9176,7 +9354,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             continuity_pass += 1;
                             return Some(call(
                                 "footage_continuity",
-                                json!({ "clips": continuity_manifest(&shopped) }),
+                                json!({ "clips": continuity_manifest(&shopped, &visual_reads(log)) }),
                             ));
                         }
                         GatherPhase::ReadContinuity => {
@@ -9215,15 +9393,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // treatment the program has is the
                                     // hold - the A-roll covers the span.
                                     "monotony" => shop.held = true,
-                                    // Scale, motion and stillness flags
-                                    // ride readings this manifest does not
-                                    // carry (one frame measures no motion
-                                    // and no scale), and the gate stands
-                                    // those rules down for exactly that
-                                    // reason - so nothing here acts on
-                                    // them. The arm stays for a rule a
-                                    // future manifest carries and this
-                                    // stage has no remedy for.
+                                    // A travel reversal or a repeated
+                                    // scale: the alternate is the search's
+                                    // own remedy - a different picture,
+                                    // spent so no other slot takes it. The
+                                    // second pass re-reads the manifest and
+                                    // records whatever is left.
+                                    "motion" | "scale" => {
+                                        if let Some((id, hash)) =
+                                            shop.swap_past(&used_ids, &used_hashes)
+                                        {
+                                            used_ids.push(id);
+                                            if !hash.is_empty() {
+                                                used_hashes.push(hash);
+                                            }
+                                        }
+                                    }
+                                    // The clip is too still for its slot.
+                                    // The picture stays - it passed the
+                                    // read - and the drift carries the
+                                    // movement the shot does not.
+                                    "static" => shop.force_push = true,
                                     _ => {}
                                 }
                             }
@@ -9234,7 +9424,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 continuity_pass += 1;
                                 return Some(call(
                                     "footage_continuity",
-                                    json!({ "clips": continuity_manifest(&shopped) }),
+                                    json!({ "clips": continuity_manifest(&shopped, &visual_reads(log)) }),
                                 ));
                             }
                             phase = GatherPhase::Import;
@@ -9501,6 +9691,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let Some((clip_id, current)) = found else {
                                 continue;
                             };
+                            // The picture's own read of the chosen
+                            // candidate: how it moves, how wide it is and
+                            // where its subject sits. Every arm below is a
+                            // decision this read made.
+                            let reads = visual_reads(log);
+                            let read = visual_read_of(&reads, &candidate.local_path);
                             let mut commands: Vec<Value> = Vec::new();
                             let delta = pending_len - current;
                             if delta < -0.05 {
@@ -9511,19 +9707,48 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "delta": round3(delta),
                                 }));
                             }
+                            // The shot's entrance lands on the movement the
+                            // read found, not on its first frame: the clip
+                            // opens a quarter second before its motion peak,
+                            // inside the media it can still play.
+                            if let Some(read) = read {
+                                let limit = (current - pending_len).max(0.0);
+                                let lead = round3(read.in_point(limit));
+                                if lead > 0.05 {
+                                    commands.push(json!({
+                                        "op": "setClipSource",
+                                        "clipId": clip_id,
+                                        "sourceStart": lead,
+                                    }));
+                                }
+                            }
                             commands.push(json!({
                                 "op": "frameClip",
                                 "clipId": clip_id,
                                 "framing": "fill",
                             }));
-                            commands.push(json!({
-                                "op": "setClipKey",
-                                "clipId": clip_id,
-                                "property": "scale",
-                                "at": 0.0,
-                                "value": 1.0,
-                                "ease": [0.0, 0.0, 0.58, 1.0],
-                            }));
+                            // The drift is for a still frame. A shot whose
+                            // camera or subject already travels gets no
+                            // added push - the redundant Ken Burns the
+                            // picture read exists to prevent - and a
+                            // close-up already fills the frame, so it
+                            // holds. The continuity gate's stillness flag
+                            // overrides both: that slot asked for motion.
+                            let moving = read.is_some_and(VisualRead::moves) && !shop.force_push;
+                            let hold_scale = read.and_then(VisualRead::shot_scale)
+                                == Some(concat_motion::continuity::ShotScale::CloseUp)
+                                && !shop.force_push;
+                            let drift_enabled = !moving && !hold_scale;
+                            if drift_enabled {
+                                commands.push(json!({
+                                    "op": "setClipKey",
+                                    "clipId": clip_id,
+                                    "property": "scale",
+                                    "at": 0.0,
+                                    "value": 1.0,
+                                    "ease": [0.0, 0.0, 0.58, 1.0],
+                                }));
+                            }
                             // The delivery over the gap sets how much the
                             // shot moves: a punchy stretch takes a livelier
                             // drift, a slow one a quieter, longer push. The
@@ -9569,15 +9794,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if let Some(energy) = pending_energy {
                                 drift += (energy - 0.5) * 0.04;
                             }
+                            // A wide shot has room to travel; a push reads
+                            // on it where the same push on a medium is
+                            // barely seen. The scale is the picture's own
+                            // reading, not the query's word.
+                            if drift_enabled
+                                && read.and_then(VisualRead::shot_scale)
+                                    == Some(concat_motion::continuity::ShotScale::Wide)
+                            {
+                                drift += 0.02;
+                            }
                             let drift = round3(drift);
-                            commands.push(json!({
-                                "op": "setClipKey",
-                                "clipId": clip_id,
-                                "property": "scale",
-                                "at": 1.0,
-                                "value": drift,
-                                "ease": [0.0, 0.0, 0.58, 1.0],
-                            }));
+                            if drift_enabled {
+                                commands.push(json!({
+                                    "op": "setClipKey",
+                                    "clipId": clip_id,
+                                    "property": "scale",
+                                    "at": 1.0,
+                                    "value": drift,
+                                    "ease": [0.0, 0.0, 0.58, 1.0],
+                                }));
+                            }
                             // The crop hint the sheet measured, spent on
                             // the axis the fill actually crops: the
                             // subject stands where the frame found it,
@@ -9888,7 +10125,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // of the platform UI a reel carries at the
                             // bottom, and a touch larger because the frame
                             // they sit in is narrower.
-                            let offset_y = if portrait { 0.22 } else { 0.35 };
+                            let mut offset_y = if portrait { 0.22 } else { 0.35 };
+                            // The words move away from where the eye already
+                            // is: a subject in the lower third lifts the
+                            // band, one in the upper third lowers it, and a
+                            // moment no measured clip covers keeps the band
+                            // the aspect gave it.
+                            match visual_focus_at(log, at).as_deref() {
+                                Some("lower") => offset_y = if portrait { 0.10 } else { 0.16 },
+                                Some("upper") => offset_y = if portrait { 0.34 } else { 0.48 },
+                                _ => {}
+                            }
                             if portrait {
                                 size *= 1.12;
                             }
@@ -12735,6 +12982,15 @@ mod tests {
             "speaker",
             "forensic",
             "motion",
+            // The picture's own families, spent by the gather and the
+            // captions: the in-point, the drift veto, the continuity
+            // direction and scale, the stock veto and the caption band.
+            "visualMotion",
+            "shotScale",
+            "camera",
+            "visualQuality",
+            "saliency",
+            "scene",
         ];
         // Families the vocabulary names but this program deliberately does
         // not spend, and why. Each is a real reading the profile makes; the
@@ -13353,7 +13609,14 @@ mod tests {
                  boundary is the timing decision, and no card is inferred from the label",
             ),
         ];
-        let source = include_str!("voice_read.rs");
+        // Both readers: the voice profile's fields and the picture's, so a
+        // visual reading the gather parses and no decision spends fails the
+        // same guard the audio readings fail.
+        let source = concat!(
+            include_str!("voice_read.rs"),
+            "\n",
+            include_str!("visual_read.rs"),
+        );
         let program = include_str!("director_program.rs");
         let body = program
             .split("#[cfg(test)]")
@@ -14437,7 +14700,10 @@ mod tests {
         let first = (music.next)(log.as_slice()).expect("the bed is asked for");
         assert_eq!(first.tool, "sense_sound_model");
         assert_eq!(first.arguments["kind"], json!("bgm"));
-        log.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
+        log.push(
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }),
+        );
         assert_eq!(
             (music.next)(log.as_slice())
                 .map(|call| call.tool)
@@ -15523,6 +15789,30 @@ mod tests {
                 "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
             }],
         }));
+        // The picture's own read rides between the sheet and the gate:
+        // the sheet looked at one tile, the read measures the frames the
+        // clip actually plays.
+        let visual = (gather.next)(&log).expect("the clip's picture is measured");
+        assert_eq!(visual.tool, "sense_visual");
+        assert_eq!(visual.arguments["action"], "measure_clips");
+        assert_eq!(
+            visual.arguments["paths"],
+            json!(["/cache/stock/pexels/2499611.mp4"])
+        );
+        log.push(json!({
+            "clips": [{
+                "path": "/cache/stock/pexels/2499611.mp4",
+                "ok": true,
+                "motion": { "mean": 0.03, "peak": 0.09, "peakAt": 1.2, "still": false },
+                "camera": { "kind": "pan", "cameraMoving": true,
+                            "subjectMoving": false, "travel": "left" },
+                "shotScale": { "scale": "wide" },
+                "quality": { "verdict": "pass" },
+                "saliency": { "focus": "center" },
+                "scene": { "cuts": 0 },
+                "visualScore": 74.0,
+            }],
+        }));
         // The emotion gate rides between the sheet and the choice: the
         // candidate it weighs carries the shelf's own caption (not the
         // slot's shared query), and the segment defaults to neutral - the
@@ -15691,6 +15981,20 @@ mod tests {
                 "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
             }],
         });
+        let visual_reply = json!({
+            "clips": [{
+                "path": "/cache/stock/pexels/2499611.mp4",
+                "ok": true,
+                "motion": { "mean": 0.03, "peak": 0.09, "peakAt": 1.2, "still": false },
+                "camera": { "kind": "pan", "cameraMoving": true,
+                            "subjectMoving": false, "travel": "left" },
+                "shotScale": { "scale": "wide" },
+                "quality": { "verdict": "pass" },
+                "saliency": { "focus": "center" },
+                "scene": { "cuts": 0 },
+                "visualScore": 74.0,
+            }],
+        });
         let drive_to_gate =
             |log: &mut Vec<Value>,
              gather: &mut (dyn FnMut(&[Value]) -> Option<ToolCall> + Send)| {
@@ -15700,6 +16004,10 @@ mod tests {
                 log.push(fetch_reply.clone());
                 let _ = (gather)(log); // stock_contact_sheet
                 log.push(sheet_reply.clone());
+                let visual = (gather)(log).expect("the clip's picture is measured");
+                assert_eq!(visual.tool, "sense_visual");
+                assert_eq!(visual.arguments["action"], "measure_clips");
+                log.push(visual_reply.clone());
                 let gate = (gather)(log).expect("the gate is asked");
                 assert_eq!(gate.tool, "emotion");
             };
@@ -16791,7 +17099,8 @@ mod tests {
         // The model is not installed: the shelf takes the accent instead,
         // and every peak after this one is the shelf's too.
         let mut after = log.clone();
-        after.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
+        after.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                          "generated": false }));
         let shop = (sfx.next)(&after).expect("the shelf answers when the model is absent");
         assert_eq!(shop.tool, "sounds_search");
         // The calm line's peak is skipped: the shelf's answer for the loud

@@ -701,6 +701,7 @@
   "settings.modelReady": "Mô hình đã sẵn sàng",
   "settings.models": "Mô hình",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Mô hình được tải khi tính năng cần dùng lần đầu. Đây là nguồn được ưu tiên tải xuống; các nguồn khác vẫn sẽ được thử sau đó.",
   "settings.newToken": "Mã thông báo mới",
   "settings.noReleasesYet": "Chưa có bản phát hành nào từ 0.2.5 trở đi.",

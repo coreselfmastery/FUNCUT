@@ -572,12 +572,17 @@ mod tests {
         // measured read of a file, the fused ranking, the placement check
         // and the per-moment sound design are 37 fields, each the input
         // of a real answer rather than prose; without them the schema
-        // refused the caller's own file. Function, not prose.
-        // 268,000 -> 271,000: the sound model door's `generate` action -
-        // the seven fields that name which of the three downloaded
-        // generators writes, what it writes, how long and where the file
-        // lands. The prose is trimmed; the fields are the action.
-        assert!(total < 271_000, "{total}: {sizes:?}");
+        // refused the caller's own file. Function, not prose. The
+        // picture's door (`sense_visual`) then lands on the same table -
+        // sixteen readings' inputs, the frame sources, the subject boxes,
+        // the bench's rows, the model doors - and the pr-217 tree
+        // measured 273,832. The generation merge (#218) then rides the
+        // sound model door with `generate`'s seven fields (~3k more),
+        // so the merged tree needs the room for both: 274,000 -> 278,000.
+        // A reading the director cannot call is a reading the edit paid
+        // for and never read; a generator the director cannot spell is
+        // the same.
+        assert!(total < 278_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -643,13 +648,24 @@ mod tests {
         // `auto_edit` is the whole fixed spine as one call - the project,
         // the optional script, the stock shelf and the copy switch -
         // 247,603 measured after trimming its prose; function, not prose.
-        // 249,000 -> 256,000 at 108: the same two sound doors ride the
+        // 249,000 -> 256,000 at 108: the sound layer's two doors ride the
         // director's surface (the sfx stage shops with them), and their
-        // fields are the price of the shelf being shoppable at all.
-        // 256,000 -> 259,000: `generate`'s seven fields ride the same
-        // door - the director writes its accents and its bed with them.
+        // fields are the price of the shelf being shoppable at all. The
+        // picture's door rides it too: the director spends motion,
+        // camera, scale and quality on its cuts, its stock veto and its
+        // captions, and a reading it cannot call is a reading the edit
+        // paid for and never read. 256,000 -> 262,000 at 109: the pr-217
+        // tree measured 260,160 - the three doors are already at their
+        // terse form, and the fields, not the prose, are what they cost.
+        // 262,000 -> 263,000 at 109: the shelf's Hub actions (`hf_search`,
+        // `hf_files`) and the sheet's two enrichment switches are what a
+        // director needs to install a door and then spend it - 262,135
+        // measured, function, not prose. 263,000 -> 267,000: `generate`'s
+        // seven fields ride the same door (#218) - the director writes
+        // its accents and its bed with them, and the two merges together
+        // need the room both measured.
         assert!(
-            director < 259_000,
+            director < 267_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

@@ -701,6 +701,7 @@
   "settings.modelReady": "Modello pronto",
   "settings.models": "Modelli",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "I modelli vengono scaricati la prima volta che una funzione ne ha bisogno. Qui il download cerca per primo; le altre fonti vengono comunque provate dopo.",
   "settings.newToken": "Nuovo token",
   "settings.noReleasesYet": "Nessuna versione dalla 0.2.5 in poi è ancora uscita.",

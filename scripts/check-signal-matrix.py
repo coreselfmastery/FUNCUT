@@ -28,12 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "src/crates/concat-mcp/sense/voice_signals.py"
-MATRIX = ROOT / ".claude/skills/funcut-director/prompts/signal_matrix.md"
-SKILL = ROOT / ".claude/skills/funcut-director/SKILL.md"
-TOOL_REFERENCE = ROOT / ".claude/skills/funcut-director/prompts/tool_reference.md"
-SFX_DESIGN = ROOT / ".claude/skills/funcut-director/prompts/sfx_design.md"
+SKILL_DIR = ROOT / ".claude/skills/funcut-director"
+MATRIX = SKILL_DIR / "prompts/signal_matrix.md"
+SKILL = SKILL_DIR / "SKILL.md"
+TOOL_REFERENCE = SKILL_DIR / "prompts/tool_reference.md"
+SFX_DESIGN = SKILL_DIR / "prompts/sfx_design.md"
 SENSE_README = ROOT / "src/crates/concat-mcp/sense/README.md"
-EXAMPLE_PLAN = ROOT / ".claude/skills/funcut-director/templates/edit_plan.example.json"
+EXAMPLE_PLAN = SKILL_DIR / "templates/edit_plan.example.json"
 TOOLS_RS = ROOT / "src/crates/concat-mcp/src/tools.rs"
 SENSE_RS = ROOT / "src/crates/concat-mcp/src/sense.rs"
 MCP_TOML = ROOT / ".forge/mcp.toml"
@@ -47,6 +48,7 @@ FAMILY_MODULES = {
     "sense_sound": "sound_sense.py",
     "sense_sound_model": "sound_model.py",
     "sense_captions": "captions.py",
+    "sense_visual": "visual_sense.py",
 }
 
 WORD_NUMBERS = {
@@ -82,7 +84,7 @@ def director_allowlist_count() -> int:
     return len([name for name in match.group(1).split(",") if name.strip()])
 
 
-def check_voice_matrix(errors: list[str]) -> tuple[int, int]:
+def check_voice_matrix(errors: list[str]) -> tuple[int, int, dict[str, str]]:
     namespace = runpy.run_path(str(CATALOGUE))
     catalogue = namespace.get("SIGNAL_CATALOGUE")
     if not isinstance(catalogue, list):
@@ -117,6 +119,15 @@ def check_voice_matrix(errors: list[str]) -> tuple[int, int]:
         for entry in entries
     }
     families = {entry.get("family") for entry in entries if isinstance(entry.get("family"), str)}
+    unmapped = sorted(families - set(family_alias))
+    if unmapped:
+        # The map is hand-kept; a family the map does not know ships
+        # untaught and uncheckable, which is exactly how drift starts.
+        print(
+            "family_alias does not cover every runtime family: " + ", ".join(unmapped),
+            file=sys.stderr,
+        )
+        return 1
     matrix_text = MATRIX.read_text(encoding="utf-8")
     rows = re.findall(
         r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
@@ -175,7 +186,7 @@ def check_voice_matrix(errors: list[str]) -> tuple[int, int]:
             f"declared {declared.group(1)} readings/{declared.group(2)} families, "
             f"actual {len(expected)} readings/{len(families)} families"
         )
-    return len(expected), len(families)
+    return len(expected), families, family_alias
 
 
 def check_skill_claims(errors: list[str], readings: int, families: int) -> None:
@@ -186,20 +197,25 @@ def check_skill_claims(errors: list[str], readings: int, families: int) -> None:
         errors.append(str(exc))
         return
 
+    family_count = len(families)
     for count in re.findall(r"(\d+) families", skill):
-        if int(count) != families:
+        if int(count) != family_count:
             errors.append(
-                f"SKILL.md claims {count} families; the runtime catalogue has {families}"
+                f"SKILL.md claims {count} families; the runtime catalogue has {family_count}"
             )
     for count in re.findall(r"(\d+)\+? (?:named )?readings", skill):
         if int(count) != readings:
             errors.append(
                 f"SKILL.md claims {count} readings; the runtime catalogue has {readings}"
             )
+    # A "-tool" claim is the served surface (the allowlist) or the whole
+    # catalogue - both are true claims, each in its own words.
+    catalogue = allowlist + 8  # the eight off-by-default doors
     for count in re.findall(r"(\d+)-tool", skill):
-        if int(count) != allowlist:
+        if int(count) not in (allowlist, catalogue):
             errors.append(
-                f"SKILL.md claims a {count}-tool surface; the Director allowlist has {allowlist}"
+                f"SKILL.md claims a {count}-tool surface; the Director allowlist "
+                f"has {allowlist} and the catalogue {catalogue}"
             )
     if not re.search(r"sense_sound(?!_model)", skill):
         errors.append("SKILL.md never teaches the sense_sound door")
@@ -221,6 +237,7 @@ def check_door_routing(errors: list[str]) -> None:
         "sense_sound": "sound",
         "sense_sound_model": "soundmodel",
         "sense_captions": "captions",
+        "sense_visual": "visual",
     }
     for path in sorted((ROOT / ".claude/skills/funcut-director").rglob("*.md")):
         text = path.read_text(encoding="utf-8")
@@ -294,14 +311,59 @@ def check_example_plan_signal_log(errors: list[str]) -> None:
         )
 
 
+def check_consumer_guards(
+    errors: list[str],
+    families: set[str],
+    family_alias: dict[str, str],
+) -> None:
+    """A reading with no mapped decision is a dashboard row, and a family
+    no prompt teaches is a reading the Director was never told how to
+    spend."""
+    matrix_text = MATRIX.read_text(encoding="utf-8")
+    decision_rows = re.findall(
+        r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|\s*`[^`]+`\s*\|\s*([^|]+)\|",
+        matrix_text,
+        flags=re.MULTILINE,
+    )
+    decisions = {reading: decision.strip() for reading, decision in decision_rows}
+    placeholder = re.compile(r"^(?:-+|tbd|todo|none|n/?a|\?)$", re.IGNORECASE)
+    for reading, decision in decisions.items():
+        if not decision or placeholder.match(decision):
+            errors.append(
+                f"{reading}: the decision column is empty - a reading with no decision is a dashboard row"
+            )
+        elif len(decision.split()) < 3:
+            errors.append(f"{reading}: the decision '{decision}' is too thin to spend")
+    taught: dict[str, list[str]] = {}
+    for path in SKILL_DIR.rglob("*.md"):
+        if path.name == MATRIX.name:
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        for family in families:
+            spent = (
+                family_alias.get(family, "").lower() in text
+                or family.lower() in text
+            )
+            if spent:
+                taught.setdefault(family, []).append(path.name)
+    untaught = sorted(family for family in families if family not in taught)
+    if untaught:
+        errors.append(
+            "families no prompt or SKILL.md teaches: " + ", ".join(untaught)
+            + " (a family the skill never names is a reading the Director"
+            " cannot spend)"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
-    readings, families = check_voice_matrix(errors)
+    readings, families, family_alias = check_voice_matrix(errors)
     check_skill_claims(errors, readings, families)
     check_door_routing(errors)
     check_sound_door_docs(errors)
     check_readme_counts(errors)
     check_example_plan_signal_log(errors)
+    check_consumer_guards(errors, families, family_alias)
 
     if errors:
         print("Signal matrix check failed:", file=sys.stderr)
@@ -311,7 +373,7 @@ def main() -> int:
 
     print(
         f"Signal matrix OK: {readings} exact "
-        f"readings across {families} runtime families; SKILL.md claims, door routing, "
+        f"readings across {len(families)} runtime families; SKILL.md claims, door routing, "
         "sound-door docs and README counts all hold."
     )
     return 0

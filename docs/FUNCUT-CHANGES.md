@@ -32,6 +32,134 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The visual model shelf (`visual_sense.py`, 30 doors)
+
+- **Every model on the shelf, and the one runner that drives them.** The
+  picture reader grew from five hard-wired doors to a **shelf of thirty
+  ONNX models** - TransNetV2, MoViNet-A0, V-JEPA-2, a film-shot classifier,
+  a scene graph, Depth Anything V2 and MiDaS, FastSAM, SegFormer-B0,
+  ByteTrack, DINOv2, CLIP, SigLIP2, RAFT, DOVER and the LAION aesthetic
+  predictor, ViNet-S, SMBlurDetect, MoveNet pose, MediaPipe hands, EyeGaze
+  and MobileGaze, MicroExpNet, SyncNet, an AQA head, Florence-2, UForm and
+  both SmolVLM2 sizes - behind **one generic runner** and ten decoders
+  (`logits`, `prob`, `embedding`, `depth`, `masks`, `boxes`, `keypoints`,
+  `segments`, `scalar`, `flow`). A door is a registry row: file, size,
+  licence, tier, input size, layout, decoder and consumer. Point `modelId`
+  at another checkpoint of the same class and nothing else changes, which
+  is what makes a bench a one-line swap. [VISUAL-MODELS.md](VISUAL-MODELS.md)
+  is the table, generated from the registry so it cannot drift.
+- **Three readings the shelf needed anyway, and they need no model.**
+  `composition` scores where the eye lands (distance from the nearest third
+  intersection, left-right balance, headroom); `motion_blur` measures
+  whether each frame's transitions are steps or ramps, per axis - a smear
+  turns a step into a ramp along the axis it ran, so a pan's smear reads as
+  blur without a reference frame; `tracks` links per-frame boxes into
+  identities by overlap and velocity, which is what tells a cut whether the
+  subject it framed is the subject the next shot inherits.
+- **What the AUTO EDIT button spends now.** `measure_clips` adds
+  composition to the sheet's score and a blur veto beside the technical one,
+  so a clip whose "motion" is a pan's smear sinks behind a clean one, and a
+  shot composed on a third beats a centred one. The rows carry
+  `composition` and `blur`, and `CONSUMERS` names what spends each.
+- **A door installs itself from the Hub, in three calls.** `hf_search`
+  asks the Hub's own API for ONNX repos; `hf_files` lists the ONNX files in
+  one repo with their sizes; `download` fetches the file the operator picks
+  - `hfRepo` + `file`, or a row's own verified repo, or any `url`. A gated
+  repo takes `token` or `HF_TOKEN`, and the token is never echoed back. With
+  `sha256` the digest is checked before anything is kept; without it the
+  digest that arrived is **pinned** in the folder's `index.json` and checked
+  on every later download of that file, so a swapped file is caught from the
+  second read on. Four rows carry a repo verified by a real download here
+  (`transnetv2`, `depth-anything-v2-small`, `dinov2-small`, `clip-vit-b32`);
+  the rest name their upstream page and take a repo from `hf_search`, because
+  a guessed file URL is worse than none.
+- **The folder the app downloads into is the folder the reader reads.**
+  The reader now resolves the app's own `cutout-models` folder the way the
+  sound reader does, so "download it in the model page and the picture reader
+  uses it" is true without either side knowing about the other.
+- **Verified on real weights, not on shapes.** In this tree: TransNetV2 found
+  a cut at frame 39 of a synthetic 100-frame clip at p 0.9996 (its input is
+  100x27x48 channels-last, raw 0-255 - the row carries that, and the runner
+  grew a non-square aspect to hold it); Depth Anything V2 produced a 518x518
+  map with the near/far split the synthetic frame deserved; DINOv2 produced a
+  CLS embedding (its output is `(1, 257, 384)`, so the decoder pools the CLS
+  row instead of flattening every patch into the "embedding").
+- **Twenty-eight new family actions, and the guards to match.** The visual
+  family is 38 readings behind one door; the family table, the schema's
+  `action` enum, the `modelId` enum and the count guard (`members == 82`
+  after the generation merge added the sound model's fifth action) all
+  moved together, and the visual selftest grew from 21 checks to 48 - the
+  shelf's rows, **every one of the thirty doors through the real runner** with
+  a stub session standing in for the weights, the Hub URL and the pin, the
+  enrichment and both vetoes. A door that cannot decode its own output shape
+  now fails in CI rather than on a user's clip.
+- **A picture row in the window, with digests that were computed, not
+  guessed.** Settings > Models carries "Picture models" beside the sound
+  row: TransNetV2, Depth Anything V2, DINOv2 and CLIP's vision tower, 172 MB
+  as one set, fetched through the same verified path as every other model
+  (`concat_host::visualmodel` is `soundmodel`'s twin) into the folder the
+  sidecar reads. The four are rows in `concat-vision`'s table and in
+  `models/manifest.toml`, each digest computed from the file this branch
+  downloaded. The other twenty-six doors stay per-model Hub installs.
+- **The sheet spends what is installed, and says what it skipped.**
+  `measure_clips` runs at most `enrichDoors` (default 3) of the shelf's cheap
+  doors per clip - a measured taste prior (blended at a tenth of the score),
+  shot type, depth and pose - on the frames it already decoded, with a
+  session cache so a model loads once per process. With nothing installed the
+  sheet is the classical one and costs a `stat()` per door; `enrich: false`
+  forces that path. The four captioning rows are `vlm: true` and the generic
+  runner refuses them with a pointer to `describe_scene`, rather than feeding
+  a chat model a 3x224x224 tensor.
+
+## The picture reader (`visual_sense.py`)
+
+*(The earlier state of this work, kept for its record of what the gather
+spends; the counts here - sixteen readings, five hard-wired doors - are
+that era's, and the "not wired yet" list below it has since been closed:
+the shelf section above is the current word, and the enrichment doors
+are spent by `measure_clips` itself.)*
+
+- **The edit can see what a shot does, not just what it looks like in
+  one frame.** `concat-mcp/sense/visual_sense.py` samples the frames a
+  clip actually plays and measures per-frame optical flow (mean, peak,
+  peak time, onsets), the camera's own travel (pan / tilt / zoom /
+  static from the flow's homography, and which way it goes:
+  `left`/`right`/`up`/`down`/`zoom_in`/`zoom_out`), the shot scale from
+  the subject's area, audio-visual sync, scene cuts, the technical read
+  (sharpness, noise, brightness, contrast, letterbox, blown highlights),
+  the palette, and a classical saliency map, behind the eighth family
+  door, `sense_visual`. The classical layer needs no model; a door that
+  is missing refuses with the reason.
+- **What the gather spends, not what it measures.** `measure_clips` is
+  called once per slot after the contact sheet: it ranks the candidates
+  on their combined `visualScore` and vetoes a soft, noisy, letterboxed,
+  flat, dark, blown or self-cutting clip behind one that passed. The
+  choice re-checks the veto. The chosen shot's in-point lands a quarter
+  second before its motion peak (through the new `setClipSource`
+  command, which moves the source frame without moving the timeline).
+  The continuity gate reads the travel word too: a pan left that meets a
+  pan right on the seam is the one cut the picture itself calls wrong.
+  The Ken Burns drift is skipped on a shot the read found already moving
+  - the redundant push the camera read exists to prevent - and a still
+  clip in a slot the continuity gate flagged as too still gets the push
+  instead. The continuity manifest carries `motion`, `motionMin`,
+  `dominantDirection` and `shotScale`, so the gate's motion, scale and
+  stillness rules stand on measured picture rather than a gate that had
+  to stand them down for missing fields. Captions move their band away
+  from the saliency peak under each line. `measure_clips` rows are
+  parsed by `visual_read.rs`, and `every_visual_reading_has_a_consumer`
+  holds every field to a named consumer or a stated reason.
+- **The bench is the evidence.** `bench {cuts, pauseCuts}` reports
+  whether the cuts that landed on motion peaks score higher than the
+  ones that landed on pauses. It is a measurement, not a claim, and it
+  is what a future change should read before it moves a cut again.
+- **What was honestly open then, and where it stands now.**
+  `analyze_scenes` and `track_subject` still feed stock inspection;
+  `palette` is recorded and spent by the continuity seam; the doors are
+  wired through `measure_clips`'s enrichment (see the shelf section
+  above). The remaining benches, in order: action class, masks, visual
+  similarity on the cut stage.
+
 ## YouTube package (2026-11-24)
 
 - **The AUTO EDIT plan carries a publishing half.** A `youtube` object

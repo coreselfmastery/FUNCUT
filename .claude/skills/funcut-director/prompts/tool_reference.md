@@ -68,6 +68,8 @@ rule: surface the pip hint.
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
 `collision_check {path}` · `plan_validate {plan}` ·
 `auto_edit {path,copy?,script?,stockProvider?}` · `media_probe {path}` ·
+`motion_probe {file|path, project?}` · `timeline_seek {path, time}` ·
+`timeline_linkage {path, on}` ·
 `media_import {path,file}` · `effects_list {kind}` (the effect/filter/transition/audio
 packages)
 
@@ -100,6 +102,16 @@ packages)
   an agent can run when the request is "just auto edit this".
 - `media_probe` before cutting anything unfamiliar: duration, streams, frame
   size, rate, codecs. Units: seconds and frames-per-second as floats.
+  `motion_probe` is the engine's own reader's version of the same question —
+  streams, frame size and rate, duration, the audio's channels — for any
+  picture, video or sound the engine reads; use it when the answer feeds
+  motion or render decisions.
+- `timeline_seek {path, time}` scrubs the window's playhead (seconds):
+  it needs the window (`--mcp window`) and a headless run refuses it. Use
+  it to put the frame you are about to `preview_frame` on screen for the
+  user. `timeline_linkage {path, on}` turns the timeline's ripple linkage
+  between lanes on or off — off when placing on several lanes at once so
+  one lane's trim does not shove the others.
 - The project `path` in every edit tool is the folder `project_open` took.
 
 ## Cutting
@@ -138,7 +150,8 @@ packages)
 
 `clip_transform` · `keyframe_set` · `keyframe_clear` · `clip_mask` ·
 `clip_stabilize` · `timeline_background` · `effect_layer_add` · `effect_key_set` ·
-`title_add` · `captions_add`
+`track_subject` ·
+`title_add` · `title_style_words` · `title_clear_word_styles` · `captions_add`
 
 - `keyframe_set` animates `scale`, `offsetX`, `offsetY`, `rotation`, `opacity`,
   `volume`, and the mask fields (`maskX/maskY/maskWidth/maskHeight/
@@ -156,7 +169,17 @@ packages)
   intervals; it does not align words. `title_add` paints styled titles (see
   `prompts/text_animation.md` for the 31 presets and the style fields:
   `fontSize` is a FRACTION OF FRAME HEIGHT — 0.04 engine default, 0.05–0.06
-  short-form; `offsetY` 0.35 ≈ lower third).
+  short-form; `offsetY` 0.35 ≈ lower third). `title_style_words` styles
+  individual words of a title — the kinetic-caption look, per word, the
+  tool behind word-timed emphasis — and `title_clear_word_styles` takes the
+  per-word looks off, back to the shared style. Style the emphasized word,
+  not the whole line.
+- `track_subject {path, media|clip, …}` is the subject's path across a
+  clip, frame by frame, as crop keyframes: it samples, finds what stands
+  out from the frame and from the temporal median, smooths the path
+  (holding through occlusion and exits) and returns crop keyframes a
+  `clip_transform` or a mask follow can ride. It is the tool behind a
+  label or mask that must follow a moving person.
 
 ## Libraries
 
@@ -178,19 +201,45 @@ tracks; MobyGratis/OpenLo-Fi 166, free for NON-COMMERCIAL use only; sorts
 that already carries music gets no bed) ·
 `sounds_search/add` (530 CC0 sounds; categories: Whoosh, Impact, Riser,
 Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
-`sounds_add` starts the file at `start`; the search result's `syncAt` is
-the curator's PEAK CLAIM — the shelf audit measured it wrong by more than
-100 ms in 30% of files, so `sense_sound {action: "describe_sound"}`'s
-measured `peakAt` is the number placement trusts) ·
-`sense_sound_model {action: "generate", kind, prompt, seconds, seed, project}`
-writes a sound the shelf does not have — `sfx-small` (TinyAudio-MF, MIT,
-~12 s per call) for accents, `sfx-large` (Stable Audio Open Small, Stability
-Community Licence, ~24 s) for the hook, `bgm` (TinyMusician, MusicGen-small
-weights under CC-BY-NC 4.0: never in monetized work, a MusicGen decode of
-minutes) for a short bed; the file lands in `<project>/generated-audio/` and
-`sounds_add {file}` or `bgm_import {file}` places it like a shelf sound. Each
-model answers `ok: false` when it is not downloaded — fall back to the shelf,
-do not retry · `magick_status/prepare/search/fetch/add` (shelves:
+`sounds_add` starts the file at `start`; the search result's `syncAt` says
+where its peak lands — a guess the file may contradict, which is what the
+measured doors below exist to end) ·
+`sense_sound {action: describe_sound|rank_sounds|check_placement|index_library}`
+(sounds measured, not guessed: `describe_sound` reads one file — level,
+crest, attack, body, transients, brightness, bass, and where its peak
+ACTUALLY falls; `rank_sounds` scores the six role fits with the evidence;
+`index_library` builds the cached shelf index and reports every `syncAt`
+the measurement contradicts — 61 of the 530 shipped sounds; and
+`check_placement` verifies a PLACED accent: peak alignment against its
+target, role fit, level, repetition) ·
+`sense_sound_model {action: describe|index|rank|plan|generate}` — the five
+actions are `describe`, `index`, `rank`, `plan` and `generate` (what a
+sound MEANS: `describe` = YAMNet's 521 event labels + a CLAP embedding
+with the description it best matches, fused with the measurements;
+`index` the semantic shelf index; `rank` a description against the shelf
+— the model wins transitions, the measurements win risers and textures;
+`plan` the per-moment sound design — beats, visual arc, BGM structure,
+style, durationSec and voiceLufs in, a moment-by-moment design out: the
+role, the selected asset, the reason, the start, the measured peak, the
+gain, the trim, the masking and the repetition constraints — the source
+of SFX decisions, not filename browsing) ·
+`sense_sound_model {action: "generate", kind, prompt,
+seconds, seed, project, monetized?}` writes a sound the shelf does not
+have — `sfx-small` (TinyAudio-MF, MIT, ~12 s per call) for accents,
+`sfx-large` (Stable Audio Open Small, Stability Community Licence, ~24 s)
+for the hook and for a monetized run's pad bed, `bgm` (TinyMusician,
+CC-BY-NC 4.0 via its MusicGen-small weights, a MusicGen decode of
+minutes) for a short bed; the file lands in
+`<project>/generated-audio/` and `sounds_add {file}` or
+`bgm_import {file}` places it like a shelf sound. `monetized: true`
+tightens the project's own brief, never loosens it. A model that is not
+downloaded, a licence a monetized cut may not spend, or a near-silent
+output all *answer* — `ok: true`, `model: absent` or `reason: "licence"`,
+`generated: false`, no `path` — so the shelf (or, for the bed, the
+sfx-large pad) takes over; never retry, and never treat the answer as a
+failure. The generator sets download headless:
+`models_download {kind: "sound", id: "sfx-small"}` — the ids are
+`sound-models`, `sfx-small`, `sfx-large`, `bgm` · `magick_status/prepare/search/fetch/add` (shelves:
 `magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
 `openmoji` 4,565 emoji CC-BY 4.0)
 
@@ -251,8 +300,12 @@ brief?, autoSetup?, profile?}` · `emotion {action:
 extract|brand|gate|verify|template, project?}` · `voice_signals {action:
 extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
 `sense_discourse` · `sense_voice_quality` · `sense_prosody_style` ·
-`sense_audio_repair` · `sense_captions` · `sense_sound` ·
-`sense_sound_model` · `measure_loudness {path,
+`sense_audio_repair` · `sense_captions` · `sense_sound` · `sense_sound_model` ·
+`sense_visual {action:
+measure_motion|camera_motion|shot_scale|visual_sync|scene_cuts|visual_quality|
+palette|saliency|composition|motion_blur|tracks|measure_clips|bench|models|
+action_class|depth_map|subject_mask|visual_embedding|describe_scene|shot_boundaries|
+film_shot_type|optical_flow|aesthetic|pose|…|hf_search|hf_files|download, …}` · `measure_loudness {path,
 targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
 `footage_plan_suggest {transcript: {segments: [{start,end,text}]}, beats?}`
 (the dialogue gaps and monotony runs that want B-roll, named before the plan is written)
@@ -262,12 +315,26 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   family, and why), `decisionPolicy` (which signals drive each decision) and
   `directorHints` (the cut style, the caption gate, the BGM call). The plan's
   `signalLog` cites its signals; `plan_validate` holds the citations.
-- The seven `sense_*` family doors are the consumption layer: `action` names
+- `sense_visual` is the picture's door: eleven readings need nothing
+  installed (motion, camera, shot scale, sync, scene cuts, quality, palette,
+  saliency, composition, blur, tracks), and the ONNX shelf behind them —
+  thirty model entries, twenty-one door actions — adds what a
+  classical read cannot (a shot boundary, depth, an embedding, an action, a
+  mask, a pose). A door with no file refuses with the reason. Install one
+  from the Hub in three calls - `hf_search` (find a repo), `hf_files` (its
+  ONNX files), `download` (fetch it; `HF_TOKEN` for a gated repo, and a
+  digest is pinned when none is given). `measure_clips` spends whatever is
+  installed on the stock sheet; `enrich: false` keeps it classical and fast.
+- The eight `sense_*` family tools are the consumption layer: `action` names
   the reading (`sense_discourse {action: "score_script_quality", script}` —
   the ten discourse readings, the six voice-quality readings, the six
   prosody readings, the eight audio-repair actions, the five caption
-  readings and the two sound doors below; `selftest: true` proves one).
-  Each reading names its own traps
+  readings, the four sound measurements, the five sound-model actions and
+  the picture's thirty-eight — motion, camera travel and its
+  direction, shot scale, audio-visual sync, scene cuts, the technical
+  read, palette, saliency, the batch `measure_clips` read, the `bench`,
+  the `models` listing and the shelf's door actions; `selftest: true` proves
+  one). Each reading names its own traps
   in its reply; the family schema documents the shared inputs. Three
   audio-repair actions are wired into the pipeline itself:
   `enhance_speech` (Phase 2 — a rough take is repaired before it is

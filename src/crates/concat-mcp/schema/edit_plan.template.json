@@ -72,6 +72,10 @@
               "maxLength": 200,
               "type": "string"
             },
+            "language": {
+              "description": "The take's language as an ISO code or BCP-47 tag (bn, bn-BD, en, hi). When absent, the runner reads the plan's own script and otherwise lets whisper detect the language. A non-English language never runs on an English-only (.en) model.",
+              "type": "string"
+            },
             "model": {
               "default": "kokoro-int8-multi-lang-v1_0",
               "type": "string"
@@ -96,10 +100,6 @@
               "maximum": 52,
               "minimum": 0,
               "type": "integer"
-            },
-            "language": {
-              "description": "The take's language as an ISO code or BCP-47 tag (bn, bn-BD, en, hi). When absent, the runner reads the plan's own script and otherwise lets whisper detect the language. A non-English language never runs on an English-only (.en) model.",
-              "type": "string"
             },
             "whisperModel": {
               "description": "The recogniser's model for this take (e.g. base, small, base.en). The multilingual default applies when absent; an English-only model named against a non-English language is replaced by its multilingual counterpart.",
@@ -345,168 +345,6 @@
     "niche": {
       "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto.",
       "type": "string"
-    },
-    "style": {
-      "description": "The style bible: the one look the whole film wears. Set it before the plan; every segment, caption, comp, grade and sound choice must conform. A plan without it is structurally valid but not creativeReady, because five good shots in five different styles read as five videos.",
-      "properties": {
-        "captions": {
-          "description": "The one caption system: family, weight, case, accent colour and placement. Per-segment captions may change presence, never the system.",
-          "properties": {
-            "emphasisColor": {
-              "description": "#rrggbb for the one accent word.",
-              "pattern": "^#[0-9a-fA-F]{6}$",
-              "type": "string"
-            },
-            "font": {
-              "description": "The caption face family, one for the whole film.",
-              "minLength": 1,
-              "type": "string"
-            },
-            "position": {
-              "description": "Where the caption block sits: lower-third, center or upper-third.",
-              "enum": [
-                "lower-third",
-                "center",
-                "upper-third"
-              ],
-              "type": "string"
-            },
-            "weight": {
-              "description": "One weight for the whole film.",
-              "maximum": 900,
-              "minimum": 100,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "font",
-            "weight",
-            "emphasisColor",
-            "position"
-          ],
-          "type": "object"
-        },
-        "continuityRules": {
-          "description": "The rules a reviewer can check: e.g. 'every shot is fill, never letterboxed', 'the accent appears once per section', 'no two consecutive shots share a camera height'. At least one.",
-          "items": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "footage": {
-          "description": "How every picture is treated, so stock, A-roll and generated stills sit in one frame.",
-          "properties": {
-            "continuity": {
-              "description": "The continuity rule for the footage: camera height, movement, colour temperature and shot-size progression.",
-              "minLength": 1,
-              "type": "string"
-            },
-            "orientation": {
-              "description": "The frame the footage is shot for; must agree with the plan aspect.",
-              "enum": [
-                "vertical",
-                "horizontal",
-                "square"
-              ],
-              "type": "string"
-            },
-            "treatment": {
-              "description": "fill = cover and crop; blurPlate = a deliberate blurred plate behind a fitted subject.",
-              "enum": [
-                "fill",
-                "blurPlate"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "orientation",
-            "treatment",
-            "continuity"
-          ],
-          "type": "object"
-        },
-        "grade": {
-          "description": "The one grade filter the whole film wears; it must equal the plan's grade.filter.",
-          "minLength": 1,
-          "type": "string"
-        },
-        "motion": {
-          "description": "The one motion language: how things enter, how they ease, how hard they push. Comps and captions may vary the idea, never the hand.",
-          "properties": {
-            "easing": {
-              "description": "The curve family the whole film uses for entrances and exits.",
-              "minLength": 1,
-              "type": "string"
-            },
-            "intensity": {
-              "description": "How far the motion pushes, 0-1; the film keeps one register.",
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            "language": {
-              "description": "One sentence: what motion means in this film (measured push-ins, paper cuts, kinetic type, 3D camera).",
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          "required": [
-            "language",
-            "easing",
-            "intensity"
-          ],
-          "type": "object"
-        },
-        "name": {
-          "description": "A name for the look, short enough to say on set.",
-          "minLength": 1,
-          "type": "string"
-        },
-        "palette": {
-          "description": "The film's palette as #rrggbb values, in order of dominance. Every generated graphic, caption accent and grade tint draws from it.",
-          "items": {
-            "pattern": "^#[0-9a-fA-F]{6}$",
-            "type": "string"
-          },
-          "minItems": 2,
-          "type": "array"
-        },
-        "sound": {
-          "description": "The one sound world: the bed's duck depth and the texture that sits under the voice.",
-          "properties": {
-            "duckDb": {
-              "description": "The bed's duck depth; must equal audio.bgm.duckDb when a bed is present.",
-              "maximum": 0,
-              "minimum": -60,
-              "type": "number"
-            },
-            "texture": {
-              "description": "One sentence: the room, the air, the low end, the transition sound.",
-              "minLength": 1,
-              "type": "string"
-            }
-          },
-          "required": [
-            "duckDb",
-            "texture"
-          ],
-          "type": "object"
-        }
-      },
-      "required": [
-        "name",
-        "palette",
-        "grade",
-        "captions",
-        "motion",
-        "sound",
-        "footage",
-        "continuityRules"
-      ],
-      "type": "object"
     },
     "retention": {
       "description": "The retention contract: what earns the first three seconds, where the turn lands, what pays it off, and the pattern breaks that keep a scroll from becoming a swipe. A plan without it is not creativeReady.",
@@ -765,6 +603,55 @@
               "null"
             ]
           },
+          "musicArrangement": {
+            "description": "The bed as structure, not one flat track: sections with reasons, timed to the story, each change landed on a cutSafePoint or a downbeat.",
+            "properties": {
+              "licence": {
+                "description": "FreePD is CC0; Lo-Fi is MobyGratis non-commercial; a TinyMusician bed never ships monetized.",
+                "type": "string"
+              },
+              "sections": {
+                "description": "The arrangement's sections, in time order.",
+                "items": {
+                  "properties": {
+                    "automation": {
+                      "description": "The duck keyframes and section dips the mix rides (the duckDb floor under speech, the lift in pauses, the dip before a reveal).",
+                      "type": "string"
+                    },
+                    "end": {
+                      "type": "number"
+                    },
+                    "reason": {
+                      "description": "Why the bed changes here - the chapter turn, the reveal, the outro.",
+                      "type": "string"
+                    },
+                    "start": {
+                      "type": "number"
+                    },
+                    "structure": {
+                      "description": "The track's own section (analyze_music_structure): intro, build, drop, outro.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "source": {
+                "description": "The track id or file the arrangement is cut from (freepd id, or a generated file's path).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sections"
+            ],
+            "type": "object"
+          },
           "out": {
             "description": "The exit or hand-off; section boundaries exit, interiors hand off.",
             "properties": {
@@ -810,6 +697,116 @@
               "object",
               "null"
             ]
+          },
+          "soundEvents": {
+            "description": "One per placed accent: the sound decisions this segment executes, each landing its measured peak on a measured target. Cite the evidence in signalLog; a generated asset carries its prompt, seed, model kind and licence.",
+            "items": {
+              "properties": {
+                "assetId": {
+                  "description": "The shelf sound's id or the generated file's path.",
+                  "type": "string"
+                },
+                "confidence": {
+                  "description": "The evidence quality behind the placement.",
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "end": {
+                  "description": "Timeline end, after the trim.",
+                  "type": "number"
+                },
+                "eventId": {
+                  "description": "Unique within the plan; the receipts and the critic name the event by it.",
+                  "type": "string"
+                },
+                "fadeIn": {
+                  "description": "Fade-in seconds.",
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "fadeOut": {
+                  "description": "Fade-out seconds.",
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "gainDb": {
+                  "description": "The starting level; keyframes ride it.",
+                  "maximum": 0,
+                  "minimum": -60,
+                  "type": "number"
+                },
+                "kind": {
+                  "description": "Generated assets only: which generator wrote it.",
+                  "enum": [
+                    "sfx-small",
+                    "sfx-large",
+                    "bgm"
+                  ],
+                  "type": "string"
+                },
+                "licence": {
+                  "description": "Generated assets only: the licence the reply carried - a monetized edit must be able to answer for it.",
+                  "type": "string"
+                },
+                "modelEvidence": {
+                  "description": "The sense_sound_model record behind the choice (its id or hash), cited not copied.",
+                  "type": "string"
+                },
+                "peakAt": {
+                  "description": "The MEASURED time the sound's own peak falls (sound_sense), not the manifest's syncAt.",
+                  "type": "number"
+                },
+                "prompt": {
+                  "description": "Generated assets only: the words it was written from.",
+                  "type": "string"
+                },
+                "reason": {
+                  "description": "One sentence: why this sound, here, for this beat.",
+                  "type": "string"
+                },
+                "role": {
+                  "description": "The six-role vocabulary of prompts/sfx_design.md (impact, whoosh, riser, reveal, ambience, texture, or the shelf's own category word).",
+                  "type": "string"
+                },
+                "seed": {
+                  "description": "Generated assets only: the seed that reproduces it.",
+                  "type": "integer"
+                },
+                "source": {
+                  "description": "Where the asset came from; a generator row records its birth.",
+                  "enum": [
+                    "library",
+                    "generator"
+                  ],
+                  "type": "string"
+                },
+                "start": {
+                  "description": "Timeline start; computed as target minus the asset's measured peakAt.",
+                  "type": "number"
+                },
+                "storyBeat": {
+                  "description": "The story moment the accent serves - an emphasis word, a cut, a reveal.",
+                  "type": "string"
+                },
+                "visualEvidence": {
+                  "description": "The visual reading it synchronises with (the cut, the motion peak, the reveal).",
+                  "type": "string"
+                },
+                "voiceEvidence": {
+                  "description": "The voice reading that timed it (the emphasis word, the pause class).",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "eventId",
+                "role",
+                "start",
+                "assetId"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "spoken": {
             "description": "The narration words this segment covers (for caption grouping); for broll, a 40+ character fallback when visual.description is omitted or empty.",
@@ -1066,6 +1063,168 @@
     },
     "slots": {
       "$generate": "plan-slots"
+    },
+    "style": {
+      "description": "The style bible: the one look the whole film wears. Set it before the plan; every segment, caption, comp, grade and sound choice must conform. A plan without it is structurally valid but not creativeReady, because five good shots in five different styles read as five videos.",
+      "properties": {
+        "captions": {
+          "description": "The one caption system: family, weight, case, accent colour and placement. Per-segment captions may change presence, never the system.",
+          "properties": {
+            "emphasisColor": {
+              "description": "#rrggbb for the one accent word.",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": "string"
+            },
+            "font": {
+              "description": "The caption face family, one for the whole film.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "position": {
+              "description": "Where the caption block sits: lower-third, center or upper-third.",
+              "enum": [
+                "lower-third",
+                "center",
+                "upper-third"
+              ],
+              "type": "string"
+            },
+            "weight": {
+              "description": "One weight for the whole film.",
+              "maximum": 900,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "font",
+            "weight",
+            "emphasisColor",
+            "position"
+          ],
+          "type": "object"
+        },
+        "continuityRules": {
+          "description": "The rules a reviewer can check: e.g. 'every shot is fill, never letterboxed', 'the accent appears once per section', 'no two consecutive shots share a camera height'. At least one.",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "footage": {
+          "description": "How every picture is treated, so stock, A-roll and generated stills sit in one frame.",
+          "properties": {
+            "continuity": {
+              "description": "The continuity rule for the footage: camera height, movement, colour temperature and shot-size progression.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "orientation": {
+              "description": "The frame the footage is shot for; must agree with the plan aspect.",
+              "enum": [
+                "vertical",
+                "horizontal",
+                "square"
+              ],
+              "type": "string"
+            },
+            "treatment": {
+              "description": "fill = cover and crop; blurPlate = a deliberate blurred plate behind a fitted subject.",
+              "enum": [
+                "fill",
+                "blurPlate"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "orientation",
+            "treatment",
+            "continuity"
+          ],
+          "type": "object"
+        },
+        "grade": {
+          "description": "The one grade filter the whole film wears; it must equal the plan's grade.filter.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "motion": {
+          "description": "The one motion language: how things enter, how they ease, how hard they push. Comps and captions may vary the idea, never the hand.",
+          "properties": {
+            "easing": {
+              "description": "The curve family the whole film uses for entrances and exits.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "intensity": {
+              "description": "How far the motion pushes, 0-1; the film keeps one register.",
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "language": {
+              "description": "One sentence: what motion means in this film (measured push-ins, paper cuts, kinetic type, 3D camera).",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "language",
+            "easing",
+            "intensity"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "description": "A name for the look, short enough to say on set.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "palette": {
+          "description": "The film's palette as #rrggbb values, in order of dominance. Every generated graphic, caption accent and grade tint draws from it.",
+          "items": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "minItems": 2,
+          "type": "array"
+        },
+        "sound": {
+          "description": "The one sound world: the bed's duck depth and the texture that sits under the voice.",
+          "properties": {
+            "duckDb": {
+              "description": "The bed's duck depth; must equal audio.bgm.duckDb when a bed is present.",
+              "maximum": 0,
+              "minimum": -60,
+              "type": "number"
+            },
+            "texture": {
+              "description": "One sentence: the room, the air, the low end, the transition sound.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "duckDb",
+            "texture"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "palette",
+        "grade",
+        "captions",
+        "motion",
+        "sound",
+        "footage",
+        "continuityRules"
+      ],
+      "type": "object"
     },
     "text": {
       "description": "The one text system: tokens fixed here, zones in prompts/text_animation.md.",

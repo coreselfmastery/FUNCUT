@@ -11,7 +11,7 @@
 <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
 <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8--funcut.15-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="FUNCUT Version 0.2.8-funcut.15" /></a>
 <img src="https://img.shields.io/badge/Native_3D-CPU-7C3AED?style=flat&logo=three.js&logoColor=F8F8F8&labelColor=212123" alt="Native CPU 3D" />
-<img src="https://img.shields.io/badge/MCP-116_tools-0EA5E9?style=flat&logo=json&logoColor=F8F8F8&labelColor=212123" alt="116 MCP tools" />
+<img src="https://img.shields.io/badge/MCP-117_tools-0EA5E9?style=flat&logo=json&logoColor=F8F8F8&labelColor=212123" alt="117 MCP tools" />
 <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 
@@ -24,7 +24,7 @@
 </div>
 
 > [!NOTE]
-> **FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat)** — the native Rust + Slint video editor — tuned for small, low-memory Linux laptops (4–6 GB RAM), and extended with a full agent stack: a built-in MCP server with **116 tools**, a 25-phase director skill, emotion-driven editing, a motion-graphics engine with a **native CPU 3D scene layer**, local stock/music/sound/sticker shelves, and a Forge page that starts a whole faceless video with one click.
+> **FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat)** — the native Rust + Slint video editor — tuned for small, low-memory Linux laptops (4–6 GB RAM), and extended with a full agent stack: a built-in MCP server with **117 tools**, a 25-phase director skill, emotion-driven editing, a motion-graphics engine with a **native CPU 3D scene layer**, local stock/music/sound/sticker shelves, and a Forge page that starts a whole faceless video with one click.
 >
 > It is **Linux-only** (x86_64 and aarch64). No account. No watermark. No upload. Your footage stays on your disk.
 
@@ -39,7 +39,7 @@
 | **Motion** | 33 presets and 30 authoring ops: lower thirds, kinetic captions, charts, counters, code, devices, maps, social cards, 3D showcase |
 | **AUTO EDIT** | One click or one MCP call: voice repair, transcription, voice signals, emotion, plan, picture, B-roll, captions, motion, music, SFX, preview, revise, save, verify |
 | **Local AI** | Whisper transcription, Kokoro/Pocket/Chatterbox TTS, voice cloning, MediaPipe/RVM/IS-Net/SlimSAM cutout, Real-ESRGAN enhance |
-| **Agent stack** | 116 MCP tools (108 served to a director by default), 25-phase director skill, maestro and clip-skills judgment shelves, Forge harness |
+| **Agent stack** | 117 MCP tools (109 served to a director by default), 25-phase director skill, maestro and clip-skills judgment shelves, Forge harness |
 | **Libraries** | 937,957 OpenVid clips, 1,025 CC0 + 166 MobyGratis tracks, 530 CC0 sounds, 1,285 stickers, 41 fonts |
 | **Small machines** | Caches size themselves to RAM; proxies, decode ladder, measured 4 GB editing; 3D measured at ~0.7 s per 1080p frame |
 | **Export** | H.264, HEVC, AV1; up to 4K 60; 10-bit; HDR HLG/PQ; NVENC/QSV/AMF; faststart MP4 |
@@ -211,9 +211,9 @@ Full manual: [`docs/MOTION.md`](docs/MOTION.md).
 
 ## The agent stack
 
-### 116 MCP tools
+### 117 MCP tools
 
-`concat --mcp` serves **116 tools** over stdio, with both protocol eras and schemas generated from the API’s own types. **108** are served to a director by default; the whole catalogue is behind `CONCAT_MCP_ALLOW=all`.
+`concat --mcp` serves **117 tools** over stdio, with both protocol eras and schemas generated from the API’s own types. **109** are served to a director by default; the whole catalogue is behind `CONCAT_MCP_ALLOW=all`.
 
 | Area | Tools |
 |---|---:|
@@ -235,7 +235,7 @@ Full manual: [`docs/MOTION.md`](docs/MOTION.md).
 | Export | 4 |
 | Perception, emotion and creative | 18 |
 | Motion | 11 |
-| **Total** | **116** |
+| **Total** | **117** |
 
 ### AUTO EDIT
 
@@ -251,6 +251,67 @@ It copies the project to a sibling by default, writes a stage receipt and report
 - [`maestro`](docs/MAESTRO.md) — 28 reference modules over 10 corpora, 157 shot cards; design, motion and film judgment.
 - [`clip-skills`](docs/CLIPSKILLS.md) — editing craft: where to cut, audio spine, B-roll matching, pacing, grading, voice processing, export numbers.
 - [`Forge`](docs/forge/FORGE.md) — the harness that drives a director run with any vision-capable model.
+
+### What the picture reader measures, and who spends it
+
+`sense_visual` is the picture's door: **38 actions** behind one tool - **11
+measure with nothing installed** (no model, no download, no `onnxruntime`, just
+the standard library and an ffmpeg), **21 are model doors**, and 6 are the
+machinery that makes them usable (the batch sheet, the bench, the shelf
+listing, the two Hub actions and the download). The shelf is **30 ONNX
+checkpoints**, each a registry row with its file, size, licence, decoder and
+consumer ([VISUAL-MODELS.md](docs/VISUAL-MODELS.md)).
+
+| The reading | What it answers | Who spends it in an edit |
+|---|---|---|
+| `measure_motion` | where the frame actually moves, and when the movement starts | the cut lands on the motion peak instead of a pause; the motion preset enters on it; the SFX syncs to it |
+| `camera_motion` | pan, tilt, zoom or still | no Ken Burns push on a shot already moving; a static shot with a moving subject is the one that gets one |
+| `shot_scale` | wide, medium, close-up | cut rhythm (the widest to the tightest), caption room, stock framing |
+| `visual_sync` | does this sound onset match this movement onset | which SFX belongs to which moment |
+| `scene_cuts` | where the shot changes inside a clip | a montage clip is not a single take; a cut is placed on a real seam |
+| `visual_quality` | sharpness, noise, bars, blown highlights | the stock veto: soft or noisy footage never reaches the ranking |
+| `palette` | the dominant colours | motion style, shot-to-shot continuity, stock similarity |
+| `saliency` | where the eye lands | the caption band moves away from the subject |
+| `composition` | rule of thirds, balance, headroom | the stock score's taste term; a caption has somewhere to sit |
+| `motion_blur` | a pan's smear, not a subject's movement | a second veto, so "motion" that is really blur sinks |
+| `tracks` | one subject's identity across frames | do not cut when the subject would jump; captions follow the subject |
+
+Behind them, the shelf adds the readings a classical measure cannot produce -
+**TransNetV2** (shot boundaries: a cut lands where the shot changes),
+**Depth Anything V2 / MiDaS** (depth: parallax layers, depth-aware captions),
+**DINOv2 / CLIP / SigLIP2** (visual and text-matched similarity: "a shot that
+looks like this"), **MoViNet / V-JEPA-2 / the film-shot classifier** (action and
+shot type: reject the wrong footage, pick the Foley and the preset),
+**FastSAM / SegFormer-B0 / ByteTrack / Grounding DINO** (masks, scene classes,
+identities, "find a shot with a laptop"), **DOVER / the LAION predictor**
+(a taste prior that orders candidates), **ViNet-S / SMBlurDetect** (attention
+and blur), **MoveNet / MediaPipe hands / EyeGaze / MicroExpNet / SyncNet / AQA**
+(pose, gesture, eyeline, expression, lip-sync, how well an action was done),
+and **SmolVLM2 / Florence-2 / UForm** (bounded scene descriptions).
+
+**Nothing is required, and nothing is silent.** A door with no file, no `numpy`
+or no `onnxruntime` refuses and names the file it looked for. The AUTO EDIT
+button spends whatever is installed: `measure_clips` adds composition to the
+stock score, a blur veto beside the technical one, and - when the doors are
+there - a measured taste prior, depth, shot type and action, at most three
+doors per clip (`enrich: false` keeps the sheet classical and fast).
+
+**Installing a model takes one call, from the Hub:**
+
+```text
+sense_visual {action: "hf_search", query: "depth anything onnx"}   → repos
+sense_visual {action: "hf_files", hfRepo: "onnx-community/depth-anything-v2-small"}
+sense_visual {action: "download", modelId: "depth-anything-v2-small",
+              hfRepo: "onnx-community/depth-anything-v2-small",
+              file: "onnx/model_quantized.onnx"}
+```
+
+Rows with a verified Hub repo download with just `{action: "download", modelId}`
+(TransNetV2, Depth Anything V2, DINOv2, CLIP). A gated repo takes `HF_TOKEN`.
+With `sha256` the digest is checked before anything is kept; without it the
+digest that arrived is pinned in the folder's `index.json` and checked on every
+later download. The files land in the app's own model folder, which is the
+folder the reader reads - download it once and the picture reader uses it.
 
 ### Perception and emotion
 

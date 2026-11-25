@@ -10,9 +10,9 @@ bigger than a few hundred megabytes.
 
 | kind | model | params | on disk | writes | licence |
 | --- | --- | --- | --- | --- | --- |
-| `sfx-small` | TinyAudio-MF | 87 M | ~0.48 GB | 10 s mono @ 44.1 kHz | MIT |
-| `sfx-large` | Stable Audio Open Small | 341 M | ~1.2 GB | 11.9 s stereo @ 44.1 kHz | Stability AI Community |
-| `bgm` | TinyMusician (MusicGen small, ONNX) | ~135 M | ~1.0 GB | a music bed @ 32 kHz | CC-BY-NC 4.0, inherited from MusicGen-small |
+| `sfx-small` | TinyAudio-MF | 87 M | ~0.36 GB | 10 s mono @ 44.1 kHz | MIT |
+| `sfx-large` | Stable Audio Open Small | 341 M | ~0.54 GB | 11.9 s stereo @ 44.1 kHz | Stability AI Community |
+| `bgm` | TinyMusician (MusicGen small, ONNX) | ~135 M | ~0.45 GB | a music bed @ 32 kHz | CC-BY-NC 4.0, inherited from MusicGen-small |
 
 `sfx-small` is the baseline: one mean-flow step, eleven seconds of work
 for three seconds of sound on a four-core laptop. `sfx-large` is the
@@ -42,13 +42,19 @@ removed by the same button. A set is ready only when every file in it is
 present: half a generator is not a generator.
 
 The files are renamed on the way out of their upstream repositories so
-the table can hold three models without three directory layouts:
+the table can hold three models without three directory layouts - except
+the three `sfx-large` weight files, which keep the names their graphs
+were exported with (ONNX stores the external-data location inside the
+graph, so renaming the file would leave a graph that cannot find its own
+bytes):
 
 ```
 sfx-small-pipeline.json  sfx-small-tokenizer.json
 sfx-small-text.onnx  sfx-small-flow.onnx  sfx-small-vae.onnx
 sfx-large-meta.json  sfx-large-tokenizer.json  sfx-large-seconds.json
-sfx-large-t5.onnx  sfx-large-dit.onnx  sfx-large-vae.onnx
+sfx-large-t5.onnx  t5_text_encoder.onnx.data
+sfx-large-dit.onnx  dit_step.onnx.data
+sfx-large-vae.onnx  vae_decoder.onnx.data
 bgm-config.json  bgm-tokenizer.json
 bgm-text.onnx  bgm-decoder.onnx  bgm-codec.onnx
 ```
@@ -76,6 +82,10 @@ The reply names the file:
 
 - `project` keeps the write inside the folder the edit owns; without it
   the file lands in a temporary folder.
+- The output is checked before it is placed: a generation that comes
+  back near-silent (its loudest sample 40 dB under full scale) is
+  answered without a `path` - `"generated": false` - so the Director
+  shops the shelf instead of placing a silent file.
 - The output is peak-normalised to 0.89 with a 10 ms fade at each end, so
   a placed accent neither clips nor clicks.
 - The same `seed` and prompt reproduce the same file.
@@ -114,9 +124,12 @@ Two stages ask the generators before they shop:
 - **Accents.** Every peak that earns an accent asks for one: the hook
   (the first three seconds) with `sfx-large`, every other peak with
   `sfx-small`, one to two and a half seconds each. A model that is not
-  installed answers `ok: false` in about a second and the shelf takes
-  over for the rest of the run, so an install without the models behaves
-  exactly as it did before.
+  installed *answers* - `{"ok": true, "model": "absent", "generated":
+  false}` with no `path`, in about a second - and the shelf takes over
+  for the rest of the run, so an install without the models behaves
+  exactly as it did before. (The absence is an answer and not an error
+  on purpose: the runner only records replies, so an error would never
+  reach the stage and it would end warned, with no accents at all.)
 - **The bed.** The music stage writes one when the cut is 8 seconds or
   shorter - the length a written bed can cover inside the call's budget -
   and keeps the shelf for longer cuts, which the shelf carries at every
@@ -129,6 +142,11 @@ Two stages ask the generators before they shop:
   cut and ducked under the voice by the same code that ducks a shelf
   track. A run whose plan is not monetized gets the music model's own
   bed, so the third model is spent wherever the licence lets it be.
+  (The licence refusal - like an absent model and a near-silent
+  generation - is an *answer*, `ok: true` with `reason: "licence"` and no
+  `path`: the runner only records replies, so an error would never reach
+  the stage and the pad fallback would never run. The answer is what
+  makes the whole ladder reachable.)
 
 The signal contract is unchanged: a generated accent is placed on the
 same measured peak, at the same level, as the shelf accent it replaces.

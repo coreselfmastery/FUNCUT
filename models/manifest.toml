@@ -164,8 +164,8 @@ upstream = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/k
 id = "pocket-tts-int8-2026-01-26"
 family = "tts"
 file = "sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
-bytes = 98336520
-sha256 = "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb"
+bytes = 98337865
+sha256 = "f4da7c7bd465f7b91e89191487fe90504396a51d6f0bcf94d0787633e2657293"
 licence = "CC-BY-4.0"
 upstream = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
 
@@ -314,6 +314,41 @@ sha256 = "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
 licence = "MIT"
 upstream = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin"
 
+[[model]]
+id = "transnetv2"
+family = "cutout"
+file = "transnetv2.onnx"
+bytes = 31250929
+sha256 = "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c"
+licence = "MIT"
+upstream = "https://huggingface.co/elya5/transnetv2/resolve/main/transnetv2.onnx"
+
+[[model]]
+id = "depth-anything-v2-small"
+family = "cutout"
+file = "depth-anything-v2-small.onnx"
+bytes = 27258801
+sha256 = "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model_quantized.onnx"
+
+[[model]]
+id = "dinov2-small"
+family = "cutout"
+file = "dinov2-small.onnx"
+bytes = 24446700
+sha256 = "c179f8f7f592449c4c1bca4cd124a7538021428c5ffb89afde9503935b197efb"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/onnx-community/dinov2-small/resolve/main/onnx/model_quantized.onnx"
+
+[[model]]
+id = "clip-vit-b32-visual"
+family = "cutout"
+file = "clip-vit-b32-visual.onnx"
+bytes = 89117001
+sha256 = "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299"
+licence = "MIT"
+upstream = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx"
 # ── Sound generation ─────────────────────────────────────────────────────
 # Three text-to-audio models, each a set of files rather than one graph.
 # In the cutout family because that is the table `concat-vision` owns and

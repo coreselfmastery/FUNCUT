@@ -701,6 +701,7 @@
   "settings.modelReady": "โมเดลพร้อมแล้ว",
   "settings.models": "โมเดล",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "โมเดลจะถูกดาวน์โหลดเมื่อฟีเจอร์ต้องใช้เป็นครั้งแรก การดาวน์โหลดจะดูที่นี่ก่อน แล้วจึงลองแหล่งอื่นๆ ต่อ",
   "settings.newToken": "โทเค็นใหม่",
   "settings.noReleasesYet": "ยังไม่มีรุ่นตั้งแต่ 0.2.5 ขึ้นไป",

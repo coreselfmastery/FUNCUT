@@ -603,6 +603,55 @@
               "null"
             ]
           },
+          "musicArrangement": {
+            "description": "The bed as structure, not one flat track: sections with reasons, timed to the story, each change landed on a cutSafePoint or a downbeat.",
+            "properties": {
+              "licence": {
+                "description": "FreePD is CC0; Lo-Fi is MobyGratis non-commercial; a TinyMusician bed never ships monetized.",
+                "type": "string"
+              },
+              "sections": {
+                "description": "The arrangement's sections, in time order.",
+                "items": {
+                  "properties": {
+                    "automation": {
+                      "description": "The duck keyframes and section dips the mix rides (the duckDb floor under speech, the lift in pauses, the dip before a reveal).",
+                      "type": "string"
+                    },
+                    "end": {
+                      "type": "number"
+                    },
+                    "reason": {
+                      "description": "Why the bed changes here - the chapter turn, the reveal, the outro.",
+                      "type": "string"
+                    },
+                    "start": {
+                      "type": "number"
+                    },
+                    "structure": {
+                      "description": "The track's own section (analyze_music_structure): intro, build, drop, outro.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "source": {
+                "description": "The track id or file the arrangement is cut from (freepd id, or a generated file's path).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "sections"
+            ],
+            "type": "object"
+          },
           "out": {
             "description": "The exit or hand-off; section boundaries exit, interiors hand off.",
             "properties": {
@@ -648,6 +697,116 @@
               "object",
               "null"
             ]
+          },
+          "soundEvents": {
+            "description": "One per placed accent: the sound decisions this segment executes, each landing its measured peak on a measured target. Cite the evidence in signalLog; a generated asset carries its prompt, seed, model kind and licence.",
+            "items": {
+              "properties": {
+                "assetId": {
+                  "description": "The shelf sound's id or the generated file's path.",
+                  "type": "string"
+                },
+                "confidence": {
+                  "description": "The evidence quality behind the placement.",
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "end": {
+                  "description": "Timeline end, after the trim.",
+                  "type": "number"
+                },
+                "eventId": {
+                  "description": "Unique within the plan; the receipts and the critic name the event by it.",
+                  "type": "string"
+                },
+                "fadeIn": {
+                  "description": "Fade-in seconds.",
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "fadeOut": {
+                  "description": "Fade-out seconds.",
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "gainDb": {
+                  "description": "The starting level; keyframes ride it.",
+                  "maximum": 0,
+                  "minimum": -60,
+                  "type": "number"
+                },
+                "kind": {
+                  "description": "Generated assets only: which generator wrote it.",
+                  "enum": [
+                    "sfx-small",
+                    "sfx-large",
+                    "bgm"
+                  ],
+                  "type": "string"
+                },
+                "licence": {
+                  "description": "Generated assets only: the licence the reply carried - a monetized edit must be able to answer for it.",
+                  "type": "string"
+                },
+                "modelEvidence": {
+                  "description": "The sense_sound_model record behind the choice (its id or hash), cited not copied.",
+                  "type": "string"
+                },
+                "peakAt": {
+                  "description": "The MEASURED time the sound's own peak falls (sound_sense), not the manifest's syncAt.",
+                  "type": "number"
+                },
+                "prompt": {
+                  "description": "Generated assets only: the words it was written from.",
+                  "type": "string"
+                },
+                "reason": {
+                  "description": "One sentence: why this sound, here, for this beat.",
+                  "type": "string"
+                },
+                "role": {
+                  "description": "The six-role vocabulary of prompts/sfx_design.md (impact, whoosh, riser, reveal, ambience, texture, or the shelf's own category word).",
+                  "type": "string"
+                },
+                "seed": {
+                  "description": "Generated assets only: the seed that reproduces it.",
+                  "type": "integer"
+                },
+                "source": {
+                  "description": "Where the asset came from; a generator row records its birth.",
+                  "enum": [
+                    "library",
+                    "generator"
+                  ],
+                  "type": "string"
+                },
+                "start": {
+                  "description": "Timeline start; computed as target minus the asset's measured peakAt.",
+                  "type": "number"
+                },
+                "storyBeat": {
+                  "description": "The story moment the accent serves - an emphasis word, a cut, a reveal.",
+                  "type": "string"
+                },
+                "visualEvidence": {
+                  "description": "The visual reading it synchronises with (the cut, the motion peak, the reveal).",
+                  "type": "string"
+                },
+                "voiceEvidence": {
+                  "description": "The voice reading that timed it (the emphasis word, the pause class).",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "eventId",
+                "role",
+                "start",
+                "assetId"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "spoken": {
             "description": "The narration words this segment covers (for caption grouping); for broll, a 40+ character fallback when visual.description is omitted or empty.",

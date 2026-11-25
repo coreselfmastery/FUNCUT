@@ -104,7 +104,42 @@ different one. Only claim improvement when `improved` is true and the image
 actually changed. A run that never improves across two passes must stop and
 report the honest score, not loop forever.
 
-## 5. Be honest in the report
+## 5. The acceptance tracks
+
+The six-axis score is the craft verdict; shipping has four more gates,
+each with its own instrument. A track passes when its measurements
+pass, not when its stages ran.
+
+**SOUND** — `sense_sound {action: "check_placement"}` on every placed
+accent: peak within tolerance of its moment, level leaving the voice on
+top, no repetition. Then `measure_loudness` on the final mix: voice
+clear, bed in balance, no clipping, true peak under the platform
+target.
+
+**MUSIC** — structure present (the bed has sections, not one loop);
+ducking under speech (the envelope dips where the words are);
+resolution at the outro (it resolves, never stops); no masking — the
+voice intelligible through every spoken span.
+
+**VISUAL** — `watch_render` frames across every section: is each shot
+relevant to the words spoken over it; continuity across cuts (travel
+direction and shot scale, not just colour); captions clear of the
+saliency focus; no empty or black frames; no repeated footage.
+
+**CROSS-MODAL** — the questions no single modality can answer: does the
+impact land on the reveal frame? does the whoosh match the camera move
+it accents? does the caption emphasize the word actually spoken? does
+the music rise where the story rises? A mismatch here is the difference
+between a synced edit and an assembled one.
+
+A defect is actionable or it is not a finding: name the tool, the
+operation and the target — `check_placement` reports the `edit_apply`
+move, `craft_critique`'s `revisions[]` name theirs. Fix, then
+re-inspect that track; a gate is re-run, not remembered. Passing means
+every gate passed — "all stages ran" is the failure mode this loop
+exists to reject.
+
+## 6. Be honest in the report
 
 Report the score, the engine that produced it, what you changed between
 passes, and what you did not fix. "The edit is perfect" is not a finding;

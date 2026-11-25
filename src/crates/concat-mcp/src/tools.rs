@@ -1103,12 +1103,14 @@ pub fn catalogue() -> Vec<Tool> {
             idempotent: true,
             action: Action::VoiceSignals,
         },
-        // The seven family doors to the family readings: what the director
-        // DOES with the voice_signals profile and the sound shelf,
-        // grouped so an agent's tool list stays small without losing a
-        // single reading - the `action` names the reading, the family
-        // names the Python module behind it, and every one degrades
-        // loudly, never silently.
+        // The eight family doors to the family readings: what the director
+        // DOES with the voice_signals profile, the sound shelf and the
+        // picture, grouped so an agent's tool list stays small without
+        // losing a single reading - the `action` names the reading, the
+        // family names the Python module behind it, and every one
+        // degrades loudly, never silently. `sense_visual` is the picture's
+        // half: motion, camera, shot scale, quality, palette, saliency,
+        // the stock batch read, the bench, and the ONNX doors behind it.
         Tool {
             name: "sense_discourse",
             title: "The script as language",
@@ -1176,6 +1178,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::SenseFamily("captions"),
         },
         Tool {
+            name: "sense_visual",
+            title: "What the shot does, measured",
+            description: "What a shot does, behind one `action`: motion, camera, shot scale, sync, scene cuts, quality, palette, saliency, composition, blur, tracks, the stock read, and the 30-model shelf.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::SenseFamily("visual"),
+        },
+        Tool {
             name: "creative_brief",
             title: "Set the creative intent",
             description: "Read or write the creative brief used to validate a plan.",
@@ -1213,7 +1224,7 @@ impl Tool {
             // The sense family, whose own budgets are 240-480 s: a
             // critique, a cut suggestion, a loudness pass, an emotion
             // read, a voice-signal read, a contact sheet with its ranking,
-            // and the seven family doors behind which the family readings
+            // and the eight family doors behind which the family readings
             // live (their member budgets are the sense.rs table's own).
             "craft_critique",
             "suggest_cuts",
@@ -1233,6 +1244,9 @@ impl Tool {
             // (480 s) is what names a stuck call.
             "sense_sound",
             "sense_sound_model",
+            // The picture's reader: the same 240-480 s class, and the
+            // ONNX doors behind it load a model on first call.
+            "sense_visual",
             // The subject tracker's own Python budget is 240 s: a long
             // span on a slow machine is not a stuck call, and the 60 s
             // default cancelled it mid-track.
@@ -3762,12 +3776,19 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "speaker",
     "noiseFloor",
     "motion",
+    // The picture's own families, measured by `sense_visual` rather than
+    // the voice profile: the frame's motion, the shot's scale, the
+    // camera's travel, the technical verdict, where the eye lands and
+    // whether the clip cuts inside itself. Each is spent by a named
+    // decision in the gather and the captions.
+    "visualMotion",
+    "shotScale",
+    "camera",
+    "visualQuality",
+    "saliency",
+    "scene",
 ];
 
-/// Whether a signal name is one the `voice_signals` profile answers - the
-/// same predicate the decision log's gate applies, exposed so a test can
-/// hold a generated plan to the vocabulary the validator will check it
-/// against rather than a copy of the list that can drift.
 /// Every family the profile answers, in the profile's own names. Exposed
 /// so a test can hold the program to the whole vocabulary - a family the
 /// profile measures and the edit never reads is a promise the button
@@ -5522,7 +5543,7 @@ mod tests {
                 "voice_signals",
                 json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found.", "signals": ["forensic.noiseFloorDbfs", "pauses.classes"] }),
             ),
-            // The seven family doors: one sample each, `action` naming a
+            // The eight family doors: one sample each, `action` naming a
             // member the schema's enum accepts.
             (
                 "sense_discourse",
@@ -5551,6 +5572,10 @@ mod tests {
             (
                 "sense_captions",
                 json!({ "action": "seal_voice", "audio": "/tmp/voiceover.wav", "policy": { "allowedUses": ["youtube", "client-work"], "expiry": "2027-01-01" } }),
+            ),
+            (
+                "sense_visual",
+                json!({ "action": "measure_clips", "paths": ["/tmp/clip.mp4"], "intent": "cut", "samples": 6 }),
             ),
             (
                 "track_subject",
@@ -7798,7 +7823,7 @@ mod tests {
             pasted, names,
             "the paste-ready whole-catalogue list is the catalogue, comma for comma"
         );
-        // And the count the comment claims: "108 of the 116 tools".
+        // And the count the comment claims: "109 of the 117 tools".
         if let Some(rest) = forge.split(" of the ").nth(1) {
             let said: usize = rest
                 .split(|c: char| !c.is_ascii_digit())

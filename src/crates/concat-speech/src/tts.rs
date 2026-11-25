@@ -113,8 +113,8 @@ const KNOWN_MODELS: &[KnownModel] = &[
         id: POCKET_ID,
         label: "Pocket TTS (cloning)",
         blurb: "Reads in any voice, including one from a clip on the timeline. English.",
-        approx_bytes: 98_336_520,
-        sha256: "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb",
+        approx_bytes: 98_337_865,
+        sha256: "f4da7c7bd465f7b91e89191487fe90504396a51d6f0bcf94d0787633e2657293",
     },
     KnownModel {
         id: "kokoro-int8-multi-lang-v1_0",

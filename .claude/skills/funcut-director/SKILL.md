@@ -49,7 +49,8 @@ reaches it.
   `stock_contact_sheet` shows B-roll candidates before you choose them;
   `motion_frame` now returns an inline image, not just a path. A file PATH to
   a PNG is not a picture you can see. Only inline `type: image` blocks are.
-- The default Director surface is the 108-tool creative surface. The
+- The default Director surface is the 109-tool creative surface (the
+  117-tool catalogue minus the eight off-by-default doors). The
   composition reads `scene_analysis`, `scene_timeline`, `motion_preview` and
   `geneva_explain` are opt-in (the farm pair and the two destructive tools are
   off by design); if one is not served, use the served equivalent
@@ -64,6 +65,11 @@ reaches it.
   the family names; a reading that is absent is named unmeasured.
 - `prompts/signal_recipes.md` turns those readings into a cut score, a cut
   density, a cut type and a confidence fallback. Read it at the plan phase.
+- `prompts/evidence_store.md` is the run's one record of its facts: the
+  project's `director/` structure (evidence, plans, execution, quality),
+  the common evidence record every reader's reply is stored as, and the
+  rules — cite never copy, a consumer for every record, absent and na
+  are records too. Phase 9 writes into it; Phase 23 hands it off.
 - `prompts/emotion_to_edit.md` is the seven-label recipe: pace, cut types,
   captions, sound, grade, motion and duck for each emotion and intensity.
 - `prompts/token_budget.md` is the 10-minute budget and the reduction rules
@@ -259,7 +265,8 @@ discourse). The Rust ears (prosody, forensics, speakers, NER) need the
 the Python signals still answer and the reply says which ear was absent —
 never guess the missing ones. **Spend every reading, not just the family:**
 `prompts/signal_matrix.md` maps all 14 families and 70 named readings
-to the decision each one informs. Every family and every reading you spend must
+to the decision each one informs — the catalogue in `voice_signals.py` is
+the authority behind those two numbers. Every family and every reading you spend must
 appear in the plan's `signalLog` with its confidence and one-sentence basis;
 a reading that was absent is named unmeasured, never cited at confidence 0.
 **Turn the reading into cuts with `prompts/signal_recipes.md`:** score the
@@ -271,17 +278,19 @@ takes the cut style, Phase 15's SFX peaks land on the emphasis words and
 the BGM obeys the noise-floor decision, the captions drop or re-check the
 gated words, and a speaker change is staged like a scene change. The
 deeper consumption readings — script quality, restarts, fillers, rhythm
-and meter, music structure, caption alignment, what a sound file IS and
-what it MEANS — live behind the seven family doors (`sense_discourse`,
-`sense_voice_quality`, `sense_prosody_style`, `sense_audio_repair`,
-`sense_captions`, `sense_sound`, `sense_sound_model`), each `action`
-naming one reading. The two sound doors are Phase 18's instruments:
-`sense_sound` measures the file (its true `peakAt`, attack, the six
-role fits) and proves a placed accent with `check_placement`;
-`sense_sound_model` adds what it MEANS (YAMNet labels, CLAP similarity)
-and `plan`s the whole accent design from the edit's own beats, arc,
-visual events and bed structure. Both degrade loudly to
-measurement-only answers when the models are absent — never silently. Three of them are wired into the pipeline,
+and meter, music structure, caption alignment — live behind the eight
+family tools (`sense_discourse`, `sense_voice_quality`,
+`sense_prosody_style`, `sense_audio_repair`, `sense_captions`, plus the
+three measurement doors below: `sense_sound`, `sense_sound_model`,
+`sense_visual`), each
+`action` naming one reading. The two sound doors are Phase 18's
+instruments: `sense_sound` measures the file (its true `peakAt`,
+attack, the six role fits) and proves a placed accent with
+`check_placement`; `sense_sound_model` adds what it MEANS (YAMNet
+labels, CLAP similarity) and `plan`s the whole accent design from the
+edit's own beats, arc, visual events and bed structure. All the doors
+degrade loudly to measurement-only answers when the models are absent —
+never silently. Three of them are wired into the pipeline,
 not left to judgment: `sense_voice_quality {action:
 "classify_recording_quality"}` + `sense_audio_repair {action:
 "enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 2),
@@ -296,6 +305,20 @@ rest are called where the edit needs them, each as its door's `action`
 `sense_captions {action: "align_captions"}` + `sense_captions {action:
 "clean_subtitles"}` before burning captions). A bare reading name is
 never a tool - always the door with its action.
+
+**The three measurement doors.** `sense_sound` measures what a sound
+file IS (its true peak position, attack, role fits — 61 of the 530
+bundled sounds carry a manifest `syncAt` the file contradicts, so the
+measurement wins); `sense_sound_model` names what it MEANS (YAMNet
+events, CLAP description match, the fused `rank`, the per-moment
+`plan` that is the source of SFX decisions, and `generate` — words to
+a sound or a bed, with the licence rules the action itself enforces);
+`sense_visual` measures what a shot DOES (motion, camera travel and
+its direction, shot scale, scene cuts, the technical read, palette,
+saliency, composition, blur, tracks — eleven classical readings that
+need no model, plus the ONNX shelf behind them). Phases 13, 14 and 18
+spend them; a run that never calls them is cutting on filenames and
+stock pages, which is exactly what they exist to end.
 
 **Phase 5 — Story map and shot budget.** Before the plan, write the
 film's argument as a map the plan can execute: the one-sentence thesis, the
@@ -483,6 +506,21 @@ report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
 
+**Shop the bed by what the audio is, not by the title.** The bed's
+search words come from the emotion read — its three-word primaries, bent
+by the act, then the bare category — and the shelf is ranked by what
+the tracks actually are: `bgm_search {source: "freepd", query, limit,
+sort: "relevance"}` builds the page, and when the choice matters (a long
+cut, a chaptered structure, a monetized edit) `sense_audio_repair
+{action: "analyze_music_structure", audio: <the candidate>}` reads the
+structure the title cannot: sections, the energy curve, and the
+`cutSafePoints` a chapter change or a bed swap can land on. FreePD is
+the monetized-safe shelf; Lo-Fi is MobyGratis, non-commercial — the
+import itself refuses it on a monetized brief, and a TinyMusician bed
+is never generated for one (the `generate` action refuses on its own).
+A long cut may change beds at a chapter boundary — land the change on
+a `cutSafePoint` or a downbeat, and the outro must resolve, not stop.
+
 **Cross-check the plan's coverage before you shop (the runner does the
 same).** `footage_plan_suggest {transcript, beats?}` reads the dialogue
 gaps and monotony runs the take actually contains and answers the
@@ -569,7 +607,19 @@ fetch and import only when the gate is quiet.
 page. For each slot, LOOK at the `stock_contact_sheet`; run
 `emotion {action: "gate"}` on the candidate against the beat's register,
 act semantics and brand taboos; reject two failed checks and drop the beat
-rather than pad it. Read the filled manifest with `footage_continuity` and
+rather than pad it. **Then spend the picture's own measurements:**
+`sense_visual {action: "measure_clips", clips: [<the candidate paths>]}`
+returns, per clip, the `visualScore` and the reads the choice stands on —
+motion and its peak (the in-point lands 0.25 s before the peak), the
+camera's travel and its direction (the seam's compatibility word), shot
+scale, the technical read (a soft, noisy, letterboxed, dark, blown or
+montage clip sinks behind a clean one — a veto, not a nudge),
+composition and directional blur. Captions move their band away from
+the measured saliency focus; a still clip in a slot the continuity gate
+called too still earns the push, an already-moving clip keeps its own
+motion. With models installed the enrichment doors add shot type, a
+near/far depth split and the action class to the same sheet
+(`enrich: false` keeps it classical and fast). Read the filled manifest with `footage_continuity` and
 apply each flag's remedy before fetching: colour jump, reversed travel,
 repeated scale, one-category run, under-floor motion. Keep the provider,
 id and url licence triple with every chosen clip; a monetized brief never
@@ -657,29 +707,35 @@ measured word times and a kinetic recipe; for longform, use
 "align_captions"}` and `{action: "clean_subtitles"}` are the proof, not a
 guess. Never let a caption cover a face, a number, or another caption.
 
-**Phase 18 — Sound design.** Build the sound spine: the BGM gate decides
-whether a bed exists at all; the bed is cut to the beat grid and ducked per
-act to the plan's `duckDb`; every SFX peak lands on a measured emphasis
-word or cut, not merely near one; no machine-gun repetition; leave breath
-between accents. The spine is MEASURED, not named: `sense_sound_model
-{action: "plan"}` turns the edit's own signals (beats with emphasis and
-pauses, visual reveals and cuts, the arc's acts, the bed's structure)
-into a per-moment accent design — each accent names its file, measured
-`syncOffset`, gain under the voice's LUFS and the signal that earned it.
-Execute its accents with `sounds_add` + `clip_audio_levels_db`, and
-prove EVERY placed accent with `sense_sound {action:
-"check_placement"}` (peak on the moment, level under the voice, no
-repetition — the reply names the fix when it is wrong). Shopping a role
-by hand instead: `sense_sound {action: "rank_sounds"}`; trusting a
-shelf name or the manifest's `syncAt` over the measured `peakAt` is the
-mistake the shelf audit measured (30% of files wrong by >100 ms).
-Full doctrine: `prompts/sfx_design.md`. If the user exports,
-`measure_loudness` on that export is the proof; on the timeline,
-`watch_render {project, audio: true}` gives the audio envelope. If the
-take already carries music, do not stack a bed; warn about the unknown
-licence in the report.
+**Phase 18 — Sound design.** Build the sound spine from the plan, not
+from filenames. **The source of SFX decisions is
+`sense_sound_model {action: "plan", beats, visual, arc, bgm, style,
+durationSec, voiceLufs}`** — feed it the story beats, the emphasis
+timestamps, the cut positions, the music structure and the style, and
+it answers a per-moment design: the moment, its role, the selected
+asset, the reason, the start, the measured `peakAt`, the gain, the
+trim, the voice-overlap masking and the repetition constraints
+(`prompts/sfx_design.md` is the full doctrine). Place each moment with
+`sounds_add`, landing the MEASURED peak on its target —
+`start = target − peakAt`, the measurement, never the manifest's
+`syncAt` (61 of the 530 bundled sounds contradict theirs). **Verify
+every placement:** `sense_sound {action: "check_placement"}` on the
+placed clip — peak alignment, role fit, level, repetition — and fix
+what it flags before moving on (the reply names the fix when it is
+wrong). Shopping a role by hand instead: `sense_sound {action:
+"rank_sounds"}`. When the shelf cannot meet a moment,
+`sense_sound_model {action: "generate", kind, prompt, seconds, seed,
+project}` writes it (sfx-small default, sfx-large for the hook; the
+reply carries its licence, and a monetized project is never given a
+bgm generation). The BGM gate still decides whether a bed exists at
+all; the bed is cut to the beat grid and ducked per act to the plan's
+`duckDb`; every SFX peak lands on a measured emphasis word or cut, not
+merely near one; no machine-gun repetition; leave breath between
+accents. `sounds_add` and `clip_audio_levels_db` are the tools;
+If the user exports, `measure_loudness` on that export is the proof; on the timeline, `watch_render {project, audio: true}` gives the audio envelope. If the take already carries
+music, do not stack a bed; warn about the unknown licence in the report.
 
-**Full editor power.** The served surface is the whole 108-tool director
+**Full editor power.** The served surface is the whole 109-tool director
 catalogue; use it where the line earns it: `clip_mask` for a shape or face
 that must share the frame, `track_subject` when the mask or label follows a
 moving person, `template_instantiate` for a designed opener/lower third/end
@@ -1042,6 +1098,7 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
 | `prompts/signal_matrix.md` | all 14 signal families and 70 named readings, and the decision each informs |
 | `prompts/signal_recipes.md` | cut score, cut density, cut type and confidence fallback from the readings |
+| `prompts/evidence_store.md` | the project's `director/` store: one record shape for every reader's evidence, cited by the plan, re-read by the critic |
 | `prompts/emotion_to_edit.md` | the seven emotion labels as pace/cut/sound/grade/motion/duck recipes |
 | `prompts/token_budget.md` | the 10-minute token estimate and the rules that cut waste, not craft |
 | `prompts/tool_reference.md` | every tool's arguments, units, and gotchas |

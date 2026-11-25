@@ -5,12 +5,15 @@ tracks by title, artist and category. Until now nothing in the editor had
 ever **opened the file**. This page is the audit that proves it, and the
 measurement engine that closes it.
 
-Status: **the engine ships** (`sound_sense.py`, four tools, 37 selftest
-checks), it is registered as the `sense_sound` MCP tool, it is ON the
-Director's default allowlist, and the Director skill teaches it: Phase 18
-plans and proves every accent with it, `prompts/sfx_design.md` is its
-doctrine and `prompts/tool_reference.md` carries its full schema — see
-§6 for the exact places it goes.
+Status: **shipped, registered, allowlisted and taught.** `sound_sense.py`
+is a sense family (`sense_sound`, four tools, 37 selftest checks), it is
+on the Director's default allowlist, and the Director skill spends it —
+Phase 18 verifies every placed accent with `check_placement`, and the
+measured `peakAt` is what a cut lands on, not the manifest's `syncAt`
+(this page's own audit found 61 of the 530 shipped sounds carry a
+`syncAt` the file contradicts). What §6 planned is now the doctrine in
+`prompts/sfx_design.md`, and `prompts/tool_reference.md` carries its
+full schema.
 
 ## 1. What was verified in the tree
 

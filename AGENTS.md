@@ -11,7 +11,7 @@ FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat) — a
 Rust + Slint video editor (`src/crates/*`, 20+ crates, ~220k lines) —
 tuned for small low-memory Linux laptops and extended with:
 
-- a built-in **MCP server** (`concat --mcp`, 116 tools, 108 served to a
+- a built-in **MCP server** (`concat --mcp`, 117 tools, 109 served to a
   director by default, including `auto_edit` - the window's one-click
   spine as one headless call) that can edit whole projects end to end;
 - the **funcut-director** skill (`.claude/skills/funcut-director/`): a
@@ -76,6 +76,29 @@ confidence; when you deliberately leave one unspent, name it in the
 guard's `NOT_SPENT` list with the reason. Never widen a guard to make it
 pass - the guards are the deliverable.
 
+The picture has the same contract, one layer down. `visual_sense.py`
+carries a `CONSUMERS` map beside its readings and
+`every_visual_reading_has_a_consumer` (its own selftest) holds every
+measured key to a named consumer; `visual_read.rs` parses the rows the
+program spends, and the gather stage reads them for its stock veto, its
+in-point, its drift and its travel. A reading added there without a
+consumer fails the selftest, not a reviewer's memory.
+
+## The picture's shelf (read before touching `sense_visual`)
+
+`sense_visual` is 38 actions: 11 measure with nothing installed, 21 are ONNX
+doors, 6 are machinery. The doors are registry rows in
+`sense/visual_sense.py` (`VISUAL_MODELS`), driven by one generic runner and
+ten decoders - so pointing a door at a better checkpoint is a one-line swap,
+and `docs/VISUAL-MODELS.md` is generated from that registry. A door installs
+from the Hub in three calls (`hf_search`, `hf_files`, `download`); four rows
+carry a repo verified by a real download, and the rest take one from
+`hf_search` rather than a guessed URL. `measure_clips` - what the stock choice
+reads - spends whatever is installed (`enrichDoors`, default 3), and
+`enrich: false` is the classical fast path. The selftest runs all thirty doors
+through the real runner with a stub session, so a decoder that cannot read its
+own output shape fails in CI.
+
 ## The five things that surprise agents here
 
 1. **A project is a folder**, not a file: `project_open {path}` names
@@ -125,8 +148,18 @@ A container restart wipes everything outside `/workspace` — the Rust
 toolchain, apt packages and the shell `PATH`. `/workspace/envsetup/setup.sh`
 rebuilds it (toolchain 1.93.1, libclang, cmake, the GTK/GL/ALSA/ssl dev
 packages); run it first, then `/workspace/envsetup/verify.sh`. The
-`ffmpeg-dev/` and `.ort-shared/` trees under the repo root survive, and
-the build needs them on the environment:
+`ffmpeg-dev/` and `.ort-shared/` trees under the repo root normally
+survive; when they do not (a fresh clone of the workspace), rebuild them
+from the pinned rows rather than from upstream's latest:
+
+```sh
+scripts/ci/fetch.sh ffmpeg-linux64 /tmp/ffmpeg.tar.xz
+mkdir -p ffmpeg-dev && tar -xf /tmp/ffmpeg.tar.xz -C ffmpeg-dev --strip-components=1
+scripts/ci/fetch.sh onnxruntime-linux-x64 /tmp/ort.tgz
+mkdir -p .ort-shared && tar -xzf /tmp/ort.tgz -C .ort-shared --strip-components=1
+```
+
+The build needs them on the environment:
 
 ```sh
 export FFMPEG_DIR=$PWD/ffmpeg-dev

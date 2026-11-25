@@ -532,6 +532,7 @@ fn start(
         app.set_transcribers(ModelRc::from(models.transcribers.clone()));
         app.set_voices(ModelRc::from(models.voices.clone()));
         app.set_sound_models(ModelRc::from(models.sound_models.clone()));
+        app.set_picture_models(ModelRc::from(models.picture_models.clone()));
         app.set_versions(ModelRc::from(models.versions.clone()));
         app.set_version_details(ModelRc::from(models.version_details.clone()));
         editor.set_seats(ModelRc::from(models.seats.clone()));

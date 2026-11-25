@@ -1,90 +1,140 @@
 # Sound design (SFX)
 
 Sound is half the edit and the first thing an amateur edit skips. The
-rules are short because the discipline is short: variety, placement,
-restraint — and every placement decided by a MEASUREMENT, not a
-filename.
+discipline used to be guesswork — categories, filenames, a peak position
+the manifest claimed. It is measured now: index the shelf, plan the
+sound design from every signal, place on the measured peak, verify each
+placement, and generate only what the shelf cannot supply.
 
-## The anti-repetition law
+## Why measured beats metadata
 
-**Never the same sound id twice within 30 s.** Rotate at least 3 ids per
-role, and alternate soft and hard variants (a `whoosh-swish-2` followed
-by `whoosh-swish-2` is a loop; a swish followed by an impact is a
-conversation). The journal (`memory.md`) is how you check — it lists
-every SFX id with its time.
+The shelf's manifest carries `syncAt`, a claim about where a sound's
+peak lands. Measured against the files: the median error is 14 ms, but
+128 files are wrong by more than 100 ms and **61 of the 530 shipped
+sounds by more than 300 ms** — the worst is 3.02 s. Every one of those
+was placeable at `moment − syncAt`, putting the accent seconds from the
+cut it was chosen for, with nothing downstream able to tell. The
+waveform does not lie; the metadata sometimes does. The peak a
+placement uses is the measured one.
 
-## The semantic map (the library's own families)
+## Index once, then plan
 
-The sound library is categorized semantically — use the categories as
-intent, not as a bucket:
+Two indexes, both cached by size and mtime, both built once per shelf:
 
-| The motion on screen | Search |
-| --- | --- |
-| A number counting up (stat card, ticker) | `data-countup-short/medium/long` |
-| A chart building, bars growing | `data-bar-grow`, `data-chart-reveal` |
-| A tick, a meter, data tension | `data-tick` |
-| Coins, cash, register, payment | `money-coin-drop`, `money-coins-pour`, `money-register`, `money-card-tap`, `money-notes` |
-| A zoom, a slide, camera move | `whoosh-swish-1..6`, `whoosh-*` |
-| A claim landing, a card appearing | `impact-*` (soft and metal variants) |
-| UI beats, notifications | `ui-*`, `notification-*` |
-| Typing, writing, working | `keyboard-*`, `writing-*` |
-| Room, place, mood under a section | `ambience-*` |
-| Build-ups into a reveal | risers (`impact` + `whoosh` layered) |
-| A trailer-grade hit, a title card, THE moment | `impact-cinematic-slam`, `impact-trailer-hit`, `impact-final-blow`, `stinger-logo-hit` |
-| A sub drop, a bass accent under a reveal | `impact-sub-drop-hit`, `impact-bass-cannon`, `stinger-sub-hit` |
-| Tension climbing into a cut | `riser-cinematic-long`, `riser-braam-rise`, `riser-tension-build`, `riser-pre-drop-tension` |
-| The suck before the hit | `whoosh-reverse-cinematic`, `impact-reverse-slam`, `riser-reverse-cymbal` |
-| Something flying past, a fast pan | `whoosh-doppler-pass`, `whoosh-dragon-flyby`, `whoosh-fast-air-cut` |
-| A glitch or digital moment | `transition-zap-digital`, `transition-glitch-stutter`, `transition-pixel-dissolve` |
-| A portal, magic, transformation | `transition-portal-open`, `transition-magic-shimmer`, `stinger-magic-reveal` |
-| Dread or scale holding a section | `drone-dark-tension`, `drone-horror-sub`, `drone-epic-swell` |
-| Water, ice, fire, mechanical beats | `transition-water-drop-reveal`, `transition-ice-crackle`, `transition-fire-whoosh`, `transition-mechanical-clunk` |
-| Powering down, rewinding, shutting off | `transition-power-down`, `transition-tape-rewind`, `impact-dramatic-stop` |
+- `sense_sound {action: "index_library"}` — the measured shelf: level,
+  crest, attack, body, transients, spectral centroid, band balance,
+  flatness, pitch movement, energy trend, and the peak's real position
+  per file. It also reports every `syncAt` the file contradicts.
+- `sense_sound_model {action: "index"}` — the semantic shelf: YAMNet's
+  521 AudioSet labels and a CLAP 512-d embedding per asset.
 
-Queries are ANDed and prefix-matched: **two or three words, no sentences**
-— "coin drop", not "coins dropping onto a wooden table in slow motion".
-The map is the QUERY vocabulary — which candidates you pull. What decides
-between them is the measurement below.
+## The plan is the source of SFX decisions
 
-## Measured selection (rank the file, not the name)
+SFX are not browsed into place. `sense_sound_model {action: "plan"}`
+takes the beats (emphasis words, pauses, sentence type, pitch
+direction), the visual arc (cuts, reveal events, motion hits), the BGM
+candidates, the style (`maxAccentsPer10s`, `minAccentGapSec`),
+`durationSec` and `voiceLufs`, and returns one sound design for the
+whole piece. Per moment it gives: `at`, `role` and the context that
+earned them; the selected `id` with its `why` — the signals that named
+the moment, the fused score with its CLAP and measured parts;
+`startAt`, already computed as `moment − measured syncOffset`; `gainDb`
+as `target − measured peak`, clamped to −24..+6 dB against the voice's
+own level; `duration` with `fitsGap`, the voice-overlap rule — a 4 s
+boom never sits in a 1 s gap to the next word. Each file is spent once,
+a stronger moment evicts a weaker one inside the density floor (the
+plan says which gave way), `silence[]` marks a pause ≥ 0.5 s before a
+reveal — hold the room, land the sound on the reveal itself — and
+`warnings[]` names every moment refused and the constraint that refused
+it. No candidate for a moment is a fact to design around, not an error
+to retry blindly.
 
-The shelf's own audit (docs/SOUND-SENSE.md) measured the 530 files and
-found the manifest's `syncAt` peak claim wrong by more than 100 ms in
-30% of them — a name-led pick that trusts it lands its accent on the
-wrong frame. So the ears decide:
+The fusion weights were fitted on the 530 shipped sounds: the CLAP
+model wins transitions (0.62 against 0.38), the measurements win risers
+(0.44 against 0.31) and textures — which is why both indexes are spent,
+never one alone.
 
-- **A role, shopped by hand**: `sense_sound {action: "rank_sounds",
-  role, dir|paths, limit}` — candidates scored on the six measured role
-  fits (`quick_transition`, `cinematic_reveal`, `action_impact`,
-  `gentle_entrance`, `emotional_texture`, `tension_build`), each with
-  the evidence behind it and `measuredPeakAt` beside the manifest's
-  `syncAt` so the drift is visible.
-- **A description, shopped semantically**: `sense_sound_model {action:
-  "rank", index, query, role}` — CLAP similarity ("dark cinematic
-  braam") fused with the measured fit. Without the models installed it
-  says `degraded` and ranks by measurement alone — a weaker answer it
-  admits, never hides.
-- **The whole design at once**: `sense_sound_model {action: "plan",
-  index, beats, visual, arc, bgm, durationSec, voiceLufs}` — the edit's
-  own signals (emphasis words, pauses, reveals, cuts, motion hits, the
-  arc's acts, the bed's structure) become a per-moment accent plan:
-  file, `startAt`, `peakLandsAt`, `syncOffset`, `gainDb` under the
-  voice's LUFS, held silences, and the why per accent. Plan first, then
-  place its accents.
+**Queries are ANDed and prefix-matched** — two or three words, no
+sentences: "coin drop", not "coins dropping onto a wooden table in slow
+motion".
 
-The one measured decision the name-led path already had — the level
-from the prosody ear's peak strength — stays; measurement replaces the
-SELECTION and the SYNC, not the gain discipline.
+## The role vocabulary
+
+Six jobs. The tools accept the plain word or the role name:
+
+| Plain word | Role | The job |
+| --- | --- | --- |
+| whoosh | `quick_transition` | move air across a cut, a slide, a fast pan |
+| impact | `action_impact` | the claim lands — heavy, sharp, short |
+| riser | `tension_build` | climbs into the reveal |
+| reveal | `cinematic_reveal` | the boom, braam or sub drop under THE moment |
+| foley | `gentle_entrance` | UI beats, chimes, small physical detail — soft, short |
+| ambience / texture | `emotional_texture` | the room under a section — tonal, sustained |
+
+A category describes a sound; a role describes the job — only 34 of
+the 64 whooshes top out as transitions, because the reverse ones are
+risers and read as `tension_build`. `rank_sounds` returns the evidence
+terms behind every fit, so a disagreement is readable, not a coin
+flip; the ranked shortlist behind each plan pick is the alternatives
+list.
 
 ## Placement: the measured peak, not the start
 
-`sounds_add` places the clip's START at the time you give, and the
-transient must land ON the cut, not after it. The number that decides
-is the MEASURED `peakAt` — from `rank_sounds`' candidates or one
-`describe_sound` call — never the manifest's `syncAt` (wrong by >100 ms
-in 30% of the shelf): give `start = peakAt_target − measuredPeakAt`
-(and the same subtraction as the head trim if the file needs one),
-then set the level with `clip_audio_levels_db`.
+`sounds_add` places the file's START at the time given; the transient
+must land on the moment. Start = target − measured `peakAt` — the
+plan's `startAt` already carries that subtraction, computed from the
+index's measured peak position, never the manifest's `syncAt`. A
+riser's whole body still leads its drop; that is in the measurement,
+not in a guessed 80–150 ms attack. Apply the plan's `gainDb` to the
+placed clip with `clip_audio_levels_db`.
+
+## Verify every placement
+
+After `sounds_add`, run `sense_sound {action: "check_placement"}` on
+each placed accent — `path`, `clipStart`, `intendedAt` (the moment),
+the `gainDb` applied, the role meant, `inPoint` when the clip was
+trimmed, and `recent` with the accents already placed. It measures the
+placed file and answers with evidence:
+
+- `sync_off` — the peak sits N ms off the moment (tolerance 40 ms
+  default), with the `edit_apply` move that fixes it;
+- `peak_cut` — the transient was trimmed out of the span: the sound is
+  not late, it is gone; re-shop the role with `rank_sounds`;
+- `wrong_sound` — placed as an impact, measures as a texture, with the
+  measured terms that say so;
+- `too_loud` — at this gain the accent peaks over the voice's own
+  ceiling, with the `clip_audio_levels_db` level that answers it;
+- `overused` — the fourth whoosh inside 12 s, with the `clips_remove`
+  that thins it: repetition flagged, not heard.
+
+An accent that was never verified is a claim, not a placement.
+
+## Generate when the shelf cannot
+
+When the brief names a sound the 530 do not hold — a specific object,
+a texture the shelf lacks — `sense_sound_model {action: "generate"}`
+writes it. `sfx-small` (TinyAudio-MF, MIT) is the default for accents;
+`sfx-large` (Stable Audio Open Small) spends its longer call on the
+hook; `bgm` (TinyMusician) never reaches a monetized project — the
+action itself refuses with `model: "refused"`, because TinyMusician
+ships no licence file. An absent model and a near-silent generation
+both answer without a `path`: shop the shelf, do not retry. The file
+lands in `<project>/generated-audio/`; `sounds_add {file}` places it
+like a shelf sound, and `check_placement` still verifies it.
+
+## Repetition, density, silence
+
+**Never the same id twice near itself.** The plan spends each file
+once and `check_placement` flags the repeat. Rotate at least 3 ids per
+role and alternate soft and hard variants — a swish followed by an
+impact is a conversation, a swish followed by the same swish is a
+loop. The journal (`memory.md`) lists every id with its time.
+
+Density is a knob, not a feeling: `maxAccentsPer10s` (default 4) and
+`minAccentGapSec` (0.45). A sound on every cut of a 30-cut minute is
+noise the viewer stops hearing. Silence is a design choice — the
+plan's `silence[]` marks the held room before a reveal; let a few cuts
+land dry so the next one is heard.
 
 **Prove every placed accent**: `sense_sound {action:
 "check_placement", path, clipStart, intendedAt, gainDb, voiceLufs,
@@ -95,6 +145,9 @@ A placement nobody checked is a guess with a good filename.
 
 ## Levels
 
+The plan computes `gainDb` from each asset's measured peak against the
+voice's loudness. Planning by hand, the table:
+
 | Role | dB |
 | --- | --- |
 | Whooshes, motion ticks | −10 to −14 |
@@ -104,22 +157,5 @@ A placement nobody checked is a guess with a good filename.
 | Counter/chart sounds with their comp | −10 to −12 |
 
 (`clip_audio_levels_db` is absolute: 0 dB unchanged, −60 the floor.)
-
-## Density
-
-- Energetic pacing: one design sound per cut, only where they add
-  information — a sound on every single cut of a 30-cut minute is noise,
-  and the viewer stops hearing all of them.
-- Calm pacing: section changes and key moments only.
-- Every transition gets its pair (whip → whoosh; dissolve → soft swell;
-  glitch → digital hit).
-- The re-hook and the outro card each get one signature sound the piece
-  has not used yet.
-
-## What "robotic" means and how it stops
-
-Robotic SFX is three failures: the same id back to back, every sound at
-the same level, every hit exactly on the grid with no musicality. The
-fixes are the three laws above — rotate ids, vary levels ±2 dB around
-the table, and let a few cuts land dry (no sound) so the next one is
-heard.
+Vary ±2 dB around the table — every hit at the same level is half of
+what "robotic" names, and the grid-perfect landing is the other half.

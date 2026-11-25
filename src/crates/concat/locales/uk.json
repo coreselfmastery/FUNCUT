@@ -701,6 +701,7 @@
   "settings.modelReady": "Модель готова",
   "settings.models": "Моделі",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Моделі завантажуються, коли якійсь функції вперше потрібна модель. Тут завантаження шукає насамперед; усі інші джерела однаково пробуються після цього.",
   "settings.newToken": "Новий токен",
   "settings.noReleasesYet": "Жодного випуску від 0.2.5 ще немає.",

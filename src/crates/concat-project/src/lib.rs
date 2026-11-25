@@ -1942,6 +1942,55 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_can_be_pointed_at_a_later_source_second_without_moving() {
+        let (mut editor, _, first) = fixture();
+        editor
+            .apply(trim(&first, TrimEdge::End, -6.0, false))
+            .expect("shortens to 4 s");
+        editor
+            .apply(Command::SetClipSource {
+                clip_id: first.clone(),
+                source_start: 2.5,
+            })
+            .expect("re-points");
+        let clip = editor
+            .project()
+            .active()
+            .clip(&first)
+            .expect("kept")
+            .clone();
+        assert_eq!(
+            (clip.start, clip.duration, clip.source_start),
+            (0.0, 4.0, 2.5),
+            "the timeline is untouched; only the frame the clip opens on moved"
+        );
+    }
+
+    #[test]
+    fn a_source_point_past_the_media_is_pulled_back_to_the_last_frame() {
+        let (mut editor, _, first) = fixture();
+        editor
+            .apply(trim(&first, TrimEdge::End, -6.0, false))
+            .expect("shortens to 4 s");
+        editor
+            .apply(Command::SetClipSource {
+                clip_id: first.clone(),
+                source_start: 9.0,
+            })
+            .expect("clamps");
+        let clip = editor
+            .project()
+            .active()
+            .clip(&first)
+            .expect("kept")
+            .clone();
+        assert_eq!(
+            clip.source_start, 6.0,
+            "a 4 s clip on 10 s of media may start no later than 6 s"
+        );
+    }
+
+    #[test]
     fn a_trim_clip_document_without_the_ripple_field_still_parses_as_a_plain_trim() {
         let command: Command = serde_json::from_value(json!({
             "op": "trimClip",

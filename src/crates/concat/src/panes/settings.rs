@@ -234,6 +234,10 @@ pub fn installed(models: &[ModelState]) -> Vec<&ModelState> {
 /// the host's, so the sheet, `models.download` and the generator's own
 /// `kind` cannot drift apart.
 pub const SOUND_MODELS_ID: &str = concat_host::soundmodel::SOUND_MODELS_ID;
+/// The picture reader's set - TransNetV2, Depth Anything V2, DINOv2 and
+/// CLIP's vision tower - as one row, for the same reason: a half a set
+/// reads less than a whole one.
+pub const PICTURE_MODELS_ID: &str = "picture-models";
 
 /// The three generators, each its own row: a small SFX model, a heavier
 /// one, and a music model. Their ids are the words `sound_model.py
@@ -275,8 +279,13 @@ pub struct SettingsPane {
     pub voices: Vec<ModelState>,
     /// The sound models - CLAP and YAMNet - as one row.
     pub sounds: Vec<ModelState>,
+    /// The picture reader's models - a shot boundary, depth, a visual
+    /// embedding and CLIP's vision tower - as one row.
+    pub visuals: Vec<ModelState>,
     /// The cancel flag of a sound-model download in flight.
     sound_cancel: Arc<AtomicBool>,
+    /// The cancel flag of a picture-model download in flight.
+    visual_cancel: Arc<AtomicBool>,
     /// The Version page's list: the stable releases from 0.2.5 on, newest
     /// first, once GitHub has been asked.
     pub releases: Vec<Release>,
@@ -533,6 +542,8 @@ impl SettingsPane {
             SettingsMsg::ModelCancel(id) => {
                 if self.is_sound_models(&id) {
                     self.sound_cancel.store(true, Ordering::Relaxed);
+                } else if self.is_picture_models(&id) {
+                    self.visual_cancel.store(true, Ordering::Relaxed);
                 } else if self.is_transcriber(&id) {
                     studio.host.transcriber.cancel_download();
                 } else {
@@ -542,6 +553,8 @@ impl SettingsPane {
             SettingsMsg::ModelRemove(id) => {
                 let result = if let Some(set) = sound_set(&id) {
                     concat_host::soundmodel::set_remove(&studio.host.dirs.data, set)
+                } else if self.is_picture_models(&id) {
+                    concat_host::visualmodel::remove(&studio.host.dirs.data)
                 } else if self.is_transcriber(&id) {
                     studio.host.transcriber.delete_model(&studio.host.dirs, &id)
                 } else {
@@ -581,7 +594,7 @@ impl SettingsPane {
                 match result {
                     Ok(()) => {
                         studio.notify(&t("settings.modelReady"), false);
-                        if self.is_sound_models(&id) {
+                        if self.is_sound_models(&id) || self.is_picture_models(&id) {
                             // Nothing to choose: the reader looks for the
                             // files, and finds them because they are here.
                         } else if self.is_transcriber(&id)
@@ -930,6 +943,7 @@ impl SettingsPane {
             .iter()
             .chain(self.voices.iter())
             .chain(self.sounds.iter())
+            .chain(self.visuals.iter())
             .filter(|model| model.fetched.is_some())
             .map(|model| (model.id.clone(), (model.fetched, model.unpacking)))
             .collect();
@@ -938,6 +952,7 @@ impl SettingsPane {
             .iter()
             .chain(self.voices.iter())
             .chain(self.sounds.iter())
+            .chain(self.visuals.iter())
             .filter_map(|model| Some((model.id.clone(), model.failure.clone()?)))
             .collect();
         let chosen_transcriber = studio.prefs.transcriber_model.clone();
@@ -1040,6 +1055,26 @@ impl SettingsPane {
                 "Writes a music bed from words. 32 kHz mono, and the slowest of the three on a CPU. MusicGen-small weights, CC-BY-NC 4.0: never in monetized work.",
             ),
         ];
+        // The picture models: the four the picture reader spends on a
+        // first edit. Same row-per-set shape, same folder, same reason.
+        let total = concat_host::visualmodel::bytes();
+        let missing = concat_host::visualmodel::missing_bytes(&dirs.data);
+        let (fetched, unpacking) = downloading
+            .get(PICTURE_MODELS_ID)
+            .copied()
+            .unwrap_or((None, false));
+        self.visuals = vec![ModelState {
+            id: PICTURE_MODELS_ID.to_owned(),
+            name: "Picture models".to_owned(),
+            note: "TransNetV2 finds a shot's boundaries, Depth Anything V2 its depth, DINOv2 and CLIP what it looks like. Without them the picture reader measures motion, camera and colour only.".to_owned(),
+            megabytes: (if missing > 0 { missing } else { total }) as f32 / 1_000_000.0,
+            accuracy: 5,
+            installed: concat_host::visualmodel::ready(&dirs.data),
+            active: concat_host::visualmodel::ready(&dirs.data),
+            fetched,
+            unpacking,
+            failure: failed.get(PICTURE_MODELS_ID).cloned(),
+        }];
 
         // An engine with nothing chosen falls back to whatever is installed,
         // rather than silently having no model at all.
@@ -1060,11 +1095,16 @@ impl SettingsPane {
         sound_set(id).is_some()
     }
 
+    fn is_picture_models(&self, id: &str) -> bool {
+        id == PICTURE_MODELS_ID
+    }
+
     fn model_mut(&mut self, id: &str) -> Option<&mut ModelState> {
         self.transcribers
             .iter_mut()
             .chain(self.voices.iter_mut())
             .chain(self.sounds.iter_mut())
+            .chain(self.visuals.iter_mut())
             .find(|model| model.id == id)
     }
 
@@ -1097,6 +1137,39 @@ impl SettingsPane {
                     let result =
                         concat_host::soundmodel::set_download(&data, set, &cancel, &mut report);
                     (row, result)
+                },
+                |studio, _, _, (id, result)| {
+                    studio.handle(Msg::Settings(SettingsMsg::ModelFinished { id, result }));
+                },
+            );
+            return;
+        }
+        if self.is_picture_models(id) {
+            let Some(model) = self.model_mut(id) else {
+                return;
+            };
+            if model.installed || model.fetched.is_some() {
+                return;
+            }
+            model.fetched = Some(0.0);
+            model.failure = None;
+            let id = id.to_owned();
+            let data = studio.host.dirs.data.clone();
+            let cancel = Arc::clone(&self.visual_cancel);
+            cancel.store(false, Ordering::Relaxed);
+            spawn(
+                move || {
+                    let mut report = |received: u64, total: u64| {
+                        let msg = SettingsMsg::ModelProgress {
+                            id: PICTURE_MODELS_ID.to_owned(),
+                            fetched: received as f32 / 1_000_000.0,
+                            total: (total > 0).then(|| total as f32 / 1_000_000.0),
+                            unpacking: false,
+                        };
+                        on_ui(move |studio, _, _| studio.handle(Msg::Settings(msg)));
+                    };
+                    let result = concat_host::visualmodel::download(&data, &cancel, &mut report);
+                    (id, result)
                 },
                 |studio, _, _, (id, result)| {
                     studio.handle(Msg::Settings(SettingsMsg::ModelFinished { id, result }));
@@ -1154,6 +1227,11 @@ impl SettingsPane {
     /// The sound models' row.
     pub fn sound_rows(&self) -> Vec<ModelData> {
         self.sounds.iter().map(ModelState::row).collect()
+    }
+
+    /// The picture models' row.
+    pub fn visual_rows(&self) -> Vec<ModelData> {
+        self.visuals.iter().map(ModelState::row).collect()
     }
 
     /// The sheet as Slint shows it.

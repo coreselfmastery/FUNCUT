@@ -219,34 +219,37 @@ moves.
 
 ## 7. What is wired, and what is not
 
-Wired and tested: the four tools (registered as the `sense_sound_model`
-MCP tool, on the Director's default allowlist), the cache, the fused
-ranking with the measured weights, the graceful absence path, and
-nineteen selftest checks (the ONNX checks skip cleanly when numpy is
-absent). The Director skill teaches all four actions: Phase 18 runs
-`plan`, `prompts/sfx_design.md` is the doctrine and
-`prompts/tool_reference.md` carries the full schema.
+Wired and tested: the tools (describe, index, rank, plan, generate), the
+cache, the fused ranking with the measured weights, the graceful absence
+path, the licence gate on generated beds, and the selftest's thirty
+checks.
 
-Not wired, and this is the honest gap:
+The four gaps below are the history of this page - each is now closed or
+narrowed, and the honest remainder is named:
 
-1. **AUTO EDIT's own sfx stage.** `AUTO EDIT` (the one-click spine)
-  still ranks sounds from shelf metadata and places on the manifest's
-  `syncAt`; the Director skill's measured path (above) is the agent's
-  route. Feeding AUTO EDIT's sfx stage through `rank` + `plan` +
-  `check_placement` is the remaining integration.
-2. **The BGM candidate page.** `bgm_search` still ranks text over
-  title/artist/category; the shelves' audio-aware candidate ranking
-  (CLAP over fetched candidates) is taught to the Director in
-  `prompts/music_and_duck.md` but not built into the shelf's own
-  search.
-3. **The download UI.** The settings sheet already has exactly the row this
-   needs: `ModelData` in `src/crates/concat/ui/dialogs/settings.slint` (id,
-   name, note, size, accuracy pips, installed, active, downloading, progress,
-   transferred, eta, problem, manual). A CLAP row is a row, not a new dialog,
-   and the Rust side follows `concat-vision/src/models.rs`: pinned URL,
-   licence, size, hash, download into the data directory.
-4. **The music join.** Beat grid and sections from the Rust analysis, merged
-   with the CLAP music embedding, into one BGM record.
+1. **The Rust side - CLOSED.** `concat-mcp` registers the family in
+   `src/crates/concat-mcp/src/sense.rs` (`sense_sound_model`, the
+   `soundmodel` family, five members), and it is on the Director's
+   default allowlist.
+2. **The Director's selection path - TAUGHT; the runner still shops the
+   metadata.** The Director skill's Phase 18 makes `plan` the source of
+   SFX decisions and `check_placement` the proof of every placement
+   (`prompts/sfx_design.md`). The one-click `AUTO EDIT` spine still
+   ranks its accents from shelf metadata and places on the manifest's
+   `syncAt` - the measured `peakAt` path is the Director's, and wiring
+   the runner to it is the remaining bench.
+3. **The download UI - CLOSED.** Settings > Models carries the reader's
+   set (CLAP's towers, YAMNet) beside the three generator rows, fetched
+   through the same verified path as every other model.
+4. **The music join - TAUGHT.** The bed is shopped on its audio now:
+   `bgm_fetch` the top candidates, `describe` each (the CLAP read
+   against the bed's own words), `analyze_music_structure` for the
+   sections and cutSafePoints, and choose on the sound, not the title.
+   The shelf's bytes arrive when fetched - by design - so the read is
+   per candidate and an indexed folder (`index {dir: <the project's
+   bgm folder>}`) is what a run that shops hard builds; a pre-built
+   embedding of all 1,191 tracks would require fetching all 1,191
+   tracks, which is a download decision, not a code gap.
 
 Pinned sources for that work, all verified today:
 

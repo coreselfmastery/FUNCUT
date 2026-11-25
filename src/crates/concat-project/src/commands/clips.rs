@@ -47,6 +47,41 @@ pub(super) fn apply(
             })
         }
 
+        Command::SetClipSource {
+            clip_id,
+            source_start,
+        } => {
+            let media_id = project
+                .active()
+                .clip(&clip_id)
+                .map(|clip| clip.media_id.clone());
+            let duration = project
+                .active()
+                .clip(&clip_id)
+                .map(|clip| clip.duration)
+                .unwrap_or(0.0);
+            let source_length = media_id
+                .as_deref()
+                .and_then(|id| project.media_by_id(id))
+                .and_then(|media| media.duration)
+                .unwrap_or(0.0);
+            // The in-point may not push the clip past the media's end:
+            // the last frame on the timeline is the last frame the file has.
+            let limit = (source_length - duration).max(0.0);
+            let timeline = project.active_mut();
+            let Some(clip) = timeline.clip_mut(&clip_id) else {
+                return Ok(Outcome::default());
+            };
+            let applied = assign(
+                &mut clip.source_start,
+                within_timeline(source_start).min(limit),
+            );
+            Ok(Outcome {
+                created_id: None,
+                applied,
+            })
+        }
+
         Command::AddClipAtFirstFree {
             media_id,
             start,

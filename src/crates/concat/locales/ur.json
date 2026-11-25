@@ -701,6 +701,7 @@
   "settings.modelReady": "ماڈل تیار ہے",
   "settings.models": "ماڈلز",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "ماڈل اس وقت لائے جاتے ہیں جب کسی فیچر کو پہلی بار ضرورت ہو۔ ڈاؤن لوڈ سب سے پہلے یہاں دیکھتا ہے؛ باقی تمام ذرائع اس کے بعد بھی آزمائے جاتے ہیں۔",
   "settings.newToken": "نیا ٹوکن",
   "settings.noReleasesYet": "0.2.5 یا اس کے بعد کا کوئی ورژن ابھی جاری نہیں ہوا۔",

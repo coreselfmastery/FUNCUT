@@ -48,6 +48,33 @@ a top result feels off, check it with a `preview_frame` after import),
 does the aesthetic score clear the shelf's average, is the motion right
 for the pacing (static drone shots in a hype piece)?
 
+## The measured pass: score what the picture is
+
+Words chose the candidates; the picture ranks them. Run `sense_visual
+{action: "measure_clips", paths: [...]}` on the gathered candidates and
+choose from the measured sheet, not the search page:
+
+- **`visualScore`** ranks the sheet — sharpness, noise, bars, measured
+  motion, composition, and a taste prior when the doors are installed.
+- **The veto sinks a clip outright**: soft, noisy, letterboxed, flat,
+  dark or blown footage (`quality.verdict`); a clip that cuts inside
+  itself (`scene.cuts` ≥ 2 — a montage wearing one id); directional
+  blur (`blur.verdict` — a pan's smear is not motion, not an entrance).
+- **The in-point is measured**: `motion.peakAt` − 0.25 s, before the movement.
+- **Camera `travel`** (left, right, up, down, in, out) is the seam's
+  compatibility check — a pan left meeting a pan right on the cut is a
+  reversal; it rides the continuity manifest as `dominantDirection`.
+- **`shotScale`** is the ladder's evidence: wide, medium or close,
+  from the subject's measured area.
+- **Saliency places the caption** — the band moves away from the focus box.
+
+With the model shelf installed, the sheet also spends its enrichment
+doors, at most three per clip by default — shot type
+(`film-shot-classifier`), near/far depth (`depth-anything-v2-small`),
+action class (`movinet-a0`), a taste prior (`dover-mobile`); `enrich:
+false` keeps it classical. A candidate is chosen on measured picture,
+not on the stock page's description.
+
 ## Aspect and fit (this is not optional)
 
 **OpenVid has no vertical footage.** Never search `orientation:

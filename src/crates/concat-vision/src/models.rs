@@ -48,6 +48,19 @@ pub enum ModelId {
     Yamnet,
     /// YAMNet's class names, in the order the model scores them.
     YamnetNames,
+    /// TransNetV2: a shot boundary, per frame, from the motion arc rather
+    /// than from one frame's histogram. What tells a cut where a shot
+    /// actually ends.
+    TransNetV2,
+    /// Depth Anything V2 Small: a relative depth per pixel. The parallax
+    /// layer, the depth-aware caption band and the real seam a cut wants.
+    DepthAnything,
+    /// DINOv2 Small: a 384-d visual embedding per frame - "looks like this
+    /// shot", which CLIP's text space is weaker at.
+    Dinov2,
+    /// CLIP ViT-B/32's vision tower: a frame into the space CLIP's text
+    /// side already ranks stock in.
+    ClipVision,
     /// TinyAudio-MF's text encoder: a prompt into the 77-token hidden
     /// states the flow step is conditioned on.
     SfxSmallText,
@@ -114,7 +127,7 @@ pub struct ModelSpec {
 }
 
 /// Every downloadable model.
-pub const MODELS: [ModelSpec; 29] = [
+pub const MODELS: [ModelSpec; 33] = [
     ModelSpec {
         id: ModelId::Person,
         file: "rvm-mobilenetv3.onnx",
@@ -200,6 +213,40 @@ pub const MODELS: [ModelSpec; 29] = [
         bytes: 14_096,
         sha256: "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
         licence: "Apache-2.0",
+    },
+    // The picture reader's four. `sense_visual` reads them from this same
+    // folder, so a set fetched here is the set it measures with.
+    ModelSpec {
+        id: ModelId::TransNetV2,
+        file: "transnetv2.onnx",
+        upstream: "https://huggingface.co/elya5/transnetv2/resolve/main/transnetv2.onnx",
+        bytes: 31_250_929,
+        sha256: "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c",
+        licence: "MIT",
+    },
+    ModelSpec {
+        id: ModelId::DepthAnything,
+        file: "depth-anything-v2-small.onnx",
+        upstream: "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model_quantized.onnx",
+        bytes: 27_258_801,
+        sha256: "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d",
+        licence: "Apache-2.0",
+    },
+    ModelSpec {
+        id: ModelId::Dinov2,
+        file: "dinov2-small.onnx",
+        upstream: "https://huggingface.co/onnx-community/dinov2-small/resolve/main/onnx/model_quantized.onnx",
+        bytes: 24_446_700,
+        sha256: "c179f8f7f592449c4c1bca4cd124a7538021428c5ffb89afde9503935b197efb",
+        licence: "Apache-2.0",
+    },
+    ModelSpec {
+        id: ModelId::ClipVision,
+        file: "clip-vit-b32-visual.onnx",
+        upstream: "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx",
+        bytes: 89_117_001,
+        sha256: "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299",
+        licence: "MIT",
     },
     // ── Sound generation ─────────────────────────────────────────────
     // Three models, each a set of files: a text encoder, a generator and
@@ -400,6 +447,10 @@ impl ModelId {
             | ModelId::ClapTokenizer
             | ModelId::Yamnet
             | ModelId::YamnetNames => "sound",
+            ModelId::TransNetV2
+            | ModelId::DepthAnything
+            | ModelId::Dinov2
+            | ModelId::ClipVision => "picture",
             // The generators are their own kind: they are not part of the
             // reader's set, and the settings sheet gives each of the three
             // its own row and its own download.
@@ -438,6 +489,10 @@ impl ModelId {
             ModelId::ClapTokenizer => "clap-htsat-tokenizer",
             ModelId::Yamnet => "yamnet",
             ModelId::YamnetNames => "yamnet-classes",
+            ModelId::TransNetV2 => "transnetv2",
+            ModelId::DepthAnything => "depth-anything-v2-small",
+            ModelId::Dinov2 => "dinov2-small",
+            ModelId::ClipVision => "clip-vit-b32",
             ModelId::SfxSmallText => "sfx-small-text",
             ModelId::SfxSmallFlow => "sfx-small-flow",
             ModelId::SfxSmallVae => "sfx-small-vae",

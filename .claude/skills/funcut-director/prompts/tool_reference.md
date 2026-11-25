@@ -255,7 +255,7 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   the reading (`sense_discourse {action: "score_script_quality", script}` —
   the ten discourse readings, the six voice-quality readings, the six
   prosody readings, the eight audio-repair actions, the five caption
-  readings and the picture's sixteen — motion, camera travel and its
+  readings and the picture's thirty-six — motion, camera travel and its
   direction, shot scale, audio-visual sync, scene cuts, the technical
   read, palette, saliency, the batch `measure_clips` read, the `bench`,
   the `models` listing and the five model doors; `selftest: true` proves

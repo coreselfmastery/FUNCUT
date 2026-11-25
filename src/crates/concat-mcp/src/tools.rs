@@ -1179,7 +1179,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "sense_visual",
             title: "What the shot does, measured",
-            description: "What a shot does, behind one `action`: motion and its peak, camera travel, shot scale, sync, scene cuts, quality, palette, saliency, the stock batch read and bench, the ONNX doors.",
+            description: "What a shot does, behind one `action`: motion, camera, shot scale, sync, scene cuts, quality, palette, saliency, composition, blur, tracks, the stock read, and the 30-model shelf.",
             read_only: true,
             destructive: false,
             idempotent: true,

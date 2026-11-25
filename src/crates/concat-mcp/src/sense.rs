@@ -1900,7 +1900,7 @@ struct SenseFamilyTool {
     base: u64,
 }
 
-/// The fifty-nine family readings behind eight family tools: discourse
+/// The seventy-nine family readings behind eight family tools: discourse
 /// (the script as language), voiceq (the take's health), prosody (the
 /// delivery), audiorepair (the clean and the music), sound (what a sound
 /// file is), soundmodel (what it means), captions (the words made to
@@ -2461,6 +2461,230 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
             "maxTokens",
         ],
     },
+    // The readings the full shelf adds: the classical pair that needs no
+    // file (composition, blur), the box linker, the downloader, and one
+    // row per ONNX door - each forwards the model fields its door reads,
+    // so a caller never has a field the schema refuses.
+    SenseFamilyTool {
+        tool: "composition",
+        cmd: "visual",
+        base: 120,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "motion_blur",
+        cmd: "visual",
+        base: 120,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "tracks",
+        cmd: "visual",
+        base: 90,
+        fields: &["boxes", "iou"],
+    },
+    SenseFamilyTool {
+        tool: "download",
+        cmd: "visual",
+        base: 1200,
+        fields: &["modelId", "modelDir", "url", "sha256"],
+    },
+    SenseFamilyTool {
+        tool: "shot_boundaries",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "model",
+            "modelId",
+            "modelDir",
+            "size",
+            "time",
+            "threshold",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "film_shot_type",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "labels", "topK",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "video_embedding",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "model",
+            "modelId",
+            "modelDir",
+            "size",
+            "time",
+            "dimensions",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "scene_graph",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "prompt",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "semantic_segments",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "labels", "topK",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "detect_objects",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "model",
+            "modelId",
+            "modelDir",
+            "size",
+            "labels",
+            "topK",
+            "threshold",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "optical_flow",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "time",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "aesthetic",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "time",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "video_saliency",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "time",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "blur_mask",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "model",
+            "modelId",
+            "modelDir",
+            "size",
+            "threshold",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "pose",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "hands",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "gaze",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "face_emotion",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "labels", "topK",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "lip_sync",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "time",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "action_quality",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size", "time",
+        ],
+    },
 ];
 
 /// The eight family doors and the members each one serves: the catalogue
@@ -2557,6 +2781,26 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
             "subject_mask",
             "visual_embedding",
             "describe_scene",
+            "composition",
+            "motion_blur",
+            "tracks",
+            "download",
+            "shot_boundaries",
+            "film_shot_type",
+            "video_embedding",
+            "scene_graph",
+            "semantic_segments",
+            "detect_objects",
+            "optical_flow",
+            "aesthetic",
+            "video_saliency",
+            "blur_mask",
+            "pose",
+            "hands",
+            "gaze",
+            "face_emotion",
+            "lip_sync",
+            "action_quality",
         ],
     ),
 ];
@@ -2674,7 +2918,7 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         );
         props.insert(
             "boxes".to_owned(),
-            json!({ "type": "array", "items": { "type": "object" }, "maxItems": 24, "description": "shot_scale: one subject box per frame." }),
+            json!({ "type": "array", "items": { "type": "object" }, "maxItems": 24, "description": "shot_scale: one subject box per frame. tracks: the boxes to link into identities." }),
         );
         props.insert(
             "audioOnsets".to_owned(),
@@ -2730,7 +2974,28 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         );
         props.insert(
             "modelId".to_owned(),
-            json!({ "type": "string", "enum": ["movenet-a0", "depth-anything-v2-small", "fastsam-s", "dinov2-small", "clip-vit-b32"], "description": "Which model door to look for." }),
+            json!({ "type": "string", "enum": [
+                "movenet-a0", "transnetv2", "smolvlm2-500m", "vjepa2-vitl",
+                "film-shot-classifier", "scenegraph-vlm", "depth-anything-v2-small",
+                "midas-v21-small", "fastsam-s", "segformer-b0", "bytetrack-yolo",
+                "dinov2-small", "clip-vit-b32", "siglip2-base", "raft-small",
+                "dover-mobile", "laion-aesthetic", "vinet-s", "smblurdetect",
+                "movenet-pose", "mediapipe-hands", "eyegaze", "mobilegaze",
+                "microexpnet", "syncnet", "aqa-transformer", "florence-2-base",
+                "uform-gen2", "grounding-dino-tiny", "smolvlm2-256m",
+            ], "description": "Which model door to run or look for: `models` lists them all with their size, licence and consumer." }),
+        );
+        props.insert(
+            "url".to_owned(),
+            string("download: the model file's own address; the module never invents one."),
+        );
+        props.insert(
+            "sha256".to_owned(),
+            string("download: the digest the file must match; a mismatch keeps nothing."),
+        );
+        props.insert(
+            "iou".to_owned(),
+            json!({ "type": "number", "minimum": 0, "maximum": 1, "default": 0.25, "description": "tracks: the overlap floor that keeps an identity across frames." }),
         );
         props.insert(
             "modelDir".to_owned(),
@@ -3126,7 +3391,7 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
     })
 }
 
-/// The door the fifty-nine family members come through when named
+/// The door the seventy-nine family members come through when named
 /// directly (the internal dispatch `sense_family_action` lands on): the
 /// name selects the row, the row names the sidecar command and the
 /// fields that travel, and the budget scales with the lines the way
@@ -3654,7 +3919,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 59, "fifty-nine readings behind eight doors");
+        assert_eq!(members, 79, "seventy-nine readings behind eight doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(

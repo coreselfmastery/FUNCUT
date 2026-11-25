@@ -576,9 +576,11 @@ mod tests {
         // picture's door (`sense_visual`) then lands on the same table -
         // sixteen readings' inputs, the frame sources, the subject boxes,
         // the bench's rows, the model doors - and the merged tree
-        // measures 271,857 - the three doors at their terse form, and the
-        // fields are the growth. A reading the director cannot call is a
-        // reading the edit paid for and never read.
+        // measures 273,025 - the three doors at their terse form, the
+        // shelf's `modelId` enum (thirty ids, the whole shelf nameable in
+        // one call) and the three fields `download` and `tracks` need. A
+        // reading the director cannot call is a reading the edit paid for
+        // and never read.
         assert!(total < 274_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");

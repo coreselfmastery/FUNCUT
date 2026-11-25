@@ -440,7 +440,9 @@ it reads (`transcript` / `lines` / `script`, the acoustic ones also
 runs the reading's own proof, and every family shares the voiceover
 tools' honest degradation contract. The thirty-five readings behind the
 five voice doors, the sound shelf's eight behind the next two, then the
-picture's sixteen behind the eighth:
+picture's thirty-six behind the eighth (the nine classical readings, then
+the shelf's twenty-seven door actions, each naming the file, licence and
+consumer it carries - [VISUAL-MODELS.md](VISUAL-MODELS.md)):
 
 *The script as language* — `sense_discourse` (`discourse`):
 

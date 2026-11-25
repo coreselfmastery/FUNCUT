@@ -32,6 +32,46 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The visual model shelf (`visual_sense.py`, 30 doors)
+
+- **Every model on the shelf, and the one runner that drives them.** The
+  picture reader grew from five hard-wired doors to a **shelf of thirty
+  ONNX models** - TransNetV2, MoViNet-A0, V-JEPA-2, a film-shot classifier,
+  a scene graph, Depth Anything V2 and MiDaS, FastSAM, SegFormer-B0,
+  ByteTrack, DINOv2, CLIP, SigLIP2, RAFT, DOVER and the LAION aesthetic
+  predictor, ViNet-S, SMBlurDetect, MoveNet pose, MediaPipe hands, EyeGaze
+  and MobileGaze, MicroExpNet, SyncNet, an AQA head, Florence-2, UForm and
+  both SmolVLM2 sizes - behind **one generic runner** and ten decoders
+  (`logits`, `prob`, `embedding`, `depth`, `masks`, `boxes`, `keypoints`,
+  `segments`, `scalar`, `flow`). A door is a registry row: file, size,
+  licence, tier, input size, layout, decoder and consumer. Point `modelId`
+  at another checkpoint of the same class and nothing else changes, which
+  is what makes a bench a one-line swap. [VISUAL-MODELS.md](VISUAL-MODELS.md)
+  is the table, generated from the registry so it cannot drift.
+- **Three readings the shelf needed anyway, and they need no model.**
+  `composition` scores where the eye lands (distance from the nearest third
+  intersection, left-right balance, headroom); `motion_blur` measures
+  whether each frame's transitions are steps or ramps, per axis - a smear
+  turns a step into a ramp along the axis it ran, so a pan's smear reads as
+  blur without a reference frame; `tracks` links per-frame boxes into
+  identities by overlap and velocity, which is what tells a cut whether the
+  subject it framed is the subject the next shot inherits.
+- **What the AUTO EDIT button spends now.** `measure_clips` adds
+  composition to the sheet's score and a blur veto beside the technical one,
+  so a clip whose "motion" is a pan's smear sinks behind a clean one, and a
+  shot composed on a third beats a centred one. The rows carry
+  `composition` and `blur`, and `CONSUMERS` names what spends each.
+- **Downloading is an operator's act, not the module's.** `download` takes
+  the URL the operator names, streams it, verifies the `sha256` it was
+  given, and keeps nothing on a mismatch. The registry's `upstream` is the
+  model's own page, never a guessed file URL.
+- **Twenty new family actions, and the guards to match.** The visual family
+  is 36 readings behind one door; the family table, the schema's `action`
+  enum, the `modelId` enum and the count guard (`members == 79`) all moved
+  together, and the visual selftest grew from 21 checks to 29 - the shelf's
+  rows, every decoder on a synthetic array, the classical pair, the box
+  linker and both vetoes.
+
 ## The picture reader (`visual_sense.py`)
 
 - **The edit can see what a shot does, not just what it looks like in

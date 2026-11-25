@@ -548,7 +548,9 @@ wherever `FUNCUT_VISUAL_MODELS` / `modelDir` says, and
 `sense_visual {action:"models"}` is the check: each row carries its file,
 its licence, its size, its door, and whether the file is present. A door
 whose file is absent answers `present: false` and measures nothing -
-the sixteen stdlib readings beside them need no model at all.
+the thirty-six readings beside them need no model at all: the classical ones
+are stdlib, and the model shelf behind them ([VISUAL-MODELS.md](VISUAL-MODELS.md),
+thirty ONNX doors) refuses by name when a file is absent.
 
 ## Where the code is
 

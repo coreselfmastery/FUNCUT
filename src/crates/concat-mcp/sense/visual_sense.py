@@ -113,6 +113,9 @@ CONSUMERS = {
     "palette": "recorded, not spent: the sheet's own colour temperature is "
                "the continuity seam today; a palette seam is a later bench",
     "saliency": "the caption band: words move away from where the eye is",
+    "composition": "the stock ranking's taste term and the caption band: a "
+                   "subject on a third holds a caption without a fight",
+    "blur": "the stock veto: motion that is a pan's smear is not an entrance",
     "scene": "the stock veto: a clip that cuts inside itself is a montage, "
              "not a take",
     "visualScore": "the stock ranking: the sheet's combined score breaks "
@@ -1497,14 +1500,19 @@ def visual_sync(spec):
     }
 
 
-def _visual_score(motion, quality, intent, scene=None):
+def _visual_score(motion, quality, intent, scene=None, comp=None, blur=None):
     sharp = min(1.0, quality.get("sharpness", 0.0) / 20.0)
     noise = max(0.0, 1.0 - min(1.0, quality.get("noise", 0.0) / 15.0))
     bars = max(0.0, 1.0 - quality.get("letterbox", 0.0))
     peak = min(1.0, motion.get("peak", 0.0) / 0.15)
-    score = 0.30 * sharp + 0.20 * noise + 0.15 * bars + 0.35 * peak
+    taste = min(1.0, float((comp or {}).get("score", 0.5)))
+    score = 0.26 * sharp + 0.17 * noise + 0.13 * bars + 0.32 * peak + 0.12 * taste
     if quality.get("verdict") != "pass":
         score *= 0.45
+    # A pan's smear reads as motion and is not one: the movement is the
+    # camera losing detail, so the clip sinks the way a soft one does.
+    if (blur or {}).get("verdict") == "directional blur":
+        score *= 0.7
     if intent == "cut" and motion.get("peakAt") is not None:
         score += 0.10 * max(0.0, 1.0 - min(1.0, motion["peakAt"] / 1.0))
     # A montage is not a shot: a candidate that cuts inside itself fights a
@@ -1515,7 +1523,7 @@ def _visual_score(motion, quality, intent, scene=None):
     return _r(_clamp(score))
 
 
-def _notes(motion, quality, camera, intent, scene=None):
+def _notes(motion, quality, camera, intent, scene=None, comp=None, blur=None):
     notes = []
     if quality.get("verdict") == "soft":
         notes.append("soft: the measured detail is too low to hold a full frame")
@@ -1531,6 +1539,11 @@ def _notes(motion, quality, camera, intent, scene=None):
         notes.append(f"camera already {camera.get('kind')}: no extra push needed")
     if scene and scene.get("cuts", 0) >= 2:
         notes.append(f"montage: {scene['cuts']} shot changes inside the clip, not one take")
+    if (blur or {}).get("verdict") == "directional blur":
+        notes.append("blurred: the motion is a pan's smear, not an entrance")
+    if comp and comp.get("placement") == "centre":
+        notes.append("centred: the subject sits on the axis, so a caption "
+                     "has nowhere to go that misses it")
     return notes
 
 
@@ -1560,6 +1573,15 @@ def measure_clips(spec):
             sal = _saliency(_grey(resized, w2, h2), w2, h2)
             scale = _shot_scale(frames, sub, width)
             scene = _scene_profile(frames, 24)
+            comp_rows = _composition_rows(frames, width)
+            blur_rows = _blur_rows(frames, width)
+            comp = max(comp_rows, key=lambda row: row["score"]) if comp_rows else None
+            blur = {
+                "verdict": "directional blur"
+                if any(row["blurred"] for row in blur_rows) else "clean",
+                "blurredShare": _r(sum(1 for row in blur_rows if row["blurred"])
+                                   / max(1, len(blur_rows))),
+            }
             scene_row = {
                 "cuts": len(scene["cuts"]),
                 "dissolves": len(scene["dissolves"]),
@@ -1572,7 +1594,7 @@ def measure_clips(spec):
                 "onsets": motion["onsets"],
                 "still": motion["still"],
             }
-            score = _visual_score(motion_row, quality, intent, scene_row)
+            score = _visual_score(motion_row, quality, intent, scene_row, comp, blur)
             rows.append({
                 "path": path,
                 "ok": True,
@@ -1585,8 +1607,11 @@ def measure_clips(spec):
                 "saliency": {"peak": sal["peak"], "focus": sal["focus"],
                              "blob": sal["blob"]},
                 "scene": scene_row,
+                "composition": comp,
+                "blur": blur,
                 "visualScore": score,
-                "notes": _notes(motion_row, quality, camera, intent, scene_row),
+                "notes": _notes(motion_row, quality, camera, intent, scene_row,
+                                comp, blur),
                 "perFrame": per_frame,
             })
         except Exception as exc:  # one bad file never sinks the batch
@@ -1608,7 +1633,9 @@ def measure_clips(spec):
                             if row["shotScale"]["scale"] == "close_up"),
         },
         "note": "One compact read per candidate. The score is the sheet's ranking: "
-                "sharpness, noise, bars and measured motion, with a technical veto.",
+                "sharpness, noise, bars, measured motion and composition, with "
+                "two vetoes - a technical one (soft, noisy, letterboxed) and a "
+                "blur one (a pan's smear is not an entrance).",
     }
 
 
@@ -1671,51 +1698,1037 @@ def bench(spec):
 
 
 VISUAL_MODELS = [
+    # Tier 1 - action, scene and temporal understanding
     {
         "id": "movenet-a0",
+        "tier": 1,
         "file": "movenet-a0.onnx",
         "bytes": 15_000_000,
         "licence": "Apache-2.0",
         "tool": "action_class",
         "signal": "temporal action class per window (600 Kinetics actions)",
         "upstream": "https://www.kaggle.com/models/google/movenet",
+        "door": {"decoder": "logits", "time": 8, "size": 172},
     },
     {
+        "id": "transnetv2",
+        "tier": 1,
+        "file": "transnetv2.onnx",
+        "bytes": 30_000_000,
+        "licence": "MIT",
+        "tool": "shot_boundaries",
+        "signal": "shot-boundary probability per frame",
+        "upstream": "https://github.com/soCzech/TransNetV2",
+        "door": {"decoder": "prob", "size": 48, "time": 16,
+                 "note": "the cut stage's own read: a boundary is where a cut "
+                         "can land, a pause is only where it must"},
+    },
+    {
+        "id": "smolvlm2-500m",
+        "tier": 1,
+        "file": "smolvlm2-500m.onnx",
+        "bytes": 546_000_000,
+        "licence": "Apache-2.0",
+        "tool": "describe_scene",
+        "signal": "bounded scene description: environment, objects, activity",
+        "upstream": "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        "door": {"decoder": "logits", "size": 384,
+                 "note": "the repo's own local_vlm; schema-constrained, never "
+                         "free creative judgment"},
+    },
+    {
+        "id": "vjepa2-vitl",
+        "tier": 1,
+        "file": "vjepa2-vitl.onnx",
+        "bytes": 1_130_000_000,
+        "licence": "MIT",
+        "tool": "video_embedding",
+        "signal": "self-supervised video embedding + action head",
+        "upstream": "https://github.com/facebookresearch/jepa",
+        "door": {"decoder": "embedding", "size": 256, "time": 16,
+                 "note": "a stronger temporal encoder than MoViNet and 75x the "
+                         "bytes; the bench decides"},
+    },
+    {
+        "id": "film-shot-classifier",
+        "tier": 1,
+        "file": "film-shot-classifier.onnx",
+        "bytes": 90_000_000,
+        "licence": "Apache-2.0",
+        "tool": "film_shot_type",
+        "signal": "shot type: wide, medium, close, extreme close, insert, two-shot",
+        "upstream": "https://huggingface.co/models?search=shot%20type%20dinov2",
+        "door": {"decoder": "logits", "size": 224,
+                 "labels": ["wide", "medium", "close_up", "extreme_close_up",
+                            "insert", "two_shot"]},
+    },
+    {
+        "id": "scenegraph-vlm",
+        "tier": 1,
+        "file": "scenegraph-vlm.onnx",
+        "bytes": 800_000_000,
+        "licence": "CC-BY-4.0",
+        "tool": "scene_graph",
+        "signal": "subject-predicate-object graph per scene",
+        "upstream": "https://arxiv.org/abs/2305.14623",
+        "door": {"decoder": "logits", "size": 384,
+                 "note": "relationships CLIP similarity cannot express; the "
+                         "bounded-schema rule applies"},
+    },
+    # Tier 2 - depth, masks and subject geometry
+    {
         "id": "depth-anything-v2-small",
+        "tier": 2,
         "file": "depth-anything-v2-small.onnx",
-        "bytes": 25_000_000,
+        "bytes": 27_300_000,
         "licence": "Apache-2.0",
         "tool": "depth_map",
         "signal": "per-pixel relative depth",
         "upstream": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small",
+        "door": {"decoder": "depth", "size": 518},
+    },
+    {
+        "id": "midas-v21-small",
+        "tier": 2,
+        "file": "midas-v21-small.onnx",
+        "bytes": 80_000_000,
+        "licence": "MIT",
+        "tool": "depth_map",
+        "signal": "monocular relative depth (the alternative to Depth Anything)",
+        "upstream": "https://huggingface.co/Intel/dpt-hybrid-midas",
+        "door": {"decoder": "depth", "size": 384},
     },
     {
         "id": "fastsam-s",
+        "tier": 2,
         "file": "fastsam-s.onnx",
         "bytes": 40_000_000,
         "licence": "Apache-2.0",
         "tool": "subject_mask",
         "signal": "pixel-accurate object masks",
         "upstream": "https://huggingface.co/Ultralytics/FastSAM",
+        "door": {"decoder": "masks", "size": 1024},
     },
     {
+        "id": "segformer-b0",
+        "tier": 2,
+        "file": "segformer-b0.onnx",
+        "bytes": 15_000_000,
+        "licence": "Apache-2.0",
+        "tool": "semantic_segments",
+        "signal": "semantic segmentation (150 ADE20K classes)",
+        "upstream": "https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512",
+        "door": {"decoder": "segments", "size": 512},
+    },
+    {
+        "id": "bytetrack-yolo",
+        "tier": 2,
+        "file": "bytetrack-yolo.onnx",
+        "bytes": 15_000_000,
+        "licence": "MIT",
+        "tool": "detect_objects",
+        "signal": "persistent object tracks across frames",
+        "upstream": "https://github.com/ifzhang/ByteTrack",
+        "door": {"decoder": "boxes", "size": 640,
+                 "note": "the detector's boxes feed `tracks`, which links them "
+                         "into identities"},
+    },
+    # Tier 3 - semantic and visual similarity
+    {
         "id": "dinov2-small",
+        "tier": 3,
         "file": "dinov2-small.onnx",
-        "bytes": 90_000_000,
+        "bytes": 84_400_000,
         "licence": "Apache-2.0",
         "tool": "visual_embedding",
-        "signal": "384-d visual embedding",
+        "signal": "384-d visual embedding per frame",
         "upstream": "https://huggingface.co/facebook/dinov2-small",
+        "door": {"decoder": "embedding", "size": 224},
     },
     {
         "id": "clip-vit-b32",
+        "tier": 3,
         "file": "clip-vit-b32-visual.onnx",
         "bytes": 150_000_000,
         "licence": "MIT",
         "tool": "visual_embedding",
         "signal": "image-text similarity embedding",
         "upstream": "https://huggingface.co/openai/clip-vit-base-patch32",
+        "door": {"decoder": "embedding", "size": 224},
     },
+    {
+        "id": "siglip2-base",
+        "tier": 3,
+        "file": "siglip2-base.onnx",
+        "bytes": 400_000_000,
+        "licence": "Apache-2.0",
+        "tool": "visual_embedding",
+        "signal": "vision-language embedding (the CLIP successor to bench)",
+        "upstream": "https://huggingface.co/google/siglip2-base-patch16-224",
+        "door": {"decoder": "embedding", "size": 224},
+    },
+    {
+        "id": "raft-small",
+        "tier": 3,
+        "file": "raft-small.onnx",
+        "bytes": 3_800_000,
+        "licence": "BSD-3-Clause",
+        "tool": "optical_flow",
+        "signal": "learned optical flow (better on complex scenes)",
+        "upstream": "https://github.com/princeton-vl/RAFT",
+        "door": {"decoder": "flow", "size": 256, "time": 2},
+    },
+    # Tier 4 - aesthetic, quality and attention
+    {
+        "id": "dover-mobile",
+        "tier": 4,
+        "file": "dover-mobile.onnx",
+        "bytes": 100_000_000,
+        "licence": "Apache-2.0",
+        "tool": "aesthetic",
+        "signal": "aesthetic + technical quality score per video",
+        "upstream": "https://github.com/QualityAssessment/DOVER",
+        "door": {"decoder": "scalar", "size": 224, "time": 8},
+    },
+    {
+        "id": "laion-aesthetic",
+        "tier": 4,
+        "file": "laion-aesthetic.onnx",
+        "bytes": 3_700_000,
+        "licence": "MIT",
+        "tool": "aesthetic",
+        "signal": "aesthetic score 0-10 per frame",
+        "upstream": "https://github.com/christophschuhmann/improved-aesthetic-predictor",
+        "door": {"decoder": "scalar", "size": 224},
+    },
+    {
+        "id": "vinet-s",
+        "tier": 4,
+        "file": "vinet-s.onnx",
+        "bytes": 36_000_000,
+        "licence": "Apache-2.0",
+        "tool": "video_saliency",
+        "signal": "video saliency map",
+        "upstream": "https://github.com/remega/UNISAL",
+        "door": {"decoder": "depth", "size": 224, "time": 8,
+                 "note": "the map's peak is where the eye already is, so a cut "
+                         "there lands on attention"},
+    },
+    {
+        "id": "smblurdetect",
+        "tier": 4,
+        "file": "smblurdetect.onnx",
+        "bytes": 8_000_000,
+        "licence": "Apache-2.0",
+        "tool": "blur_mask",
+        "signal": "motion blur probability / mask",
+        "upstream": "https://github.com/limacv/DeblurGANv2",
+        "door": {"decoder": "masks", "size": 256},
+    },
+    # Tier 5 - human-specific signals
+    {
+        "id": "movenet-pose",
+        "tier": 5,
+        "file": "movenet-pose.onnx",
+        "bytes": 5_000_000,
+        "licence": "Apache-2.0",
+        "tool": "pose",
+        "signal": "17 body keypoints per person",
+        "upstream": "https://www.kaggle.com/models/google/movenet",
+        "door": {"decoder": "keypoints", "size": 192},
+    },
+    {
+        "id": "mediapipe-hands",
+        "tier": 5,
+        "file": "mediapipe-hands.onnx",
+        "bytes": 7_000_000,
+        "licence": "Apache-2.0",
+        "tool": "hands",
+        "signal": "21 hand landmarks + gesture class",
+        "upstream": "https://developers.google.com/mediapipe/solutions/vision/hand_landmarker",
+        "door": {"decoder": "keypoints", "size": 224},
+    },
+    {
+        "id": "eyegaze",
+        "tier": 5,
+        "file": "eyegaze.onnx",
+        "bytes": 9_600_000,
+        "licence": "research-only (Gaze360)",
+        "tool": "gaze",
+        "signal": "gaze pitch/yaw per face",
+        "upstream": "https://github.com/ck-ll/EyeGaze",
+        "door": {"decoder": "keypoints", "size": 224,
+                 "note": "licence blocker: research-only, never a commercial path"},
+    },
+    {
+        "id": "mobilegaze",
+        "tier": 5,
+        "file": "mobilegaze.onnx",
+        "bytes": 5_000_000,
+        "licence": "research-only (Gaze360)",
+        "tool": "gaze",
+        "signal": "gaze pitch/yaw per face (mobile variant)",
+        "upstream": "https://github.com/yakhyo/gaze-estimation",
+        "door": {"decoder": "keypoints", "size": 448},
+    },
+    {
+        "id": "microexpnet",
+        "tier": 5,
+        "file": "microexpnet.onnx",
+        "bytes": 900_000,
+        "licence": "MIT",
+        "tool": "face_emotion",
+        "signal": "emotion class per face",
+        "upstream": "https://github.com/citiususc/MicroExpNet",
+        "door": {"decoder": "logits", "size": 84,
+                 "labels": ["neutral", "happiness", "surprise", "sadness",
+                            "anger", "disgust", "fear", "contempt"]},
+    },
+    # Tier 6 - specialised and deferred
+    {
+        "id": "syncnet",
+        "tier": 6,
+        "file": "syncnet.onnx",
+        "bytes": 20_000_000,
+        "licence": "MIT",
+        "tool": "lip_sync",
+        "signal": "lip-sync score",
+        "upstream": "https://github.com/joonson/syncnet_python",
+        "door": {"decoder": "scalar", "size": 224, "time": 5},
+    },
+    {
+        "id": "aqa-transformer",
+        "tier": 6,
+        "file": "aqa-transformer.onnx",
+        "bytes": 60_000_000,
+        "licence": "research",
+        "tool": "action_quality",
+        "signal": "how well an action was performed",
+        "upstream": "https://github.com/Finspire13/AQA-ANet",
+        "door": {"decoder": "scalar", "size": 224, "time": 16},
+    },
+    {
+        "id": "florence-2-base",
+        "tier": 6,
+        "file": "florence-2-base.onnx",
+        "bytes": 230_000_000,
+        "licence": "MIT",
+        "tool": "describe_scene",
+        "signal": "lightweight captioning / VQA",
+        "upstream": "https://huggingface.co/microsoft/Florence-2-base",
+        "door": {"decoder": "logits", "size": 384},
+    },
+    {
+        "id": "uform-gen2",
+        "tier": 6,
+        "file": "uform-gen2.onnx",
+        "bytes": 400_000_000,
+        "licence": "Apache-2.0",
+        "tool": "describe_scene",
+        "signal": "lightweight captioning / VQA (UForm)",
+        "upstream": "https://huggingface.co/unum-cloud/uform-gen2-qwen-500m",
+        "door": {"decoder": "logits", "size": 384},
+    },
+    {
+        "id": "grounding-dino-tiny",
+        "tier": 6,
+        "file": "grounding-dino-tiny.onnx",
+        "bytes": 628_000_000,
+        "licence": "Apache-2.0",
+        "tool": "detect_objects",
+        "signal": "open-vocabulary object detection by text query",
+        "upstream": "https://huggingface.co/IDEA-Research/grounding-dino-tiny",
+        "door": {"decoder": "boxes", "size": 800,
+                 "note": "pass `labels` (the phrase list) with the call"},
+    },
+    {
+        "id": "smolvlm2-256m",
+        "tier": 6,
+        "file": "smolvlm2-256m.onnx",
+        "bytes": 256_000_000,
+        "licence": "Apache-2.0",
+        "tool": "describe_scene",
+        "signal": "the small VLM variant, for 4 GB machines",
+        "upstream": "https://huggingface.co/HuggingFaceTB/SmolVLM2-256M-Video-Instruct",
+        "door": {"decoder": "logits", "size": 384},
+    },
+]
+
+
+def _np():
+    if np is None:
+        raise RuntimeError("numpy is not installed: the ONNX doors need numpy")
+    return np
+
+
+def _squeeze2(raw):
+    """Drop leading/trailing singleton axes until two remain."""
+    a = _np().asarray(raw, dtype=_np().float32)
+    while a.ndim > 2 and a.shape[0] == 1:
+        a = a[0]
+    while a.ndim > 2 and a.shape[-1] == 1:
+        a = a[..., 0]
+    if a.ndim > 2:
+        a = a[0]
+    return a
+
+
+def _norm_map(raw):
+    a = _squeeze2(raw)
+    lo, hi = float(a.min()), float(a.max())
+    if hi - lo < 1e-6:
+        return _np().zeros_like(a), lo, hi
+    return (a - lo) / (hi - lo), lo, hi
+
+
+def _decode_depth(raw):
+    """A relative depth map: which half of the frame is nearer, and how much."""
+    norm, lo, hi = _norm_map(raw)
+    h, w = norm.shape[-2], norm.shape[-1]
+    top = norm[: max(1, h // 2)]
+    bottom = norm[max(1, h // 2):]
+    centre = norm[h // 4 : max(h // 4 + 1, 3 * h // 4), w // 4 : max(w // 4 + 1, 3 * w // 4)]
+    near = float((norm > 0.66).mean())
+    return {
+        "shape": [h, w],
+        "nearShare": _r(near),
+        "farShare": _r(float((norm < 0.33).mean())),
+        "topMean": _r(float(top.mean())),
+        "bottomMean": _r(float(bottom.mean())),
+        "centreMean": _r(float(centre.mean())),
+        "range": [_r(lo), _r(hi)],
+        "verdict": "nearer at the bottom" if bottom.mean() > top.mean()
+                   else "nearer at the top",
+    }
+
+
+def _decode_embedding(raw):
+    a = _np().asarray(raw, dtype=_np().float32).reshape(-1)
+    norm = float(_np().linalg.norm(a))
+    if norm < 1e-6:
+        raise RuntimeError("the model returned an all-zero embedding")
+    unit = a / norm
+    return {
+        "dim": int(unit.size),
+        "norm": _r(norm),
+        "vector": [_r(float(value)) for value in unit[: int(unit.size)]],
+    }
+
+
+def _decode_logits(raw, labels=None, top=3):
+    a = _np().asarray(raw, dtype=_np().float32).reshape(-1)
+    exps = _np().exp(a - a.max())
+    probs = exps / (float(exps.sum()) or 1.0)
+    order = list(_np().argsort(probs)[::-1])[:top]
+    names = labels or []
+    return {
+        "classes": int(probs.size),
+        "top": [
+            {
+                "index": int(i),
+                "label": names[int(i)] if int(i) < len(names) else f"class {int(i)}",
+                "p": _r(float(probs[int(i)])),
+            }
+            for i in order
+        ],
+    }
+
+
+def _decode_prob(raw, times=None, floor=0.5):
+    a = _np().asarray(raw, dtype=_np().float32)
+    if a.ndim >= 3 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim == 2 and a.shape[0] < a.shape[1]:
+        a = a[:, 1] if a.shape[1] == 2 else a.max(axis=1)
+    a = a.reshape(-1)
+    if a.max() > 1.0 or a.min() < 0.0:
+        a = 1.0 / (1.0 + _np().exp(-a))
+    peak_index = int(_np().argmax(a))
+    boundaries = [int(i) for i in _np().nonzero(a >= floor)[0]]
+    span = float(times[-1] - times[0]) if times and len(times) > 1 else 1.0
+    per = span / max(1, a.size - 1) if times else None
+    return {
+        "frames": int(a.size),
+        "peak": _r(float(a[peak_index])),
+        "peakAt": _r((times[0] + peak_index * per) if times and per else
+                     peak_index / max(1, a.size - 1)),
+        "boundaries": [int(i) for i in boundaries[:32]],
+        "boundaryCount": len(boundaries),
+    }
+
+
+def _decode_masks(raw, floor=0.5):
+    a = _np().asarray(raw, dtype=_np().float32)
+    if a.ndim >= 3 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim > 2:
+        a = a.max(axis=0) if a.shape[0] < a.shape[-1] else a[..., 0]
+    if a.max() > 1.0 or a.min() < 0.0:
+        a = 1.0 / (1.0 + _np().exp(-a))
+    mask = a >= floor
+    h, w = mask.shape[-2], mask.shape[-1]
+    area = float(mask.mean())
+    ys, xs = _np().nonzero(mask)
+    if not len(ys):
+        return {"shape": [h, w], "areaShare": 0.0, "present": False}
+    return {
+        "shape": [h, w],
+        "areaShare": _r(area),
+        "present": area > 0.002,
+        "centroid": [_r(float(xs.mean()) / max(1, w - 1)),
+                     _r(float(ys.mean()) / max(1, h - 1))],
+        "bbox": [_r(float(xs.min()) / max(1, w - 1)),
+                 _r(float(ys.min()) / max(1, h - 1)),
+                 _r(float(xs.max()) / max(1, w - 1)),
+                 _r(float(ys.max()) / max(1, h - 1))],
+    }
+
+
+def _decode_boxes(raw, labels=None, top=8, floor=0.25):
+    a = _np().asarray(raw, dtype=_np().float32)
+    while a.ndim > 2 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim != 2:
+        raise RuntimeError(f"expected an (N, 4 or 6) box array, got {list(a.shape)}")
+    rows = []
+    for row in a:
+        if a.shape[1] >= 6:
+            x1, y1, x2, y2, conf, cls = row[:6]
+            name = labels[int(cls)] if labels and int(cls) < len(labels) else f"class {int(cls)}"
+        else:
+            x1, y1, x2, y2 = row[:4]
+            conf, name = 1.0, "object"
+        if float(conf) < floor:
+            continue
+        rows.append({
+            "label": name,
+            "confidence": _r(float(conf)),
+            "box": [_r(float(x1)), _r(float(y1)), _r(float(x2)), _r(float(y2))],
+            "area": _r(max(0.0, float(x2) - float(x1)) * max(0.0, float(y2) - float(y1))),
+        })
+    rows.sort(key=lambda row: row["area"], reverse=True)
+    return {"count": len(rows), "objects": rows[:top]}
+
+
+def _decode_keypoints(raw, min_confidence=0.2):
+    a = _np().asarray(raw, dtype=_np().float32)
+    while a.ndim > 2 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim == 1:
+        a = a.reshape(-1, 3) if a.size % 3 == 0 else a.reshape(-1, 2)
+    if a.shape[-1] not in (2, 3):
+        a = a.reshape(-1, a.shape[-1])
+    scale = 1.0 if float(a[:, :2].max()) <= 1.5 else max(float(a[:, 0].max()),
+                                                         float(a[:, 1].max()), 1.0)
+    conf = a[:, 2] if a.shape[-1] == 3 else _np().ones(a.shape[0])
+    keep = [i for i in range(a.shape[0]) if float(conf[i]) >= min_confidence]
+    if not keep:
+        return {"keypoints": 0, "present": False}
+    xs = a[keep, 0] / scale
+    ys = a[keep, 1] / scale
+    return {
+        "keypoints": int(len(keep)),
+        "present": True,
+        "meanConfidence": _r(float(conf[keep].mean())),
+        "bbox": [_r(float(xs.min())), _r(float(ys.min())),
+                 _r(float(xs.max())), _r(float(ys.max()))],
+        "centre": [_r(float(xs.mean())), _r(float(ys.mean()))],
+        "points": [[_r(float(a[i, 0] / scale)), _r(float(a[i, 1] / scale))]
+                   for i in keep[:33]],
+    }
+
+
+def _decode_segments(raw, labels=None, top=3):
+    a = _np().asarray(raw, dtype=_np().float32)
+    while a.ndim > 3 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim == 3:
+        classes = int(_np().argmax(a, axis=0).max()) + 1
+        counts = _np().bincount(_np().argmax(a, axis=0).reshape(-1),
+                                minlength=max(1, a.shape[0]))
+    else:
+        idx = _np().argmax(a, axis=-1).reshape(-1)
+        classes = int(idx.max()) + 1
+        counts = _np().bincount(idx, minlength=max(1, int(a.shape[-1])))
+    total = float(counts.sum()) or 1.0
+    order = list(_np().argsort(counts)[::-1])[:top]
+    names = labels or []
+    return {
+        "classes": classes,
+        "shares": [
+            {
+                "index": int(i),
+                "label": names[int(i)] if int(i) < len(names) else f"class {int(i)}",
+                "share": _r(float(counts[int(i)]) / total),
+            }
+            for i in order
+        ],
+    }
+
+
+def _decode_scalar(raw, low=0.0, high=10.0):
+    a = _np().asarray(raw, dtype=_np().float32).reshape(-1)
+    value = float(a.mean())
+    if high == 10.0 and 0.0 <= value <= 1.0:
+        value *= 10.0
+    return {"score": _r(_clamp((value - low) / max(1e-6, high - low)) * 10.0),
+            "raw": _r(value)}
+
+
+def _decode_flow(raw):
+    a = _np().asarray(raw, dtype=_np().float32)
+    while a.ndim > 3 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim != 3 or a.shape[0] not in (2, 3):
+        raise RuntimeError(f"expected a (2, H, W) flow field, got {list(a.shape)}")
+    dx, dy = a[0], a[1]
+    mag = _np().sqrt(dx * dx + dy * dy)
+    return {
+        "shape": [int(a.shape[1]), int(a.shape[2])],
+        "mean": _r(float(mag.mean())),
+        "peak": _r(float(mag.max())),
+        "direction": _travel(float(dx.mean()), float(dy.mean()), "static"),
+    }
+
+
+DECODERS = {
+    "depth": _decode_depth,
+    "embedding": _decode_embedding,
+    "logits": _decode_logits,
+    "prob": _decode_prob,
+    "masks": _decode_masks,
+    "boxes": _decode_boxes,
+    "keypoints": _decode_keypoints,
+    "segments": _decode_segments,
+    "scalar": _decode_scalar,
+    "flow": _decode_flow,
+}
+
+
+def _model_row(model_id):
+    for model in VISUAL_MODELS:
+        if model["id"] == model_id:
+            return model
+    return None
+
+
+def _generic_door(spec, model_id):
+    """One ONNX door, driven by the registry row: preprocess, run, decode.
+
+    The decoder is chosen by the row, so a model's file is the only thing
+    that changes when the door is pointed at a better checkpoint.
+    """
+    model = _model_row(model_id)
+    if model is None:
+        return {"ok": False, "error": f"unknown model id {model_id!r}"}
+    path, why = _model_file(spec, model_id)
+    if not path:
+        return {"ok": False, "model": model_id, "tool": model["tool"],
+                "error": why, "licence": model["licence"],
+                "upstream": model["upstream"]}
+    try:
+        session = _onnx_session(path)
+    except Exception as exc:  # pragma: no cover - depends on the machine
+        return {"ok": False, "model": model_id, "error": f"{model_id}: {exc}"}
+    door = model.get("door") or {}
+    try:
+        frames = _load_frames(spec)
+        layer = session.get_inputs()[0]
+        shape = list(layer.shape)
+        temporal = len(shape) == 5
+        size = max(32, min(1024, _int(spec, "size",
+                                     door.get("size") or _shape_size(shape, 224))))
+        time = max(2, min(32, _int(spec, "time", door.get("time") or 8))) if temporal else None
+        tensor = _tensor(frames, size, time,
+                         door.get("mean", 0.0), door.get("std", 255.0))
+        if door.get("layout") == "nhwc":
+            tensor = tensor.transpose(0, 2, 3, 1) if not temporal else \
+                tensor.transpose(0, 1, 3, 4, 2)
+        raw = session.run(None, {layer.name: tensor})
+        decoder = DECODERS.get(door.get("decoder", "logits"))
+        if decoder is None:
+            return {"ok": False, "model": model_id,
+                    "error": f"unknown decoder {door.get('decoder')!r}"}
+        kwargs = {}
+        if door.get("decoder") in ("logits", "boxes", "segments"):
+            kwargs["labels"] = _labels(spec) or door.get("labels") or None
+        decoded = decoder(raw[0], **kwargs) if raw else {}
+        return {
+            "ok": True,
+            "tool": model["tool"],
+            "model": model_id,
+            "licence": model["licence"],
+            "decoded": decoded,
+            "outputs": [list(o.shape) for o in session.get_outputs()],
+            "note": door.get("note", model["signal"]),
+        }
+    except Exception as exc:
+        return {"ok": False, "model": model_id,
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _door(spec, default_id):
+    """A specialised door when one exists, the generic runner otherwise.
+
+    `spec["modelId"]` picks an alternate from the registry (CLIP beside
+    DINOv2, MiDaS beside Depth Anything, Grounding DINO beside ByteTrack),
+    so a bench swaps the file and nothing else.
+    """
+    model_id = spec.get("modelId") or default_id
+    model = _model_row(model_id)
+    if model is None:
+        return {"ok": False, "error": f"unknown model id {model_id!r}"}
+    special = {
+        "action_class": action_class,
+        "depth_map": depth_map,
+        "subject_mask": subject_mask,
+        "visual_embedding": visual_embedding,
+        "describe_scene": describe_scene,
+    }
+    handler = special.get(model["tool"])
+    if handler is not None and not spec.get("generic"):
+        return handler({**spec, "modelId": model_id})
+    return _generic_door(spec, model_id)
+
+
+def shot_boundaries(spec):
+    return _door(spec, "transnetv2")
+
+
+def film_shot_type(spec):
+    return _door(spec, "film-shot-classifier")
+
+
+def video_embedding(spec):
+    return _door(spec, "vjepa2-vitl")
+
+
+def scene_graph(spec):
+    return _door(spec, "scenegraph-vlm")
+
+
+def semantic_segments(spec):
+    return _door(spec, "segformer-b0")
+
+
+def detect_objects(spec):
+    return _door(spec, "bytetrack-yolo")
+
+
+def optical_flow(spec):
+    return _door(spec, "raft-small")
+
+
+def aesthetic(spec):
+    return _door(spec, "dover-mobile")
+
+
+def video_saliency(spec):
+    return _door(spec, "vinet-s")
+
+
+def blur_mask(spec):
+    return _door(spec, "smblurdetect")
+
+
+def pose(spec):
+    return _door(spec, "movenet-pose")
+
+
+def hands(spec):
+    return _door(spec, "mediapipe-hands")
+
+
+def gaze(spec):
+    return _door(spec, "eyegaze")
+
+
+def face_emotion(spec):
+    return _door(spec, "microexpnet")
+
+
+def lip_sync(spec):
+    return _door(spec, "syncnet")
+
+
+def action_quality(spec):
+    return _door(spec, "aqa-transformer")
+
+
+def _thirds_distance(x, y):
+    """Distance from the nearest third-line intersection, normalised 0-1."""
+    best = 1.0
+    for tx in (1 / 3, 2 / 3):
+        for ty in (1 / 3, 2 / 3):
+            best = min(best, math.hypot(x - tx, y - ty))
+    return best
+
+
+def composition(spec):
+    """Where the subject sits in the frame, and whether the frame is balanced."""
+    frames = _load_frames(spec)
+    width = max(16, min(160, _int(spec, "width", WORK_WIDTH)))
+    rows = _composition_rows(frames, width)
+    best = max(rows, key=lambda row: row["score"]) if rows else None
+    return {
+        "ok": True,
+        "tool": "composition",
+        "frames": rows,
+        "score": best["score"] if best else 0.0,
+        "placement": best["placement"] if best else None,
+        "note": "A classical rule-of-thirds read of where the eye lands: the "
+                "distance from the nearest third intersection, the left-right "
+                "balance of the salient cells, and the headroom above the "
+                "subject. No model, no download.",
+    }
+
+
+def _composition_rows(frames, width):
+    rows = []
+    for index, (_, rgb, w, h) in enumerate(frames):
+        resized, w2, h2 = _resize(rgb, w, h, width)
+        grey = _grey(resized, w2, h2)
+        sal = _saliency(grey, w2, h2)
+        blob = sal.get("blob") or {}
+        peak = sal.get("peak") or {"x": 0.5, "y": 0.5}
+        x = float(peak.get("x", 0.5))
+        y = float(peak.get("y", 0.5))
+        off = _thirds_distance(x, y)
+        grid = sal.get("map") or []
+        cols = max(1, int(sal.get("cols") or 1))
+        left = right = 0.0
+        for row in grid:
+            for c, value in enumerate(row):
+                if c < cols / 2:
+                    left += value
+                else:
+                    right += value
+        balance = 1.0 - abs(left - right) / max(1e-6, left + right)
+        headroom = 1.0 - min(1.0, max(0.0, 0.14 - y) / 0.14)
+        score = _clamp(0.55 * (1.0 - min(1.0, off / 0.45))
+                       + 0.25 * balance + 0.20 * headroom)
+        rows.append({
+            "at": _r(index / max(1, len(frames) - 1)),
+            "peak": {"x": _r(x), "y": _r(y)},
+            "thirdsOffset": _r(off),
+            "balance": _r(balance),
+            "headroom": _r(headroom),
+            "score": _r(score),
+            "placement": ("centre" if off > 0.3 else
+                          ("left third" if x < 0.5 else "right third")),
+            "blobArea": _r(float(blob.get("area", 0.0))),
+        })
+    return rows
+
+
+def _crispness(grey, w, h):
+    """How step-like the transitions are, per axis: 2 is a step, 0 a ramp."""
+    lap_x = grad_x = lap_y = grad_y = 0.0
+    for y in range(1, h - 1):
+        row = y * w
+        for x in range(1, w - 1):
+            i = row + x
+            lap_x += abs(grey[i - 1] - 2 * grey[i] + grey[i + 1])
+            grad_x += abs(grey[i + 1] - grey[i - 1])
+            lap_y += abs(grey[i - w] - 2 * grey[i] + grey[i + w])
+            grad_y += abs(grey[i + w] - grey[i - w])
+    return (lap_x / max(grad_x, 1e-6), lap_y / max(grad_y, 1e-6),
+            (grad_x + grad_y) / max(1, (w - 2) * (h - 2)))
+
+
+def _blur_rows(frames, width):
+    """A smear turns a step into a ramp: the axis it ran along loses crispness."""
+    rows = []
+    for index, (_, rgb, w, h) in enumerate(frames):
+        resized, w2, h2 = _resize(rgb, w, h, width)
+        grey = _grey(resized, w2, h2)
+        crisp_x, crisp_y, detail = _crispness(grey, w2, h2)
+        small, large = min(crisp_x, crisp_y), max(crisp_x, crisp_y)
+        ratio = large / small if small > 1e-6 else 99.0
+        rows.append({
+            "at": _r(index / max(1, len(frames) - 1)),
+            "crispX": _r(crisp_x, 3),
+            "crispY": _r(crisp_y, 3),
+            "ratio": _r(min(99.0, ratio), 2),
+            "detail": _r(detail, 2),
+            "axis": "x" if crisp_x < crisp_y else "y",
+            "blurred": ratio >= 2.5 and small < 0.9,
+        })
+    return rows
+
+
+def motion_blur(spec):
+    """Directional smearing: is the frame's detail lost along one axis?"""
+    frames = _load_frames(spec)
+    width = max(16, min(160, _int(spec, "width", WORK_WIDTH)))
+    rows = _blur_rows(frames, width)
+    worst = max(rows, key=lambda row: row["ratio"]) if rows else None
+    return {
+        "ok": True,
+        "tool": "motion_blur",
+        "frames": rows,
+        "worst": worst,
+        "blurredShare": _r(sum(1 for row in rows if row["blurred"]) / max(1, len(rows))),
+        "verdict": "directional blur" if worst and worst["blurred"] else "clean",
+        "note": "A smear turns a step edge into a ramp, and only along the axis "
+                "it ran: each frame's transitions are compared with themselves, "
+                "so no model, no reference frame and no download. A clip whose "
+                "motion is a pan's smear is vetoed the way a soft one is - the "
+                "movement is an artefact, not an entrance.",
+    }
+
+
+def _iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 1e-9 else 0.0
+
+
+def tracks(spec):
+    """Link per-frame boxes into identities: does the subject stay one subject?
+
+    The detector's boxes come from `track_subject` (or any caller); this
+    links them by overlap and velocity, which is what tells a cut whether
+    the subject it framed is the subject the next shot inherits.
+    """
+    frames = spec.get("frames") or spec.get("boxes")
+    if not isinstance(frames, list) or not frames:
+        return {"ok": False,
+                "error": "give `frames`: one list of [x1,y1,x2,y2] boxes per frame"}
+    iou_floor = _num(spec, "iou", 0.25)
+    active = {}
+    finished = []
+    next_id = 1
+    for index, boxes in enumerate(frames):
+        seen = set()
+        for box in boxes or []:
+            if isinstance(box, dict):
+                # track_subject's own shape: fractions of the frame.
+                x = float(box.get("x", 0.0))
+                y = float(box.get("y", 0.0))
+                box = [x, y, x + float(box.get("w", 0.0)),
+                       y + float(box.get("h", 0.0))]
+            if not isinstance(box, (list, tuple)) or len(box) < 4:
+                continue
+            best, best_iou = None, iou_floor
+            for track_id, track in active.items():
+                if track_id in seen:
+                    continue
+                predicted = track["box"]
+                if track.get("velocity"):
+                    predicted = [predicted[i] + track["velocity"][i]
+                                 for i in range(4)]
+                score = _iou(predicted, box[:4])
+                if score >= best_iou:
+                    best, best_iou = track_id, score
+            if best is None:
+                active[next_id] = {"id": next_id, "box": list(box[:4]),
+                                   "first": index, "last": index, "boxes": 1,
+                                   "velocity": None}
+                seen.add(next_id)
+                next_id += 1
+            else:
+                track = active[best]
+                track["velocity"] = [box[i] - track["box"][i] for i in range(4)]
+                track["box"] = list(box[:4])
+                track["last"] = index
+                track["boxes"] += 1
+                seen.add(best)
+        for track_id in list(active):
+            if track_id not in seen:
+                finished.append(active.pop(track_id))
+    finished.extend(active.values())
+    finished.sort(key=lambda track: track["boxes"], reverse=True)
+    span = max(1, len(frames))
+    rows = [{
+        "id": track["id"],
+        "first": track["first"],
+        "last": track["last"],
+        "boxes": track["boxes"],
+        "coverage": _r(track["boxes"] / span),
+        "box": [_r(float(value)) for value in track["box"]],
+    } for track in finished]
+    main = rows[0] if rows else None
+    return {
+        "ok": True,
+        "tool": "tracks",
+        "frames": len(frames),
+        "tracks": rows[:16],
+        "count": len(rows),
+        "main": main,
+        "continuity": _r(main["coverage"]) if main else 0.0,
+        "note": "Overlap-and-velocity association over the boxes a detector "
+                "gives. A subject that keeps one id across the clip is a "
+                "subject a cut can follow; one that changes id mid-clip is a "
+                "subject a cut would jump.",
+    }
+
+
+def tracks_from_file(spec):
+    """The same linking, with `track_subject`'s own reply as the input."""
+    reply = spec.get("trackSubject") or spec.get("track") or spec.get("reply")
+    if not isinstance(reply, dict):
+        return tracks(spec)
+    boxes = reply.get("boxes") or reply.get("frames") or reply.get("points")
+    if not isinstance(boxes, list):
+        return {"ok": False, "error": "the track_subject reply carries no `boxes`"}
+    frames = []
+    for row in boxes:
+        if isinstance(row, dict):
+            box = row.get("box") or row.get("bbox") or row.get("rect")
+            frames.append([box] if box else [])
+        elif isinstance(row, list) and row and isinstance(row[0], list):
+            frames.append(row)
+        else:
+            frames.append([row] if len(row or []) >= 4 else [])
+    return tracks({**spec, "frames": frames})
+
+# The six readings that need no model and no download, and the door each
+# one answers. `models` lists them beside the ONNX rows so an operator can
+# see the whole shelf: what runs on any machine, and what a file adds.
+CLASSICAL = [
+    {"id": "optical-flow", "tool": "measure_motion",
+     "signal": "per-frame motion vectors: direction, magnitude, onset",
+     "licence": "OpenCV (Apache-2.0)", "bytes": 0,
+     "spends": "cut timing, motion sync, SFX sync"},
+    {"id": "homography", "tool": "camera_motion",
+     "signal": "global camera motion: pan / tilt / zoom / static",
+     "licence": "OpenCV (Apache-2.0)", "bytes": 0,
+     "spends": "cut continuity, motion preset, stock query"},
+    {"id": "derived-shot-scale", "tool": "shot_scale",
+     "signal": "wide / medium / close-up from the subject's area",
+     "licence": "-", "bytes": 0,
+     "spends": "cut rhythm, motion design, caption placement"},
+    {"id": "audio-visual-sync", "tool": "visual_sync",
+     "signal": "sync score correlating audio onset with flow onset",
+     "licence": "-", "bytes": 0,
+     "spends": "sound design, cut timing"},
+    {"id": "palette-kmeans", "tool": "palette",
+     "signal": "dominant colours per scene",
+     "licence": "-", "bytes": 0,
+     "spends": "motion style, continuity, stock similarity"},
+    {"id": "noise-estimator", "tool": "visual_quality",
+     "signal": "noise variance per clip",
+     "licence": "-", "bytes": 0,
+     "spends": "stock filter, quality gate"},
+    {"id": "rule-of-thirds", "tool": "composition",
+     "signal": "composition score and subject placement",
+     "licence": "-", "bytes": 0,
+     "spends": "stock ranking, caption placement"},
+    {"id": "motion-blur", "tool": "motion_blur",
+     "signal": "directional blur probability",
+     "licence": "-", "bytes": 0,
+     "spends": "stock filter, cut veto"},
+    {"id": "box-tracks", "tool": "tracks",
+     "signal": "persistent identities from per-frame boxes",
+     "licence": "-", "bytes": 0,
+     "spends": "subject continuity, cut continuity"},
 ]
 
 
@@ -1742,16 +2755,89 @@ def models(spec):
             "present": found is not None,
             "path": found,
             "onDiskBytes": Path(found).stat().st_size if found else 0,
+            "ready": found is not None and np is not None,
         })
+    present = [row["id"] for row in rows if row["present"]]
+    missing = [row["id"] for row in rows if not row["present"]]
     return {
         "ok": True,
         "tool": "models",
         "dirs": dirs,
+        "numpy": np is not None,
+        "onnxruntime": _has_onnxruntime(),
         "models": rows,
-        "note": "The visual doors run only when their file is present AND numpy + "
-                "onnxruntime are installed; otherwise they refuse with the reason. "
-                "No model is downloaded by this module.",
+        "present": present,
+        "missing": missing,
+        "ready": len(present),
+        "catalogue": len(rows),
+        "classical": CLASSICAL,
+        "note": "Every door runs when its file is present AND numpy + onnxruntime "
+                "are installed; otherwise it refuses with the reason. The "
+                "classical readings need neither a file nor a runtime. Nothing "
+                "here downloads a model: `download` does, with the URL the "
+                "operator names and the digest verified.",
     }
+
+
+def _has_onnxruntime():
+    try:
+        import onnxruntime  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def download(spec):
+    """Fetch one model file, verify what arrived, and say where it went."""
+    wanted = spec.get("modelId") or spec.get("id")
+    model = _model_row(wanted) if wanted else None
+    if model is None:
+        return {"ok": False, "error": f"unknown model id {wanted!r}: one of "
+                                      f"{[row['id'] for row in VISUAL_MODELS]}"}
+    url = spec.get("url") or model.get("download")
+    if not url:
+        return {"ok": False, "model": model["id"],
+                "error": "give `url` (the model file's own address): this module "
+                         "does not invent download links, and the upstream page "
+                         "is not the file",
+                "upstream": model["upstream"],
+                "file": model["file"]}
+    directory = Path(str(spec.get("modelDir") or (Path(__file__).resolve().parents[4]
+                                                  / "models" / "visual")))
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / model["file"]
+    partial = target.with_suffix(target.suffix + ".part")
+    try:
+        import hashlib
+        import urllib.request
+        request = urllib.request.Request(url, headers={"User-Agent": "funcut-visual-sense"})
+        digest = hashlib.sha256()
+        written = 0
+        with urllib.request.urlopen(request, timeout=120) as reply, open(partial, "wb") as sink:
+            while True:
+                chunk = reply.read(1 << 20)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                sink.write(chunk)
+                written += len(chunk)
+        expected = str(spec.get("sha256") or "").lower().strip()
+        if expected and digest.hexdigest() != expected:
+            partial.unlink(missing_ok=True)
+            return {"ok": False, "model": model["id"],
+                    "error": f"digest mismatch: got {digest.hexdigest()}, "
+                             f"expected {expected}; nothing was kept"}
+        partial.replace(target)
+        return {"ok": True, "tool": "download", "model": model["id"],
+                "path": str(target), "bytes": written,
+                "sha256": digest.hexdigest(),
+                "verified": bool(expected),
+                "licence": model["licence"],
+                "note": "Re-run `models` to see the door ready."}
+    except Exception as exc:
+        partial.unlink(missing_ok=True)
+        return {"ok": False, "model": model["id"],
+                "error": f"{type(exc).__name__}: {exc}"}
 
 
 TOOLS = {
@@ -1763,13 +2849,33 @@ TOOLS = {
     "visual_quality": visual_quality,
     "palette": palette,
     "saliency": saliency,
+    "composition": composition,
+    "motion_blur": motion_blur,
+    "tracks": tracks_from_file,
     "measure_clips": measure_clips,
     "bench": bench,
     "models": models,
+    "download": download,
     "action_class": action_class,
+    "shot_boundaries": shot_boundaries,
+    "film_shot_type": film_shot_type,
+    "video_embedding": video_embedding,
+    "scene_graph": scene_graph,
     "depth_map": depth_map,
     "subject_mask": subject_mask,
+    "semantic_segments": semantic_segments,
+    "detect_objects": detect_objects,
+    "optical_flow": optical_flow,
     "visual_embedding": visual_embedding,
+    "aesthetic": aesthetic,
+    "video_saliency": video_saliency,
+    "blur_mask": blur_mask,
+    "pose": pose,
+    "hands": hands,
+    "gaze": gaze,
+    "face_emotion": face_emotion,
+    "lip_sync": lip_sync,
+    "action_quality": action_quality,
     "describe_scene": describe_scene,
 }
 
@@ -1789,6 +2895,24 @@ def _draw_square(rgb, w, h, colour, sx, sy, size):
 
 def _square(w, h, background, colour, sx, sy, size):
     return _draw_square(_solid(w, h, background), w, h, colour, sx, sy, size)
+
+
+def _smear_x(rgb, w, h, taps=17):
+    """A horizontal smear: what a pan does to a frame in one exposure."""
+    out = bytearray(len(rgb))
+    half = taps // 2
+    for y in range(h):
+        for x in range(w):
+            acc = [0, 0, 0]
+            for t in range(-half, half + 1):
+                sx = min(w - 1, max(0, x + t))
+                i = (y * w + sx) * 3
+                for c in range(3):
+                    acc[c] += rgb[i + c]
+            j = (y * w + x) * 3
+            for c in range(3):
+                out[j + c] = acc[c] // taps
+    return bytes(out)
 
 
 def _pattern(w, h, dx=0, dy=0):
@@ -1947,8 +3071,70 @@ def selftest(only=None):
           refusal.get("error", ""))
 
     table = models({})
-    check("the model doors are listed", table["ok"] and len(table["models"]) == 5,
-          len(table.get("models", [])))
+    check("the model shelf lists every door",
+          table["ok"] and len(table["models"]) == len(VISUAL_MODELS)
+          and len(table["classical"]) >= 6,
+          f"{len(table.get('models', []))} models, "
+          f"{len(table.get('classical', []))} classical")
+    rows_ok = all(
+        row.get("id") and row.get("file") and isinstance(row.get("bytes"), int)
+        and row.get("licence") and row.get("tool") in TOOLS
+        and row.get("signal") and row.get("upstream") and row.get("tier")
+        and row.get("door", {}).get("decoder") in DECODERS
+        for row in VISUAL_MODELS)
+    check("every model row names a file, a licence, a tool and a decoder", rows_ok,
+          [row["id"] for row in VISUAL_MODELS
+           if row.get("tool") not in TOOLS or
+           row.get("door", {}).get("decoder") not in DECODERS])
+    check("the classical shelf names the readings that need no file",
+          {row["tool"] for row in CLASSICAL} <= set(TOOLS),
+          sorted(row["tool"] for row in CLASSICAL if row["tool"] not in TOOLS))
+    fetched = download({"modelId": "dinov2-small"})
+    check("a download without a url refuses and names the file",
+          (not fetched["ok"]) and fetched["file"] == "dinov2-small.onnx",
+          fetched.get("error", "")[:60])
+
+    if np is not None:
+        depth = _decode_depth(np.linspace(0, 1, 16 * 16).reshape(16, 16))
+        check("a depth map reads near and far",
+              depth["nearShare"] > 0 and depth["farShare"] > 0
+              and depth["verdict"].startswith("nearer"), depth["verdict"])
+        unit = _decode_embedding(np.arange(8, dtype=np.float32))
+        check("an embedding is unit length",
+              unit["dim"] == 8 and abs(sum(v * v for v in unit["vector"]) - 1) < 1e-3,
+              unit["dim"])
+        top = _decode_logits(np.array([0.1, 2.0, 0.3], dtype=np.float32),
+                             ["a", "b", "c"])
+        check("logits name their winner", top["top"][0]["label"] == "b"
+              and top["top"][0]["p"] > 0.5, top["top"][0])
+        curve = _decode_prob(np.array([0.0, 0.1, 0.9, 0.05], dtype=np.float32),
+                             times=[0.0, 0.5, 1.0, 1.5])
+        check("a boundary curve names the frame it peaks on",
+              curve["boundaryCount"] == 1 and abs(curve["peakAt"] - 1.0) < 1e-6,
+              curve)
+        mask = _decode_masks(np.pad(np.ones((4, 4), dtype=np.float32), 2))
+        check("a mask reports the area it covers",
+              0.1 < mask["areaShare"] < 0.9 and mask["present"], mask["areaShare"])
+        boxes = _decode_boxes(np.array([[0.1, 0.1, 0.4, 0.4, 0.9, 0],
+                                        [0.0, 0.0, 0.1, 0.1, 0.1, 1]], dtype=np.float32),
+                              ["person", "laptop"])
+        check("boxes keep the confident one and drop the weak one",
+              boxes["count"] == 1 and boxes["objects"][0]["label"] == "person", boxes)
+        keys = _decode_keypoints(np.array([[0.2, 0.3, 0.9], [0.4, 0.5, 0.8]],
+                                          dtype=np.float32))
+        check("keypoints report where the body is",
+              keys["keypoints"] == 2 and 0.2 <= keys["centre"][0] <= 0.4, keys["bbox"])
+        seg = _decode_segments(np.stack([np.zeros((4, 4)), np.ones((4, 4))]) * 3)
+        check("segments report the dominant class", seg["shares"][0]["index"] == 1, seg)
+        score = _decode_scalar(np.array([0.72], dtype=np.float32))
+        check("a scalar aesthetic reads 0-10", abs(score["score"] - 7.2) < 0.01, score)
+        flow = _decode_flow(np.stack([np.ones((4, 4)), np.zeros((4, 4))]) * 0.5)
+        check("a flow field reads its own magnitude and direction",
+              flow["mean"] > 0 and flow["direction"] == "right", flow["direction"])
+        check("every decoder in the shelf has a proof above",
+              set(DECODERS) <= {"depth", "embedding", "logits", "prob", "masks",
+                                "boxes", "keypoints", "segments", "scalar", "flow"},
+              sorted(DECODERS))
 
     measured = measure_clips({"paths": ["synthetic"], "frames": encoded,
                               "width": 32, "intent": "cut"})
@@ -1973,6 +3159,41 @@ def selftest(only=None):
                                   "verdict": "pass"}, "cut", {"cuts": 0})
     check("a montage sinks behind a single take", montage_score < single_score,
           f"{montage_score} < {single_score}")
+
+    composed = _composition_rows(
+        [(0.0, _draw_square(pattern, w, h, (250, 250, 250), 14, 9, 6), w, h)],
+        32)[0]
+    centred = _composition_rows(
+        [(0.0, _draw_square(pattern, w, h, (250, 250, 250), 21, 12, 6), w, h)],
+        32)[0]
+    check("composition tells a third from the centre",
+          composed["score"] > centred["score"],
+          f"third={composed['score']} centre={centred['score']}")
+    subject = _draw_square(pattern, w, h, (250, 250, 250), 20, 9, 6)
+    sharp_row = _blur_rows([(0.0, subject, w, h)], 32)[0]
+    blur_row = _blur_rows([(0.0, _smear_x(subject, w, h), w, h)], 32)[0]
+    check("a smeared frame reads as blur, a sharp one does not",
+          (not sharp_row["blurred"]) and blur_row["blurred"]
+          and blur_row["ratio"] > sharp_row["ratio"],
+          f"ratio {blur_row['ratio']} vs {sharp_row['ratio']}")
+    linked = tracks({"frames": [[[0.1, 0.1, 0.3, 0.3]], [[0.12, 0.1, 0.32, 0.3]],
+                                 [[0.14, 0.1, 0.34, 0.3]]]})
+    jumped = tracks({"frames": [[[0.1, 0.1, 0.3, 0.3]], [[0.7, 0.6, 0.9, 0.8]]]})
+    check("a subject that stays put keeps one id; a jump starts a second",
+          linked["count"] == 1 and jumped["count"] == 2,
+          f"{linked['count']} / {jumped['count']}")
+    check("a track's coverage is its share of the clip",
+          abs(linked["main"]["coverage"] - 1.0) < 1e-6, linked["main"])
+    vetted = _visual_score({"peak": 0.2, "peakAt": 0.2},
+                           {"sharpness": 25, "noise": 1, "letterbox": 0,
+                            "verdict": "pass"}, "cut", {"cuts": 0},
+                           {"score": 0.9}, {"verdict": "directional blur"})
+    clean = _visual_score({"peak": 0.2, "peakAt": 0.2},
+                          {"sharpness": 25, "noise": 1, "letterbox": 0,
+                           "verdict": "pass"}, "cut", {"cuts": 0},
+                          {"score": 0.9}, {"verdict": "clean"})
+    check("a blurred candidate sinks behind a clean one", vetted < clean,
+          f"{vetted} < {clean}")
 
     failed = [row for row in checks if not row["ok"]]
     return {

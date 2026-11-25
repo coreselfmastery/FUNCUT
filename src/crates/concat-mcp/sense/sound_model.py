@@ -1498,6 +1498,18 @@ def _licence_selftest():
             "ok": refusal is None or refusal.get("reason") != "licence",
             "detail": str((refusal or {}).get("reason")),
         })
+        _row, refusal = _generator({"kind": "bgm", "project": project, "monetized": True})
+        checks.append({
+            "check": "a caller that says monetized is refused even without a brief",
+            "ok": refusal is not None and refusal.get("reason") == "licence",
+            "detail": str((refusal or {}).get("reason")),
+        })
+        _row, refusal = _generator({"kind": "sfx-small", "project": project, "monetized": True})
+        checks.append({
+            "check": "the commercial generators are never refused on licence",
+            "ok": refusal is None or refusal.get("reason") != "licence",
+            "detail": str((refusal or {}).get("reason")),
+        })
     return checks
 
 
@@ -1650,7 +1662,11 @@ def _generator(spec):
     row = GEN_KINDS.get(kind)
     if row is None:
         return None, {"ok": False, "error": f"unknown kind {kind!r}: one of {sorted(GEN_KINDS)}"}
-    if not row.get("commercial", True) and _project_monetized(spec.get("project")):
+    # The brief is the authority; a caller that says the work is monetized
+    # can only tighten it, never loosen it - an unattended run knows its
+    # own plan, and a project whose brief was never written does not.
+    monetized = spec.get("monetized") is True or _project_monetized(spec.get("project"))
+    if not row.get("commercial", True) and monetized:
         return None, {
             "tool": "generate",
             "ok": False,

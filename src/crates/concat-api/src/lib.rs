@@ -3042,7 +3042,11 @@ impl Api {
             Ok(record) => record,
             Err(_) => return Ok(None),
         };
-        if record.get("commercial").and_then(serde_json::Value::as_bool) != Some(false) {
+        if record
+            .get("commercial")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
             return Ok(None);
         }
         if !self.project_is_monetized(path)? {

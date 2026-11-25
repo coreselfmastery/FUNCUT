@@ -10637,6 +10637,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "prompt": bed_prompt(log, &music_source),
                                     "seconds": round3(runtime.min(8.0)),
                                     "project": music_project,
+                                    // The plan this run wrote says
+                                    // monetized, and a run must not ship
+                                    // a bed its own plan would refuse:
+                                    // the music model answers with the
+                                    // licence instead of a file, and the
+                                    // pad below is written instead.
+                                    "monetized": true,
                                 }),
                             ));
                         }

@@ -61,6 +61,10 @@ bgm-text.onnx  bgm-decoder.onnx  bgm-codec.onnx
   "seconds": 2.5, "seed": 7, "project": "/home/you/Videos/Cut" }
 ```
 
+`monetized: true` is the caller's own assertion, and it can only tighten
+the project's brief, never loosen it - a run that knows its plan is
+monetized says so even when the folder carries no brief yet.
+
 The reply names the file:
 
 ```json
@@ -116,9 +120,15 @@ Two stages ask the generators before they shop:
 - **The bed.** The music stage writes one when the cut is 8 seconds or
   shorter - the length a written bed can cover inside the call's budget -
   and keeps the shelf for longer cuts, which the shelf carries at every
-  length. The written bed
-  is imported into the project's `bgm` folder and then trimmed to the cut
-  and ducked under the voice by the same code that ducks a shelf track.
+  length. It asks the music model first, with its own plan's
+  `monetized: true`; the model refuses on licence (the plan says
+  monetized, and MusicGen-small's weights do not allow it), and the stage
+  asks `sfx-large` for the same words as a warm ambient pad - no drums,
+  no melody - which the Stability Community Licence allows. The written
+  bed is imported into the project's `bgm` folder and then trimmed to the
+  cut and ducked under the voice by the same code that ducks a shelf
+  track. A run whose plan is not monetized gets the music model's own
+  bed, so the third model is spent wherever the licence lets it be.
 
 The signal contract is unchanged: a generated accent is placed on the
 same measured peak, at the same level, as the shelf accent it replaces.

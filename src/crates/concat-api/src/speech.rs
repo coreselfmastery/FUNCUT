@@ -20,7 +20,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::message::{ApiError, ErrorCode, Event, JobStatus, ModelsState, SoundModelStatus, Started};
+use crate::message::{
+    ApiError, ErrorCode, Event, JobStatus, ModelsState, SoundModelStatus, Started,
+};
 use crate::{Api, AppDirs, EventSink};
 
 /// A transcript with its times rounded to the millisecond, the shape the
@@ -653,7 +655,7 @@ enum Work {
     },
     /// Bring one model down from the mirror: the headless download.
     Download {
-        /// Which engine the model serves: "tts" or "whisper".
+        /// Which engine the model serves: "tts", "whisper" or "sound".
         kind: String,
         /// The model's id.
         id: String,

@@ -907,7 +907,7 @@ pub enum Request {
     /// model already on disk is a no-op that ends at once.
     #[serde(rename = "models.download")]
     ModelsDownload {
-        /// Which family: "tts" or "whisper".
+        /// Which family: "tts", "whisper" or "sound".
         kind: String,
         /// The model's id, from `models.list`.
         id: String,

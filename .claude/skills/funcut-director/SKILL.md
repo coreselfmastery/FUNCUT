@@ -65,6 +65,11 @@ reaches it.
   the family names; a reading that is absent is named unmeasured.
 - `prompts/signal_recipes.md` turns those readings into a cut score, a cut
   density, a cut type and a confidence fallback. Read it at the plan phase.
+- `prompts/evidence_store.md` is the run's one record of its facts: the
+  project's `director/` structure (evidence, plans, execution, quality),
+  the common evidence record every reader's reply is stored as, and the
+  rules — cite never copy, a consumer for every record, absent and na
+  are records too. Phase 9 writes into it; Phase 23 hands it off.
 - `prompts/emotion_to_edit.md` is the seven-label recipe: pace, cut types,
   captions, sound, grade, motion and duck for each emotion and intensity.
 - `prompts/token_budget.md` is the 10-minute budget and the reduction rules
@@ -1082,6 +1087,7 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
 | `prompts/signal_matrix.md` | all 14 signal families and 70 named readings, and the decision each informs |
 | `prompts/signal_recipes.md` | cut score, cut density, cut type and confidence fallback from the readings |
+| `prompts/evidence_store.md` | the project's `director/` store: one record shape for every reader's evidence, cited by the plan, re-read by the critic |
 | `prompts/emotion_to_edit.md` | the seven emotion labels as pace/cut/sound/grade/motion/duck recipes |
 | `prompts/token_budget.md` | the 10-minute token estimate and the rules that cut waste, not craft |
 | `prompts/tool_reference.md` | every tool's arguments, units, and gotchas |

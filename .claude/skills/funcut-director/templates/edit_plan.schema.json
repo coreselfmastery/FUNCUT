@@ -834,6 +834,165 @@
               "type"
             ],
             "type": "object"
+          },
+          "soundEvents": {
+            "type": "array",
+            "description": "One per placed accent: the sound decisions this segment executes, each landing its measured peak on a measured target. Cite the evidence in signalLog; a generated asset carries its prompt, seed, model kind and licence.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "eventId": {
+                  "type": "string",
+                  "description": "Unique within the plan; the receipts and the critic name the event by it."
+                },
+                "role": {
+                  "type": "string",
+                  "description": "The six-role vocabulary of prompts/sfx_design.md (impact, whoosh, riser, reveal, ambience, texture, or the shelf's own category word)."
+                },
+                "storyBeat": {
+                  "type": "string",
+                  "description": "The story moment the accent serves - an emphasis word, a cut, a reveal."
+                },
+                "start": {
+                  "type": "number",
+                  "description": "Timeline start; computed as target minus the asset's measured peakAt."
+                },
+                "peakAt": {
+                  "type": "number",
+                  "description": "The MEASURED time the sound's own peak falls (sound_sense), not the manifest's syncAt."
+                },
+                "end": {
+                  "type": "number",
+                  "description": "Timeline end, after the trim."
+                },
+                "assetId": {
+                  "type": "string",
+                  "description": "The shelf sound's id or the generated file's path."
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "library",
+                    "generator"
+                  ],
+                  "description": "Where the asset came from; a generator row records its birth."
+                },
+                "prompt": {
+                  "type": "string",
+                  "description": "Generated assets only: the words it was written from."
+                },
+                "seed": {
+                  "type": "integer",
+                  "description": "Generated assets only: the seed that reproduces it."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "sfx-small",
+                    "sfx-large",
+                    "bgm"
+                  ],
+                  "description": "Generated assets only: which generator wrote it."
+                },
+                "licence": {
+                  "type": "string",
+                  "description": "Generated assets only: the licence the reply carried - a monetized edit must be able to answer for it."
+                },
+                "modelEvidence": {
+                  "type": "string",
+                  "description": "The sense_sound_model record behind the choice (its id or hash), cited not copied."
+                },
+                "voiceEvidence": {
+                  "type": "string",
+                  "description": "The voice reading that timed it (the emphasis word, the pause class)."
+                },
+                "visualEvidence": {
+                  "type": "string",
+                  "description": "The visual reading it synchronises with (the cut, the motion peak, the reveal)."
+                },
+                "gainDb": {
+                  "type": "number",
+                  "minimum": -60,
+                  "maximum": 0,
+                  "description": "The starting level; keyframes ride it."
+                },
+                "fadeIn": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Fade-in seconds."
+                },
+                "fadeOut": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Fade-out seconds."
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "The evidence quality behind the placement."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "One sentence: why this sound, here, for this beat."
+                }
+              },
+              "required": [
+                "eventId",
+                "role",
+                "start",
+                "assetId"
+              ]
+            }
+          },
+          "musicArrangement": {
+            "type": "object",
+            "description": "The bed as structure, not one flat track: sections with reasons, timed to the story, each change landed on a cutSafePoint or a downbeat.",
+            "properties": {
+              "source": {
+                "type": "string",
+                "description": "The track id or file the arrangement is cut from (freepd id, or a generated file's path)."
+              },
+              "licence": {
+                "type": "string",
+                "description": "FreePD is CC0; Lo-Fi is MobyGratis non-commercial; a TinyMusician bed never ships monetized."
+              },
+              "sections": {
+                "type": "array",
+                "description": "The arrangement's sections, in time order.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "reason": {
+                      "type": "string",
+                      "description": "Why the bed changes here - the chapter turn, the reveal, the outro."
+                    },
+                    "start": {
+                      "type": "number"
+                    },
+                    "end": {
+                      "type": "number"
+                    },
+                    "structure": {
+                      "type": "string",
+                      "description": "The track's own section (analyze_music_structure): intro, build, drop, outro."
+                    },
+                    "automation": {
+                      "type": "string",
+                      "description": "The duck keyframes and section dips the mix rides (the duckDb floor under speech, the lift in pauses, the dip before a reveal)."
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end",
+                    "reason"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "sections"
+            ]
           }
         },
         "required": [

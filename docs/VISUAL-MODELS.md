@@ -24,7 +24,10 @@ sense_visual {action: "download", modelId: "depth-anything-v2-small",
 
 A row with a verified repo downloads with `modelId` alone (`transnetv2`,
 `depth-anything-v2-small`, `dinov2-small`, `clip-vit-b32`, `movenet-pose`,
-`segformer-b0`). A gated repo takes
+`segformer-b0`), and if the row carries a digest - all six do - the file is
+checked against **the registry's** before it is kept, so a one-call install
+is a verified fetch rather than a trusted one. The authority order is the
+caller's `sha256`, then the row's, then a pin from an earlier arrival. A gated repo takes
 `token` or `HF_TOKEN`, and the token is never echoed back. With `sha256` the
 digest is checked before anything is kept; without it the digest that arrived
 is **pinned** in the folder's `index.json` and checked on every later download

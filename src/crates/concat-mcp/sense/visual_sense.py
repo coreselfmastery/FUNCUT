@@ -3199,15 +3199,30 @@ def hf_files(spec):
                     "usually the one a laptop wants."}
 
 
+def _expected_digest(spec, model, pinned):
+    """Which digest a download is checked against, in order of authority.
+
+    The caller's own first, then the registry's - a row that was verified
+    before it was registered is what a one-call install checks against -
+    and only then a pin from an earlier arrival, which is trust on first
+    use and the weakest of the three.
+    """
+    return str(spec.get("sha256") or (model or {}).get("sha256")
+               or pinned or "").lower().strip()
+
+
 def download(spec):
     """Fetch one model file from an address the caller names, and pin it.
 
     Three ways to name the file, in this order: `url` (any address),
     `hfRepo` + `file` (the Hub's own resolve URL, with `HF_TOKEN` when the
     repo is gated), or the registry's `download` when a row carries one.
-    With `sha256` the digest is checked before anything is kept. Without
-    it the digest of what arrived is **pinned** in the folder's
-    `index.json` and checked on every later `download` of the same file:
+    With `sha256` the digest is checked before anything is kept, and so is
+    a registry row's own digest - a verified row downloads verified, which
+    is what makes "download it in Settings" a checked fetch rather than a
+    trusted one. Only a file with neither the caller's digest nor the
+    registry's has its arrived digest **pinned** in the folder's
+    `index.json`, and checked on every later `download` of the same file:
     trust on first use, recorded, not silent.
     """
     wanted = spec.get("modelId") or spec.get("id")
@@ -3264,7 +3279,7 @@ def download(spec):
                 sink.write(chunk)
                 written += len(chunk)
         actual = digest.hexdigest()
-        expected = str(spec.get("sha256") or pinned or "").lower().strip()
+        expected = _expected_digest(spec, model, pinned)
         if expected and actual != expected:
             partial.unlink(missing_ok=True)
             return {"ok": False, "model": model["id"] if model else name,
@@ -3277,7 +3292,8 @@ def download(spec):
                 "path": str(target), "bytes": written, "sha256": actual,
                 "verified": bool(expected), "pinned": not bool(expected),
                 "licence": model["licence"] if model else None,
-                "note": ("Digest matched the one given." if expected else
+                "note": ("Digest matched the one given." if spec.get("sha256")
+                         else "Digest matched the registry's." if expected else
                          "No digest was given, so the one that arrived is now "
                          "pinned in index.json and checked on every later "
                          "download of this file. Re-run `models` to see the "
@@ -3795,6 +3811,12 @@ def selftest(only=None):
               f"{len(ENRICH_DOORS)} doors, segmentation first")
         spent = _enrich({"modelDir": "/tmp/no-doors-here", "enrichSeconds": 0},
                         stub_frames)
+        row = _model_row("segformer-b0")
+        check("a verified row's own digest is what its install checks against",
+              _expected_digest({}, row, "") == row["sha256"]
+              and _expected_digest({"sha256": "AB"}, row, "") == "ab"
+              and _expected_digest({}, {}, "cd") == "cd",
+              "caller > registry > pin")
         check("a door the clock ran out before is named, not dropped",
               "skipped" not in spent,
               "nothing installed, so nothing to skip: skipped is only for a "

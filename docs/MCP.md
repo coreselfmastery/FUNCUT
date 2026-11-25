@@ -731,7 +731,10 @@ side here the way they do behind the window's button: every lane its own
 backend, opened the way this run's own backend was opened, so a
 five-take voiceover lands in the time of the slowest take, not the sum.
 A client that cancels the call carries the cancellation to every lane.
-Every stage record carries `elapsedMs` - the wall-clock time that stage
+These fan stages can run concurrently rather than serially; actual wall-time
+improvement depends on CPU, storage and model contention and still needs a
+measured multi-take run on the target machine. Every stage record carries
+`elapsedMs` - the wall-clock time that stage
 spent - and the resumed stages carry `0`, so a slow run names its slow
 stage instead of leaving it to guesswork. The plan also carries a
 `youtube` package: the mode and creative profile, five title directions,

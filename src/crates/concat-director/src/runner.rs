@@ -1484,9 +1484,10 @@ mod tests {
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         let cancelled = AtomicBool::new(true);
         let mut caller = Scripted::new(vec![]);
-        let mut program = program(vec![
-            StageStep::run(Stage::Plan, vec![call("must_not_run")]).into(),
-        ]);
+        let mut program = program(vec![StageStep::run(
+            Stage::Plan,
+            vec![call("must_not_run")],
+        )]);
 
         let outcome = runner.run_with_lanes_and_cancellation(
             &mut program,

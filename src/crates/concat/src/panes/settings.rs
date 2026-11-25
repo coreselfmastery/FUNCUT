@@ -237,7 +237,7 @@ pub const SOUND_MODELS_ID: &str = concat_host::soundmodel::SOUND_MODELS_ID;
 /// The picture reader's set - TransNetV2, Depth Anything V2, DINOv2 and
 /// CLIP's vision tower - as one row, for the same reason: a half a set
 /// reads less than a whole one.
-pub const PICTURE_MODELS_ID: &str = "picture-models";
+pub const PICTURE_MODELS_ID: &str = concat_host::visualmodel::SET_ID;
 
 /// The three generators, each its own row: a small SFX model, a heavier
 /// one, and a music model. Their ids are the words `sound_model.py

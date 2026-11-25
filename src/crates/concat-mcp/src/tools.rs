@@ -865,7 +865,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "models_list",
             "List the AI models",
-            "List the local AI models - voices, transcribers, and the sound sets - and which are missing.",
+            "List the local AI models - voices, transcribers, the sound sets and the picture set - and which are missing.",
             "models.list",
             Raw,
         )
@@ -873,8 +873,9 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "models_download",
             "Download an AI model",
-            "Download a missing model - voice (kind tts), transcriber (whisper) or sound set \
-             (kind sound, id sound-models|sfx-small|sfx-large|bgm); a job, poll models_list.",
+            "Download a missing model - voice (kind tts), transcriber (whisper), sound set \
+             (kind sound, id sound-models|sfx-small|sfx-large|bgm) or the picture set \
+             (kind picture, id picture-models); a job, poll models_list.",
             "models.download",
             Raw,
         ),

@@ -691,7 +691,25 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
         "the music bed's licence is not the one it carries: {bed}"
     );
 
-    // A kind that is not one of the three is refused before a job is booked.
+    // The picture set is one row the same shape as the sound rows: the four
+    // files the picture reader spends on a first edit, licensed as visibly
+    // as the sound sets are, and downloadable headlessly the same way.
+    let picture = listed["structuredContent"]["visual"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(picture.len(), 1, "{listed}");
+    let picture = &picture[0];
+    assert_eq!(picture["id"], json!("picture-models"), "{picture}");
+    assert!(
+        picture["licence"]
+            .as_str()
+            .is_some_and(|said| said.contains("Apache-2.0") && said.contains("MIT")),
+        "the picture set's licence is not the one its files carry: {picture}"
+    );
+    assert!(picture["downloaded"].is_boolean(), "{picture}");
+
+    // A kind that is not one of the four is refused before a job is booked.
     let (_, reply) = agent.ask(
         "tools/call",
         json!({ "name": "models_download", "arguments": { "kind": "gpu", "id": "x" } }),
@@ -699,7 +717,18 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     let refused = reply.get("result").cloned().expect("a result");
     assert_eq!(refused["isError"], true, "{refused}");
     let said = refused["content"][0]["text"].as_str().expect("the refusal");
-    assert!(said.contains("tts, whisper or sound"), "{said}");
+    assert!(said.contains("tts, whisper, sound or picture"), "{said}");
+
+    // The picture kind takes its id from the row the sheet shows: any other
+    // id under that kind is named as unknown, the ids being in models.list.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "models_download", "arguments": { "kind": "picture", "id": "not-a-set" } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("models.list"), "{said}");
 
     // A model the tables do not know is named, with where the ids are.
     let (_, reply) = agent.ask(

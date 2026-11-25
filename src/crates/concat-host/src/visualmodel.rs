@@ -30,6 +30,24 @@ pub const VISUAL_MODELS: [ModelId; 4] = [
     ModelId::ClipVision,
 ];
 
+/// The set's id: the settings sheet's picture row, and the id
+/// `models.download` takes with `kind: "picture"` - one id for the four
+/// files, because they are what a first edit spends together.
+pub const SET_ID: &str = "picture-models";
+
+/// The set's licences as one line, from the same table the files are
+/// fetched by: what a caller choosing the row is shown, so the picture
+/// set is licensed as visibly as the sound sets are.
+pub fn licences() -> String {
+    let mut said: Vec<&'static str> = VISUAL_MODELS
+        .iter()
+        .map(|id| id.spec().licence)
+        .collect();
+    said.sort_unstable();
+    said.dedup();
+    said.join("; ")
+}
+
 /// Where they live: the app's own model folder, the one the cutout models,
 /// the sound models and the sidecar share.
 pub fn folder(data: &Path) -> PathBuf {

@@ -223,6 +223,32 @@ read. Prefer vertical push-ins, slow drifts and rotations around the subject's
 axis; keep the subject in the middle 60%; and compose the comp at the reel's
 own frame size, never a 16:9 bake cropped later.
 
+### From measured signals to Geneva moves
+
+A comp is designed against measurements, not defaults — each voice or
+visual signal maps onto a Geneva instruction, and the mapping is doctrine:
+
+| The measured signal | The Geneva instruction |
+| --- | --- |
+| emphasis words (`prosody.emphasisWords`) | time text entrances — the pop lands on the stressed word, not the sentence's start |
+| pitch contour (`prosody.pitchContourHz`) | sets intensity: a rising line earns a spring entrance, a falling one a settle |
+| optical-flow direction (`sense_visual` `measure_motion` / `camera_motion`) | elements move the way the shot travels — a card slides with the pan, never against it |
+| `depth_map` (Depth Anything) | layered parallax: the subject separated from its background, `set-camera` `depths` doing the rest |
+| `subject_mask` (FastSAM) | subject-focused motion: the push, the glow or the reveal follows the masked subject |
+| saliency (`sense_visual` `saliency`) | text and graphics stay out of the focal region — the eye is already there |
+| composition thirds | position elements on the measured thirds, not the frame centre by default |
+| motion peaks (`motion.peakAt`) | time scene entrances on the peak — the entrance rides movement the viewer is already watching |
+| downbeats and SFX transients | synchronize entrances: a card that arrives with the hit reads as one event |
+| `track_subject` | crop keyframes for follow motion — the frame keeps the subject the comp points at |
+
+Two rules the table implies. A **still clip earns controlled camera
+movement** — a `set-camera` push, a drift, a parallax stack; an
+**already-moving clip keeps its own motion** — never stack a Ken Burns
+push on a pan; the smear doubles and the frame fights itself. And a
+measured signal outranks a preset default: if the saliency peak sits
+right of centre, the caption goes left of it, whatever the preset's
+position says.
+
 ## 7. Verification
 
 - Three frames per comp: mid-entrance, settled, mid-exit. A comp that is right at 2 s and wrong at

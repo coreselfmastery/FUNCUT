@@ -54,8 +54,10 @@ assets; it validates structure and timeline continuity, not creative quality.
    `clipId` or `mediaId` is a real asset already in the project. There is
    no universal B-roll/motion share target: choose the medium from the
    communication job and evidence of this film.
-4. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
-   See `prompts/sfx_design.md` for query writing.
+4. **SFX with `peakAt` on the segment's first frame** (the cut), not the
+   word. The sound design comes from `sense_sound_model {action:
+   "plan"}` and lands on the measured peak; see `prompts/sfx_design.md`,
+   and the arrangement slots below for how events ride the plan.
 5. **`transitionIn` only where the SECTION changes** — most segments take a
    plain cut (`null`). The 122 transitions and their uses:
    `prompts/transitions_guide.md`.
@@ -82,10 +84,37 @@ assets; it validates structure and timeline continuity, not creative quality.
   4th beat; section boundaries move to the nearest downbeat (± ≤300 ms is
   fine for speech integrity — speech wins over beats when they conflict).
 
+## The audiovisual arrangement slots
+
+A segment may carry its sound and music decisions beside its visual, so
+the plan is one object the whole mix executes from:
+
+- **`soundEvents[]`** — one per placed accent: `eventId`, `role` (the
+  six-role vocabulary of `prompts/sfx_design.md`), the `storyBeat` it
+  serves, `start`, `peakAt`, `end`, `assetId`, `source`
+  (`library` | `generator`), `modelEvidence` / `voiceEvidence` /
+  `visualEvidence`, `gainDb`, `keyframes`, `fadeIn`/`fadeOut`,
+  `confidence`, `reason`. `start` is `peakAt − measured syncOffset` —
+  the same arithmetic the sound plan already did.
+- **`musicArrangement`** — the bed as structure: sections with
+  `reason`, time range, `structure` (the track's own, from
+  `analyze_music_structure`) and `automation` (the duck keyframes and
+  section dips the mix will ride).
+- **Evidence is cited, not copied.** The plan references evidence
+  records — the `sense_sound`, `sense_sound_model` and `sense_visual`
+  replies — instead of pasting thousands of model values inline;
+  `plan_validate`'s `signalLog` holds the citations, and an event
+  whose evidence is not cited is a decoration, not a decision.
+- **A generated asset records its birth**: a `source: "generator"`
+  event carries the `prompt`, `seed`, model `kind` and `licence`, so a
+  review can answer where a sound came from and whether it may ship.
+
 ## Quality gates on the plan itself
 
 - [ ] Every segment has a visual; no two segments reference the same clip id
   within 20 s (no visible reuse).
+- [ ] Every `soundEvent` cites its evidence records in `signalLog`; a
+  generated asset carries its prompt, seed, model kind and licence.
 - [ ] Every query is concrete: noun + action/setting + shot feel ("aerial
   canyon river sunrise"), not a mood word alone.
 - [ ] Every B-roll segment has a concrete query and a 40+ character semantic

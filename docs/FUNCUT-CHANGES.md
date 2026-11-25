@@ -494,21 +494,29 @@ program exactly where it helps, and deliberately not where it does not:
   for hardware - many times faster than x265 on two weak cores, which is
   the difference between an export that sips CPU and one that owns the
   machine for an hour. This is upstream behaviour and stays.
-- **Export encoding in H.264: on the CPU, deliberately.** x264 makes a
-  better picture per bit than the hardware H.264 encoders, and H.264 is
-  the compatibility choice; the codebase measured this and chose quality.
-  On a Celeron that means a 20-minute 1080p H.264 export is slow - the
-  honest advice is to export HEVC, which the chip does for nothing.
-- **Decoding: on the CPU, deliberately.** The engine links VAAPI (the
-  Linux decode API your iGPU speaks) and can be pointed at it, but two
-  facts keep it off by default: upstream measured 8-bit H.264 - the format
-  of essentially all YouTube footage - decoding *faster* on the CPU than
-  through the iGPU-plus-copy-back path; and on Intel i915 drivers VAAPI
-  has hung whole machines until reboot (upstream issue #70). A hard freeze
-  is the one thing a "no compromises on this potato" build must not ship.
-  Heavier codecs (HEVC, 10-bit) would win on the chip, but the safe
-  default is the CPU, and the proxy system covers 4K sources with
-  quarter-size copies that decode smoothly anywhere.
+- **Export encoding in H.264: on the CPU, deliberately, until the person
+  names the GPU.** x264 makes a better picture per bit than the hardware
+  H.264 encoders, and H.264 is the compatibility choice; the codebase
+  measured this and chose quality. On a Celeron that means a 20-minute
+  1080p H.264 export is slow - the honest advice is to export HEVC, which
+  the chip does for nothing. Choosing GPU in the export sheet leads with
+  the machine's own encoder for H.264 too, and that row now reaches NVENC
+  as well as VAAPI.
+- **Decoding: on the CPU on a small machine, NVDEC on a data-centre
+  NVIDIA part.** The engine links VAAPI (the Linux decode API an Intel or
+  AMD iGPU speaks) and NVDEC (NVIDIA's). On this class of machine the CPU
+  keeps it, for two measured reasons: upstream found 8-bit H.264 - the
+  format of essentially all YouTube footage - decoding *faster* on the CPU
+  than through the iGPU-plus-copy-back path, and on Intel i915 drivers
+  VAAPI has hung whole machines until reboot (upstream issue #70). A hard
+  freeze is the one thing a "no compromises on this potato" build must not
+  ship. A data-centre NVIDIA part (a T4, A100, L4 and the rest of the
+  `Tesla` line) is the one card whose driver the app opens unasked, since
+  that is the machine the headless director runs on; its model is read
+  from `/proc/driver/nvidia/gpus`, so no driver is loaded to decide.
+  Desktop cards and hybrid laptops stay on the CPU unless
+  `CONCAT_HARDWARE_DECODE` names them, and the proxy system still covers
+  4K sources with quarter-size copies that decode smoothly anywhere.
 
 ## 7. The feature: the Wyzowl sound effects, and a search that ranks
 

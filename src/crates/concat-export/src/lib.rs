@@ -471,10 +471,11 @@ pub struct ExportRequest {
     /// sheet starts has always meant.
     #[serde(default = "hardware_by_default")]
     pub hardware: bool,
-    /// The machine's own video hardware by name: the VAAPI encoders lead
-    /// every codec's list, with the software encoder as the fallback for
-    /// a chip that refuses this export's size or depth. See
-    /// [`concat_media::vaapi_encode_available`].
+    /// The machine's own video hardware by name: the hardware encoders -
+    /// VAAPI, NVENC, Quick Sync or AMF - lead every codec's list, with the
+    /// software encoder as the fallback for a chip that refuses this
+    /// export's size or depth. See
+    /// [`concat_media::hardware_encode_available`].
     #[serde(default)]
     pub vaapi_first: bool,
     /// An HDR timeline written as HDR - HEVC or AV1 in ten bits, BT.2020

@@ -32,7 +32,8 @@ pub mod treat;
 
 pub use decode::{ColorRange, ColorSignal, DecodeOptions, Decoder, FrameSource, SeekableSource};
 pub use encode::{
-    EncodeOptions, Encoder, FrameSink, RateMode, VideoCodec, jpeg, vaapi_encode_available,
+    EncodeOptions, Encoder, FrameSink, RateMode, VideoCodec, hardware_encode_available, jpeg,
+    vaapi_encode_available,
 };
 pub use error::{Error, Result};
 pub use ffi::{init, linked_version};

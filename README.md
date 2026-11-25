@@ -150,7 +150,7 @@ A machine with no GPU still runs: Mesa’s lavapipe is a software Vulkan rendere
 
 ### Headless
 
-The editor is also an MCP server. A sandbox needs no desktop, GPU or build toolchain:
+The editor is also an MCP server. A sandbox or a Kaggle notebook needs no desktop, GPU or build toolchain:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -305,7 +305,7 @@ FUNCUT is in **beta**. It works, and it still has edges. The honest limits:
 - **AUTO EDIT does not export by default.** It leaves an editable timeline; call `export_start`.
 - **Headless AUTO EDIT does not extract a talking head from raw video.** That is the GUI handoff’s work.
 - **The Geneva sidecar is a pinned closed-source binary (1.6.0).** It has no path drawing, no variable-font axes, and keyframes in px and % only.
-- **VAAPI hardware encode is opt-in and unvalidated on real GPUs.**
+- **Hardware video is opt-in or NVIDIA-only, and unvalidated on real GPUs.** VAAPI decode and encode are opt-in; decode is NVDEC by default on a data-centre NVIDIA part (a T4 and the rest of the `Tesla` line); and the export sheet's GPU row now reaches NVENC as well as VAAPI. None of it has been accepted on real Intel, AMD or NVIDIA hardware yet.
 - **The FreePD music shelf depends on archive.org.**
 - **OpenVid is a research dataset**, not rights-cleared stock.
 - **MobyGratis music is non-commercial only.**

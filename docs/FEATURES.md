@@ -125,11 +125,14 @@ Everything upstream Concat is, verified in this tree:
 - **Proxies & decode.** Every file ≥1080p gets a working copy (H.264 or
   all-keyframe MJPEG; HDR sources keep 10-bit HEVC) built on background
   lanes and adopted for scrub; decode-level ladder halves the source until
-  it covers the request; hardware decode via VideoToolbox/D3D11VA/MediaCodec
-  (VAAPI opt-in), with 8-bit H.264 deliberately on the CPU where it is
-  faster. SVG via resvg. Waveform and filmstrip caches.
+  it covers the request; hardware decode through NVIDIA's NVDEC on a
+  data-centre part (a T4, A100, L4 and the rest of the `Tesla` line) and
+  VAAPI by name, with 8-bit H.264 deliberately on the CPU where it is
+  faster. `CONCAT_HARDWARE_DECODE=auto|cuda|vaapi|off` overrides the
+  choice. SVG via resvg. Waveform and filmstrip caches.
 - **Export.** H.264 / HEVC / AV1, 10-bit colour, HDR (BT.2020 HLG/PQ),
-  x264/x265/SVT-AV1 and NVENC/QSV/AMF hardware, VBR/CBR/average rate
+  x264/x265/SVT-AV1 and NVENC/QSV/AMF hardware (the GPU row is offered
+  wherever any of them is reachable, NVIDIA included), VBR/CBR/average rate
   control, limited/full range, AAC 48 kHz audio, faststart MP4, staged
   progress (cutout → stabilize → video → audio → mux) with cancel. The
   finished sheet offers **Download** — a copy into the Downloads folder,

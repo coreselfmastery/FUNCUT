@@ -292,7 +292,11 @@ fn copy_project(source: &Path) -> Result<PathBuf, ApiError> {
 /// in the copy as though they were this run's. The names are skipped at
 /// the project's root only - a user folder that shares a reserved name
 /// deeper in the tree is the user's, not the run's.
-const NOT_COPIED: &[&str] = &["auto-edit", "auto-edit-report.json", "auto-edit-receipt.json"];
+const NOT_COPIED: &[&str] = &[
+    "auto-edit",
+    "auto-edit-report.json",
+    "auto-edit-receipt.json",
+];
 
 fn copy_tree(source: &Path, destination: &Path) -> std::io::Result<()> {
     copy_contents(source, destination, true)
@@ -443,7 +447,10 @@ mod tests {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        assert!(stem.ends_with("edit"), "named from the real project: {stem}");
+        assert!(
+            stem.ends_with("edit"),
+            "named from the real project: {stem}"
+        );
     }
 
     #[test]
@@ -531,7 +538,11 @@ mod tests {
                 "the copy names its own: {}",
                 path.display()
             );
-            assert!(path.is_file(), "the copy carries the file: {}", path.display());
+            assert!(
+                path.is_file(),
+                "the copy carries the file: {}",
+                path.display()
+            );
         }
         assert!(
             paths[1].starts_with(copy.join("media")),
@@ -544,11 +555,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("Reel");
         std::fs::create_dir_all(source.join("auto-edit")).unwrap();
-        std::fs::write(source.join("auto-edit").join("enhanced-000-a.wav"), b"stale").unwrap();
+        std::fs::write(
+            source.join("auto-edit").join("enhanced-000-a.wav"),
+            b"stale",
+        )
+        .unwrap();
         std::fs::write(source.join("auto-edit-report.json"), b"stale").unwrap();
         std::fs::write(source.join("auto-edit-receipt.json"), b"stale").unwrap();
         std::fs::create_dir_all(source.join("footage").join("auto-edit")).unwrap();
-        std::fs::write(source.join("footage").join("auto-edit").join("clip.mp4"), b"user").unwrap();
+        std::fs::write(
+            source.join("footage").join("auto-edit").join("clip.mp4"),
+            b"user",
+        )
+        .unwrap();
         std::fs::write(
             source.join("concat.json"),
             serde_json::to_vec(&json!({ "media": [] })).unwrap(),

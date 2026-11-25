@@ -9821,7 +9821,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // but a future call shape must not take the runner
                     // down with it for an invariant it cannot see.
                     let last = log.last()?;
-                    if last.get("kind").is_some() && last.get("path").is_some() {
+                    // The generator's own reply, success or refusal: the
+                    // sidecar stamps every one of them with the tool it
+                    // answered, so a model that is not installed is read
+                    // as this stage's answer and not as somebody else's.
+                    if last.get("tool") == Some(&json!("generate")) {
                         // The generator's reply: a written bed is imported
                         // into the project's own `bgm` folder, which is
                         // where the timeline read below finds it. A model
@@ -13511,7 +13515,13 @@ mod tests {
             "media": [{ "id": "m1", "path": "/edits/Reel/voiceover/take-000-a.wav" }],
         });
         let mut log = vec![captions_view];
-        // First call: the shelf's state, not a duck of nothing.
+        // First call: the bed is written for a cut this short - and when
+        // the model is not installed, the shelf's state. Either way, not
+        // a duck of nothing.
+        let first = (music.next)(log.as_slice()).expect("the bed is asked for");
+        assert_eq!(first.tool, "sense_sound_model");
+        assert_eq!(first.arguments["kind"], json!("bgm"));
+        log.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
         assert_eq!(
             (music.next)(log.as_slice())
                 .map(|call| call.tool)
@@ -15857,12 +15867,20 @@ mod tests {
                 ],
             }),
         ];
-        let first = (sfx.next)(&log).expect("the loud peak is shopped");
-        assert_eq!(first.tool, "sounds_search");
+        // The loud peak is inside the first three seconds: the hook asks
+        // the heavier generator for its accent.
+        let first = (sfx.next)(&log).expect("the loud peak is generated");
+        assert_eq!(first.tool, "sense_sound_model");
+        assert_eq!(first.arguments["kind"], json!("sfx-large"));
+        // The model is not installed: the shelf takes the accent instead,
+        // and every peak after this one is the shelf's too.
+        let mut after = log.clone();
+        after.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
+        let shop = (sfx.next)(&after).expect("the shelf answers when the model is absent");
+        assert_eq!(shop.tool, "sounds_search");
         // The calm line's peak is skipped: the shelf's answer for the loud
         // one is the last call, so the next ask is the add, and once that
         // is spent the stage ends rather than shopping the calm peak.
-        let mut after = log.clone();
         after.push(json!({ "sounds": [{ "id": "s1" }] }));
         let add = (sfx.next)(&after).expect("the sound is added");
         assert_eq!(add.tool, "sounds_add");

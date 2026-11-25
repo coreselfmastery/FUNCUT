@@ -1893,7 +1893,7 @@ struct SenseFamilyTool {
     base: u64,
 }
 
-/// The forty-three family tools, seven families: discourse (the script
+/// The forty-four family tools, seven families: discourse (the script
 /// as language), voiceq (the take's health), prosody (the delivery),
 /// audiorepair (the clean and the music), sound (what a sound file is),
 /// soundmodel (what it means) and captions (the words made to agree with
@@ -2781,7 +2781,7 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
     })
 }
 
-/// The door the forty-three family members come through when named
+/// The door the forty-four family members come through when named
 /// directly (the internal dispatch `sense_family_action` lands on): the
 /// name selects the row, the row names the sidecar command and the
 /// fields that travel, and the budget scales with the lines the way
@@ -3308,7 +3308,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 43, "forty-three readings behind seven doors");
+        assert_eq!(members, 44, "forty-four readings behind seven doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(

@@ -1533,6 +1533,7 @@ def _generator(spec):
         if Tokenizer is None:
             missing.append("tokenizers")
         return None, {
+            "tool": "generate",
             "ok": False,
             "model": "absent",
             "error": "the generators need " + ", ".join(missing)
@@ -1541,6 +1542,7 @@ def _generator(spec):
     absent = [name for name in row["files"] if _model_file(spec, name) is None]
     if absent:
         return None, {
+            "tool": "generate",
             "ok": False,
             "model": "absent",
             "error": f"the {kind} model is not downloaded: missing {', '.join(absent)} "
@@ -1804,7 +1806,11 @@ def generate_sound(spec):
     kind, row = resolved
     prompt = str(spec.get("prompt") or "").strip()
     if not prompt:
-        return {"ok": False, "error": "name `prompt`: the words the model writes from"}
+        return {
+            "tool": "generate",
+            "ok": False,
+            "error": "name `prompt`: the words the model writes from",
+        }
     seconds = _gen_seconds(spec, row)
     seed = int(spec.get("seed") or 0)
     threads = _threads(spec)

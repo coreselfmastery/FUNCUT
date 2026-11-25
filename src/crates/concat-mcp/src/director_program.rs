@@ -3728,6 +3728,27 @@ fn accent_gain_db(strength: f64) -> f64 {
 /// specific than the emotion alone: a line read as a stinger is shopped
 /// for a stinger, not the family its emotion happens to share. The
 /// family is the fallback when the read named no register.
+/// The words a generated accent is written from: the family the peak's
+/// emotion named, said the way a sound model hears it - the object first,
+/// then the character, then what the file must not carry. A prompt with
+/// music in it is a prompt the SFX model answers with a bed.
+fn sfx_prompt(queries: &[&'static str], emotion: &str) -> String {
+    let word = queries.first().copied().unwrap_or("impact");
+    format!("a {word} sound effect, {emotion}, dry, close, cinematic, no music")
+}
+
+/// The words a generated music bed is written from: the read's own bed
+/// words when it named any, and otherwise the one register an unattended
+/// cut can always take.
+fn bed_prompt(log: &[Value], takes: &[TakePaths]) -> String {
+    let word = bed_query_chain(log, takes)
+        .into_iter()
+        .flatten()
+        .next()
+        .unwrap_or_else(|| "cinematic underscore".to_owned());
+    format!("{word}, instrumental, no drums, sparse, warm, cinematic")
+}
+
 fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'static str> {
     let register = line
         .map(|line| line.sfx_type.to_ascii_lowercase())
@@ -9553,6 +9574,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Stage::Music,
             Box::new({
                 let mut polls = 0u32;
+                // Whether the generator was asked for a bed: one ask a run,
+                // then the shelf if it answered nothing.
+                let mut ai_bed = false;
                 // How many replies the run had drawn before this stage's
                 // first call: everything before that index belongs to the
                 // earlier stages, and the stage reads only what it drew
@@ -9758,6 +9782,38 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         if bed_already {
                             return Some(call("timeline_read", json!({ "path": music_project })));
                         }
+                        // The generator first, for a cut short enough that
+                        // one written bed covers it: this decoder has no
+                        // usable cache, so its cost is the square of the
+                        // length and eight seconds of bed is already most
+                        // of the call's budget. A longer cut keeps the
+                        // shelf, which carries tracks of every length.
+                        let runtime = latest_view(log)
+                            .and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            })
+                            .unwrap_or(0.0);
+                        if !ai_bed && runtime > 0.5 && runtime <= 8.0 {
+                            ai_bed = true;
+                            return Some(call(
+                                "sense_sound_model",
+                                json!({
+                                    "action": "generate",
+                                    "kind": "bgm",
+                                    "prompt": bed_prompt(log, &music_source),
+                                    "seconds": round3(runtime.min(8.0)),
+                                    "project": music_project,
+                                }),
+                            ));
+                        }
                         // The stage's own first call: the shelf's state.
                         return Some(call("bgm_status", json!({})));
                     }
@@ -9765,6 +9821,26 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // but a future call shape must not take the runner
                     // down with it for an invariant it cannot see.
                     let last = log.last()?;
+                    if last.get("kind").is_some() && last.get("path").is_some() {
+                        // The generator's reply: a written bed is imported
+                        // into the project's own `bgm` folder, which is
+                        // where the timeline read below finds it. A model
+                        // that is not installed sends the stage to the
+                        // shelf, and every later reply is the shelf's.
+                        if last.get("ok") == Some(&json!(true))
+                            && let Some(path) = last.get("path").and_then(|path| path.as_str())
+                        {
+                            return Some(call(
+                                "bgm_import",
+                                json!({
+                                    "path": music_project,
+                                    "file": path,
+                                    "start": 0.0,
+                                }),
+                            ));
+                        }
+                        return Some(call("bgm_status", json!({})));
+                    }
                     if last.get("freepd").is_some() {
                         // A bgm_status reply: prepare the missing shelf,
                         // poll the loading one, shop the ready one.
@@ -10071,6 +10147,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     /// own, so a stage never has to guess from a reply's shape what it was
     /// waiting for.
     enum SfxPending {
+        /// The generator's reply is in: place the file it wrote, or fall
+        /// back to the shelf when the model is not installed.
+        Generate {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, for the fallback.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+        },
         /// The search's reply is in: pick a hit this run has not spent, or
         /// walk the family's next word.
         Pick {
@@ -10120,6 +10208,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // accents do not all shop the same shelf answer.
                 let mut used: Vec<String> = Vec::new();
                 let mut rotation = 0usize;
+                // Whether a generator answered this run: Some(true) after a
+                // file was written, Some(false) after the model said it was
+                // absent - which stops every later peak from asking again.
+                let mut ai_accent: Option<bool> = None;
                 move |log| {
                     let peaks = peaks.get_or_insert_with(|| {
                         // Each peak carries the take it was measured on:
@@ -10217,6 +10309,52 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // A reply is waiting to be read: the pending state says
                     // which one, and each state reads only its own reply.
                     match pending.take() {
+                        Some(SfxPending::Generate {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                        }) => {
+                            // The generator's own reply: a written file is
+                            // placed the way a shelf hit is, and a model
+                            // that is not installed sends this peak - and
+                            // every peak after it - to the shelf instead.
+                            let written = log
+                                .last()
+                                .filter(|reply| reply.get("ok") == Some(&json!(true)));
+                            if let Some(path) = written
+                                .and_then(|reply| reply.get("path"))
+                                .and_then(|path| path.as_str())
+                            {
+                                ai_accent = Some(true);
+                                pending = Some(SfxPending::Gain {
+                                    id: path.to_owned(),
+                                    gain_db,
+                                });
+                                return Some(call(
+                                    "sounds_add",
+                                    json!({
+                                        "path": sfx_project,
+                                        "file": path,
+                                        "start": round3(at),
+                                    }),
+                                ));
+                            }
+                            ai_accent = Some(false);
+                            pending = Some(SfxPending::Pick {
+                                at,
+                                gain_db,
+                                queries: queries.clone(),
+                                tried,
+                            });
+                            return Some(call(
+                                "sounds_search",
+                                json!({
+                                    "query": queries[tried % queries.len()],
+                                    "limit": 3,
+                                }),
+                            ));
+                        }
                         Some(SfxPending::Pick {
                             at,
                             gain_db,
@@ -10379,9 +10517,36 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         .find(|(path, _)| *path == take)
                         .map(|(_, penalty)| *penalty)
                         .unwrap_or(0.0);
+                    let gain_db = accent_gain_db(strength) - penalty;
+                    // The generator first, when the machine has one: the
+                    // hook is the one accent worth the heavier model, and
+                    // every other peak is a short sound the small model
+                    // writes in seconds. A model that is not installed
+                    // answers `ok: false` in a second and the shelf takes
+                    // over for the rest of the run.
+                    if ai_accent != Some(false) {
+                        let kind = if hook { "sfx-large" } else { "sfx-small" };
+                        pending = Some(SfxPending::Generate {
+                            at,
+                            gain_db,
+                            queries: queries.clone(),
+                            tried: 0,
+                        });
+                        return Some(call(
+                            "sense_sound_model",
+                            json!({
+                                "action": "generate",
+                                "kind": kind,
+                                "prompt": sfx_prompt(&queries, &emotion),
+                                "seconds": if hook { 2.5 } else { 1.5 },
+                                "seed": placed,
+                                "project": sfx_project,
+                            }),
+                        ));
+                    }
                     pending = Some(SfxPending::Pick {
                         at,
-                        gain_db: accent_gain_db(strength) - penalty,
+                        gain_db,
                         queries: queries.clone(),
                         tried: 0,
                     });

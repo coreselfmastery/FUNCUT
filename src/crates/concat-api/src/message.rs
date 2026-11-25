@@ -439,14 +439,22 @@ pub enum Request {
     SoundsAdd {
         /// The project folder.
         path: String,
-        /// The sound's id, as `sounds.search` gave it.
-        id: String,
+        /// The sound's id, as `sounds.search` gave it; absent when
+        /// `file` names a local file instead.
+        #[serde(default)]
+        id: Option<String>,
         /// Lay it on the timeline at this moment.
         #[serde(default)]
         start: Option<f64>,
         /// The lane to lay it on; the first lane with room when absent.
         #[serde(default)]
         track: Option<String>,
+        /// A local audio file to import instead of a shelf id - a
+        /// generated accent, or any file the caller already owns. It is
+        /// copied into the project's `audio` folder the way a shelf
+        /// sound is, so the project owns its files either way.
+        #[serde(default)]
+        file: Option<String>,
     },
 
     /// Every effect package the build knows, with its parameters, so a
@@ -544,8 +552,15 @@ pub enum Request {
     BgmImport {
         /// The project folder.
         path: String,
-        /// The track ids, in the order they should play.
+        /// The track ids, in the order they should play; empty when
+        /// `file` names a local track instead.
+        #[serde(default)]
         ids: Vec<String>,
+        /// A local audio file to import instead of shelf ids - a
+        /// generated bed, or any file the caller already owns. Copied
+        /// into the project's `bgm` folder the way a shelf track is.
+        #[serde(default)]
+        file: Option<String>,
         /// Lay them on the timeline from this moment, in sequence.
         #[serde(default)]
         start: Option<f64>,

@@ -44,6 +44,7 @@ tuned for small low-memory Linux laptops and extended with:
 | [docs/forge/FORGE.md](docs/forge/FORGE.md) | The Forge harness that drives a director run (any vision-capable model) |
 | [docs/EMOTION.md](docs/EMOTION.md) | The emotion read and the gate that drives easing, colour, sound, duck, stock |
 | [docs/SOUND-SENSE.md](docs/SOUND-SENSE.md) | What a sound file measures, the six roles it is scored for, and where the shelf's metadata lies |
+| [docs/SOUND-GENERATION.md](docs/SOUND-GENERATION.md) | The three text-to-audio models (TinyAudio-MF, Stable Audio Open Small, TinyMusician): download, the `generate` action, and how AUTO EDIT spends them |
 | [docs/MOTION.md](docs/MOTION.md) | The Geneva comp document, its ops, presets, storyboard, farm |
 | [docs/MAESTRO.md](docs/MAESTRO.md) · [docs/CLIPSKILLS.md](docs/CLIPSKILLS.md) | The two judgment shelves |
 | [docs/STOCK_LICENSING.md](docs/STOCK_LICENSING.md) | What the stock shelf's clips are licensed as (read before publishing) |

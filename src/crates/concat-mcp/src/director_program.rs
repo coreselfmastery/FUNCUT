@@ -11354,8 +11354,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The clip the add placed.
             clip_id: String,
-            /// The copy the add made, which is what the check measures.
-            file: String,
         },
         /// The move's reply is in: gain the clip it moved.
         Level {
@@ -11731,8 +11729,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     id,
                                     queries,
                                     tried,
-                                    clip_id,
-                                    file,
+                                    clip_id: clip_id.clone(),
                                 });
                                 return Some(call(
                                     "sense_sound",
@@ -11757,7 +11754,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             queries,
                             tried,
                             clip_id,
-                            file: _,
                         }) => {
                             let checked = log.last();
                             let issues = checked

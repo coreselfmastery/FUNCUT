@@ -60,7 +60,8 @@ parseable.
 | `audiorepair` | The clean and the music (`audio_repair.py`, six tools): the measured enhance chain, hum/hiss/rumble removal, two-pass loudness (the three that WRITE a new file - the input is never touched), music-vs-speech spans, offline identification with the libraryQuery, and the structure map with cutSafePoints. |
 | `sound` | What a sound file IS (`sound_sense.py`, four tools): the measured read of one sound (level, crest, attack, body, transients, centroid, bands, flatness, pitch movement, and where its peak actually falls), the six role fits a cut shops for with the evidence behind each, candidate ranking, a placed accent checked for sync, role, level and repetition, and a cached library index that reports a `syncAt` the file contradicts. |
 | `captions` | The words and the take, made to agree (`captions.py`, five tools): TTS quality, the AI-voice disclosure heuristic, the SHA-256 voice seal (seal / verify / status), caption alignment with drift correction, and subtitle hygiene with the changeLog. |
-| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest`, `emotion.py selftest` and `voice_signals.py selftest` check the critic and the readers the same way, and the five family modules' own `selftest` proves all thirty-three consumption-layer tools on synthetic takes — CI runs every one. |
+| `soundmodel` | What a sound MEANS (`sound_model.py`, four tools): one record per asset - identity, YAMNet's 521 AudioSet labels, a 512-d CLAP embedding with the description it best matches, the `sound_sense.py` measurements, loudness/clipping/silence, roles, sync offset and trim advice - plus a cached shelf index, a ranking that fuses CLAP with the measured fit using weights fitted on the 530 shipped sounds, and `plan` - every signal at once, into a per-moment sound design with the evidence behind each choice. numpy + onnxruntime when installed, never required; without them the reply says `model: absent` and measures only. |
+| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest`, `emotion.py selftest` and `voice_signals.py selftest` check the critic and the readers the same way, and the seven family modules' own `selftest` proves all forty-one consumption-layer tools on synthetic takes — CI runs the six whose modules are standard-library only. |
 
 Example:
 
@@ -178,6 +179,30 @@ measurements - the whole 530 in 0.11 s instead of 148 s - and
 peak with the clip instead of reading as a late accent. See
 `docs/SOUND-SENSE.md` for the audit, the formulas, the measured
 library evidence and the wiring plan.
+
+## What a sound means (`sound_model.py`)
+
+`sound_sense.py` measures; this module names. YAMNet (521 AudioSet classes,
+16 MB) says what a file contains, and CLAP puts audio and text in one 512-d
+space so a written description can be compared with the file itself rather
+than with its filename. The two answer different questions, and the
+measurements still gate them: a model asked "is this a whoosh" will answer
+about a file of silence.
+
+`docs/SOUND-MODEL.md` has the whole case, including the part that matters
+for trust: on the 530 shipped sounds, P@64, CLAP beats the measurements on
+transitions (0.62 vs 0.38) and loses on risers and textures (0.31 vs 0.44,
+0.31 vs 0.42). The fused ranking therefore weights the two per role, and on
+transitions the weight on the measurements is zero - they pull the model
+down. `scripts/sound-model/bench.py` reproduces that table and fails when it
+drifts.
+
+The models are optional. numpy and onnxruntime are used when installed and
+never required, the same rule `voice_quality.py` follows: without them every
+tool answers with `"model": {"state": "absent", "reason": ...}` and
+measurement-only records. The models live in `$FUNCUT_MODELS` (or
+`~/.local/share/funcut/models`), so a bigger CLAP is a file swap, not a code
+change.
 
 ## The emotion read (`emotion.py`)
 

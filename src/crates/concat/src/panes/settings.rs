@@ -229,6 +229,10 @@ pub fn installed(models: &[ModelState]) -> Vec<&ModelState> {
     models.iter().filter(|model| model.installed).collect()
 }
 
+/// The sound models' row: CLAP and YAMNet are one download, because half
+/// a set reads nothing and nobody wants to choose a tokenizer.
+pub const SOUND_MODELS_ID: &str = "sound-models";
+
 /// The settings sheet's state.
 #[derive(Default)]
 pub struct SettingsPane {
@@ -253,6 +257,10 @@ pub struct SettingsPane {
     pub transcribers: Vec<ModelState>,
     /// The voice models, installed or not.
     pub voices: Vec<ModelState>,
+    /// The sound models - CLAP and YAMNet - as one row.
+    pub sounds: Vec<ModelState>,
+    /// The cancel flag of a sound-model download in flight.
+    sound_cancel: Arc<AtomicBool>,
     /// The Version page's list: the stable releases from 0.2.5 on, newest
     /// first, once GitHub has been asked.
     pub releases: Vec<Release>,
@@ -500,14 +508,18 @@ impl SettingsPane {
                 }
             }
             SettingsMsg::ModelCancel(id) => {
-                if self.is_transcriber(&id) {
+                if self.is_sound_models(&id) {
+                    self.sound_cancel.store(true, Ordering::Relaxed);
+                } else if self.is_transcriber(&id) {
                     studio.host.transcriber.cancel_download();
                 } else {
                     studio.host.speech.cancel_download();
                 }
             }
             SettingsMsg::ModelRemove(id) => {
-                let result = if self.is_transcriber(&id) {
+                let result = if self.is_sound_models(&id) {
+                    concat_host::soundmodel::remove(&studio.host.dirs.data)
+                } else if self.is_transcriber(&id) {
                     studio.host.transcriber.delete_model(&studio.host.dirs, &id)
                 } else {
                     studio.host.speech.delete_model(&studio.host.dirs, &id)
@@ -546,7 +558,12 @@ impl SettingsPane {
                 match result {
                     Ok(()) => {
                         studio.notify(&t("settings.modelReady"), false);
-                        if self.is_transcriber(&id) && studio.prefs.transcriber_model.is_none() {
+                        if self.is_sound_models(&id) {
+                            // Nothing to choose: the reader looks for the
+                            // files, and finds them because they are here.
+                        } else if self.is_transcriber(&id)
+                            && studio.prefs.transcriber_model.is_none()
+                        {
                             studio.prefs.transcriber_model = Some(id.clone());
                         } else if !self.is_transcriber(&id) && studio.prefs.tts_model.is_none() {
                             studio.prefs.tts_model = Some(id.clone());
@@ -889,6 +906,7 @@ impl SettingsPane {
             .transcribers
             .iter()
             .chain(self.voices.iter())
+            .chain(self.sounds.iter())
             .filter(|model| model.fetched.is_some())
             .map(|model| (model.id.clone(), (model.fetched, model.unpacking)))
             .collect();
@@ -896,6 +914,7 @@ impl SettingsPane {
             .transcribers
             .iter()
             .chain(self.voices.iter())
+            .chain(self.sounds.iter())
             .filter_map(|model| Some((model.id.clone(), model.failure.clone()?)))
             .collect();
         let chosen_transcriber = studio.prefs.transcriber_model.clone();
@@ -951,6 +970,30 @@ impl SettingsPane {
                 })
                 .collect();
         }
+        // The sound models: one row, the bytes still to fetch, and whether
+        // the reader would find a working set. `ready` is the whole set -
+        // CLAP without its text tower matches nothing.
+        let total = concat_host::soundmodel::bytes();
+        let missing = concat_host::soundmodel::missing_bytes(&dirs.data);
+        let (fetched, unpacking) = downloading
+            .get(SOUND_MODELS_ID)
+            .copied()
+            .unwrap_or((None, false));
+        self.sounds = vec![ModelState {
+            id: SOUND_MODELS_ID.to_owned(),
+            name: "Sound models".to_owned(),
+            note: "CLAP reads a sound against a description; YAMNet names what it contains. Without them the sound reader measures only.".to_owned(),
+            // The row shows what pressing download would fetch: the whole
+            // set, or only what a half-finished one left out.
+            megabytes: (if missing > 0 { missing } else { total }) as f32 / 1_000_000.0,
+            accuracy: 5,
+            installed: concat_host::soundmodel::ready(&dirs.data),
+            active: concat_host::soundmodel::ready(&dirs.data),
+            fetched,
+            unpacking,
+            failure: failed.get(SOUND_MODELS_ID).cloned(),
+        }];
+
         // An engine with nothing chosen falls back to whatever is installed,
         // rather than silently having no model at all.
         for list in [&mut self.transcribers, &mut self.voices] {
@@ -966,15 +1009,53 @@ impl SettingsPane {
         self.transcribers.iter().any(|model| model.id == id)
     }
 
+    fn is_sound_models(&self, id: &str) -> bool {
+        id == SOUND_MODELS_ID
+    }
+
     fn model_mut(&mut self, id: &str) -> Option<&mut ModelState> {
         self.transcribers
             .iter_mut()
             .chain(self.voices.iter_mut())
+            .chain(self.sounds.iter_mut())
             .find(|model| model.id == id)
     }
 
     /// Starts a download on a worker. Its reports come back as messages.
     fn download(&mut self, id: &str, studio: &Studio) {
+        if self.is_sound_models(id) {
+            let Some(model) = self.model_mut(id) else {
+                return;
+            };
+            if model.installed || model.fetched.is_some() {
+                return;
+            }
+            model.fetched = Some(0.0);
+            model.failure = None;
+            let id = id.to_owned();
+            let data = studio.host.dirs.data.clone();
+            let cancel = Arc::clone(&self.sound_cancel);
+            cancel.store(false, Ordering::Relaxed);
+            spawn(
+                move || {
+                    let mut report = |received: u64, total: u64| {
+                        let msg = SettingsMsg::ModelProgress {
+                            id: SOUND_MODELS_ID.to_owned(),
+                            fetched: received as f32 / 1_000_000.0,
+                            total: (total > 0).then(|| total as f32 / 1_000_000.0),
+                            unpacking: false,
+                        };
+                        on_ui(move |studio, _, _| studio.handle(Msg::Settings(msg)));
+                    };
+                    let result = concat_host::soundmodel::download(&data, &cancel, &mut report);
+                    (id, result)
+                },
+                |studio, _, _, (id, result)| {
+                    studio.handle(Msg::Settings(SettingsMsg::ModelFinished { id, result }));
+                },
+            );
+            return;
+        }
         let transcriber = self.is_transcriber(id);
         let Some(model) = self.model_mut(id) else {
             return;
@@ -1020,6 +1101,11 @@ impl SettingsPane {
     /// The voice list's rows.
     pub fn voice_rows(&self) -> Vec<ModelData> {
         self.voices.iter().map(ModelState::row).collect()
+    }
+
+    /// The sound models' row.
+    pub fn sound_rows(&self) -> Vec<ModelData> {
+        self.sounds.iter().map(ModelState::row).collect()
     }
 
     /// The sheet as Slint shows it.

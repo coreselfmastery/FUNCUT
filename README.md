@@ -11,7 +11,7 @@
 <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
 <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8--funcut.15-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="FUNCUT Version 0.2.8-funcut.15" /></a>
 <img src="https://img.shields.io/badge/Native_3D-CPU-7C3AED?style=flat&logo=three.js&logoColor=F8F8F8&labelColor=212123" alt="Native CPU 3D" />
-<img src="https://img.shields.io/badge/MCP-114_tools-0EA5E9?style=flat&logo=json&logoColor=F8F8F8&labelColor=212123" alt="114 MCP tools" />
+<img src="https://img.shields.io/badge/MCP-116_tools-0EA5E9?style=flat&logo=json&logoColor=F8F8F8&labelColor=212123" alt="116 MCP tools" />
 <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 
@@ -24,7 +24,7 @@
 </div>
 
 > [!NOTE]
-> **FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat)** — the native Rust + Slint video editor — tuned for small, low-memory Linux laptops (4–6 GB RAM), and extended with a full agent stack: a built-in MCP server with **114 tools**, a 25-phase director skill, emotion-driven editing, a motion-graphics engine with a **native CPU 3D scene layer**, local stock/music/sound/sticker shelves, and a Forge page that starts a whole faceless video with one click.
+> **FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat)** — the native Rust + Slint video editor — tuned for small, low-memory Linux laptops (4–6 GB RAM), and extended with a full agent stack: a built-in MCP server with **116 tools**, a 25-phase director skill, emotion-driven editing, a motion-graphics engine with a **native CPU 3D scene layer**, local stock/music/sound/sticker shelves, and a Forge page that starts a whole faceless video with one click.
 >
 > It is **Linux-only** (x86_64 and aarch64). No account. No watermark. No upload. Your footage stays on your disk.
 
@@ -39,7 +39,7 @@
 | **Motion** | 33 presets and 30 authoring ops: lower thirds, kinetic captions, charts, counters, code, devices, maps, social cards, 3D showcase |
 | **AUTO EDIT** | One click or one MCP call: voice repair, transcription, voice signals, emotion, plan, picture, B-roll, captions, motion, music, SFX, preview, revise, save, verify |
 | **Local AI** | Whisper transcription, Kokoro/Pocket/Chatterbox TTS, voice cloning, MediaPipe/RVM/IS-Net/SlimSAM cutout, Real-ESRGAN enhance |
-| **Agent stack** | 114 MCP tools (106 served to a director by default), 25-phase director skill, maestro and clip-skills judgment shelves, Forge harness |
+| **Agent stack** | 116 MCP tools (108 served to a director by default), 25-phase director skill, maestro and clip-skills judgment shelves, Forge harness |
 | **Libraries** | 937,957 OpenVid clips, 1,025 CC0 + 166 MobyGratis tracks, 530 CC0 sounds, 1,285 stickers, 41 fonts |
 | **Small machines** | Caches size themselves to RAM; proxies, decode ladder, measured 4 GB editing; 3D measured at ~0.7 s per 1080p frame |
 | **Export** | H.264, HEVC, AV1; up to 4K 60; 10-bit; HDR HLG/PQ; NVENC/QSV/AMF; faststart MP4 |
@@ -211,9 +211,9 @@ Full manual: [`docs/MOTION.md`](docs/MOTION.md).
 
 ## The agent stack
 
-### 114 MCP tools
+### 116 MCP tools
 
-`concat --mcp` serves **114 tools** over stdio, with both protocol eras and schemas generated from the API’s own types. **106** are served to a director by default; the whole catalogue is behind `CONCAT_MCP_ALLOW=all`.
+`concat --mcp` serves **116 tools** over stdio, with both protocol eras and schemas generated from the API’s own types. **108** are served to a director by default; the whole catalogue is behind `CONCAT_MCP_ALLOW=all`.
 
 | Area | Tools |
 |---|---:|
@@ -233,9 +233,9 @@ Full manual: [`docs/MOTION.md`](docs/MOTION.md).
 | Speech | 4 |
 | Templates | 2 |
 | Export | 4 |
-| Perception, emotion and creative | 16 |
+| Perception, emotion and creative | 18 |
 | Motion | 11 |
-| **Total** | **114** |
+| **Total** | **116** |
 
 ### AUTO EDIT
 

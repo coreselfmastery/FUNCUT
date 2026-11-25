@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "Um espelho seu",
   "settings.modelReady": "Modelo pronto",
   "settings.models": "Modelos",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "Os modelos são baixados na primeira vez que um recurso precisa deles. Aqui o download procura primeiro; as outras fontes ainda são tentadas depois.",
   "settings.newToken": "Novo token",
   "settings.noReleasesYet": "Ainda não há nenhuma versão a partir da 0.2.5.",

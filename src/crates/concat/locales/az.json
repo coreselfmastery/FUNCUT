@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "Öz güzgü serveriniz",
   "settings.modelReady": "Model hazırdır",
   "settings.models": "Modellər",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "Modellər hansısa funksiyaya ilk dəfə lazım olanda yüklənir. Yükləmə əvvəlcə bura baxır; ondan sonra digər mənbələr də yoxlanılır.",
   "settings.newToken": "Yeni token",
   "settings.noReleasesYet": "0.2.5-dən sonrakı heç bir buraxılış hələ çıxmayıb.",

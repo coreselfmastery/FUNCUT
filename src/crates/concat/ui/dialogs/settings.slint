@@ -633,6 +633,7 @@ export component SettingsDialog inherits Modal {
     in property <SettingsData> data;
     in property <[ModelData]> transcribers;
     in property <[ModelData]> voices;
+    in property <[ModelData]> sound-models;
     /// the releases a person can switch to, newest first, and beside each
     /// the day it came out - or that it is this one
     in property <[string]> versions;
@@ -1305,6 +1306,26 @@ export component SettingsDialog inherits Modal {
                             font-size: Theme.fs-sm;
                             vertical-alignment: center;
                         }
+                    }
+                }
+
+                // The sound reader's models: CLAP and YAMNet, one row,
+                // because a half a set reads nothing. Downloaded into the
+                // same folder the vision models use, which is the folder
+                // the sidecar reads - so this row is the whole wiring.
+                DialogSection {
+                    title: I18n.t("settings.soundModels");
+                    hint: I18n.t("settings.modelsFetchedFirstTime");
+
+                    for model in root.sound-models: ModelRow {
+                        compact: root.compact;
+                        model: model;
+                        activated => { root.model-activated(model.id); }
+                        download => { root.model-download(model.id); }
+                        cancel => { root.model-cancel(model.id); }
+                        remove => { root.model-remove(model.id); }
+                        open-link => { root.model-open-link(model.id); }
+                        choose-file => { root.model-choose-file(model.id); }
                     }
                 }
             }

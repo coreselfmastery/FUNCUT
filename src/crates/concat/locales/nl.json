@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "Een eigen spiegelserver",
   "settings.modelReady": "Model klaar",
   "settings.models": "Modellen",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "Modellen worden opgehaald zodra een functie er voor het eerst een nodig heeft. Hier kijkt de download eerst; elke andere bron wordt daarna nog steeds geprobeerd.",
   "settings.newToken": "Nieuw token",
   "settings.noReleasesYet": "Er is nog geen release vanaf 0.2.5 uit.",

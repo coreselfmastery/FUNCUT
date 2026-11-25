@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "מראה משלך",
   "settings.modelReady": "המודל מוכן",
   "settings.models": "מודלים",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "מודלים מורדים בפעם הראשונה שתכונה צריכה אחד. כאן ההורדה מחפשת קודם; כל שאר המקורות עדיין נבדקים אחריו.",
   "settings.newToken": "אסימון חדש",
   "settings.noReleasesYet": "עדיין לא יצאה גרסה מ-0.2.5 ואילך.",

@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "你自己的鏡像",
   "settings.modelReady": "模型已就緒",
   "settings.models": "模型",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "模型會在功能首次需要時下載。下載會優先從這裡取得；之後仍會依序嘗試其他所有來源。",
   "settings.newToken": "產生新權杖",
   "settings.noReleasesYet": "0.2.5 之後的版本尚未發布。",

@@ -37,6 +37,13 @@ const VOICE_QUALITY_PY: &str = include_str!("../sense/voice_quality.py");
 const PROSODY_STYLE_PY: &str = include_str!("../sense/prosody_style.py");
 const AUDIO_REPAIR_PY: &str = include_str!("../sense/audio_repair.py");
 const CAPTIONS_PY: &str = include_str!("../sense/captions.py");
+/// The sound reader: what a sound file IS, measured (`sound_sense.py`) and
+/// what it MEANS, from YAMNet and CLAP (`sound_model.py`). Two scripts
+/// because the first is standard-library arithmetic and the second needs
+/// numpy and ONNX Runtime - a stock install runs the first and is told
+/// exactly what the second would add.
+const SOUND_SENSE_PY: &str = include_str!("../sense/sound_sense.py");
+const SOUND_MODEL_PY: &str = include_str!("../sense/sound_model.py");
 const FARM_SYNC_PY: &str = include_str!("../sense/farm-sync.py");
 /// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
 /// rerank `openvid_search` runs behind BM25. It lands in the same runtime
@@ -100,6 +107,8 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("prosody_style.py"), PROSODY_STYLE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("audio_repair.py"), AUDIO_REPAIR_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("captions.py"), CAPTIONS_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("sound_sense.py"), SOUND_SENSE_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("sound_model.py"), SOUND_MODEL_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("farm-sync.py"), FARM_SYNC_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
@@ -1884,10 +1893,11 @@ struct SenseFamilyTool {
     base: u64,
 }
 
-/// The thirty-five consumption-layer tools, five families: discourse
-/// (the script as language), voiceq (the take's health), prosody (the
-/// delivery), audiorepair (the clean and the music) and captions (the
-/// words made to agree with the take).
+/// The forty-three family tools, seven families: discourse (the script
+/// as language), voiceq (the take's health), prosody (the delivery),
+/// audiorepair (the clean and the music), sound (what a sound file is),
+/// soundmodel (what it means) and captions (the words made to agree with
+/// the take).
 const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
     // discourse.py - the script read as language
     SenseFamilyTool {
@@ -2126,6 +2136,98 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
             "maxCharsPerLine",
         ],
     },
+    // sound_sense.py - what a sound file IS, measured
+    SenseFamilyTool {
+        tool: "describe_sound",
+        cmd: "sound",
+        base: 90,
+        fields: &["path", "audio"],
+    },
+    SenseFamilyTool {
+        // rank_sounds shops a folder or an index: the candidates travel as
+        // `paths` (or a `dir` to sweep), which is the only way the tool has
+        // any candidates at all - without them it can only refuse.
+        tool: "rank_sounds",
+        cmd: "sound",
+        base: 120,
+        fields: &[
+            "paths",
+            "dir",
+            "index",
+            "role",
+            "limit",
+            "maxDuration",
+            "minDuration",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "check_placement",
+        cmd: "sound",
+        base: 120,
+        fields: &[
+            "path",
+            "audio",
+            "index",
+            "role",
+            "clipStart",
+            "intendedAt",
+            "moment",
+            "toleranceMs",
+            "gainDb",
+            "inPoint",
+            "recent",
+            "voiceLufs",
+            "voicePeakDbfs",
+            "repetitionWindowSec",
+            "maxSameRole",
+        ],
+    },
+    SenseFamilyTool {
+        // The shelf index measures every asset once: 530 sounds take about
+        // two and a half minutes on a laptop, and the budget is the floor
+        // that lets the first run finish instead of timing out mid-shelf.
+        tool: "index_library",
+        cmd: "sound",
+        base: 420,
+        fields: &["dir", "out", "limit"],
+    },
+    // sound_model.py - what a sound MEANS, from YAMNet and CLAP
+    SenseFamilyTool {
+        tool: "describe",
+        cmd: "soundmodel",
+        base: 90,
+        fields: &["file", "models"],
+    },
+    SenseFamilyTool {
+        tool: "index",
+        cmd: "soundmodel",
+        base: 440,
+        fields: &["dir", "out", "workers", "models"],
+    },
+    SenseFamilyTool {
+        tool: "rank",
+        cmd: "soundmodel",
+        base: 120,
+        fields: &["index", "query", "role", "limit", "maxDuration", "models"],
+    },
+    SenseFamilyTool {
+        // The whole sound design in one call: every signal the Director
+        // has, in, and a per-moment plan out.
+        tool: "plan",
+        cmd: "soundmodel",
+        base: 180,
+        fields: &[
+            "index",
+            "beats",
+            "visual",
+            "arc",
+            "bgm",
+            "style",
+            "durationSec",
+            "voiceLufs",
+            "models",
+        ],
+    },
     SenseFamilyTool {
         tool: "clean_subtitles",
         cmd: "captions",
@@ -2143,7 +2245,7 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
     },
 ];
 
-/// The five family doors and the members each one serves: the catalogue
+/// The seven family doors and the members each one serves: the catalogue
 /// names the family, the `action` argument names the member, and this
 /// table is the boundary between them - a member named through the wrong
 /// family is refused here, with the family that carries it named.
@@ -2199,6 +2301,16 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "sound",
+        &[
+            "describe_sound",
+            "rank_sounds",
+            "check_placement",
+            "index_library",
+        ],
+    ),
+    ("soundmodel", &["describe", "index", "rank", "plan"]),
+    (
         "captions",
         &[
             "evaluate_tts_quality",
@@ -2250,7 +2362,13 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
     // even though the rest of the discourse family works from text, and
     // the family schema refusing the field would refuse the member's own
     // contract.
-    let takes_audio = name != "sense_discourse" || members.contains(&"detect_sarcasm");
+    let takes_audio = match name {
+        "sense_discourse" => members.contains(&"detect_sarcasm"),
+        // The sound model reads `file`, not `audio`: an alias the sidecar
+        // ignores is worse than no field at all.
+        "sense_sound_model" => false,
+        _ => true,
+    };
     if takes_audio {
         props.insert(
             "audio".to_owned(),
@@ -2289,10 +2407,10 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
             json!({ "type": "number", "minimum": 30, "maximum": 300, "description": "measure_rhythm_meter: a BPM hint - which syllable nuclei land on the beat grid." }),
         );
     }
-    if member("enhance_speech") || member("normalize_loudness") {
+    if member("enhance_speech") || member("normalize_loudness") || member("seal_voice") {
         props.insert(
             "out".to_owned(),
-            string("enhance_speech / remove_hiss_hum_rumble / normalize_loudness: the output file; defaults beside the input."),
+            string("enhance_speech / remove_hiss_hum_rumble / normalize_loudness / seal_voice: the output file; defaults beside the input."),
         );
         props.insert(
             "overwrite".to_owned(),
@@ -2383,6 +2501,170 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
             json!({ "type": "string", "enum": ["cues", "srt"], "default": "cues", "description": "clean_subtitles: the shape of the cleaned reply." }),
         );
     }
+    // The sound families read files and shelves rather than a transcript.
+    // Their fields are declared here for the same reason the voice
+    // families' are: the schema refuses an undeclared field, so a door
+    // that forwarded a path the schema did not carry would refuse the
+    // caller's own file before the sidecar ever saw it.
+    if name == "sense_sound" {
+        let seconds = |what: &str| json!({ "type": "number", "description": what });
+        props.insert(
+            "path".to_owned(),
+            string("describe_sound / check_placement: the sound file to measure (any format ffmpeg reads); `audio` is the same field."),
+        );
+        props.insert(
+            "paths".to_owned(),
+            json!({ "type": "array", "items": { "type": ["object", "string"] }, "description": "rank_sounds: the candidates - paths, or {path, name, id, syncAt} records; `dir` adds a whole folder." }),
+        );
+        props.insert(
+            "dir".to_owned(),
+            string(
+                "rank_sounds / index_library: the folder of sounds to rank, or the shelf to index.",
+            ),
+        );
+        props.insert(
+            "index".to_owned(),
+            string("rank_sounds: a sound-index.json written by index_library, read instead of decoding each candidate."),
+        );
+        props.insert(
+            "role".to_owned(),
+            json!({ "type": "string", "enum": ["quick_transition", "cinematic_reveal", "action_impact", "gentle_entrance", "emotional_texture", "tension_build"], "description": "rank_sounds / check_placement: the job the sound is for." }),
+        );
+        props.insert(
+            "limit".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "description": "rank_sounds: how many candidates to return (default 5); index_library: the most files to index." }),
+        );
+        props.insert(
+            "maxDuration".to_owned(),
+            seconds("rank_sounds: skip candidates longer than this many seconds."),
+        );
+        props.insert(
+            "minDuration".to_owned(),
+            seconds("rank_sounds: skip candidates shorter than this many seconds."),
+        );
+        props.insert(
+            "clipStart".to_owned(),
+            seconds("check_placement: the placed clip's start on the timeline, in seconds."),
+        );
+        props.insert(
+            "intendedAt".to_owned(),
+            seconds("check_placement: when the accent is meant to land, in seconds from the edit's start; `moment` is the same field."),
+        );
+        props.insert(
+            "moment".to_owned(),
+            seconds("check_placement: the intended moment, in seconds - the alias `intendedAt` also takes."),
+        );
+        props.insert(
+            "inPoint".to_owned(),
+            seconds("check_placement: the trim at the clip's head, in seconds - the peak sits this much later in the file."),
+        );
+        props.insert(
+            "toleranceMs".to_owned(),
+            json!({ "type": "number", "default": 40, "description": "check_placement: how many milliseconds late still counts as on the cut." }),
+        );
+        props.insert(
+            "gainDb".to_owned(),
+            json!({ "type": "number", "description": "check_placement: the gain the clip was placed at." }),
+        );
+        props.insert(
+            "voiceLufs".to_owned(),
+            json!({ "type": "number", "description": "check_placement: the voice's integrated loudness, when the accent has to sit under it." }),
+        );
+        props.insert(
+            "voicePeakDbfs".to_owned(),
+            json!({ "type": "number", "description": "check_placement: the voice's true peak; `voiceLufs` plus 6 dB when absent." }),
+        );
+        props.insert(
+            "recent".to_owned(),
+            json!({ "type": "array", "items": { "type": "object" }, "description": "check_placement: the accents already placed, as {path, role} records, for the repetition check." }),
+        );
+        props.insert(
+            "repetitionWindowSec".to_owned(),
+            json!({ "type": "number", "default": 12, "description": "check_placement: how close the same role twice counts as repetition." }),
+        );
+        props.insert(
+            "maxSameRole".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "default": 3, "description": "check_placement: how many times one role may repeat in that window." }),
+        );
+        props.insert(
+            "out".to_owned(),
+            string(
+                "index_library: the index file to write; defaults to sound-index.json in `dir`.",
+            ),
+        );
+    }
+    if name == "sense_sound_model" {
+        props.insert(
+            "file".to_owned(),
+            string("describe: the sound file to identify and measure."),
+        );
+        props.insert(
+            "dir".to_owned(),
+            string("index: the folder of sounds to index."),
+        );
+        props.insert(
+            "out".to_owned(),
+            string("index: the index file to write; defaults to sound-model-index.json in `dir`."),
+        );
+        props.insert(
+            "workers".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "default": 2, "description": "index: how many files to read at once." }),
+        );
+        props.insert(
+            "index".to_owned(),
+            string("rank / plan: a sound-model-index.json written by index."),
+        );
+        props.insert(
+            "query".to_owned(),
+            string(
+                "rank: the description to compare each sound with, in words - CLAP's own question.",
+            ),
+        );
+        props.insert(
+            "role".to_owned(),
+            string("rank: one of the six sound roles (quick_transition, cinematic_reveal, action_impact, gentle_entrance, emotional_texture, tension_build) - the measured half of the fused score."),
+        );
+        props.insert(
+            "limit".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "default": 8, "description": "rank: how many candidates to return." }),
+        );
+        props.insert(
+            "maxDuration".to_owned(),
+            json!({ "type": "number", "description": "rank: skip candidates longer than this many seconds." }),
+        );
+        props.insert(
+            "beats".to_owned(),
+            json!({ "type": "array", "items": { "type": "object" }, "description": "plan: the soundtrack's beat grid, analyze_beats' own times." }),
+        );
+        props.insert(
+            "visual".to_owned(),
+            json!({ "type": "object", "description": "plan: the visual arc's moments, as the cut places them." }),
+        );
+        props.insert(
+            "arc".to_owned(),
+            json!({ "type": "object", "description": "plan: the emotion read's arc." }),
+        );
+        props.insert(
+            "bgm".to_owned(),
+            json!({ "type": "object", "description": "plan: the music bed's structure, analyze_music_structure's own map." }),
+        );
+        props.insert(
+            "style".to_owned(),
+            json!({ "type": "object", "description": "plan: the cut's style, when the caller has one." }),
+        );
+        props.insert(
+            "durationSec".to_owned(),
+            json!({ "type": "number", "description": "plan: the piece's length in seconds." }),
+        );
+        props.insert(
+            "voiceLufs".to_owned(),
+            json!({ "type": "number", "description": "plan: the voice's integrated loudness, so an accent is placed under it." }),
+        );
+        props.insert(
+            "models".to_owned(),
+            string("The folder the ONNX models live in ($FUNCUT_MODELS by default); absent means the standard location."),
+        );
+    }
     json!({
         "type": "object",
         "properties": props,
@@ -2399,12 +2681,14 @@ fn family_key(tool: &str) -> &str {
         "sense_voice_quality" => "voiceq",
         "sense_prosody_style" => "prosody",
         "sense_audio_repair" => "audiorepair",
+        "sense_sound" => "sound",
+        "sense_sound_model" => "soundmodel",
         _ => "captions",
     }
 }
 
-/// The door the thirty-five consumption-layer readings come through
-/// from their five family tools: `action` names the member, the member's
+/// The door the family readings come through from their seven family
+/// tools: `action` names the member, the member's
 /// row names the sidecar command and the fields that travel, and the
 /// budget scales with the lines the way `voice_signals`'s does - a
 /// transcript-heavy call is real work, a script-only call is not.
@@ -2451,7 +2735,7 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
     })
 }
 
-/// The door the thirty-five family members come through when named
+/// The door the forty-three family members come through when named
 /// directly (the internal dispatch `sense_family_action` lands on): the
 /// name selects the row, the row names the sidecar command and the
 /// fields that travel, and the budget scales with the lines the way
@@ -2931,7 +3215,7 @@ mod tests {
         assert_eq!(base64(png), "iVBORw0KGgoAAf8=");
     }
 
-    /// The five family doors: `action` names a member, a member named
+    /// The seven family doors: `action` names a member, a member named
     /// through the wrong family is refused with both families' real
     /// members, and the schemas carry every member in their enum. None
     /// of this runs Python - the refusals answer before the sidecar is
@@ -2945,6 +3229,8 @@ mod tests {
             ("sense_voice_quality", "voiceq"),
             ("sense_prosody_style", "prosody"),
             ("sense_audio_repair", "audiorepair"),
+            ("sense_sound", "sound"),
+            ("sense_sound_model", "soundmodel"),
             ("sense_captions", "captions"),
         ];
         let mut members = 0;
@@ -2976,7 +3262,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 35, "thirty-five readings behind five doors");
+        assert_eq!(members, 43, "forty-three readings behind seven doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(
@@ -3005,6 +3291,39 @@ mod tests {
         );
         // An unknown family is refused too.
         assert!(sense_family_action("nope", json!({ "action": "x" })).is_err());
+    }
+
+    /// Every field a family's rows forward is a field its door's schema
+    /// declares. The two cannot drift: a row that forwards a `paths` the
+    /// schema refuses is a tool whose caller is turned away before the
+    /// sidecar sees the request - the shape the sound doors shipped in,
+    /// where `rank_sounds` could not be given a single candidate and the
+    /// schema refused the caller's own file.
+    #[test]
+    fn every_forwarded_field_is_in_its_familys_schema() {
+        for (tool, family) in [
+            ("sense_discourse", "discourse"),
+            ("sense_voice_quality", "voiceq"),
+            ("sense_prosody_style", "prosody"),
+            ("sense_audio_repair", "audiorepair"),
+            ("sense_sound", "sound"),
+            ("sense_sound_model", "soundmodel"),
+            ("sense_captions", "captions"),
+        ] {
+            let schema = sense_family_schema(tool);
+            let properties = schema["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{tool}: properties"));
+            for row in SENSE_FAMILY_TOOLS.iter().filter(|row| row.cmd == family) {
+                for field in row.fields {
+                    assert!(
+                        properties.contains_key(*field),
+                        "{tool} forwards `{field}` (row {}) but its schema does not declare it",
+                        row.tool
+                    );
+                }
+            }
+        }
     }
 
     /// The Rust ears' pin: a `voice-signals` beside the executable is

@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "आपका अपना मिरर",
   "settings.modelReady": "मॉडल तैयार है",
   "settings.models": "मॉडल",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "जब किसी फ़ीचर को पहली बार मॉडल की ज़रूरत होती है, तब मॉडल डाउनलोड होते हैं। डाउनलोड सबसे पहले यहीं देखता है; बाकी सभी स्रोत इसके बाद भी आज़माए जाते हैं।",
   "settings.newToken": "नया टोकन",
   "settings.noReleasesYet": "0.2.5 या उसके बाद की कोई रिलीज़ अभी नहीं आई है।",

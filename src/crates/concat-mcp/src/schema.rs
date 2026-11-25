@@ -567,7 +567,13 @@ mod tests {
         // stock_fetch, stock_import) rode the catalogue with their own
         // schemas - the rights-cleared shelves a monetized edit may shop -
         // function again; the number is CI's to measure on the merged tree.
-        assert!(total < 260_000, "{total}: {sizes:?}");
+        // 260,000 -> 268,000 at 116: the sound layer's two doors
+        // (sense_sound, sense_sound_model) cost ~5k between them - the
+        // measured read of a file, the fused ranking, the placement check
+        // and the per-moment sound design are 37 fields, each the input
+        // of a real answer rather than prose; without them the schema
+        // refused the caller's own file. Function, not prose.
+        assert!(total < 268_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -633,8 +639,11 @@ mod tests {
         // `auto_edit` is the whole fixed spine as one call - the project,
         // the optional script, the stock shelf and the copy switch -
         // 247,603 measured after trimming its prose; function, not prose.
+        // 249,000 -> 256,000 at 108: the same two sound doors ride the
+        // director's surface (the sfx stage shops with them), and their
+        // fields are the price of the shelf being shoppable at all.
         assert!(
-            director < 249_000,
+            director < 256_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

@@ -118,7 +118,7 @@ pub const MODELS: [ModelSpec; 10] = [
     ModelSpec {
         id: ModelId::ClapAudio,
         file: "clap_audio.onnx",
-        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/main/onnx/audio_model_quantized.onnx",
+        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/onnx/audio_model_quantized.onnx",
         bytes: 34_301_667,
         sha256: "3fcff2c8824e7bcb83a983f2a49edab3b60cbcf4872ac70efee517355173bd1f",
         licence: "Apache-2.0",
@@ -126,7 +126,7 @@ pub const MODELS: [ModelSpec; 10] = [
     ModelSpec {
         id: ModelId::ClapText,
         file: "clap_text.onnx",
-        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/main/onnx/text_model_quantized.onnx",
+        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/onnx/text_model_quantized.onnx",
         bytes: 126_603_263,
         sha256: "1a3df8b197e249816e08415fd040434c44762b2eea7eb7bf8a48a0f0bf3c14e5",
         licence: "Apache-2.0",
@@ -134,7 +134,7 @@ pub const MODELS: [ModelSpec; 10] = [
     ModelSpec {
         id: ModelId::ClapTokenizer,
         file: "clap_tokenizer.json",
-        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/main/tokenizer.json",
+        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/tokenizer.json",
         bytes: 2_108_774,
         sha256: "dc239041d98de27ffc3975473a1a23e3db4c937b23c138c38bbc66588bd247e5",
         licence: "Apache-2.0",
@@ -145,7 +145,7 @@ pub const MODELS: [ModelSpec; 10] = [
         // A community ONNX conversion of Google's Apache-2.0 weights:
         // record both, and check the conversion against the original
         // before trusting a label it produces.
-        upstream: "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/main/yamnet.onnx",
+        upstream: "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf/yamnet.onnx",
         bytes: 16_093_603,
         sha256: "1510041dce24a2e9e84ec546807ac408ae496da6d1ed41bc3ccba649623f8e19",
         licence: "Apache-2.0",
@@ -153,7 +153,7 @@ pub const MODELS: [ModelSpec; 10] = [
     ModelSpec {
         id: ModelId::YamnetNames,
         file: "yamnet_class_map.csv",
-        upstream: "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/main/yamnet_class_map.csv",
+        upstream: "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf/yamnet_class_map.csv",
         bytes: 14_096,
         sha256: "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
         licence: "Apache-2.0",
@@ -169,7 +169,6 @@ impl ModelId {
             .expect("every model is in the table")
     }
 
-    /// The name a mask store records for masks this model made.
     /// Which layer of the app a model serves. The settings sheet groups
     /// its rows by this, and the sidecars ask for their own kind, so a
     /// download lands where the reader that needs it already looks.
@@ -188,6 +187,7 @@ impl ModelId {
         }
     }
 
+    /// The name a mask store records for masks this model made.
     pub fn name(self) -> &'static str {
         match self {
             ModelId::Person => "rvm-mobilenetv3",

@@ -1102,8 +1102,8 @@ pub fn catalogue() -> Vec<Tool> {
             idempotent: true,
             action: Action::VoiceSignals,
         },
-        // The five family doors to the thirty-five consumption-layer
-        // readings: what the director DOES with the voice_signals profile,
+        // The seven family doors to the family readings: what the director
+        // DOES with the voice_signals profile and the sound shelf,
         // grouped so an agent's tool list stays small without losing a
         // single reading - the `action` names the reading, the family
         // names the Python module behind it, and every one degrades
@@ -1147,8 +1147,11 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "sense_sound",
             title: "What a sound file is, measured",
-            description: "One `action`: describe_sound (level, crest, attack, decay, brightness, bands, transients, peak position, six role fits with evidence), rank_sounds, check_placement (sync, role, level, repetition), index_library (cached shelf index).",
-            read_only: true,
+            description: "One `action` per sound file: describe_sound (level, crest, attack, transients, six role fits), rank_sounds, check_placement, index_library.",
+            // index_library writes the shelf index, so the family is not
+            // read-only - the same rule sense_captions follows for
+            // seal_voice.
+            read_only: false,
             destructive: false,
             idempotent: true,
             action: Action::SenseFamily("sound"),
@@ -1156,7 +1159,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "sense_sound_model",
             title: "What a sound means, and the sound design",
-            description: "One `action`: describe (YAMNet labels, CLAP embedding and best-matching description, measurements, quality, trim), index (cached shelf index, parallel), rank (CLAP fused with the measured role fit), plan (every signal - arc, prosody emphasis, pauses, cuts, motion hits, BGM structure - into a per-moment sound design with the evidence behind each choice).",
+            description: "One `action` per sound shelf: describe (YAMNet labels, CLAP match), index, rank (CLAP fused with the measured fit), plan (a per-moment design).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1209,9 +1212,8 @@ impl Tool {
             // The sense family, whose own budgets are 240-480 s: a
             // critique, a cut suggestion, a loudness pass, an emotion
             // read, a voice-signal read, a contact sheet with its ranking,
-            // and the five family doors behind which the thirty-five
-            // consumption-layer readings live (their member budgets are
-            // the sense.rs table's own).
+            // and the seven family doors behind which the family readings
+            // live (their member budgets are the sense.rs table's own).
             "craft_critique",
             "suggest_cuts",
             "measure_loudness",
@@ -5512,7 +5514,7 @@ mod tests {
                 "voice_signals",
                 json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found.", "signals": ["forensic.noiseFloorDbfs", "pauses.classes"] }),
             ),
-            // The five family doors: one sample each, `action` naming a
+            // The seven family doors: one sample each, `action` naming a
             // member the schema's enum accepts.
             (
                 "sense_discourse",
@@ -5529,6 +5531,14 @@ mod tests {
             (
                 "sense_audio_repair",
                 json!({ "action": "enhance_speech", "audio": "/tmp/voiceover.wav", "out": "/tmp/voiceover_enhanced.wav" }),
+            ),
+            (
+                "sense_sound",
+                json!({ "action": "describe_sound", "path": "/tmp/boom.ogg" }),
+            ),
+            (
+                "sense_sound_model",
+                json!({ "action": "describe", "file": "/tmp/boom.ogg" }),
             ),
             (
                 "sense_captions",
@@ -7780,7 +7790,7 @@ mod tests {
             pasted, names,
             "the paste-ready whole-catalogue list is the catalogue, comma for comma"
         );
-        // And the count the comment claims: "106 of the 114 tools".
+        // And the count the comment claims: "108 of the 116 tools".
         if let Some(rest) = forge.split(" of the ").nth(1) {
             let said: usize = rest
                 .split(|c: char| !c.is_ascii_digit())

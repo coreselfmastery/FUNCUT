@@ -27,7 +27,7 @@ one corrects **this plan**:
 
 1. **It says "0/42" for the roadmap and implies 42 MCP tools.** The
    `Action` enum has 42 variants, but `catalogue()` (`tools.rs:257`) lists
-   **114 tools** (the README's number); 106 are served to a director by
+   **116 tools** (the README's number); 108 are served to a director by
    default. "42" is the enum, not the tool count.
 2. **Its §5.3 repeats the flatten-to-MP4 claim this plan also made - and
    both are half-wrong.** See the correction to Workstream D below: the
@@ -296,7 +296,7 @@ canonical: `KNOWN_ISSUES.md` (`fa6f566a`), `GENEVA_MASTER_LIST.md`
 `docs/DIRECTOR-INTEGRATION-PLAN.md` (`45c86f2e`). A reader cannot tell
 which describes today.
 
-- `docs/FEATURES.md` - the verified inventory (114 tools, every page,
+- `docs/FEATURES.md` - the verified inventory (116 tools, every page,
   engine and model) becomes the single canonical status page, regenerated
   against the current `main` SHA, carrying the four-level status
   (implemented / connected / tested / accepted) per feature.

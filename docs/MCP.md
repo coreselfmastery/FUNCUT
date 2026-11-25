@@ -432,13 +432,13 @@ return MCP `type: image` content blocks, so the model can actually look:
   creativeReady. `action "selftest"` proves the whole chain on a
   synthetic take.
 
-**The consumption layer** — thirty-three readings behind five family
+**The consumption layer** — the readings behind seven family
 tools, what the director DOES with the readings. One tool per family:
 `action` names the reading, the family's other arguments are the inputs
 it reads (`transcript` / `lines` / `script`, the acoustic ones also
 `audio`), `selftest: true` runs the reading's own proof, and every
 family shares the voiceover tools' honest degradation contract. The
-thirty-three readings behind the five doors:
+readings behind the seven doors:
 
 *The script as language* — `sense_discourse` (`discourse`):
 
@@ -530,6 +530,39 @@ enhance / remove / normalize WRITE a new file; the input is never touched):
 - `analyze_music_structure` - BPM, the bar grid, sections with roles, the
   drops, the energy curve and `cutSafePoints`: where every cut lands
   musical.
+
+*What a sound file is* — `sense_sound` (`sound`; `sound_sense.py`,
+standard library only):
+
+- `describe_sound` - the measured read of one file: level, crest factor,
+  attack and body, transients, spectral centroid, bands, flatness, pitch
+  movement, and where its peak actually falls. No model, no filename
+  trust.
+- `rank_sounds` - the six role fits a cut shops for (quick transition,
+  gentle entrance, action impact, tension build, emotional texture,
+  cinematic reveal), each with the evidence behind it, over a folder or
+  the cached library index.
+- `check_placement` - a placed accent checked against the cut it was
+  placed on: sync offset, role, level and repetition, so a late boom is
+  reported instead of heard.
+- `index_library` - the cached shelf index; it reports a `syncAt` the
+  file itself contradicts.
+
+*What a sound means* — `sense_sound_model` (`soundmodel`; `sound_model.py`,
+numpy and ONNX Runtime when installed, never required):
+
+- `describe` - one record per asset: identity, YAMNet's 521 AudioSet
+  labels, a 512-d CLAP embedding with the description it best matches,
+  the `sound_sense.py` measurements, loudness / clipping / silence, roles,
+  sync offset and trim advice. Without the models the reply says
+  `model: absent` and measures only.
+- `index` - the cached shelf index, built in parallel.
+- `rank` - CLAP fused with the measured role fit, the weights fitted on
+  the 530 shipped sounds: the model wins transitions, the measurements
+  win risers and textures. See [docs/SOUND-MODEL.md](SOUND-MODEL.md).
+- `plan` - every signal at once (beats, visual arc, BGM, style, the voice
+  level) into a per-moment sound design with the evidence behind each
+  choice.
 
 *The words and the take, made to agree* — `sense_captions` (`captions`):
 
@@ -704,7 +737,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 106 of the 114 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the eight left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the composition reads `motion_preview`/`scene_analysis`/`scene_timeline`, `geneva_explain`); `track_subject` is served - a subject path a vertical reframe can follow is a creative tool; `motion_probe` is served because it is what proves an export is a readable file. `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 108 of the 116 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the seven sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the eight left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the composition reads `motion_preview`/`scene_analysis`/`scene_timeline`, `geneva_explain`); `track_subject` is served - a subject path a vertical reframe can follow is a creative tool; `motion_probe` is served because it is what proves an export is a readable file. `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

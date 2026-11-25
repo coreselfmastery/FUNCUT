@@ -341,3 +341,49 @@ The five files are in the app's own registry (`concat-vision/src/models.rs`, `Mo
 `_models_dir()` reads, in order: the spec's `models`, `FUNCUT_MODELS`, `<app dir>/portable/cutout-models`, `<data>/app.concat.editor/cutout-models` (where the settings sheet downloads), then the older `funcut/` and `concat/` layouts. A folder that holds only the vision models is not chosen for the sound models — the reader looks for `clap_text.onnx` or `yamnet.onnx` before it settles.
 
 **Still open:** the settings sheet's model list is built from the speech models, not from `concat_vision::models::MODELS`, so the sound rows need a new section in `src/crates/concat/src/panes/settings.rs` plus a download worker for them. The registry entries, hashes and the sidecar's search order are in place; the sheet is the remaining piece.
+
+## 14. What measuring the real shelf changed
+
+The gates in §11 were calibrated on fixtures. Running them over all 530 shipped
+sounds found two things the fixtures could not.
+
+**A bed scored as a gesture.** `sustain` saturates at 2.5 s, so a 4.5 s dark
+room tone and a 2 s boom read the same on it, and `ambience-dark-1` duly won
+`cinematic_reveal` (0.91) ahead of a sub drop. The fix is a `gestureGate` that
+gives full credit under three seconds of body and none past eight, applied to
+the two roles that are accents rather than beds (`action_impact`,
+`cinematic_reveal`). The ambience falls to 0.27 and reads as what it is,
+`emotional_texture`; `bass-sub-drop-long` stays at 0.90.
+
+**Two reads of one payoff became two booms.** An arc placing `reveal` at 22.0
+and a vision read placing the reveal frame at 22.4 are the same moment. They
+were merged only within 20 ms, so the plan emitted a boom on the frame and a
+"no candidate fits" warning 400 ms earlier. Two reveals within 600 ms now merge
+into one accent, keeping the stronger read (the measured frame over the planned
+boundary), and the merged moment cites every signal that agreed.
+
+Measured on the shelf, no models loaded:
+
+| Step | 530 sounds |
+| --- | --- |
+| `index` | 19 s, 0.6 MB of JSON |
+| `plan` (9 moments) | 1 s |
+
+Every record now carries `evidence` — the normalised terms the fits were
+computed from — so a Director can audit a fit instead of trusting it, and each
+plan accent carries the shelf `id` the file is named after, so a plan can be
+executed without a second lookup.
+
+**One thing measurement cannot settle.** `riser-braam-rise` and
+`bass-sub-drop-medium` are both heavy, tonal and sustained with an early peak;
+without CLAP the two are the same numbers, and which one a reveal wants is a
+semantic judgement. With no models the planner picks risers that peak on the
+cut, which is a real choice (the rise lands on the frame), but it is not the
+same as knowing a braam from a boom. That distinction is what the audio-text
+model is for, and the plan's `why` block is what makes the difference visible
+instead of hidden.
+
+`MODEL_INDEX_VERSION` in `sound_model.py` must be bumped whenever a record means
+something different, because the index cache keys on it: a measurement change
+without a bump leaves every user with stale roles and a re-index that finishes
+in 0.01 s.

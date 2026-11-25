@@ -76,7 +76,7 @@ except Exception:  # pragma: no cover
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sound_sense  # noqa: E402  - the measurement half of this answer
 
-MODEL_INDEX_VERSION = 2  # bump whenever a record means something different
+MODEL_INDEX_VERSION = 4  # bump whenever a record means something different
 
 # CLAP's own front-end, pinned against the reference extractor
 # (`transformers.ClapFeatureExtractor`) to 1e-5 on the shipped shelf: 48 kHz
@@ -553,6 +553,10 @@ def describe_file(spec, path, models):
             "energySlopeDbPerSec": _r(read.get("energySlopeDbPerSec"), 2),
         },
         "quality": _quality(read),
+        # The evidence the fits were computed from: a plan that says "this
+        # sound fits a reveal" without the numbers behind it is a guess in
+        # a confident voice.
+        "evidence": read.get("evidence"),
         "roles": {name: _r(value) for name, value in (read.get("roles") or {}).items()},
         "role": read.get("role"),
         "confidence": _r(read.get("confidence")),
@@ -736,7 +740,12 @@ def _index_records(spec):
     to answer twenty dot products is the kind of cost that makes a feature
     feel slow without being slow.
     """
-    path = Path(str(spec.get("index") or ""))
+    # `index` names the file; with only `dir` given, the file the index
+    # tool writes there is the one meant.
+    named = str(spec.get("index") or "")
+    if not named and spec.get("dir"):
+        named = str(Path(str(spec["dir"])) / "sound-model-index.json")
+    path = Path(named or "sound-model-index.json")
     if not path.is_file():
         return None, f"no index at {path}: run the index tool first"
     try:
@@ -917,11 +926,15 @@ def _accent_sources(spec):
                     "weight": float(weight), **extra})
 
     for event in visual.get("events") or []:
+        if not isinstance(event, dict):
+            continue
         kind = str(event.get("kind") or "").lower()
         if kind in ("reveal", "payoff", "result", "title"):
             add(event.get("at"), "reveal", "visual.events.reveal", 1.0,
                 kind=kind)
     for act in arc.get("acts") or []:
+        if not isinstance(act, dict):
+            continue
         name = str(act.get("name") or "").lower()
         if name in ("hook", "opening", "title"):
             add(act.get("start", 0.0), "hook", "arc.acts.hook", 0.9)
@@ -930,6 +943,8 @@ def _accent_sources(spec):
         elif act.get("start") is not None:
             add(act.get("start"), "act_start", f"arc.acts.{name}", 0.45)
     for beat in spec.get("beats") or []:
+        if not isinstance(beat, dict):
+            continue
         for hit in beat.get("emphasis") or []:
             at = hit.get("at") if isinstance(hit, dict) else None
             word = hit.get("word") if isinstance(hit, dict) else str(hit)
@@ -963,7 +978,29 @@ def _accent_sources(spec):
                 kept["beat"] = moment.get("beat", kept.get("beat"))
             continue
         merged.append(moment)
-    return merged
+    # The act boundary and the frame that proves it are one payoff: an arc
+    # saying "the reveal starts at 22.0" and a vision read saying "the
+    # reveal frame is at 22.4" is the same beat seen twice, and two booms
+    # 400 ms apart is the double-hit a mixer would cut. The stronger read
+    # wins - the measured frame over the planned boundary - and the weaker
+    # one is not reported as a moment that could not be filled, because it
+    # was never a separate moment.
+    one = []
+    for moment in merged:
+        if (one and moment["context"] == "reveal"
+                and one[-1]["context"] == "reveal"
+                and moment["at"] - one[-1]["at"] <= 0.6):
+            kept = one[-1]
+            if moment["weight"] > kept["weight"]:
+                kept["at"] = moment["at"]
+                kept["weight"] = moment["weight"]
+                kept["source"] = moment["source"]
+                kept["beat"] = moment.get("beat", kept.get("beat"))
+            kept["sources"] = sorted(set(kept.get("sources", [kept["source"]])
+                                         + moment.get("sources", [moment["source"]])))
+            continue
+        one.append(moment)
+    return one
 
 
 def _role_for(moment, spec):
@@ -1158,6 +1195,7 @@ def plan_sound(spec):
             "context": moment["context"],
             "weight": moment["weight"],
             "file": chosen["file"],
+            "id": Path(chosen["file"]).stem,
             "query": query,
             "startAt": _r(max(0.0, moment["at"] - offset), 3),
             "peakLandsAt": _r(moment["at"], 3),

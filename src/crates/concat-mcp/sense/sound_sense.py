@@ -722,6 +722,12 @@ def _roles(read):
     reveal_gate = 0.45 + 0.55 * heavy
     still_gate = 1.0 - flux
     build_gate = 0.25 + 0.75 * rise
+    # An accent is a gesture, not a bed. `sustain` saturates at 2.5 s, so a
+    # thirty-second room tone and a two-second boom read the same on it, and
+    # a dark ambience duly won a reveal - every number right, the answer
+    # wrong. Full credit under three seconds of body, nothing past eight.
+    gesture = 1.0 - _n(read["bodySec"], 3.0, 8.0)
+    gesture_gate = 0.15 + 0.85 * gesture
     evidence = {
         "heavy": _r(heavy),
         "light": _r(1.0 - heavy),
@@ -753,14 +759,16 @@ def _roles(read):
         "revealGate": _r(reveal_gate),
         "heldGate": _r(held_gate),
         "buildGate": _r(build_gate),
+        "gestureGate": _r(gesture_gate),
     }
     scores = {
         "quick_transition": air_gate * (0.28 * brightness + 0.24 * transition_length
                                         + 0.28 * flux + 0.20 * airy),
-        "cinematic_reveal": reveal_gate * (0.34 * heavy + 0.28 * sustain
+        "cinematic_reveal": reveal_gate * gesture_gate * (0.34 * heavy + 0.28 * sustain
                                            + 0.22 * max(sweep, tonal)
                                            + 0.16 * (1.0 - noisy)),
-        "action_impact": impact_gate * (0.40 * heavy + 0.32 * sharp + 0.28 * short),
+        "action_impact": impact_gate * gesture_gate * (0.40 * heavy + 0.32 * sharp
+                                                       + 0.28 * short),
         "gentle_entrance": soft_gate * still_gate * (0.30 * tonal + 0.25 * short
                                                      + 0.25 * soft + 0.20 * airy),
         "emotional_texture": held_gate * (0.34 * tonal + 0.28 * sustain

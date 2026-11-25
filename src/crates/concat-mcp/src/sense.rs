@@ -1900,11 +1900,12 @@ struct SenseFamilyTool {
     base: u64,
 }
 
-/// The eighty-one family readings behind eight family tools: discourse
+/// The eighty-two family readings behind eight family tools: discourse
 /// (the script as language), voiceq (the take's health), prosody (the
 /// delivery), audiorepair (the clean and the music), sound (what a sound
-/// file is), soundmodel (what it means), captions (the words made to
-/// agree with the take) and visual (what the picture does).
+/// file is), soundmodel (what it means, and what it can write), captions
+/// (the words made to agree with the take) and visual (what the picture
+/// does).
 const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
     // discourse.py - the script read as language
     SenseFamilyTool {
@@ -2233,6 +2234,17 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
             "durationSec",
             "voiceLufs",
             "models",
+        ],
+    },
+    SenseFamilyTool {
+        // Text to audio: the three downloaded generators. The budget is
+        // the longest of the three on a four-core laptop - a music bed is
+        // a MusicGen decode with no cache, which is minutes, not seconds.
+        tool: "generate",
+        cmd: "soundmodel",
+        base: 480,
+        fields: &[
+            "kind", "prompt", "seconds", "seed", "steps", "threads", "project", "models",
         ],
     },
     SenseFamilyTool {
@@ -2776,7 +2788,10 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
             "index_library",
         ],
     ),
-    ("soundmodel", &["describe", "index", "rank", "plan"]),
+    (
+        "soundmodel",
+        &["describe", "index", "rank", "plan", "generate"],
+    ),
     (
         "captions",
         &[
@@ -3374,6 +3389,38 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
             "models".to_owned(),
             string("The folder the ONNX models live in ($FUNCUT_MODELS by default); absent means the standard location."),
         );
+        props.insert(
+            "kind".to_owned(),
+            json!({
+                "type": "string",
+                "enum": ["sfx-small", "sfx-large", "bgm"],
+                "description": "generate: sfx-small (TinyAudio-MF, 10 s, cheapest), sfx-large (Stable Audio Open Small, 11.9 s stereo), or bgm (TinyMusician, a music bed).",
+            }),
+        );
+        props.insert(
+            "prompt".to_owned(),
+            string("generate: the words the model writes from, in the vocabulary of the sound - 'a heavy wooden door slams shut in a stone hall'."),
+        );
+        props.insert(
+            "seconds".to_owned(),
+            json!({ "type": "number", "description": "generate: how much to keep; the model writes 10 s (sfx-small) or 11.9 s (sfx-large) and the file is trimmed." }),
+        );
+        props.insert(
+            "seed".to_owned(),
+            json!({ "type": "integer", "description": "generate: the noise seed; the same seed and prompt reproduce the file." }),
+        );
+        props.insert(
+            "steps".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "description": "generate: denoising steps; 1 for sfx-small, 8 for sfx-large. More is slower, not better." }),
+        );
+        props.insert(
+            "threads".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "description": "generate: CPU threads; four by default." }),
+        );
+        props.insert(
+            "project".to_owned(),
+            string("generate: the project folder to write into - the file lands in <project>/generated-audio/; absent writes to a temporary folder."),
+        );
     }
     json!({
         "type": "object",
@@ -3446,7 +3493,7 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
     })
 }
 
-/// The door the eighty-one family members come through when named
+/// The door the eighty-two family members come through when named
 /// directly (the internal dispatch `sense_family_action` lands on): the
 /// name selects the row, the row names the sidecar command and the
 /// fields that travel, and the budget scales with the lines the way
@@ -3974,7 +4021,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 81, "eighty-one readings behind eight doors");
+        assert_eq!(members, 82, "eighty-two readings behind eight doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(

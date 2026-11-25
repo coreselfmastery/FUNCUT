@@ -36,6 +36,12 @@ other sense script: one JSON spec in, one JSON object out.
 | `rank` | a creative description and a role: candidates scored by CLAP fused with the measured role fit |
 | `selftest` | twelve checks, no network: the filterbank, the front-end, the weights, and - when models are installed - that YAMNet calls a whoosh a whoosh |
 
+The same module also writes sound: `plan` turns every signal into one sound
+design, and `generate` writes a short sound or a music bed with one of three
+downloaded text-to-audio models - see
+[SOUND-GENERATION.md](SOUND-GENERATION.md) for what each costs and what each
+is licensed as.
+
 `numpy` and `onnxruntime` are used when installed and never required, the
 same rule `voice_quality.py` follows. Without them every tool still answers,
 with `"model": {"state": "absent", "reason": ...}` and measurement-only

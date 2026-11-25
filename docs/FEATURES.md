@@ -533,10 +533,15 @@ upstream fallback): Whisper tiny.en→small (MIT, 75–470 MB each) · Kokoro
 int8/multi-lang (Apache-2.0, 132/350 MB) · Pocket TTS (CC-BY-4.0, 98 MB) ·
 Chatterbox Turbo (MIT, ~1.1 GB) · RVM person matting (GPL-3.0, 15 MB) ·
 IS-Net object (Apache-2.0, 179 MB) · SlimSAM brushes (Apache-2.0, 40 MB) ·
-Real-ESRGAN enhance (BSD-3, 4.9 MB). The optional VLM critic (SmolVLM2
-0.5B ≈ 546 MB, or MiniCPM-V-2 ≈ 2.2 GB) and the MobileCLIP2 rerank model
-fetch on demand into the app data dir. Stabilization is classical CV — no
-model at all.
+Real-ESRGAN enhance (BSD-3, 4.9 MB) · the sound reader, CLAP and YAMNet
+(Apache-2.0, 37 MB) · and three text-to-audio generators, TinyAudio-MF
+(MIT, 0.48 GB), Stable Audio Open Small (Stability AI Community, 1.2 GB)
+and TinyMusician (no licence upstream, 1.0 GB), which write the accents
+and the music bed AUTO EDIT places — see
+[docs/SOUND-GENERATION.md](SOUND-GENERATION.md). The optional VLM critic
+(SmolVLM2 0.5B ≈ 546 MB, or MiniCPM-V-2 ≈ 2.2 GB) and the MobileCLIP2
+rerank model fetch on demand into the app data dir. Stabilization is
+classical CV — no model at all.
 
 The picture reader's shelf is thirty ONNX doors
 ([VISUAL-MODELS.md](VISUAL-MODELS.md)), and four of them are in

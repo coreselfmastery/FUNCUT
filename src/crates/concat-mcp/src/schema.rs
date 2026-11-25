@@ -575,14 +575,14 @@ mod tests {
         // refused the caller's own file. Function, not prose. The
         // picture's door (`sense_visual`) then lands on the same table -
         // sixteen readings' inputs, the frame sources, the subject boxes,
-        // the bench's rows, the model doors - and the merged tree
-        // measures 273,832 - the three doors at their terse form, the
-        // shelf's `modelId` enum (thirty ids, the whole shelf nameable in
-        // one call), the Hub's repo/file/token and the two enrichment
-        // switches. A
-        // reading the director cannot call is a reading the edit paid for
-        // and never read.
-        assert!(total < 274_000, "{total}: {sizes:?}");
+        // the bench's rows, the model doors - and the pr-217 tree
+        // measured 273,832. The generation merge (#218) then rides the
+        // sound model door with `generate`'s seven fields (~3k more),
+        // so the merged tree needs the room for both: 274,000 -> 278,000.
+        // A reading the director cannot call is a reading the edit paid
+        // for and never read; a generator the director cannot spell is
+        // the same.
+        assert!(total < 278_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -654,15 +654,18 @@ mod tests {
         // picture's door rides it too: the director spends motion,
         // camera, scale and quality on its cuts, its stock veto and its
         // captions, and a reading it cannot call is a reading the edit
-        // paid for and never read. 256,000 -> 262,000 at 109: the merged
-        // tree measures 260,160 - the three doors are already at their
+        // paid for and never read. 256,000 -> 262,000 at 109: the pr-217
+        // tree measured 260,160 - the three doors are already at their
         // terse form, and the fields, not the prose, are what they cost.
         // 262,000 -> 263,000 at 109: the shelf's Hub actions (`hf_search`,
         // `hf_files`) and the sheet's two enrichment switches are what a
         // director needs to install a door and then spend it - 262,135
-        // measured, function, not prose.
+        // measured, function, not prose. 263,000 -> 267,000: `generate`'s
+        // seven fields ride the same door (#218) - the director writes
+        // its accents and its bed with them, and the two merges together
+        // need the room both measured.
         assert!(
-            director < 263_000,
+            director < 267_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

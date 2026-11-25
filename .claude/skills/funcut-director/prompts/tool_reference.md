@@ -177,7 +177,15 @@ that already carries music gets no bed) ·
 `sounds_search/add` (530 CC0 sounds; categories: Whoosh, Impact, Riser,
 Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
 `sounds_add` starts the file at `start`; the search result's `syncAt` says
-where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
+where its peak lands) · `sense_sound_model {action: "generate", kind, prompt,
+seconds, seed, project}` writes a sound the shelf does not have — `sfx-small`
+(TinyAudio-MF, MIT, ~12 s per call) for accents, `sfx-large` (Stable Audio
+Open Small, Stability Community Licence, ~24 s) for the hook, `bgm`
+(TinyMusician, licence unclear, a MusicGen decode of minutes) for a short
+bed; the file lands in `<project>/generated-audio/` and `sounds_add {file}`
+or `bgm_import {file}` places it like a shelf sound. Each model answers
+`ok: false` when it is not downloaded — fall back to the shelf, do not
+retry · `magick_status/prepare/search/fetch/add` (shelves:
 `magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
 `openmoji` 4,565 emoji CC-BY 4.0)
 

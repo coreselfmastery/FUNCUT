@@ -197,6 +197,45 @@ ranking, the settings sheet has no CLAP row (`ModelData` in
 row needs), and the music join - beat grid and sections from the Rust
 analysis beside the CLAP music embedding - is not made.
 
+## Sound generation: three small models that write audio
+
+The reader names a sound; three more models write one, in the same
+`cutout-models` folder and behind the same `sound_model.py`:
+
+- **TinyAudio-MF** (`sfx-small`, 87 M, MIT) - a one-step mean flow,
+  10 s mono at 44.1 kHz. Measured 11.5 s for 3 s of sound on four cores:
+  the baseline accent.
+- **Stable Audio Open Small** (`sfx-large`, 341 M, Stability AI Community
+  License) - eight distilled steps, 11.9 s stereo. Measured 23.5 s for
+  4 s: the hook.
+- **TinyMusician** (`bgm`, ~135 M, no licence file upstream) - MusicGen
+  small as ONNX, four codebooks, 32 kHz. Measured 38.3 s for 3.9 s: the
+  bed, and the reason the bed is written only for a short cut.
+
+The download side is the existing one: three sets in
+`concat-host/src/soundmodel.rs` (`SFX_SMALL`, `SFX_LARGE`, `BGM`), three
+rows in the settings sheet beside the reader's, the same
+`.part`-then-rename download, digest check and remove. The files are
+renamed on the way out of upstream so the table holds three layouts
+without a directory scheme: `sfx-small-*`, `sfx-large-*`, `bgm-*`.
+
+The write side is `generate` on the sound-model family - `kind`,
+`prompt`, `seconds`, `seed`, `steps`, `threads`, `project` - which lands
+the file in `<project>/generated-audio/`. `sounds_add` and `bgm_import`
+grew a `file` argument that copies a local file into the project's own
+`audio` / `bgm` folder exactly as a shelf id is copied, so a generated
+accent and a shelf accent are placed by the same code.
+
+AUTO EDIT spends them in two places and falls back on measurement, not
+on configuration: the sfx stage writes each accent (the hook with
+`sfx-large`, the rest with `sfx-small`) and switches to the shelf for the
+rest of the run when the model says it is absent; the music stage writes
+the bed when the cut is 8 s or shorter - its decoder has no usable
+cache, so cost is the square of the length - and keeps the shelf for
+longer cuts. The three licences are not equal - MIT, the Stability Community
+License, and unclear - so the reply carries the licence of the model that
+wrote the file. See [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
+
 ## The sound reader (`sound_sense.py`)
 
 - **The shelf now has an ear.** `concat-mcp/sense/sound_sense.py` decodes a

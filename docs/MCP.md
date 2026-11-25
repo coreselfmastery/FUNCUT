@@ -567,6 +567,13 @@ numpy and ONNX Runtime when installed, never required):
 - `plan` - every signal at once (beats, visual arc, BGM, style, the voice
   level) into a per-moment sound design with the evidence behind each
   choice.
+- `generate` - words to audio with one of the three downloaded
+  generators: `kind: "sfx-small"` (TinyAudio-MF, a one-step mean flow),
+  `"sfx-large"` (Stable Audio Open Small, the hook) or `"bgm"`
+  (TinyMusician, a music bed). The file lands in
+  `<project>/generated-audio/`, or a temporary folder without a project,
+  and `sounds_add` / `bgm_import` take it by `file`. See
+  [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
 
 *The words and the take, made to agree* — `sense_captions` (`captions`):
 

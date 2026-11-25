@@ -55,6 +55,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -1452,11 +1453,430 @@ def selftest(spec=None):
             "model": {"state": models.state, "reason": models.reason}}
 
 
+# ── Generation ──────────────────────────────────────────────────────────
+#
+# Three text-to-audio models, downloaded by the settings sheet into the
+# same `cutout-models` folder the reader uses:
+#
+#   sfx-small  TinyAudio-MF        87 M, one mean-flow step, 10 s @ 44.1 kHz
+#   sfx-large  Stable Audio Open Small  341 M, eight distilled steps, 11.9 s stereo
+#   bgm        TinyMusician        MusicGen 15 layers, four codebooks, 32 kHz
+#
+# Every one is ONNX plus a Hugging Face tokenizer, so the dependency is the
+# same numpy + onnxruntime + tokenizers the reader already asks for. The
+# sessions are built per call: a generation is seconds to minutes of work
+# and the process exits afterwards, so a cached session would only hold
+# memory between calls that never come.
+
+GEN_KINDS = {
+    "sfx-small": {
+        "model": "tiny-audio-mf",
+        "files": [
+            "sfx-small-pipeline.json",
+            "sfx-small-tokenizer.json",
+            "sfx-small-text.onnx",
+            "sfx-small-flow.onnx",
+            "sfx-small-vae.onnx",
+        ],
+        "seconds": 3.0,
+        "maxSeconds": 30.0,
+        "steps": 1,
+        "licence": "MIT",
+    },
+    "sfx-large": {
+        "model": "stable-audio-open-small",
+        "files": [
+            "sfx-large-meta.json",
+            "sfx-large-tokenizer.json",
+            "sfx-large-seconds.json",
+            "sfx-large-t5.onnx",
+            "t5_text_encoder.onnx.data",
+            "sfx-large-dit.onnx",
+            "dit_step.onnx.data",
+            "sfx-large-vae.onnx",
+            "vae_decoder.onnx.data",
+        ],
+        "seconds": 4.0,
+        "maxSeconds": 11.9,
+        "steps": 8,
+        "licence": "Stability AI Community License",
+    },
+    "bgm": {
+        "model": "tinymusician",
+        "files": [
+            "bgm-config.json",
+            "bgm-tokenizer.json",
+            "bgm-text.onnx",
+            "bgm-decoder.onnx",
+            "bgm-codec.onnx",
+        ],
+        "seconds": 8.0,
+        "maxSeconds": 10.0,
+        "steps": None,
+        "licence": "unclear (no licence file upstream)",
+    },
+}
+
+
+def _slug(text, limit=48):
+    kept = "".join(ch.lower() if ch.isalnum() else "-" for ch in text)
+    kept = "-".join(part for part in kept.split("-") if part)
+    return (kept[:limit].strip("-") or "sound")
+
+
+def _generator(spec):
+    """The kind's table row, or the reason it cannot run."""
+    kind = str(spec.get("kind") or "sfx-small")
+    row = GEN_KINDS.get(kind)
+    if row is None:
+        return None, {"ok": False, "error": f"unknown kind {kind!r}: one of {sorted(GEN_KINDS)}"}
+    if np is None or ort is None or Tokenizer is None:
+        missing = []
+        if np is None:
+            missing.append("numpy")
+        if ort is None:
+            missing.append("onnxruntime")
+        if Tokenizer is None:
+            missing.append("tokenizers")
+        return None, {
+            "tool": "generate",
+            "ok": False,
+            "model": "absent",
+            "error": "the generators need " + ", ".join(missing)
+            + " (pip install numpy onnxruntime tokenizers)",
+        }
+    absent = [name for name in row["files"] if _model_file(spec, name) is None]
+    if absent:
+        return None, {
+            "tool": "generate",
+            "ok": False,
+            "model": "absent",
+            "error": f"the {kind} model is not downloaded: missing {', '.join(absent)} "
+            "(Settings > Models, or models_download)",
+            "missing": absent,
+        }
+    return (kind, row), None
+
+
+def _session(name, spec, threads):
+    path = _model_file(spec, name)
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    options.log_severity_level = 3
+    return ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+
+
+def _threads(spec):
+    named = spec.get("threads")
+    if isinstance(named, (int, float)) and named >= 1:
+        return min(int(named), 16)
+    return max(1, min(4, os.cpu_count() or 2))
+
+
+def _gen_seconds(spec, row):
+    named = spec.get("seconds")
+    seconds = float(named) if isinstance(named, (int, float)) else float(row["seconds"])
+    return max(0.5, min(seconds, float(row.get("maxSeconds") or 30.0)))
+
+
+def _normalise(audio, rate=44100):
+    """Peak-normalise to 0.89 and fade the ends, so a placed clip neither
+    clips nor clicks at its boundaries."""
+    peak = float(np.abs(audio).max()) if audio.size else 0.0
+    if peak > 1e-6:
+        audio = audio * (0.89 / peak)
+    fade = min(int(0.01 * rate), audio.shape[-1] // 4 if audio.ndim else 0)
+    if fade > 1:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+        audio[..., :fade] *= ramp
+        audio[..., -fade:] *= ramp[::-1]
+    return audio
+
+
+def _write_float_wav(path, audio, rate):
+    """`audio` is (samples,) mono or (2, samples) stereo, float in [-1, 1]."""
+    import wave
+
+    audio = np.asarray(audio, dtype=np.float32)
+    if audio.ndim == 2:
+        inter = np.empty(audio.shape[1] * audio.shape[0], dtype=np.float32)
+        for channel in range(audio.shape[0]):
+            inter[channel:: audio.shape[0]] = audio[channel]
+        channels = audio.shape[0]
+    else:
+        inter = audio.reshape(-1)
+        channels = 1
+    pcm = (np.clip(inter, -1.0, 1.0) * 32767.0).astype(np.int16)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(channels)
+        handle.setsampwidth(2)
+        handle.setframerate(int(rate))
+        handle.writeframes(pcm.tobytes())
+    return channels, len(inter) // channels
+
+
+def _gen_tiny(spec, prompt, seconds, seed, threads, steps):
+    pipeline = json.loads(_model_file(spec, "sfx-small-pipeline.json").read_text())
+    rate = int(pipeline.get("audio_sample_rate") or 44100)
+    max_tokens = int(pipeline.get("prompt_max_length") or 77)
+    latent_len = int(pipeline.get("latent_seq_len") or 431)
+    latent_dim = int(pipeline.get("latent_dim") or 64)
+
+    tokenizer = Tokenizer.from_file(str(_model_file(spec, "sfx-small-tokenizer.json")))
+    pad_id = tokenizer.token_to_id("<pad>")
+    tokenizer.enable_truncation(max_length=max_tokens)
+    tokenizer.enable_padding(length=max_tokens, pad_id=0 if pad_id is None else pad_id)
+    encoded = tokenizer.encode(prompt)
+    ids = np.array([encoded.ids], dtype=np.int64)
+    mask = np.array([encoded.attention_mask], dtype=np.int64)
+
+    text = _session("sfx-small-text.onnx", spec, threads)
+    flow = _session("sfx-small-flow.onnx", spec, threads)
+    vae = _session("sfx-small-vae.onnx", spec, threads)
+
+    hidden, _global, padding = text.run(
+        ["text_hidden", "text_global", "text_padding_mask"],
+        {"input_ids": ids, "attention_mask": mask},
+    )
+    rng = np.random.default_rng(seed)
+    x = rng.standard_normal((1, latent_len, latent_dim), dtype=np.float32)
+    steps = max(1, min(int(steps or pipeline.get("default_num_steps") or 1), 8))
+    schedule = np.linspace(1.0, 0.0, steps + 1, dtype=np.float32)
+    for i in range(steps):
+        x = flow.run(
+            ["x_next"],
+            {
+                "text_hidden": hidden.astype(np.float32),
+                "text_padding_mask": padding.astype(bool),
+                "x": x,
+                "t": schedule[i : i + 1],
+                "r": schedule[i + 1 : i + 2],
+                "cfg_strength": np.array([7.0], dtype=np.float32),
+                "cfg_interval_min": np.array([0.0], dtype=np.float32),
+                "cfg_interval_max": np.array([1.0], dtype=np.float32),
+            },
+        )[0]
+    audio = np.asarray(vae.run(["audio"], {"x": x.astype(np.float32)})[0], np.float32).reshape(-1)
+    audio = audio[: int(seconds * rate)]
+    return audio, rate
+
+
+def _gen_stable(spec, prompt, seconds, seed, threads, steps):
+    text_tokens, cond_dim = 64, 768
+    rate = 44100
+    tokenizer = Tokenizer.from_file(str(_model_file(spec, "sfx-large-tokenizer.json")))
+    tokenizer.enable_truncation(max_length=text_tokens)
+    tokenizer.enable_padding(length=text_tokens, pad_id=0)
+    encoded = tokenizer.encode(prompt)
+    ids = np.array([encoded.ids], dtype=np.int64)
+    mask = np.array([encoded.attention_mask], dtype=np.int64)
+
+    t5 = _session("sfx-large-t5.onnx", spec, threads)
+    dit = _session("sfx-large-dit.onnx", spec, threads)
+    vae = _session("sfx-large-vae.onnx", spec, threads)
+
+    embeddings = t5.run(["embeddings"], {"input_ids": ids, "attention_mask": mask})[0]
+    embedder = json.loads(_model_file(spec, "sfx-large-seconds.json").read_text())
+    fourier = np.array(embedder["fourier_weights"], dtype=np.float32)
+    weight = np.array(embedder["linear_weight"], dtype=np.float32)
+    bias = np.array(embedder["linear_bias"], dtype=np.float32)
+    scaled = np.float32(seconds / float(embedder.get("max_val") or 256.0))
+    feats = np.empty(2 * len(fourier) + 1, dtype=np.float32)
+    feats[0] = scaled
+    angles = scaled * fourier * 2 * math.pi
+    feats[1 : 1 + len(fourier)] = np.sin(angles)
+    feats[1 + len(fourier) :] = np.cos(angles)
+    seconds_embedding = (weight @ feats + bias)[None, :]
+    cross = np.zeros((1, text_tokens + 1, cond_dim), dtype=np.float32)
+    cross[0, :text_tokens] = np.where(mask[0][:, None] > 0, embeddings[0], 0)
+    cross[0, text_tokens] = seconds_embedding[0]
+
+    steps = max(1, min(int(steps or 8), 16))
+    schedule = np.zeros(steps + 1, dtype=np.float32)
+    for i in range(steps + 1):
+        u = 1.0 - i / steps
+        schedule[i] = 1.0 if i == 0 else (0.0 if i == steps else 1.0 / (1.0 + math.exp(-(8.2 * u - 2.0))))
+    rng = np.random.default_rng(seed)
+    latents = rng.standard_normal((1, 64, 256), dtype=np.float32)
+    for i in range(steps):
+        current, following = schedule[i], schedule[i + 1]
+        velocity = dit.run(
+            ["v"],
+            {
+                "x": latents,
+                "t": np.array([current], np.float32),
+                "cross_attn_cond": cross,
+                "global_cond": seconds_embedding,
+            },
+        )[0]
+        denoised = latents - current * velocity
+        if following == 0:
+            latents = denoised
+        else:
+            latents = (1 - following) * denoised + following * rng.standard_normal(
+                (1, 64, 256), dtype=np.float32
+            )
+    audio = np.asarray(vae.run(["audio"], {"latent": latents.astype(np.float32)})[0], np.float32)[0]
+    frames = min(int(seconds * rate), audio.shape[1])
+    return audio[:, :frames], rate
+
+
+def _gen_musician(spec, prompt, seconds, seed, threads):
+    config = json.loads(_model_file(spec, "bgm-config.json").read_text())
+    rate = int((config.get("audio_encoder") or {}).get("sampling_rate") or 32000)
+    codebooks = int((config.get("decoder") or {}).get("num_codebooks") or 4)
+    bos = 2048
+    # One codebook frame is 640 samples at 32 kHz in this export: the
+    # measured 160-token run decoded to 3.12 s.
+    frames = max(codebooks + 8, int(seconds * rate / 640.0) + 1)
+
+    tokenizer = Tokenizer.from_file(str(_model_file(spec, "bgm-tokenizer.json")))
+    encoded = tokenizer.encode(prompt)
+    ids = np.array([encoded.ids], dtype=np.int64)
+    mask = np.array([encoded.attention_mask], dtype=np.int64)
+
+    text = _session("bgm-text.onnx", spec, threads)
+    decoder = _session("bgm-decoder.onnx", spec, threads)
+    codec = _session("bgm-codec.onnx", spec, threads)
+
+    hidden = text.run(["last_hidden_state"], {"input_ids": ids, "attention_mask": mask})[0]
+
+    def build(seq_len, max_length):
+        shifted = np.full((1, codebooks, max_length), -1, dtype=np.int64)
+        tokens = np.full((1, codebooks, seq_len), bos, dtype=np.int64)
+        for channel in range(codebooks):
+            shifted[:, channel, channel : channel + seq_len] = tokens[:, channel]
+        delay = np.zeros((codebooks, max_length), dtype=bool)
+        for channel in range(codebooks):
+            delay[channel, max_length - codebooks + 1 + channel :] = True
+            delay[channel, : channel + 1] = True
+        out = np.where(~delay, shifted[0], bos)
+        starts = np.nonzero(out[0] == -1)[0]
+        first = int(starts.min()) if len(starts) else seq_len
+        return out[:, :first], out
+
+    def apply(sequence, pattern):
+        width = sequence.shape[1]
+        return np.where(pattern[:, :width] == -1, sequence, pattern[:, :width])
+
+    # The exported merged decoder's cache branch is broken (it reshapes a
+    # zero-batch past into a non-empty present), so the whole prefix is fed
+    # every step with `use_cache_branch` false. That is quadratic in the
+    # length, which is why the music model is the slow one.
+    past = {}
+    for layer in range(int(config.get("decoder", {}).get("num_hidden_layers") or 15)):
+        for name in ("decoder.key", "decoder.value", "encoder.key", "encoder.value"):
+            past[f"past_key_values.{layer}.{name}"] = np.zeros((1, 16, 0, 64), np.float32)
+    sequence, pattern = build(1, frames)
+    rng = np.random.default_rng(seed)
+    for _ in range(frames - 1):
+        feed = dict(past)
+        feed.update(
+            {
+                "input_ids": apply(sequence, pattern),
+                "encoder_attention_mask": mask,
+                "encoder_hidden_states": hidden,
+                "use_cache_branch": np.array([False], dtype=bool),
+            }
+        )
+        logits = decoder.run(None, feed)[0][:, -1, :]
+        next_tokens = np.empty(codebooks, dtype=np.int64)
+        for channel in range(codebooks):
+            row = logits[channel].astype(np.float64)
+            top = np.argpartition(-row, 50)[:50]
+            scores = row[top] - row[top].max()
+            weights = np.exp(scores)
+            weights /= weights.sum()
+            next_tokens[channel] = top[rng.choice(len(top), p=weights)]
+        sequence = np.concatenate([sequence, next_tokens[:, None]], axis=1)
+    codes = apply(sequence, pattern)
+    codes = codes[codes != bos].reshape(1, 1, codebooks, -1)
+    audio = np.asarray(codec.run(["audio_values"], {"audio_codes": codes})[0], np.float32).reshape(-1)
+    return audio[: int(seconds * rate)], rate
+
+
+def generate_sound(spec):
+    """Write a short sound or a music bed from words.
+
+    The kind names the model, the prompt names the sound, and the file
+    lands where the caller can import it: inside `project` when one is
+    named, so an auto edit never writes outside the folder it edits.
+    """
+    resolved, refusal = _generator(spec)
+    if refusal is not None:
+        return refusal
+    kind, row = resolved
+    prompt = str(spec.get("prompt") or "").strip()
+    if not prompt:
+        return {
+            "tool": "generate",
+            "ok": False,
+            "error": "name `prompt`: the words the model writes from",
+        }
+    seconds = _gen_seconds(spec, row)
+    seed = int(spec.get("seed") or 0)
+    threads = _threads(spec)
+    steps = spec.get("steps")
+    if steps is None:
+        steps = row.get("steps")
+    started = time.time()
+    if kind == "sfx-small":
+        audio, rate = _gen_tiny(spec, prompt, seconds, seed, threads, steps)
+        channels = 1
+    elif kind == "sfx-large":
+        audio, rate = _gen_stable(spec, prompt, seconds, seed, threads, steps)
+        channels = 2
+    else:
+        audio, rate = _gen_musician(spec, prompt, seconds, seed, threads)
+        channels = 1
+    audio = _normalise(np.asarray(audio, np.float32), rate)
+
+    project = spec.get("project")
+    out = spec.get("out")
+    if out:
+        path = Path(out)
+        if project and not path.is_absolute():
+            path = Path(project) / path
+    elif project:
+        path = Path(project) / "generated-audio" / f"{kind}-{_slug(prompt)}-{seed}.wav"
+    else:
+        path = Path(tempfile.mkdtemp(prefix="funcut-sound-")) / f"{kind}-{_slug(prompt)}-{seed}.wav"
+    if project and path.is_absolute():
+        try:
+            path.resolve().relative_to(Path(project).resolve())
+        except ValueError:
+            return {"ok": False, "error": "`out` must stay inside `project`"}
+    channels, frames = _write_float_wav(path, audio, rate)
+    return {
+        "ok": True,
+        "tool": "generate",
+        "kind": kind,
+        "model": row["model"],
+        "licence": row["licence"],
+        "prompt": prompt,
+        "path": str(path),
+        "seconds": _r(frames / rate, 3),
+        "rate": rate,
+        "channels": channels,
+        "peak": _r(float(np.abs(audio).max()) if audio.size else 0.0, 3),
+        "rms": _r(float(np.sqrt((audio.astype(np.float64) ** 2).mean())) if audio.size else 0.0, 4),
+        "seed": seed,
+        "steps": steps,
+        "threads": threads,
+        "elapsedSec": _r(time.time() - started, 2),
+    }
+
+
 TOOLS = {
     "describe": describe_sound,
     "index": index_library,
     "rank": rank_sounds,
     "plan": plan_sound,
+    "generate": generate_sound,
     "selftest": selftest,
 }
 

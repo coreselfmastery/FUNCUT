@@ -82,6 +82,21 @@ program spends, and the gather stage reads them for its stock veto, its
 in-point, its drift and its travel. A reading added there without a
 consumer fails the selftest, not a reviewer's memory.
 
+## The picture's shelf (read before touching `sense_visual`)
+
+`sense_visual` is 38 actions: 11 measure with nothing installed, 21 are ONNX
+doors, 6 are machinery. The doors are registry rows in
+`sense/visual_sense.py` (`VISUAL_MODELS`), driven by one generic runner and
+ten decoders - so pointing a door at a better checkpoint is a one-line swap,
+and `docs/VISUAL-MODELS.md` is generated from that registry. A door installs
+from the Hub in three calls (`hf_search`, `hf_files`, `download`); four rows
+carry a repo verified by a real download, and the rest take one from
+`hf_search` rather than a guessed URL. `measure_clips` - what the stock choice
+reads - spends whatever is installed (`enrichDoors`, default 3), and
+`enrich: false` is the classical fast path. The selftest runs all thirty doors
+through the real runner with a stub session, so a decoder that cannot read its
+own output shape fails in CI.
+
 ## The five things that surprise agents here
 
 1. **A project is a folder**, not a file: `project_open {path}` names

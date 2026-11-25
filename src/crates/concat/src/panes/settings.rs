@@ -560,7 +560,9 @@ impl SettingsPane {
                         if self.is_sound_models(&id) {
                             // Nothing to choose: the reader looks for the
                             // files, and finds them because they are here.
-                        } else if self.is_transcriber(&id) && studio.prefs.transcriber_model.is_none() {
+                        } else if self.is_transcriber(&id)
+                            && studio.prefs.transcriber_model.is_none()
+                        {
                             studio.prefs.transcriber_model = Some(id.clone());
                         } else if !self.is_transcriber(&id) && studio.prefs.tts_model.is_none() {
                             studio.prefs.tts_model = Some(id.clone());

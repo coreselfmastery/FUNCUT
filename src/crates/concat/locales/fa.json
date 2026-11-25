@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "آینه‌ای از تصویر خودتان",
   "settings.modelReady": "مدل آماده است",
   "settings.models": "مدل‌ها",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "مدل‌ها اولین باری که یک قابلیت به آن‌ها نیاز داشته باشد دریافت می‌شوند. دانلود ابتدا این محل را بررسی می‌کند و سپس سایر منبعها نیز امتحان می‌شوند.",
   "settings.newToken": "Token جدید",
   "settings.noReleasesYet": "هنوز نسخه‌ای از 0.2.5 به بعد منتشر نشده است.",

@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-use concat_vision::models::{ModelId, MODELS, models_dir};
+use concat_vision::models::{MODELS, ModelId, models_dir};
 
 /// The files the sound reader needs, in the order they are fetched: the
 /// smallest first, so an interrupted download still leaves a usable

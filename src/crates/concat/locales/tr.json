@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "Kendi yansınız",
   "settings.modelReady": "Model hazır",
   "settings.models": "Modeller",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "Modeller bir özellik ilk kez ihtiyaç duyduğunda indirilir. İndirme önce buraya bakar; diğer tüm kaynaklar yine de sonra denenir.",
   "settings.newToken": "Yeni belirteç",
   "settings.noReleasesYet": "0.2.5 ve sonrası için henüz bir sürüm yok.",

@@ -700,6 +700,7 @@
   "settings.mirrorOwn": "직접 운영하는 미러",
   "settings.modelReady": "모델 준비 완료",
   "settings.models": "모델",
+  "settings.soundModels": "Sound",
   "settings.modelsFetchedFirstTime": "모델은 기능이 처음 필요로 할 때 내려받습니다. 여기서 먼저 찾고, 그다음에도 다른 출처를 모두 시도합니다.",
   "settings.newToken": "새 토큰",
   "settings.noReleasesYet": "0.2.5 이후 릴리스가 아직 없습니다.",

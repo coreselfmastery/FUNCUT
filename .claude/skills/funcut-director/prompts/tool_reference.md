@@ -308,7 +308,7 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   onnxruntime when installed, NEVER required — without the models every
   action still answers with `model: {state: "absent", reason}` and the
   measured half only, and `rank` says `degraded` — a weaker answer it
-  admits, never hides). Four actions:
+  admits, never hides). Five actions:
   - `describe` {file} — one record per asset: identity, YAMNet labels,
     the CLAP embedding + the description it best matches, the Sound
     Sense measurements, quality flags, roles, `syncOffset` and trim
@@ -331,6 +331,24 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
     structure; execute its accents with `sounds_add` +
     `clip_audio_levels_db`; prove each with `sense_sound {action:
     "check_placement"}`.
+  - `generate` {kind, prompt, seconds?, seed?, steps?, threads?,
+    project?, out?, monetized?} — the one action that WRITES a sound.
+    `kind` picks the model: `sfx-small` (TinyAudio-MF, MIT, 10 s mono,
+    0.48 GB) for a short accent, `sfx-large` (Stable Audio Open Small,
+    Stability AI Community Licence, 11.9 s stereo, 1.2 GB) for a hook or
+    a written bed, `bgm` (TinyMusician — MusicGen-small's weights,
+    CC-BY-NC 4.0, 1.0 GB) for a music bed. The prompt is the sound in
+    words ("a heavy wooden door slams shut in a stone hall"), and the
+    file lands in `<project>/generated-audio/` with a
+    `<file>.licence.json` beside it, placed like any shelf sound
+    (`sounds_add`, or `bgm_import` for a bed). A kind that is not
+    downloaded answers `model: "absent"` in about a second; a kind that
+    would not fit the machine answers `reason: "memory"` before it loads
+    anything; and `bgm` in a monetized project (`monetized: true`, or the
+    brief's own flag — the caller can only tighten it) is refused with
+    `reason: "licence"`, because the MusicGen weights are
+    non-commercial. Generate for the moment the shelf cannot cover — a
+    sound that must match the words — never as a way to skip shopping.
 
 - The loop that uses them is the skill's Phase 1 and §4 (and
   `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE

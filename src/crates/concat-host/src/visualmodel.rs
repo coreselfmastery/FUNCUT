@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The picture reader's five models: a shot boundary, a depth map, a visual
-//! embedding, CLIP's vision tower and the body in the frame. Fetched into the same `cutout-models`
+//! The picture reader's six models: a shot boundary, a depth map, a visual
+//! embedding, CLIP's vision tower, the body in the frame and what fills it.
+//! Fetched into the same `cutout-models`
 //! folder the cutout and sound models use, each file verified against its
 //! digest, because that is the folder `visual_sense.py` reads - so a set
 //! downloaded here is the set the reader measures with, without either side
 //! being told about the other.
 //!
-//! One row in the sheet, not four: they are what the AUTO EDIT's stock
-//! choice spends together. The other twenty-six rows on the reader's shelf
+//! One row in the sheet, not six: they are what the AUTO EDIT's stock
+//! choice spends together. The other twenty-four rows on the reader's shelf
 //! are specialist doors - an action classifier, a tracker, a gaze model -
 //! and are installed per model through `sense_visual {action: "download"}`,
 //! so the sheet carries the set a first edit needs and not 3 GB of
@@ -23,7 +24,8 @@ use concat_vision::models::{MODELS, ModelId, models_dir};
 /// The files the picture reader spends on a first edit, smallest first, so
 /// an interrupted download still leaves the depth and similarity reads
 /// behind.
-pub const VISUAL_MODELS: [ModelId; 5] = [
+pub const VISUAL_MODELS: [ModelId; 6] = [
+    ModelId::Segformer,
     ModelId::MovenetPose,
     ModelId::Dinov2,
     ModelId::DepthAnything,
@@ -78,7 +80,7 @@ pub fn ready(data: &Path) -> bool {
 }
 
 /// Fetch what is missing. `progress` is called with (received, total) over
-/// the whole set, so one bar covers four files.
+/// the whole set, so one bar covers six files.
 pub fn download(
     data: &Path,
     cancel: &AtomicBool,
@@ -179,7 +181,7 @@ mod tests {
         std::fs::write(&path, vec![0u8; id.spec().bytes as usize]).unwrap();
         assert!(installed(&dir, id));
         assert!(!ready(&dir));
-        assert_eq!(missing(&dir).len(), 4);
+        assert_eq!(missing(&dir).len(), 5);
         remove(&dir).unwrap();
         assert!(!installed(&dir, id));
         let _ = std::fs::remove_dir_all(&dir);

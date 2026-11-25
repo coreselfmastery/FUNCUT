@@ -1017,7 +1017,7 @@ impl SettingsPane {
         self.visuals = vec![ModelState {
             id: PICTURE_MODELS_ID.to_owned(),
             name: "Picture models".to_owned(),
-            note: "TransNetV2 finds a shot's boundaries, Depth Anything V2 its depth, DINOv2 and CLIP what it looks like, MoveNet where the body is. Without them the picture reader measures motion, camera and colour only.".to_owned(),
+            note: "TransNetV2 finds a shot's boundaries, Depth Anything V2 its depth, DINOv2 and CLIP what it looks like, MoveNet where the body is, SegFormer what fills the frame. Without them the picture reader measures motion, camera and colour only.".to_owned(),
             megabytes: (if missing > 0 { missing } else { total }) as f32 / 1_000_000.0,
             accuracy: 5,
             installed: concat_host::visualmodel::ready(&dirs.data),

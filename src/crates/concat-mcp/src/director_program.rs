@@ -9169,11 +9169,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "width": 64,
                                     "maxClips": 3,
                                     // Every door the shelf has installed:
-                                    // the taste prior, the shot's type, its
-                                    // depth and its bodies steer the scale,
-                                    // the drift and the caption band.
+                                    // the taste prior, the shot's type, what
+                                    // fills the frame, its depth and its
+                                    // bodies steer the score, the scale, the
+                                    // drift and the caption band. No
+                                    // `enrichDoors` - the reader's default is
+                                    // every installed door, under its own
+                                    // wall clock, so a shelf that grows is a
+                                    // shelf the sheet spends.
                                     "enrich": true,
-                                    "enrichDoors": 6,
                                 }),
                             ));
                         }

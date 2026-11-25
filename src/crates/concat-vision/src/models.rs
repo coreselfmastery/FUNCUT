@@ -63,6 +63,10 @@ pub enum ModelId {
     ClipVision,
     /// MoveNet singlepose: the body in the frame, as a box and a head.
     MovenetPose,
+    /// SegFormer-B0 on Cityscapes: every pixel's class. The only reading
+    /// that can say what fills a frame - a subject, a sky, a road - which
+    /// is what a caption band and an ambience call stand on.
+    Segformer,
 }
 
 /// One model as the table describes it.
@@ -86,7 +90,7 @@ pub struct ModelSpec {
 }
 
 /// Every downloadable model.
-pub const MODELS: [ModelSpec; 15] = [
+pub const MODELS: [ModelSpec; 16] = [
     ModelSpec {
         id: ModelId::Person,
         file: "rvm-mobilenetv3.onnx",
@@ -215,6 +219,14 @@ pub const MODELS: [ModelSpec; 15] = [
         sha256: "8bef13b3da241fe1302d247fd9363bbbf09ea4f02344372a09f73921b2f9ec01",
         licence: "Apache-2.0",
     },
+    ModelSpec {
+        id: ModelId::Segformer,
+        file: "segformer-b0.onnx",
+        upstream: "https://huggingface.co/Xenova/segformer-b0-finetuned-cityscapes-768-768/resolve/main/onnx/model_quantized.onnx",
+        bytes: 4_384_797,
+        sha256: "e90dc4112c066066110c5aac955990427095a27a88c7dbfd4fcc7d1bbf147147",
+        licence: "Apache-2.0",
+    },
 ];
 
 impl ModelId {
@@ -245,7 +257,8 @@ impl ModelId {
             | ModelId::DepthAnything
             | ModelId::Dinov2
             | ModelId::ClipVision
-            | ModelId::MovenetPose => "picture",
+            | ModelId::MovenetPose
+            | ModelId::Segformer => "picture",
         }
     }
 
@@ -267,6 +280,7 @@ impl ModelId {
             ModelId::Dinov2 => "dinov2-small",
             ModelId::ClipVision => "clip-vit-b32",
             ModelId::MovenetPose => "movenet-pose",
+            ModelId::Segformer => "segformer-b0",
         }
     }
 }

@@ -358,3 +358,12 @@ bytes = 2788976
 sha256 = "8bef13b3da241fe1302d247fd9363bbbf09ea4f02344372a09f73921b2f9ec01"
 licence = "Apache-2.0"
 upstream = "https://huggingface.co/Xenova/movenet-singlepose-lightning/resolve/main/onnx/model_int8.onnx"
+
+[[model]]
+id = "segformer-b0"
+family = "cutout"
+file = "segformer-b0.onnx"
+bytes = 4384797
+sha256 = "e90dc4112c066066110c5aac955990427095a27a88c7dbfd4fcc7d1bbf147147"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/Xenova/segformer-b0-finetuned-cityscapes-768-768/resolve/main/onnx/model_quantized.onnx"

@@ -23,7 +23,8 @@ sense_visual {action: "download", modelId: "depth-anything-v2-small",
 ```
 
 A row with a verified repo downloads with `modelId` alone (`transnetv2`,
-`depth-anything-v2-small`, `dinov2-small`, `clip-vit-b32`). A gated repo takes
+`depth-anything-v2-small`, `dinov2-small`, `clip-vit-b32`, `movenet-pose`,
+`segformer-b0`). A gated repo takes
 `token` or `HF_TOKEN`, and the token is never echoed back. With `sha256` the
 digest is checked before anything is kept; without it the digest that arrived
 is **pinned** in the folder's `index.json` and checked on every later download
@@ -73,7 +74,7 @@ chat models, not graphs, and `describe_scene` is their door.
 | `depth-anything-v2-small` | 2 | per-pixel relative depth | 27 MB | Apache-2.0 | `depth_map` | `depth` | `onnx-community/depth-anything-v2-small` / `onnx/model_quantized.onnx` |  |
 | `midas-v21-small` | 2 | monocular relative depth (the alternative to Depth Anything) | 80 MB | MIT | `depth_map` | `depth` | — |  |
 | `fastsam-s` | 2 | pixel-accurate object masks | 40 MB | Apache-2.0 | `subject_mask` | `masks` | — |  |
-| `segformer-b0` | 2 | semantic segmentation (150 ADE20K classes) | 15 MB | Apache-2.0 | `semantic_segments` | `segments` | — |  |
+| `segformer-b0` | 2 | semantic segmentation (19 Cityscapes classes) | 4.4 MB | Apache-2.0 | `semantic_segments` | `segments` | `Xenova/segformer-b0-finetuned-cityscapes-768-768` | verified |
 | `bytetrack-yolo` | 2 | persistent object tracks across frames | 15 MB | MIT | `detect_objects` | `boxes` | — | the detector's boxes feed `tracks`, which links them into identities |
 | `dinov2-small` | 3 | 384-d visual embedding per frame | 84 MB | Apache-2.0 | `visual_embedding` | `embedding` | `onnx-community/dinov2-small` / `onnx/model_quantized.onnx` |  |
 | `clip-vit-b32` | 3 | image-text similarity embedding | 150 MB | MIT | `visual_embedding` | `embedding` | `Xenova/clip-vit-base-patch32` / `onnx/vision_model_quantized.onnx` |  |
@@ -132,10 +133,14 @@ enrichment and one with the depth door installed:
 
 `measure_clips` asks the doors only when a sheet is being built for an edit,
 and only the doors whose read a sheet can spend, in this order (`ENRICH_DOORS`
-in `visual_sense.py`, up to `enrichDoors` per clip):
+in `visual_sense.py`). The default budget is **every installed door**; a
+caller that wants fewer names `enrichDoors`, and `enrichSeconds` (4 s by
+default) is a wall clock, not a count - a door the clock ran out before is
+named under `models.skipped` rather than dropped silently.
 
 | Door | Reading | Where the program spends it |
 | --- | --- | --- |
+| `segformer-b0` | what fills each pixel: `subject` (person, rider, vehicle), `sky`, `greenery`, and the top three classes | two decisions: the shot's scale (`subject` ≥ 0.28 is a close-up, ≥ 0.09 a medium, < 0.02 a wide - it outranks the box and the saliency blob, which are only as good as their detectors), and the score, where a frame with something in it gains up to 0.05 and a frame that is only a texture loses 0.05. The door is 4.4 MB (Apache-2.0, `Xenova/segformer-b0-finetuned-cityscapes-768-768`), 19 labelled Cityscapes classes, and is the sixth row in the window |
 | `dover-mobile`, `laion-aesthetic` | a 0–10 taste prior | the sheet's score, a tenth of it - it orders candidates, it never vetoes |
 | `film-shot-classifier` | the shot's type, with a probability | `shot_scale()`, when the classical measure could not place the shot and the classifier was at least 0.5 sure: the drift and the cut rhythm read the same gate word |
 | `depth-anything-v2-small` | `nearShare`, `verdict` | two decisions: `tight()` holds the drift when half the frame sits at the lens, and the verdict places the caption band when saliency found no blob |
@@ -146,15 +151,25 @@ The guard in `director_program.rs` (`every_reading_inside_a_family_has_a_consume
 holds the Rust side to this table: a field `visual_read.rs` parses and no
 helper in the program calls fails the test by name.
 
-So the ranking is the classical one's: motion beats a still frame by 0.157.
-The doors add their readings under `models` per row, and the only one wired
-into `visualScore` today is the aesthetic taste prior - depth, shot type and
-pose are **recorded, not spent**, which is the diagnostic shape on purpose.
-They are what the caption band, the parallax layer and the continuity gate
-will read next; the score is not the only consumer a signal can have, and
-pretending a depth map makes a stock clip "better" would be a guess wearing a
-number. Enrichment costs 2.3 s for two clips at this size (1.9 s -> 4.2 s),
-which is why it is off the classical path and capped at `enrichDoors`.
+So the ranking is the classical one's, plus what the doors add: motion still
+beats a still frame, and a measured subject now beats a measured texture.
+Three readings reach `visualScore` (the taste prior, the segmentation's
+subject share, and the montage and blur multipliers), one reaches the scale
+the drift and the cut rhythm read (the learned shot type, and the
+segmentation ahead of it), and two reach the caption band (depth's verdict,
+a pose's head). `action_class` is recorded and named in the critic's brief:
+a cut boundary needs two windows of it, and one window is not a boundary.
+
+Not everything is a scorer. A depth map does not make a stock clip "better";
+it holds a drift, places a caption band and marks a seam. The taxonomy in
+`docs/EMOTION.md` holds here unchanged: direct action, veto, confidence
+modulation, repair selection, diagnostic - and the last two are supposed to
+end in a log, not in an edit.
+
+Enrichment costs what the installed doors cost: 1.1 s for two clips of this
+size with the classical reads alone and 4.2 s with one depth door. The clock
+(`enrichSeconds`) is what keeps a six-door shelf from doubling a sheet's
+time, and it skips by name so the reply says what was not spent.
 
 ## Honest caveats
 

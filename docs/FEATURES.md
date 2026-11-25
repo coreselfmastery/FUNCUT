@@ -543,18 +543,21 @@ fetch on demand into the app data dir. Stabilization is classical CV — no
 model at all.
 
 The picture reader's shelf is thirty ONNX doors
-([VISUAL-MODELS.md](VISUAL-MODELS.md)), and five of them are in
+([VISUAL-MODELS.md](VISUAL-MODELS.md)), and six of them are in
 `models/manifest.toml` with a real digest: `transnetv2` (MIT, 31 MB, a shot
 boundary) · `depth-anything-v2-small` (Apache-2.0, 27 MB quantized, a depth
 map) · `dinov2-small` (Apache-2.0, 24 MB quantized, a visual embedding) ·
 `clip-vit-b32-visual` (MIT, 89 MB quantized, CLIP's vision tower) ·
 `movenet-pose` (Apache-2.0, 2.8 MB int8, the body in the frame - the file
 whose `int32` `[1,192,192,3]` signature and `[y, x, confidence]` keypoint
-order were run end to end before it was registered). Those five
-are one row in Settings > Models ("Picture models", 175 MB) and download
+order were run end to end before it was registered) · `segformer-b0`
+(Apache-2.0, 4.4 MB quantized Cityscapes, what fills each pixel - the
+reading that says "a person", "a sky", "a road" rather than "something
+moved"). Those six
+are one row in Settings > Models ("Picture models", 179 MB) and download
 into `cutout-models` like the cutout and sound models, digest-checked, which
 is the folder `sense_visual` reads - so a set fetched in the window is the
-set the AUTO EDIT's stock choice measures with. The other twenty-five are
+set the AUTO EDIT's stock choice measures with. The other twenty-four are
 installed per model from the Hub through `sense_visual` (`hf_search` ->
 `hf_files` -> `download`), land in `models/visual/` or wherever
 `FUNCUT_VISUAL_MODELS` / `modelDir` says, and

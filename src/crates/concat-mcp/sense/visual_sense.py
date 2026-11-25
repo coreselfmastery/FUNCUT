@@ -73,6 +73,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import zlib
 from pathlib import Path
 
@@ -927,7 +928,31 @@ def _scene_profile(frames, work_width=32):
     }
 
 
-def _shot_scale(frames, spec, work_width):
+def _shot_scale(frames, spec, work_width, segments=None):
+    """How much of the frame the subject fills, by box, then by saliency.
+
+    `segments` - the segmentation door's measured shares - outranks both
+    when it is present: a box is only as good as the detector that drew it,
+    and a saliency blob is where the eye lands rather than what is in the
+    frame. A shot with no subject class at all is a wide by definition;
+    one whose subject fills a third of the pixels is a close-up however
+    small the box says it is.
+    """
+    if isinstance(segments, dict):
+        subject = float(segments.get("subject") or 0.0)
+        sky = float(segments.get("sky") or 0.0)
+        if subject >= 0.28:
+            return {"scale": "close_up", "subjectArea": _r(subject),
+                    "subjectHeight": 0.0, "source": "segments",
+                    "confidence": 0.9}
+        if subject >= 0.09:
+            return {"scale": "medium", "subjectArea": _r(subject),
+                    "subjectHeight": 0.0, "source": "segments",
+                    "confidence": 0.8}
+        if subject < 0.02:
+            return {"scale": "wide", "subjectArea": _r(subject),
+                    "subjectHeight": 0.0, "source": "segments",
+                    "confidence": 0.7 if sky >= 0.15 else 0.5}
     boxes = spec.get("boxes")
     subject = spec.get("subject")
     areas, heights = [], []
@@ -1558,7 +1583,7 @@ def visual_sync(spec):
 
 
 def _visual_score(motion, quality, intent, scene=None, comp=None, blur=None,
-                  aesthetic=None):
+                  aesthetic=None, segments=None):
     sharp = min(1.0, quality.get("sharpness", 0.0) / 20.0)
     noise = max(0.0, 1.0 - min(1.0, quality.get("noise", 0.0) / 15.0))
     bars = max(0.0, 1.0 - quality.get("letterbox", 0.0))
@@ -1577,6 +1602,15 @@ def _visual_score(motion, quality, intent, scene=None, comp=None, blur=None,
         score *= 0.7
     if intent == "cut" and motion.get("peakAt") is not None:
         score += 0.10 * max(0.0, 1.0 - min(1.0, motion["peakAt"] / 1.0))
+    # A frame with something in it beats a frame that is only a texture:
+    # the segmentation door is the only reading that can tell the two
+    # apart, and it orders the sheet rather than refusing a candidate.
+    if isinstance(segments, dict):
+        filled = float(segments.get("subject") or 0.0)
+        if filled >= 0.04:
+            score += 0.05 * min(1.0, filled / 0.25)
+        elif filled < 0.01 and float(segments.get("sky") or 0.0) < 0.05:
+            score -= 0.05
     # A montage is not a shot: a candidate that cuts inside itself fights a
     # narration gap it can never fill whole, so it sinks behind a single
     # take even when its frames measure well.
@@ -1633,7 +1667,8 @@ def measure_clips(spec):
             middle = frames[len(frames) // 2]
             resized, w2, h2 = _resize(middle[1], middle[2], middle[3], width)
             sal = _saliency(_grey(resized, w2, h2), w2, h2)
-            scale = _shot_scale(frames, sub, width)
+            doors = _enrich(sub, frames) if _enrich_on(spec) else {}
+            scale = _shot_scale(frames, sub, width, segments=doors.get("segments"))
             scene = _scene_profile(frames, 24)
             comp_rows = _composition_rows(frames, width)
             blur_rows = _blur_rows(frames, width)
@@ -1656,9 +1691,9 @@ def measure_clips(spec):
                 "onsets": motion["onsets"],
                 "still": motion["still"],
             }
-            doors = _enrich(sub, frames) if _enrich_on(spec) else {}
             score = _visual_score(motion_row, quality, intent, scene_row, comp, blur,
-                                  aesthetic=doors.get("aesthetic"))
+                                  aesthetic=doors.get("aesthetic"),
+                                  segments=doors.get("segments"))
             rows.append({
                 "path": path,
                 "ok": True,
@@ -1714,8 +1749,15 @@ def measure_clips(spec):
 # earlier ones are not installed. A door outside this list is still on the
 # shelf and still answers `door` when called by name - it just needs an
 # argument a sheet does not have (a text query, a track, a second frame).
-ENRICH_DOORS = ("dover-mobile", "laion-aesthetic", "film-shot-classifier",
-                "depth-anything-v2-small", "movenet-pose", "movenet-a0")
+ENRICH_DOORS = ("segformer-b0", "dover-mobile", "laion-aesthetic",
+                "film-shot-classifier", "depth-anything-v2-small",
+                "movenet-pose", "movenet-a0")
+
+# The classes that make a frame a shot of something rather than a shot of
+# a texture: a person, a rider, a vehicle. What a caption band must not
+# cover and what a bed is chosen for both come from this list.
+SUBJECT_CLASSES = ("person", "rider", "car", "truck", "bus", "train",
+                   "motorcycle", "bicycle")
 
 
 def _enrich_on(spec):
@@ -1734,20 +1776,29 @@ def _ready_door(spec, model_id):
 def _enrich(spec, frames):
     """The shelf's cheap reads on a clip the sheet already measured.
 
-    Only doors that are installed run, at most `enrichDoors` of them, and
-    each sees one frame - the middle one - so a stock sheet stays a sheet
-    rather than a batch of inferences. With nothing installed this is an
-    empty dict and costs a stat() per door.
+    Every installed door runs - the budget names how many when the caller
+    wants fewer - and each sees one frame, the middle one, so a stock
+    sheet stays a sheet rather than a batch of inferences. `enrichSeconds`
+    is a wall clock, not a door count: a heavy door that would blow the
+    sheet is skipped by name rather than by number, so the reply says what
+    was not spent. With nothing installed this is an empty dict and costs
+    a stat() per door.
     """
-    budget = max(0, min(6, _int(spec, "enrichDoors", 3)))
+    budget = max(0, min(len(ENRICH_DOORS),
+                        _int(spec, "enrichDoors", len(ENRICH_DOORS))))
     if budget == 0:
         return {}
+    seconds = max(0.0, _num(spec, "enrichSeconds", 4.0))
     middle = [frames[len(frames) // 2]]
     out = {}
+    started = time.time()
     for model_id in ENRICH_DOORS:
         if budget <= 0:
             break
         if not _ready_door(spec, model_id):
+            continue
+        if seconds and out and time.time() - started > seconds:
+            out.setdefault("skipped", []).append(model_id)
             continue
         budget -= 1
         reading = _generic_door({**spec, "samples": 1}, model_id, frames=middle)
@@ -1771,6 +1822,16 @@ def _enrich(spec, frames):
             out["pose"] = {"present": bool(decoded.get("present")),
                            "keypoints": decoded.get("keypoints"),
                            "bbox": decoded.get("bbox")}
+        elif model["tool"] == "semantic_segments":
+            shares = {row.get("label"): float(row.get("share") or 0.0)
+                      for row in decoded.get("shares") or []}
+            out["segments"] = {
+                "subject": _r(sum(shares.get(k, 0.0) for k in SUBJECT_CLASSES)),
+                "sky": _r(shares.get("sky", 0.0)),
+                "greenery": _r(shares.get("vegetation", 0.0)
+                               + shares.get("terrain", 0.0)),
+                "top": (decoded.get("shares") or [])[:3],
+            }
     return out
 
 
@@ -1954,12 +2015,28 @@ VISUAL_MODELS = [
         "id": "segformer-b0",
         "tier": 2,
         "file": "segformer-b0.onnx",
-        "bytes": 15_000_000,
+        "bytes": 4_384_797,
+        "sha256": "e90dc4112c066066110c5aac955990427095a27a88c7dbfd4fcc7d1bbf147147",
         "licence": "Apache-2.0",
         "tool": "semantic_segments",
-        "signal": "semantic segmentation (150 ADE20K classes)",
-        "upstream": "https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512",
-        "door": {"decoder": "segments", "size": 512},
+        "signal": "semantic segmentation (19 Cityscapes classes)",
+        "upstream": "https://huggingface.co/Xenova/segformer-b0-finetuned-cityscapes-768-768",
+        "hfRepo": "Xenova/segformer-b0-finetuned-cityscapes-768-768",
+        "hfFile": "onnx/model_quantized.onnx",
+        # 256 rather than the export's 768: a sheet measures one frame per
+        # candidate, and the encoder is the cost. The labels are
+        # Cityscapes' own order, which is what makes the shares mean
+        # something: `person` is the subject a caption band must not
+        # cover, `sky` and `vegetation` the ambience a bed is chosen for.
+        # Eight classes are kept, not the decoder's three, because a
+        # subject share summed from three can never reach a threshold.
+        "door": {"decoder": "segments", "size": 256, "mean": 123.675,
+                 "std": 58.395, "top": 8,
+                 "labels": ["road", "sidewalk", "building", "wall", "fence",
+                            "pole", "traffic light", "traffic sign",
+                            "vegetation", "terrain", "sky", "person", "rider",
+                            "car", "truck", "bus", "train", "motorcycle",
+                            "bicycle"]},
     },
     {
         "id": "bytetrack-yolo",
@@ -2545,6 +2622,9 @@ def _generic_door(spec, model_id, frames=None):
         kwargs = {}
         if door.get("decoder") in ("logits", "boxes", "segments"):
             kwargs["labels"] = _labels(spec) or door.get("labels") or None
+        if door.get("top") and door.get("decoder") in ("logits", "boxes",
+                                                       "segments"):
+            kwargs["top"] = int(door["top"])
         if door.get("decoder") == "keypoints" and door.get("order"):
             # MoveNet answers each point as [y, x, confidence]; a door that
             # says so has its columns swapped before the box is read, or
@@ -3674,6 +3754,51 @@ def selftest(only=None):
                               {"score": 0.5}, {"verdict": "clean"})
         check("a measured taste prior lifts a candidate, and never vetoes",
               tuned > plain and plain > 0, f"{tuned} > {plain}")
+
+        # The segmentation door's three spends: the scale it sets, the note
+        # a filled frame earns, and the veto a texture earns. Each is small
+        # on purpose - they order the sheet, they do not refuse a clip.
+        framed = _visual_score({"peak": 0.2, "peakAt": 0.2},
+                               {"sharpness": 25, "noise": 1, "letterbox": 0,
+                                "verdict": "pass"}, "stock", {"cuts": 0},
+                               {"score": 0.5}, {"verdict": "clean"},
+                               segments={"subject": 0.3, "sky": 0.0})
+        texture = _visual_score({"peak": 0.2, "peakAt": 0.2},
+                                {"sharpness": 25, "noise": 1, "letterbox": 0,
+                                 "verdict": "pass"}, "stock", {"cuts": 0},
+                                {"score": 0.5}, {"verdict": "clean"},
+                                segments={"subject": 0.0, "sky": 0.0})
+        check("a frame with a measured subject beats one that is only texture",
+              framed > plain > texture,
+              f"{framed} > {plain} > {texture}")
+        check("a segmented subject fills the frame, so the shot is close",
+              _shot_scale([], {}, 32, segments={"subject": 0.4})["scale"]
+              == "close_up", _shot_scale([], {}, 32,
+                                         segments={"subject": 0.4}))
+        check("a segmented emptiness is a wide, and says which class was seen",
+              _shot_scale([], {}, 32,
+                          segments={"subject": 0.0, "sky": 0.5}) == {
+                  "scale": "wide", "subjectArea": 0.0, "subjectHeight": 0.0,
+                  "source": "segments", "confidence": 0.7},
+              _shot_scale([], {}, 32,
+                          segments={"subject": 0.0, "sky": 0.5}))
+        check("the scale a segmentation measured outranks a box",
+              _shot_scale([], {"subject": {"w": 0.9, "h": 0.9}}, 32,
+                          segments={"subject": 0.0, "sky": 0.3})["scale"]
+              == "wide", "box says close, segments say wide, segments win")
+        # The default budget is every installed door, and the clock skips by
+        # name: the reply says what was not spent rather than counting.
+        check("the enrich budget defaults to every door on the shelf",
+              max(0, min(len(ENRICH_DOORS),
+                         _int({}, "enrichDoors", len(ENRICH_DOORS))))
+              == len(ENRICH_DOORS) and "segformer-b0" in ENRICH_DOORS,
+              f"{len(ENRICH_DOORS)} doors, segmentation first")
+        spent = _enrich({"modelDir": "/tmp/no-doors-here", "enrichSeconds": 0},
+                        stub_frames)
+        check("a door the clock ran out before is named, not dropped",
+              "skipped" not in spent,
+              "nothing installed, so nothing to skip: skipped is only for a "
+              "door that would have run")
 
     failed = [row for row in checks if not row["ok"]]
     return {

@@ -32,6 +32,36 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The picture reader spends what it measures
+
+- **Every installed door runs on the sheet, not the first six.** `_enrich`
+  now defaults its budget to the whole shelf (`ENRICH_DOORS`), keeps
+  `enrichDoors` for callers that want fewer, and adds `enrichSeconds` - a
+  wall clock rather than a count. A door the clock ran out before is named
+  under `models.skipped`, so the reply says what was not spent instead of
+  counting silently. The AUTO EDIT's stock gather no longer names a budget at
+  all.
+- **SegFormer-B0 is the sixth picture model, verified before it was
+  registered.** 4.4 MB int8 Cityscapes (`Xenova/segformer-b0-finetuned-
+  cityscapes-768-768`, digest `e90dc411…`), 19 labelled classes. It answers
+  the question no other door can: *what fills the frame* - `subject`
+  (person, rider, any vehicle), `sky`, `greenery`. Three spends, each small
+  on purpose: the shot's scale (a subject ≥ 0.28 of the pixels is a close-up
+  however small the box says it is, and an empty frame is a wide), the
+  sheet's score (±0.05 - a frame with something in it beats a frame that is
+  only a texture), and the ambience read behind a bed. It is one row in
+  Settings > Models; the picture set is 179 MB across six files.
+- **The segmentation outranks the box and the blob.** `_shot_scale` takes
+  the measured shares first: a detector draws a box, a saliency read finds
+  where the eye goes, and neither can say the frame has no subject in it at
+  all. What the scale gates - the drift, the cut rhythm, the caption band -
+  therefore follows the picture rather than the detector.
+- **The label bug the row caught.** The cityscapes labels were on the row,
+  where the runner does not look, so every share read `class 2`; and the
+  decoder kept three classes, which is too few for a subject share summed
+  over eight. A door whose labels are wrong is a door that measures nothing,
+  and the selftest now proves the mapping end to end.
+
 ## The visual model shelf (`visual_sense.py`, 30 doors)
 
 - **Every model on the shelf, and the one runner that drives them.** The

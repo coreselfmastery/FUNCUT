@@ -1036,6 +1036,37 @@ fn signal_evidence_gate(
 
     let mut claimed = std::collections::BTreeSet::new();
     let mut failures = Vec::new();
+    // The Rust ears: a reading taken without the voice-signals binary
+    // says so in its own notes, and the run lost more than half its
+    // readings - every accent, the duck's deepening, the tighten
+    // guards, the entity cards - while the Python half still answered,
+    // so the run completed over a reading nobody said was halved. The
+    // packaged app ships the binary; a from-source build that lacks it
+    // still edits, but the edit is a warned one, not an accepted one,
+    // and the receipt names the half that was read.
+    let earless = profiles
+        .iter()
+        .filter(|profile| {
+            profile.get("ok").and_then(Value::as_bool) == Some(true)
+                && profile
+                    .get("notes")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|note| {
+                        note.as_str()
+                            .is_some_and(|said| said.contains("the voice-signals binary is not built"))
+                    })
+        })
+        .count();
+    if earless > 0 {
+        failures.push(format!(
+            "{earless} of {} take profile(s) were read without the voice-signals binary - \
+             prosody, forensics, speakers and NER entities were absent from the reading; \
+             build it with `cargo build -p voice-signals`",
+            profiles.len()
+        ));
+    }
     for (index, entry) in entries.iter().enumerate() {
         let confidence = entry.get("confidence").and_then(Value::as_f64);
         for signal in entry
@@ -1698,6 +1729,64 @@ mod tests {
         assert_eq!(status, GateStatus::Fail);
         assert!(evidence.contains("did not measure wordConfidence"));
         assert!(evidence.contains("above measured pauses confidence"));
+    }
+
+    /// A reading taken without the voice-signals binary answers with the
+    /// Python half and a note saying so: the receipt must not accept an
+    /// edit whose accents, duck deepening, tighten guards and entity
+    /// cards were silently absent, and the sentence names the fix.
+    #[test]
+    fn a_profile_read_without_the_rust_ears_is_a_rejected_signal_gate() {
+        let plan = json!({
+            "signalLog": [
+                {"signals":["pause.class=dead_air","words"],"confidence":0.7}
+            ]
+        });
+        let earless = json!({
+            "ok": true,
+            "notes": [
+                "the voice-signals binary is not built; build it with \
+                 `cargo build -p voice-signals` (prosody, forensics, \
+                 speakers and NER entities are absent from this reading)"
+            ],
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"wordConfidence","confidence":0.75}
+                ]
+            }
+        });
+        // One halved reading among two whole ones is still a halved run.
+        let whole = json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"prosody","confidence":0.7}
+                ]
+            }
+        });
+        let (status, evidence) = signal_evidence_gate(&plan, &[earless, whole], None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(
+            evidence.contains("1 of 2 take profile(s) were read without the voice-signals binary"),
+            "{evidence}"
+        );
+        assert!(evidence.contains("cargo build -p voice-signals"), "{evidence}");
+        // The same profiles with the note gone pass: the check rides on
+        // the note the reading itself carries, never on a guess.
+        let healed = json!({
+            "ok": true,
+            "notes": [],
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"wordConfidence","confidence":0.75}
+                ]
+            }
+        });
+        let (status, _) = signal_evidence_gate(&plan, &[healed, whole], None);
+        assert_eq!(status, GateStatus::Pass);
     }
 
     #[test]

@@ -77,11 +77,7 @@ fn idempotency_key(epoch: u64, stage: Stage, call: &ToolCall) -> String {
 }
 
 /// Add one explicit tool degradation to the run's warning list.
-fn push_reply_warning(
-    warnings: &mut Vec<String>,
-    source: &str,
-    message: &str,
-) -> bool {
+fn push_reply_warning(warnings: &mut Vec<String>, source: &str, message: &str) -> bool {
     let message = message.trim();
     if message.is_empty() {
         return false;
@@ -97,12 +93,7 @@ fn push_reply_warning(
 /// warning list even when the program deliberately handles the reply and
 /// continues. A successful transport is not proof that the tool produced
 /// a complete measurement.
-fn record_reply_warnings(
-    stage: Stage,
-    call: &ToolCall,
-    reply: &Value,
-    warnings: &mut Vec<String>,
-) {
+fn record_reply_warnings(stage: Stage, call: &ToolCall, reply: &Value, warnings: &mut Vec<String>) {
     let action = call.arguments.get("action").and_then(Value::as_str);
     let source = match action {
         Some(action) => format!("{} / {} ({action})", stage.label(), call.tool),
@@ -135,7 +126,11 @@ fn record_reply_warnings(
     }
 
     if reply.get("status").and_then(Value::as_str) == Some("degraded") && !has_detail {
-        push_reply_warning(warnings, &source, "returned degraded status without a detail");
+        push_reply_warning(
+            warnings,
+            &source,
+            "returned degraded status without a detail",
+        );
     }
 }
 
@@ -1621,7 +1616,10 @@ mod tests {
 
         let outcome = runner.run(&mut program, &mut caller);
         assert_eq!(outcome, RunOutcome::CompletedWithWarnings);
-        let AutoEditState::CompletedWithWarnings { warnings, receipt, .. } = runner.state() else {
+        let AutoEditState::CompletedWithWarnings {
+            warnings, receipt, ..
+        } = runner.state()
+        else {
             panic!("a degraded measurement must finish with its warning visible");
         };
         assert_eq!(warnings.len(), 1);
@@ -1652,13 +1650,19 @@ mod tests {
 
         let outcome = runner.run(&mut program, &mut caller);
         assert_eq!(outcome, RunOutcome::CompletedWithWarnings);
-        let AutoEditState::CompletedWithWarnings { warnings, receipt, .. } = runner.state() else {
+        let AutoEditState::CompletedWithWarnings {
+            warnings, receipt, ..
+        } = runner.state()
+        else {
             panic!("a handled soft failure must remain visible in the run");
         };
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("sfx / sense_sound (check_placement)"));
         assert!(warnings[0].contains("could not inspect the placed SFX file"));
-        assert_eq!(receipt.expect("the acceptance receipt is present").warnings, warnings);
+        assert_eq!(
+            receipt.expect("the acceptance receipt is present").warnings,
+            warnings
+        );
     }
 
     #[test]

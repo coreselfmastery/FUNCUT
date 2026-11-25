@@ -707,9 +707,12 @@ project whose timeline already carries narration audio (an audio clip
 outside the project's `bgm/` folder); it does not generate a video from
 nothing. By default it edits a sibling copy named `<project> edit`, so
 the source project is never overwritten, then runs the deterministic
-spine: repair the voice, transcribe it, read the voice signals, cut dead
-air, place captions, shop licensed B-roll, grade, add and duck music, add
-sound accents, save the timeline, look at the result and score it.
+spine: preflight the transcriber (downloaded headlessly when the machine
+is cold, so the run fails fast with the model named instead of dying at
+the transcription), repair the voice, transcribe it, read the voice
+signals, cut dead air, place captions, shop licensed B-roll, grade, add
+and duck music, add sound accents, save the timeline, look at the result
+and score it.
 
 ```json
 {

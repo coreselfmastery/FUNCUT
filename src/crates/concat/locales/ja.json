@@ -406,6 +406,7 @@
   "forge.stageMotion": "Motion",
   "forge.stageMusic": "BGMの配置",
   "forge.stagePlan": "Plan",
+  "forge.stagePreflight": "モデル事前確認",
   "forge.stagePreview": "Preview",
   "forge.stageRevise": "Revise",
   "forge.stageSfx": "効果音の配置",

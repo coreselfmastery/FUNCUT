@@ -8070,6 +8070,55 @@ pub fn auto_edit_source_from_view(
     })
 }
 
+/// The preflight's next call: the transcriber the words stage spends,
+/// asked for before anything else is. A cold machine used to pay the
+/// repair stage's minutes and then die at the transcription - "model
+/// base is not downloaded" - because nothing checked the model until it
+/// was needed. The download is idempotent - a model already on disk
+/// ends at once - so a warm machine pays two quick calls and nothing
+/// else, and a cold one pays the download where the run can name it.
+fn whisper_preflight(log: &[Value]) -> Option<ToolCall> {
+    let call = |tool: &str, arguments: Value| ToolCall {
+        tool: tool.to_owned(),
+        arguments,
+    };
+    // The wait's own replies, newest first: the wait is a poll of one
+    // job, and the last poll's word is the job's word. A job that
+    // settled - done, failed, cancelled - is the gate's to judge; a
+    // job still running gets one more wait, the same two-wait budget
+    // the words stage's own lanes work on.
+    if let Some(last) = log.iter().rev().find(|reply| reply.get("state").is_some()) {
+        if last["state"] != "running" {
+            return None;
+        }
+        let job = last["job"].as_str()?;
+        return Some(call(
+            "analysis_wait",
+            json!({ "job": job, "timeoutSeconds": 590 }),
+        ));
+    }
+    // The download's own reply: a Started names the job a headless
+    // caller waits on.
+    if let Some(job) = log
+        .iter()
+        .rev()
+        .find(|reply| reply.get("job").is_some() && reply.get("state").is_none())
+        .and_then(|started| started["job"].as_str())
+    {
+        return Some(call(
+            "analysis_wait",
+            json!({ "job": job, "timeoutSeconds": 590 }),
+        ));
+    }
+    // Nothing asked yet: the model itself - the multilingual base,
+    // the model every transcribe call in this program resolves to when
+    // the caller names none.
+    Some(call(
+        "models_download",
+        json!({ "kind": "whisper", "id": "base" }),
+    ))
+}
+
 /// The AUTO EDIT's whole program: every stage the unattended run can run
 /// without a creative brain, each standing on what the run itself
 /// measured. The static spine repairs, transcribes, reads the voice and
@@ -8106,7 +8155,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .clone()
         .filter(|script| !script.trim().is_empty());
     let mut steps: Vec<ProgramStep> = Vec::new();
-    // 1. The handoff, read back: the sibling is opened on the window's
+    // 1. The preflight: the one model the run cannot proceed without -
+    //    the transcriber - is asked for before anything is spent on it.
+    //    The download ends at once when the model is on disk, and the
+    //    gate holds the stage until the model has landed, so a cold
+    //    machine fails fast with the model named instead of dying at
+    //    the third stage.
+    steps.push(
+        DerivedStep::react(Stage::Preflight, Box::new(whisper_preflight))
+            .gate(ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "the whisper base model the words stage needs did not arrive",
+            })
+            .into(),
+    );
+    // 2. The handoff, read back: the sibling is opened on the window's
     //    server - the same register a forge run's edit sits in - and the
     //    voiceover lane is read as the run's own ground truth.
     steps.push(
@@ -8119,7 +8183,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         )
         .into(),
     );
-    // 2. The repair, per distinct take, on its own lane: measured first,
+    // 3. The repair, per distinct take, on its own lane: measured first,
     //    then only the chain the measurements ordered. The old spine ran
     //    the same generic clean on every take - a hum paid for a
     //    broadband pass that barely touched it, a DC offset paid for a
@@ -8176,7 +8240,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         })
         .collect();
     steps.push(FanStep::fan(Stage::AudioRepair, repair).warn().into());
-    // 3. The words: every take transcribed at the same time, one lane
+    // 4. The words: every take transcribed at the same time, one lane
     //    each - the transcriptions of a five-take voiceover land in the
     //    time of the slowest, not the sum. Two waits per lane cover the
     //    transcriber's own 900-second budget.
@@ -8211,7 +8275,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             })
             .into(),
     );
-    // 4. The delivery: pauses, emphasis, the read itself - one lane per
+    // 5. The delivery: pauses, emphasis, the read itself - one lane per
     //    take, each reply carrying its own audio path so the fan's
     //    landing order is no one's guess. The script, when the run was
     //    handed one, rides along: the reading aligns the transcript to
@@ -8228,7 +8292,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         })
         .collect();
     steps.push(FanStep::fan(Stage::VoiceSignals, signals).into());
-    // 5. The understanding: the music gate (a take that already carries
+    // 6. The understanding: the music gate (a take that already carries
     //    music gets no bed stacked under it) and the emotional read of
     //    every take that has words - the arc, the acts, the colour
     //    temperature, the bed's duck and the accent family each line
@@ -8641,7 +8705,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         })
         .into(),
     );
-    // 6. The timeline, in one stage and one step: the tighten, then the
+    // 7. The timeline, in one stage and one step: the tighten, then the
     //    grade. The runner's resume record is keyed by the stage, so two
     //    steps sharing `Stage::Timeline` were not two steps - the second
     //    was skipped the moment the first completed, and the run never
@@ -9863,7 +9927,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 7. The captions: the transcript's own measured words, placed where
+    // 8. The captions: the transcript's own measured words, placed where
     //    the timeline now plays them - through the pieces the tighten
     //    left, so a cut that moved a word moves its caption too - as one
     //    undoable batch of titles in the reading's house style, then a
@@ -10319,7 +10383,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 8. The graphics, then the entrance. Two motions in one stage, in
+    // 9. The graphics, then the entrance. Two motions in one stage, in
     //    the order an editor works: the designed cards are baked through
     //    the Geneva engine and placed on the timeline as motion clips
     //    (linked to their comp, so the card stays editable and the export
@@ -10626,7 +10690,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 9. The music bed, only where the gate said the take carries none:
+    // 10. The music bed, only where the gate said the take carries none:
     //    the shelf prepared and polled, the track shopped (the emotional
     //    read's own bed words for the query - the mood and act the line
     //    sits in name the genre - or the reading's language hint when the
@@ -11256,7 +11320,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 10. The accents: the reading's own emphasis peaks, the strongest
+    // 11. The accents: the reading's own emphasis peaks, the strongest
     //    six, each with a library sound landed on the moment the peak
     //    measured - shopped one at a time so the search's answer picks
     //    the sound, not the program's guess. The query is the accent
@@ -11686,7 +11750,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 11. The preview: the cut as it stands, sampled from the OPEN
+    // 12. The preview: the cut as it stands, sampled from the OPEN
     //     timeline - not the export, which has not been rendered yet - and
     //     scored on the six craft axes. This is the look that decides
     //     whether the render is worth paying for, and the numbers the
@@ -11766,7 +11830,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 12. The revise, warn-policy: the critic's measured faults answered
+    // 13. The revise, warn-policy: the critic's measured faults answered
     //     with targeted edits, then the cut looked at again. Every command
     //     comes from a number the sheet carried - bars to fill, a black
     //     opening to trim, static cuts to choreograph - so a clean cut
@@ -11866,7 +11930,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 13. Save and read back the editable project. AUTO EDIT's default
+    // 14. Save and read back the editable project. AUTO EDIT's default
     //     deliverable is the timeline the user can continue editing, not
     //     an MP4 the user did not ask to render.
     let ready_project = source.project.clone();
@@ -11881,7 +11945,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 14. Verify the saved timeline and its lanes. The independent
+    // 15. Verify the saved timeline and its lanes. The independent
     //     acceptance receipt checks every media reference and source path;
     //     this stage's own gate refuses shared lanes before the user opens
     //     the result.
@@ -11901,7 +11965,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 15. Review the final timeline after revisions. watch_render renders
+    // 16. Review the final timeline after revisions. watch_render renders
     //     a preview/contact sheet from the open project, not an export;
     //     the critic scores that sheet against the measured brief.
     let watch_project = source.project.clone();
@@ -12021,14 +12085,51 @@ mod tests {
         assert!(refused.contains("no narration audio"), "{refused}");
     }
 
+    /// The preflight asks for the transcriber before anything else is
+    /// spent: the download on an empty log, the wait on the job the
+    /// download named, one more wait while the job still runs, and the
+    /// gate's judgement once the job has settled - done or failed, the
+    /// stage's own proving is over and the gate reads the last word.
+    #[test]
+    fn the_preflight_shops_the_transcriber_before_anything_is_spent() {
+        use super::whisper_preflight;
+
+        // Nothing asked yet: the model itself, headlessly.
+        let ask = whisper_preflight(&[]).expect("the first call");
+        assert_eq!(ask.tool, "models_download");
+        assert_eq!(ask.arguments["kind"], json!("whisper"));
+        assert_eq!(ask.arguments["id"], json!("base"));
+
+        // The download's Started names the job a caller waits on.
+        let started = json!({ "job": "j1", "path": "base.bin", "output": "" });
+        let ask = whisper_preflight(&[started]).expect("the wait");
+        assert_eq!(ask.tool, "analysis_wait");
+        assert_eq!(ask.arguments["job"], json!("j1"));
+
+        // A job still running gets one more wait on the same job; a
+        // settled job - done or failed - is the gate's to judge, and
+        // the derive answers nothing more.
+        let running = json!({ "job": "j1", "path": "base.bin", "state": "running" });
+        let ask = whisper_preflight(&[started.clone(), running]).expect("another wait");
+        assert_eq!(ask.tool, "analysis_wait");
+        assert_eq!(ask.arguments["job"], json!("j1"));
+        for settled in ["done", "failed", "cancelled"] {
+            let word = json!({ "job": "j1", "path": "base.bin", "state": settled });
+            assert!(
+                whisper_preflight(&[started.clone(), word]).is_none(),
+                "a settled job ({settled}) is the gate's, not another wait"
+            );
+        }
+    }
+
     /// The program the button runs: the whole unattended spine in the
-    /// runner's register - the static handoff, the fanned repair and
-    /// transcription (every take at the same time), the derived tighten,
-    /// grade, licensed live-stock B-roll, captions, title entrances,
-    /// music bed and accents, the preview, the revise, the saved
-    /// timeline, the verify and the watch. The plan's creative brief, the
-    /// eye-picked stock and the baked motion comps remain the Director
-    /// agent's.
+    /// runner's register - the model preflight, the static handoff, the
+    /// fanned repair and transcription (every take at the same time),
+    /// the derived tighten, grade, licensed live-stock B-roll, captions,
+    /// title entrances, music bed and accents, the preview, the revise,
+    /// the saved timeline, the verify and the watch. The plan's creative
+    /// brief, the eye-picked stock and the baked motion comps remain the
+    /// Director agent's.
     #[test]
     fn the_auto_edit_program_is_the_watchers_spine_over_fixed_paths() {
         use concat_director::{ErrorPolicy, FanStep, ProgramStep};
@@ -12070,10 +12171,11 @@ mod tests {
         };
         let program = super::auto_edit_program(&source);
 
-        // The register, in the run's own order: the fanned repair and
-        // transcription, the derived tighten-then-grade, B-roll, captions,
-        // title entrances, bed and accents, the preview, the revise,
-        // the saved timeline, the verify gates and the final watch.
+        // The register, in the run's own order: the model preflight,
+        // the fanned repair and transcription, the derived
+        // tighten-then-grade, B-roll, captions, title entrances, bed and
+        // accents, the preview, the revise, the saved timeline, the
+        // verify gates and the final watch.
         let order: Vec<&str> = program
             .steps
             .iter()
@@ -12082,6 +12184,7 @@ mod tests {
         assert_eq!(
             order,
             vec![
+                "preflight",
                 "handoff-voiceover",
                 "audio-repair",
                 "transcribe",

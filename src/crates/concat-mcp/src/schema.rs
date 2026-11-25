@@ -573,7 +573,11 @@ mod tests {
         // and the per-moment sound design are 37 fields, each the input
         // of a real answer rather than prose; without them the schema
         // refused the caller's own file. Function, not prose.
-        assert!(total < 268_000, "{total}: {sizes:?}");
+        // 268,000 -> 271,000: the sound model door's `generate` action -
+        // the seven fields that name which of the three downloaded
+        // generators writes, what it writes, how long and where the file
+        // lands. The prose is trimmed; the fields are the action.
+        assert!(total < 271_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -642,8 +646,10 @@ mod tests {
         // 249,000 -> 256,000 at 108: the same two sound doors ride the
         // director's surface (the sfx stage shops with them), and their
         // fields are the price of the shelf being shoppable at all.
+        // 256,000 -> 259,000: `generate`'s seven fields ride the same
+        // door - the director writes its accents and its bed with them.
         assert!(
-            director < 256_000,
+            director < 259_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

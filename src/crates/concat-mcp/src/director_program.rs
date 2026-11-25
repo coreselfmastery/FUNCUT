@@ -3728,6 +3728,27 @@ fn accent_gain_db(strength: f64) -> f64 {
 /// specific than the emotion alone: a line read as a stinger is shopped
 /// for a stinger, not the family its emotion happens to share. The
 /// family is the fallback when the read named no register.
+/// The words a generated accent is written from: the family the peak's
+/// emotion named, said the way a sound model hears it - the object first,
+/// then the character, then what the file must not carry. A prompt with
+/// music in it is a prompt the SFX model answers with a bed.
+fn sfx_prompt(queries: &[&'static str], emotion: &str) -> String {
+    let word = queries.first().copied().unwrap_or("impact");
+    format!("a {word} sound effect, {emotion}, dry, close, cinematic, no music")
+}
+
+/// The words a generated music bed is written from: the read's own bed
+/// words when it named any, and otherwise the one register an unattended
+/// cut can always take.
+fn bed_prompt(log: &[Value], takes: &[TakePaths]) -> String {
+    let word = bed_query_chain(log, takes)
+        .into_iter()
+        .flatten()
+        .next()
+        .unwrap_or_else(|| "cinematic underscore".to_owned());
+    format!("{word}, instrumental, no drums, sparse, warm, cinematic")
+}
+
 fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'static str> {
     let register = line
         .map(|line| line.sfx_type.to_ascii_lowercase())
@@ -10373,6 +10394,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Stage::Music,
             Box::new({
                 let mut polls = 0u32;
+                // Whether the generator was asked for a bed: one ask a run,
+                // then the shelf if it answered nothing.
+                let mut ai_bed = false;
+                // Whether the licence-clean pad was asked for, after the
+                // music model refused a monetized project: one ask, then
+                // the shelf. TinyMusician's weights are CC-BY-NC, so the
+                // plan's own monetized brief rules that bed out; the pad
+                // is Stable Audio's, which the community licence allows.
+                let mut pad_bed = false;
                 // How many replies the run had drawn before this stage's
                 // first call: everything before that index belongs to the
                 // earlier stages, and the stage reads only what it drew
@@ -10578,6 +10608,45 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         if bed_already {
                             return Some(call("timeline_read", json!({ "path": music_project })));
                         }
+                        // The generator first, for a cut short enough that
+                        // one written bed covers it: this decoder has no
+                        // usable cache, so its cost is the square of the
+                        // length and eight seconds of bed is already most
+                        // of the call's budget. A longer cut keeps the
+                        // shelf, which carries tracks of every length.
+                        let runtime = latest_view(log)
+                            .and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            })
+                            .unwrap_or(0.0);
+                        if !ai_bed && runtime > 0.5 && runtime <= 8.0 {
+                            ai_bed = true;
+                            return Some(call(
+                                "sense_sound_model",
+                                json!({
+                                    "action": "generate",
+                                    "kind": "bgm",
+                                    "prompt": bed_prompt(log, &music_source),
+                                    "seconds": round3(runtime.min(8.0)),
+                                    "project": music_project,
+                                    // The plan this run wrote says
+                                    // monetized, and a run must not ship
+                                    // a bed its own plan would refuse:
+                                    // the music model answers with the
+                                    // licence instead of a file, and the
+                                    // pad below is written instead.
+                                    "monetized": true,
+                                }),
+                            ));
+                        }
                         // The stage's own first call: the shelf's state.
                         return Some(call("bgm_status", json!({})));
                     }
@@ -10585,6 +10654,69 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // but a future call shape must not take the runner
                     // down with it for an invariant it cannot see.
                     let last = log.last()?;
+                    // The generator's own reply, success or refusal: the
+                    // sidecar stamps every one of them with the tool it
+                    // answered, so a model that is not installed is read
+                    // as this stage's answer and not as somebody else's.
+                    if last.get("tool") == Some(&json!("generate")) {
+                        // The generator's reply: a written bed is imported
+                        // into the project's own `bgm` folder, which is
+                        // where the timeline read below finds it. A model
+                        // that is not installed sends the stage to the
+                        // shelf, and every later reply is the shelf's.
+                        if last.get("ok") == Some(&json!(true))
+                            && let Some(path) = last.get("path").and_then(|path| path.as_str())
+                        {
+                            return Some(call(
+                                "bgm_import",
+                                json!({
+                                    "path": music_project,
+                                    "file": path,
+                                    "start": 0.0,
+                                }),
+                            ));
+                        }
+                        // The music model refused on licence: this project
+                        // is monetized and TinyMusician's weights are
+                        // CC-BY-NC. A bed is still wanted, and Stable
+                        // Audio's community licence allows one, so the
+                        // same words are asked of it as a texture - no
+                        // drums, so it sits under a voice instead of
+                        // fighting it.
+                        let runtime = latest_view(log)
+                            .and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            })
+                            .unwrap_or(0.0);
+                        if last.get("reason") == Some(&json!("licence"))
+                            && !pad_bed
+                            && runtime > 0.5
+                        {
+                            pad_bed = true;
+                            return Some(call(
+                                "sense_sound_model",
+                                json!({
+                                    "action": "generate",
+                                    "kind": "sfx-large",
+                                    "prompt": format!(
+                                        "warm ambient pad, {}, no drums, no melody",
+                                        bed_prompt(log, &music_source)
+                                    ),
+                                    "seconds": round3(runtime.min(11.5)),
+                                    "project": music_project,
+                                }),
+                            ));
+                        }
+                        return Some(call("bgm_status", json!({})));
+                    }
                     if last.get("freepd").is_some() {
                         // A bgm_status reply: prepare the missing shelf,
                         // poll the loading one, shop the ready one.
@@ -10891,6 +11023,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     /// own, so a stage never has to guess from a reply's shape what it was
     /// waiting for.
     enum SfxPending {
+        /// The generator's reply is in: place the file it wrote, or fall
+        /// back to the shelf when the model is not installed.
+        Generate {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, for the fallback.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+        },
         /// The search's reply is in: pick a hit this run has not spent, or
         /// walk the family's next word.
         Pick {
@@ -10940,6 +11084,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // accents do not all shop the same shelf answer.
                 let mut used: Vec<String> = Vec::new();
                 let mut rotation = 0usize;
+                // Whether a generator answered this run: Some(true) after a
+                // file was written, Some(false) after the model said it was
+                // absent - which stops every later peak from asking again.
+                let mut ai_accent: Option<bool> = None;
                 move |log| {
                     let peaks = peaks.get_or_insert_with(|| {
                         // Each peak carries the take it was measured on:
@@ -11037,6 +11185,52 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // A reply is waiting to be read: the pending state says
                     // which one, and each state reads only its own reply.
                     match pending.take() {
+                        Some(SfxPending::Generate {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                        }) => {
+                            // The generator's own reply: a written file is
+                            // placed the way a shelf hit is, and a model
+                            // that is not installed sends this peak - and
+                            // every peak after it - to the shelf instead.
+                            let written = log
+                                .last()
+                                .filter(|reply| reply.get("ok") == Some(&json!(true)));
+                            if let Some(path) = written
+                                .and_then(|reply| reply.get("path"))
+                                .and_then(|path| path.as_str())
+                            {
+                                ai_accent = Some(true);
+                                pending = Some(SfxPending::Gain {
+                                    id: path.to_owned(),
+                                    gain_db,
+                                });
+                                return Some(call(
+                                    "sounds_add",
+                                    json!({
+                                        "path": sfx_project,
+                                        "file": path,
+                                        "start": round3(at),
+                                    }),
+                                ));
+                            }
+                            ai_accent = Some(false);
+                            pending = Some(SfxPending::Pick {
+                                at,
+                                gain_db,
+                                queries: queries.clone(),
+                                tried,
+                            });
+                            return Some(call(
+                                "sounds_search",
+                                json!({
+                                    "query": queries[tried % queries.len()],
+                                    "limit": 3,
+                                }),
+                            ));
+                        }
                         Some(SfxPending::Pick {
                             at,
                             gain_db,
@@ -11199,9 +11393,36 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         .find(|(path, _)| *path == take)
                         .map(|(_, penalty)| *penalty)
                         .unwrap_or(0.0);
+                    let gain_db = accent_gain_db(strength) - penalty;
+                    // The generator first, when the machine has one: the
+                    // hook is the one accent worth the heavier model, and
+                    // every other peak is a short sound the small model
+                    // writes in seconds. A model that is not installed
+                    // answers `ok: false` in a second and the shelf takes
+                    // over for the rest of the run.
+                    if ai_accent != Some(false) {
+                        let kind = if hook { "sfx-large" } else { "sfx-small" };
+                        pending = Some(SfxPending::Generate {
+                            at,
+                            gain_db,
+                            queries: queries.clone(),
+                            tried: 0,
+                        });
+                        return Some(call(
+                            "sense_sound_model",
+                            json!({
+                                "action": "generate",
+                                "kind": kind,
+                                "prompt": sfx_prompt(&queries, &emotion),
+                                "seconds": if hook { 2.5 } else { 1.5 },
+                                "seed": placed,
+                                "project": sfx_project,
+                            }),
+                        ));
+                    }
                     pending = Some(SfxPending::Pick {
                         at,
-                        gain_db: accent_gain_db(strength) - penalty,
+                        gain_db,
                         queries: queries.clone(),
                         tried: 0,
                     });
@@ -14210,7 +14431,13 @@ mod tests {
             "media": [{ "id": "m1", "path": "/edits/Reel/voiceover/take-000-a.wav" }],
         });
         let mut log = vec![captions_view];
-        // First call: the shelf's state, not a duck of nothing.
+        // First call: the bed is written for a cut this short - and when
+        // the model is not installed, the shelf's state. Either way, not
+        // a duck of nothing.
+        let first = (music.next)(log.as_slice()).expect("the bed is asked for");
+        assert_eq!(first.tool, "sense_sound_model");
+        assert_eq!(first.arguments["kind"], json!("bgm"));
+        log.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
         assert_eq!(
             (music.next)(log.as_slice())
                 .map(|call| call.tool)
@@ -16556,12 +16783,20 @@ mod tests {
                 ],
             }),
         ];
-        let first = (sfx.next)(&log).expect("the loud peak is shopped");
-        assert_eq!(first.tool, "sounds_search");
+        // The loud peak is inside the first three seconds: the hook asks
+        // the heavier generator for its accent.
+        let first = (sfx.next)(&log).expect("the loud peak is generated");
+        assert_eq!(first.tool, "sense_sound_model");
+        assert_eq!(first.arguments["kind"], json!("sfx-large"));
+        // The model is not installed: the shelf takes the accent instead,
+        // and every peak after this one is the shelf's too.
+        let mut after = log.clone();
+        after.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
+        let shop = (sfx.next)(&after).expect("the shelf answers when the model is absent");
+        assert_eq!(shop.tool, "sounds_search");
         // The calm line's peak is skipped: the shelf's answer for the loud
         // one is the last call, so the next ask is the add, and once that
         // is spent the stage ends rather than shopping the calm peak.
-        let mut after = log.clone();
         after.push(json!({ "sounds": [{ "id": "s1" }] }));
         let add = (sfx.next)(&after).expect("the sound is added");
         assert_eq!(add.tool, "sounds_add");

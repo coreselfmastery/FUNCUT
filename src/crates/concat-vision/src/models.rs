@@ -48,6 +48,49 @@ pub enum ModelId {
     Yamnet,
     /// YAMNet's class names, in the order the model scores them.
     YamnetNames,
+    /// TinyAudio-MF's text encoder: a prompt into the 77-token hidden
+    /// states the flow step is conditioned on.
+    SfxSmallText,
+    /// TinyAudio-MF's mean-flow step: one denoising pass, guidance
+    /// applied inside the graph, 431 x 64 latents per 10 s.
+    SfxSmallFlow,
+    /// TinyAudio-MF's decoder: latents into 44.1 kHz audio.
+    SfxSmallVae,
+    /// TinyAudio-MF's tokenizer: words into the ids the text encoder reads.
+    SfxSmallTokenizer,
+    /// TinyAudio-MF's pipeline description: rates, shapes and step count.
+    SfxSmallPipeline,
+    /// Stable Audio Open Small's T5 encoder: a prompt into 64 x 768.
+    SfxLargeT5,
+    /// The T5 encoder's weights, stored beside its graph.
+    SfxLargeT5Data,
+    /// Stable Audio Open Small's distilled rectified-flow DiT step.
+    SfxLargeDit,
+    /// The DiT step's weights, stored beside its graph.
+    SfxLargeDitData,
+    /// Stable Audio Open Small's Oobleck decoder: 64 x 256 latents into
+    /// 11.9 s of 44.1 kHz stereo.
+    SfxLargeVae,
+    /// The Oobleck decoder's weights, stored beside its graph.
+    SfxLargeVaeData,
+    /// Stable Audio Open Small's `seconds_total` conditioner: the learned
+    /// Fourier embedding of the requested length.
+    SfxLargeSeconds,
+    /// Stable Audio Open Small's T5 tokenizer.
+    SfxLargeTokenizer,
+    /// Stable Audio Open Small's own description of its bundle: sample
+    /// rate, latent shape, segment length and step count.
+    SfxLargeMeta,
+    /// TinyMusician's text encoder: a prompt into MusicGen's 768-d states.
+    BgmText,
+    /// TinyMusician's MusicGen decoder: four codebooks, one token a step.
+    BgmDecoder,
+    /// TinyMusician's EnCodec decoder: codebook tokens into 32 kHz audio.
+    BgmCodec,
+    /// TinyMusician's T5 tokenizer.
+    BgmTokenizer,
+    /// TinyMusician's MusicGen configuration: rate, codebooks, layer count.
+    BgmConfig,
 }
 
 /// One model as the table describes it.
@@ -71,7 +114,7 @@ pub struct ModelSpec {
 }
 
 /// Every downloadable model.
-pub const MODELS: [ModelSpec; 10] = [
+pub const MODELS: [ModelSpec; 29] = [
     ModelSpec {
         id: ModelId::Person,
         file: "rvm-mobilenetv3.onnx",
@@ -158,6 +201,179 @@ pub const MODELS: [ModelSpec; 10] = [
         sha256: "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
         licence: "Apache-2.0",
     },
+    // ── Sound generation ─────────────────────────────────────────────
+    // Three models, each a set of files: a text encoder, a generator and
+    // an audio decoder. They are listed here beside the readers because
+    // this is the one table the settings sheet and the sidecar both read,
+    // and because `scripts/models.py` checks a mirror row against the
+    // file names in this table. Their `kind` is "generate", so the sound
+    // reader's set is still exactly the five files above.
+    //
+    // TinyAudio-MF (MIT): 87 M parameters, one mean-flow step, 10 s at
+    // 44.1 kHz. The lightest of the three by a wide margin, and the one
+    // the small SFX row downloads.
+    ModelSpec {
+        id: ModelId::SfxSmallTokenizer,
+        file: "sfx-small-tokenizer.json",
+        upstream: "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/tokenizer/tokenizer.json",
+        bytes: 2_132_967,
+        sha256: "9fd55248d51d33976b324fc11592e28071da7d41e0e9401dfb7082e30574b7b1",
+        licence: "MIT",
+    },
+    ModelSpec {
+        id: ModelId::SfxSmallPipeline,
+        file: "sfx-small-pipeline.json",
+        upstream: "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/pipeline.json",
+        bytes: 670,
+        sha256: "c01a8b8fbff62edcac4a3c2be02affa425a85444a4f1ebff6321cd3675cf4a39",
+        licence: "MIT",
+    },
+    ModelSpec {
+        id: ModelId::SfxSmallText,
+        file: "sfx-small-text.onnx",
+        upstream: "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/text_encoder.onnx",
+        bytes: 127_777_800,
+        sha256: "a02961c9e08e7a1091786be95ead5be443ca11dc2fccca376ee40d11c75d2323",
+        licence: "MIT",
+    },
+    ModelSpec {
+        id: ModelId::SfxSmallVae,
+        file: "sfx-small-vae.onnx",
+        upstream: "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/vae_decode.onnx",
+        bytes: 83_011_126,
+        sha256: "1aff9ec512d2aca3e1b3dc0632e419497a7f9b62fab68b407e87268418229b92",
+        licence: "MIT",
+    },
+    ModelSpec {
+        id: ModelId::SfxSmallFlow,
+        file: "sfx-small-flow.onnx",
+        upstream: "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/meanflow_step.onnx",
+        bytes: 142_610_964,
+        sha256: "2fff20b9ac9055da2734d2d9cb4ad1ab6b2775d6001cdc03e729c7bfacd1a847",
+        licence: "MIT",
+    },
+    // Stable Audio Open Small (Stability AI Community License): 341 M
+    // parameters, eight distilled rectified-flow steps, 11.9 s of stereo.
+    // The heavier SFX row, and the one whose licence asks a reader to
+    // check the revenue threshold before monetizing.
+    ModelSpec {
+        id: ModelId::SfxLargeTokenizer,
+        file: "sfx-large-tokenizer.json",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/t5_tokenizer_json.json",
+        bytes: 2_424_332,
+        sha256: "30ecc5c7c3f2a5e24f1837df50ad6288e12aef9c78a12eede8f67489faec1c45",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeSeconds,
+        file: "sfx-large-seconds.json",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/seconds_embedder.json",
+        bytes: 4_405_016,
+        sha256: "0e08dd6200826d602e55ed20655f9fc30cdc46ef831d2dbde9575ce60495e250",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeMeta,
+        file: "sfx-large-meta.json",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/model_weights_meta.json",
+        bytes: 835,
+        sha256: "22206201697ebdb7bc6496c489e0185c17251b3d24c1fe40902c9c58d8e1d8e3",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeT5,
+        file: "sfx-large-t5.onnx",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/t5_text_encoder.onnx",
+        bytes: 330_376,
+        sha256: "95d8b885c5d7a855366f5061abc6aafe08a378ab22ecb86c3bad57e9ee673784",
+        licence: "Stability AI Community License",
+    },
+    // The encoder's weights keep the name its graph was exported with:
+    // ONNX stores that name as the external-data location, so renaming
+    // the file here would leave a graph that cannot find its own bytes.
+    ModelSpec {
+        id: ModelId::SfxLargeT5Data,
+        file: "t5_text_encoder.onnx.data",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/t5_text_encoder.onnx.data",
+        bytes: 110_216_576,
+        sha256: "d48426eaafeacd0e20ebd48b67179a7278ee2df6e6ad3801ee4c2bcdc371941e",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeDit,
+        file: "sfx-large-dit.onnx",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/dit_step.onnx",
+        bytes: 930_150,
+        sha256: "1b52abe1ac0f0b5c8208bed89db538ca860e030ebc09e8a1bb338ea11044531e",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeDitData,
+        file: "dit_step.onnx.data",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/dit_step.onnx.data",
+        bytes: 341_714_944,
+        sha256: "9ccaac2be9c02fe6b320a6d4af2a90509b2b76ed61e70c6519ef298d75fe1bb2",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeVae,
+        file: "sfx-large-vae.onnx",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/vae_decoder.onnx",
+        bytes: 250_288,
+        sha256: "896a3aa833b84a0a314d11b5b2630c73a1fbe86495e498c375d163d038acafb5",
+        licence: "Stability AI Community License",
+    },
+    ModelSpec {
+        id: ModelId::SfxLargeVaeData,
+        file: "vae_decoder.onnx.data",
+        upstream: "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/vae_decoder.onnx.data",
+        bytes: 78_289_664,
+        sha256: "a30eded351e419f97a2808d3e7bbe0ab683ba03f864b4dc717abc1798e33761a",
+        licence: "Stability AI Community License",
+    },
+    // TinyMusician (no licence file in the upstream repository): MusicGen
+    // at 15 layers, four codebooks, 32 kHz mono. The BGM row, and the one
+    // an unattended run never spends on a monetized cut.
+    ModelSpec {
+        id: ModelId::BgmTokenizer,
+        file: "bgm-tokenizer.json",
+        upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/tokenizer.json",
+        bytes: 2_422_169,
+        sha256: "71c33c3bf57bf2e19b4f8ac686ad8d182a79f7cd1a4921889437c453420223f1",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
+    },
+    ModelSpec {
+        id: ModelId::BgmConfig,
+        file: "bgm-config.json",
+        upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/config.json",
+        bytes: 8_264,
+        sha256: "b2568a15382bf35ae5af135917f28ac5204d715da6b53e60b19a83c80a52d2ef",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
+    },
+    ModelSpec {
+        id: ModelId::BgmText,
+        file: "bgm-text.onnx",
+        upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/text_encoder.onnx",
+        bytes: 110_076_078,
+        sha256: "5a7e4354596a15c47ed1669926f1ff8398b195e0a914f4e6a92b97618e7162d5",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
+    },
+    ModelSpec {
+        id: ModelId::BgmCodec,
+        file: "bgm-codec.onnx",
+        upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/encodec_decode.onnx",
+        bytes: 59_796_655,
+        sha256: "4d87a6f86dd84fc967c9b45206acc96796aa93eb14cf7a9346fd06e04a3ad31e",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
+    },
+    ModelSpec {
+        id: ModelId::BgmDecoder,
+        file: "bgm-decoder.onnx",
+        upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/decoder_model_merged.onnx",
+        bytes: 274_356_314,
+        sha256: "e1a4481a24ec947c4c7cc6a7d742c0c03a9ccdf2a18c6589d4d2d157c8e60d70",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
+    },
 ];
 
 impl ModelId {
@@ -184,6 +400,28 @@ impl ModelId {
             | ModelId::ClapTokenizer
             | ModelId::Yamnet
             | ModelId::YamnetNames => "sound",
+            // The generators are their own kind: they are not part of the
+            // reader's set, and the settings sheet gives each of the three
+            // its own row and its own download.
+            ModelId::SfxSmallText
+            | ModelId::SfxSmallFlow
+            | ModelId::SfxSmallVae
+            | ModelId::SfxSmallTokenizer
+            | ModelId::SfxSmallPipeline
+            | ModelId::SfxLargeT5
+            | ModelId::SfxLargeT5Data
+            | ModelId::SfxLargeDit
+            | ModelId::SfxLargeDitData
+            | ModelId::SfxLargeVae
+            | ModelId::SfxLargeVaeData
+            | ModelId::SfxLargeSeconds
+            | ModelId::SfxLargeTokenizer
+            | ModelId::SfxLargeMeta
+            | ModelId::BgmText
+            | ModelId::BgmDecoder
+            | ModelId::BgmCodec
+            | ModelId::BgmTokenizer
+            | ModelId::BgmConfig => "generate",
         }
     }
 
@@ -200,6 +438,25 @@ impl ModelId {
             ModelId::ClapTokenizer => "clap-htsat-tokenizer",
             ModelId::Yamnet => "yamnet",
             ModelId::YamnetNames => "yamnet-classes",
+            ModelId::SfxSmallText => "sfx-small-text",
+            ModelId::SfxSmallFlow => "sfx-small-flow",
+            ModelId::SfxSmallVae => "sfx-small-vae",
+            ModelId::SfxSmallTokenizer => "sfx-small-tokenizer",
+            ModelId::SfxSmallPipeline => "sfx-small-pipeline",
+            ModelId::SfxLargeT5 => "sfx-large-t5",
+            ModelId::SfxLargeT5Data => "sfx-large-t5-data",
+            ModelId::SfxLargeDit => "sfx-large-dit",
+            ModelId::SfxLargeDitData => "sfx-large-dit-data",
+            ModelId::SfxLargeVae => "sfx-large-vae",
+            ModelId::SfxLargeVaeData => "sfx-large-vae-data",
+            ModelId::SfxLargeSeconds => "sfx-large-seconds",
+            ModelId::SfxLargeTokenizer => "sfx-large-tokenizer",
+            ModelId::SfxLargeMeta => "sfx-large-meta",
+            ModelId::BgmText => "bgm-text",
+            ModelId::BgmDecoder => "bgm-decoder",
+            ModelId::BgmCodec => "bgm-codec",
+            ModelId::BgmTokenizer => "bgm-tokenizer",
+            ModelId::BgmConfig => "bgm-config",
         }
     }
 }

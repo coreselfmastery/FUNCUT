@@ -439,14 +439,22 @@ pub enum Request {
     SoundsAdd {
         /// The project folder.
         path: String,
-        /// The sound's id, as `sounds.search` gave it.
-        id: String,
+        /// The sound's id, as `sounds.search` gave it; absent when
+        /// `file` names a local file instead.
+        #[serde(default)]
+        id: Option<String>,
         /// Lay it on the timeline at this moment.
         #[serde(default)]
         start: Option<f64>,
         /// The lane to lay it on; the first lane with room when absent.
         #[serde(default)]
         track: Option<String>,
+        /// A local audio file to import instead of a shelf id - a
+        /// generated accent, or any file the caller already owns. It is
+        /// copied into the project's `audio` folder the way a shelf
+        /// sound is, so the project owns its files either way.
+        #[serde(default)]
+        file: Option<String>,
     },
 
     /// Every effect package the build knows, with its parameters, so a
@@ -544,8 +552,15 @@ pub enum Request {
     BgmImport {
         /// The project folder.
         path: String,
-        /// The track ids, in the order they should play.
+        /// The track ids, in the order they should play; empty when
+        /// `file` names a local track instead.
+        #[serde(default)]
         ids: Vec<String>,
+        /// A local audio file to import instead of shelf ids - a
+        /// generated bed, or any file the caller already owns. Copied
+        /// into the project's `bgm` folder the way a shelf track is.
+        #[serde(default)]
+        file: Option<String>,
         /// Lay them on the timeline from this moment, in sequence.
         #[serde(default)]
         start: Option<f64>,
@@ -892,7 +907,7 @@ pub enum Request {
     /// model already on disk is a no-op that ends at once.
     #[serde(rename = "models.download")]
     ModelsDownload {
-        /// Which family: "tts" or "whisper".
+        /// Which family: "tts", "whisper" or "sound".
         kind: String,
         /// The model's id, from `models.list`.
         id: String,
@@ -1056,6 +1071,28 @@ pub struct ModelsState {
     pub tts: Vec<concat_speech::tts::ModelStatus>,
     /// The transcriber models.
     pub transcriber: Vec<concat_speech::transcribe::ModelStatus>,
+    /// The sound sets: CLAP and YAMNet, and the three generators. The ids
+    /// are the ones `models.download` takes with `kind: "sound"`.
+    pub sound: Vec<SoundModelStatus>,
+}
+
+/// One downloadable sound set, as `models.list` shows it: a row of the
+/// settings sheet, and a `models.download` id.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundModelStatus {
+    /// The row id: `sound-models`, `sfx-small`, `sfx-large` or `bgm`.
+    pub id: String,
+    /// What the set is for.
+    pub label: String,
+    /// The licence every file in it comes under.
+    pub licence: String,
+    /// The bytes a full set takes.
+    pub bytes: u64,
+    /// The bytes still to fetch.
+    pub missing_bytes: u64,
+    /// Whether every file is on disk and whole.
+    pub downloaded: bool,
 }
 
 /// What a successful `window.seek` answers: where the playhead now is,

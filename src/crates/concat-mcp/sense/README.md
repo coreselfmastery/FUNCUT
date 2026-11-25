@@ -60,7 +60,7 @@ parseable.
 | `audiorepair` | The clean and the music (`audio_repair.py`, eight tools): the measured enhance chain, hum/hiss/rumble removal, two-pass loudness (the three that WRITE a new file - the input is never touched), the diagnose→repair-by-diagnosis pair, music-vs-speech spans, offline identification with the libraryQuery, and the structure map with cutSafePoints. |
 | `sound` | What a sound file IS (`sound_sense.py`, four tools): the measured read of one sound (level, crest, attack, body, transients, centroid, bands, flatness, pitch movement, and where its peak actually falls), the six role fits a cut shops for with the evidence behind each, candidate ranking, a placed accent checked for sync, role, level and repetition, and a cached library index that reports a `syncAt` the file contradicts. |
 | `captions` | The words and the take, made to agree (`captions.py`, five tools): TTS quality, the AI-voice disclosure heuristic, the SHA-256 voice seal (seal / verify / status), caption alignment with drift correction, and subtitle hygiene with the changeLog. |
-| `soundmodel` | What a sound MEANS (`sound_model.py`, four tools): one record per asset - identity, YAMNet's 521 AudioSet labels, a 512-d CLAP embedding with the description it best matches, the `sound_sense.py` measurements, loudness/clipping/silence, roles, sync offset and trim advice - plus a cached shelf index, a ranking that fuses CLAP with the measured fit using weights fitted on the 530 shipped sounds, and `plan` - every signal at once, into a per-moment sound design with the evidence behind each choice. numpy + onnxruntime when installed, never required; without them the reply says `model: absent` and measures only. |
+| `soundmodel` | What a sound MEANS (`sound_model.py`, five tools): one record per asset - identity, YAMNet's 521 AudioSet labels, a 512-d CLAP embedding with the description it best matches, the `sound_sense.py` measurements, loudness/clipping/silence, roles, sync offset and trim advice - plus a cached shelf index, a ranking that fuses CLAP with the measured fit using weights fitted on the 530 shipped sounds, `plan` - every signal at once, into a per-moment sound design with the evidence behind each choice - and `generate` - words into a short sound or a music bed, with one of three downloaded generators. numpy + onnxruntime when installed, never required; without them the reply says `model: absent` and measures only. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest`, `emotion.py selftest` and `voice_signals.py selftest` check the critic and the readers the same way, and the seven family modules' own `selftest` proves all forty-three consumption-layer tools on synthetic takes — CI runs the seven whose modules run standard-library only (the soundmodel selftest skips only its ONNX checks when numpy is absent). |
 
 Example:
@@ -203,6 +203,15 @@ tool answers with `"model": {"state": "absent", "reason": ...}` and
 measurement-only records. The models live in `$FUNCUT_MODELS` (or
 `~/.local/share/funcut/models`), so a bigger CLAP is a file swap, not a code
 change.
+
+The same module writes sound: `generate` takes `kind` (`sfx-small` -
+TinyAudio-MF, `sfx-large` - Stable Audio Open Small, `bgm` - TinyMusician),
+`prompt`, `seconds`, `seed`, `steps` and `threads`, and lands a 44.1 kHz
+(or 32 kHz) WAV in `<project>/generated-audio/` - or a temporary folder
+without a project - which `sounds_add` and `bgm_import` then take by
+`file`. The three sets are downloaded by the Models sheet beside the
+reader's, into the same folder, and `docs/SOUND-GENERATION.md` carries the
+measured cost of each and the licences.
 
 ## The emotion read (`emotion.py`)
 

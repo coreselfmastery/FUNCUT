@@ -636,7 +636,7 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     let home = scratch.path().to_path_buf();
     let mut agent = Agent::spawn(&home, "headless", &[]);
 
-    // The list knows both families and says which are on disk.
+    // The list knows every family and says which are on disk.
     let listed = agent.tool("models_list", json!({}));
     let tts = listed["structuredContent"]["tts"]
         .as_array()
@@ -661,7 +661,37 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
         assert!(model["downloaded"].is_boolean(), "{model}");
     }
 
-    // A kind that is not one of the two is refused before a job is booked.
+    // The sound sets are the four the settings sheet lists: the reader's
+    // pair of models and the three generators, each with its licence, so
+    // a caller choosing a bed can see what it may be used for.
+    let sound = listed["structuredContent"]["sound"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(sound.len(), 4, "{listed}");
+    for id in ["sound-models", "sfx-small", "sfx-large", "bgm"] {
+        let set = sound
+            .iter()
+            .find(|set| set["id"] == json!(id))
+            .unwrap_or_else(|| panic!("{id} is not in {listed}"));
+        assert!(
+            set["licence"].as_str().is_some_and(|said| !said.is_empty()),
+            "{set}"
+        );
+        assert!(set["downloaded"].is_boolean(), "{set}");
+    }
+    let bed = sound
+        .iter()
+        .find(|set| set["id"] == json!("bgm"))
+        .expect("the music set");
+    assert!(
+        bed["licence"]
+            .as_str()
+            .is_some_and(|said| said.contains("CC-BY-NC")),
+        "the music bed's licence is not the one it carries: {bed}"
+    );
+
+    // A kind that is not one of the three is refused before a job is booked.
     let (_, reply) = agent.ask(
         "tools/call",
         json!({ "name": "models_download", "arguments": { "kind": "gpu", "id": "x" } }),
@@ -669,7 +699,7 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     let refused = reply.get("result").cloned().expect("a result");
     assert_eq!(refused["isError"], true, "{refused}");
     let said = refused["content"][0]["text"].as_str().expect("the refusal");
-    assert!(said.contains("tts or whisper"), "{said}");
+    assert!(said.contains("tts, whisper or sound"), "{said}");
 
     // A model the tables do not know is named, with where the ids are.
     let (_, reply) = agent.ask(

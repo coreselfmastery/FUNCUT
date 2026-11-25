@@ -37,6 +37,12 @@ other sense script: one JSON spec in, one JSON object out.
 | `plan` | every signal at once — the beats' emphasis and pauses, the visual events and cuts, the arc's acts, the bed's structure — into a per-moment accent design, held silences and the music plan, each choice with its evidence |
 | `selftest` | nineteen checks, no network: the filterbank, the front-end, the planner, and - when models are installed - that YAMNet calls a whoosh a whoosh |
 
+The same module also writes sound: `plan` turns every signal into one sound
+design, and `generate` writes a short sound or a music bed with one of three
+downloaded text-to-audio models - see
+[SOUND-GENERATION.md](SOUND-GENERATION.md) for what each costs and what each
+is licensed as.
+
 `numpy` and `onnxruntime` are used when installed and never required, the
 same rule `voice_quality.py` follows. Without them every tool still answers,
 with `"model": {"state": "absent", "reason": ...}` and measurement-only

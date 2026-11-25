@@ -864,16 +864,17 @@ pub fn catalogue() -> Vec<Tool> {
         ),
         method(
             "models_list",
-            "List speech models",
-            "List the local AI models and which are missing.",
+            "List the AI models",
+            "List the local AI models - voices, transcribers, and the sound sets - and which are missing.",
             "models.list",
             Raw,
         )
         .reading(),
         method(
             "models_download",
-            "Download a speech model",
-            "Download a missing model - voice, transcriber, vision; a job, poll models_list.",
+            "Download an AI model",
+            "Download a missing model - voice (kind tts), transcriber (whisper) or sound set \
+             (kind sound, id sound-models|sfx-small|sfx-large|bgm); a job, poll models_list.",
             "models.download",
             Raw,
         ),
@@ -1159,7 +1160,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "sense_sound_model",
             title: "What a sound means, and the sound design",
-            description: "One `action` per sound shelf: describe (YAMNet labels, CLAP match), index, rank (CLAP fused with the measured fit), plan (a per-moment design).",
+            description: "One `action` per sound shelf: describe (YAMNet labels, CLAP match), index, rank (CLAP fused with the measured fit), plan (a per-moment design), generate (text to audio).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1225,6 +1226,13 @@ impl Tool {
             "sense_prosody_style",
             "sense_audio_repair",
             "sense_captions",
+            // The sound shelf's index (a first pass over a library) and
+            // the sound model family, whose `generate` action writes
+            // audio from a prompt: a music bed is a cache-less MusicGen
+            // decode and runs into minutes, and the family's own budget
+            // (480 s) is what names a stuck call.
+            "sense_sound",
+            "sense_sound_model",
             // The subject tracker's own Python budget is 240 s: a long
             // span on a slow machine is not a stuck call, and the 60 s
             // default cancelled it mid-track.

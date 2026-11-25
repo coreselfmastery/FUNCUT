@@ -313,3 +313,192 @@ bytes = 487601967
 sha256 = "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
 licence = "MIT"
 upstream = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin"
+
+# ── Sound generation ─────────────────────────────────────────────────────
+# Three text-to-audio models, each a set of files rather than one graph.
+# In the cutout family because that is the table `concat-vision` owns and
+# `scripts/models.py --check` reads a mirror row against; the settings
+# sheet groups them by the engine's `kind`, which is "generate".
+#
+# TinyAudio-MF (MIT): 87 M parameters, one mean-flow step, 10 s at
+# 44.1 kHz. The small SFX row, and the cheapest of the three by far.
+[[model]]
+id = "sfx-small-tokenizer"
+family = "cutout"
+file = "sfx-small-tokenizer.json"
+bytes = 2132967
+sha256 = "9fd55248d51d33976b324fc11592e28071da7d41e0e9401dfb7082e30574b7b1"
+licence = "MIT"
+upstream = "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/tokenizer/tokenizer.json"
+
+[[model]]
+id = "sfx-small-pipeline"
+family = "cutout"
+file = "sfx-small-pipeline.json"
+bytes = 670
+sha256 = "c01a8b8fbff62edcac4a3c2be02affa425a85444a4f1ebff6321cd3675cf4a39"
+licence = "MIT"
+upstream = "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/pipeline.json"
+
+[[model]]
+id = "sfx-small-text"
+family = "cutout"
+file = "sfx-small-text.onnx"
+bytes = 127777800
+sha256 = "a02961c9e08e7a1091786be95ead5be443ca11dc2fccca376ee40d11c75d2323"
+licence = "MIT"
+upstream = "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/text_encoder.onnx"
+
+[[model]]
+id = "sfx-small-vae"
+family = "cutout"
+file = "sfx-small-vae.onnx"
+bytes = 83011126
+sha256 = "1aff9ec512d2aca3e1b3dc0632e419497a7f9b62fab68b407e87268418229b92"
+licence = "MIT"
+upstream = "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/vae_decode.onnx"
+
+[[model]]
+id = "sfx-small-flow"
+family = "cutout"
+file = "sfx-small-flow.onnx"
+bytes = 142610964
+sha256 = "2fff20b9ac9055da2734d2d9cb4ad1ab6b2775d6001cdc03e729c7bfacd1a847"
+licence = "MIT"
+upstream = "https://huggingface.co/junxiliu/TinyAudio/resolve/28e4c990d18044131e77e8528d5d79c3e7714891/cpu/standard/meanflow_step.onnx"
+
+# Stable Audio Open Small (Stability AI Community License): 341 M
+# parameters, eight distilled rectified-flow steps, 11.9 s of stereo at
+# 44.1 kHz. The heavier SFX row; its licence asks a reader to check the
+# revenue threshold before monetizing.
+[[model]]
+id = "sfx-large-tokenizer"
+family = "cutout"
+file = "sfx-large-tokenizer.json"
+bytes = 2424332
+sha256 = "30ecc5c7c3f2a5e24f1837df50ad6288e12aef9c78a12eede8f67489faec1c45"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/t5_tokenizer_json.json"
+
+[[model]]
+id = "sfx-large-seconds"
+family = "cutout"
+file = "sfx-large-seconds.json"
+bytes = 4405016
+sha256 = "0e08dd6200826d602e55ed20655f9fc30cdc46ef831d2dbde9575ce60495e250"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/seconds_embedder.json"
+
+[[model]]
+id = "sfx-large-meta"
+family = "cutout"
+file = "sfx-large-meta.json"
+bytes = 835
+sha256 = "22206201697ebdb7bc6496c489e0185c17251b3d24c1fe40902c9c58d8e1d8e3"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/model_weights_meta.json"
+
+[[model]]
+id = "sfx-large-t5"
+family = "cutout"
+file = "sfx-large-t5.onnx"
+bytes = 330376
+sha256 = "95d8b885c5d7a855366f5061abc6aafe08a378ab22ecb86c3bad57e9ee673784"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/t5_text_encoder.onnx"
+
+# The weights keep the name the graph was exported with: ONNX stores that
+# name as the external-data location, so a renamed file would leave a
+# graph that cannot find its own bytes.
+[[model]]
+id = "sfx-large-t5-data"
+family = "cutout"
+file = "t5_text_encoder.onnx.data"
+bytes = 110216576
+sha256 = "d48426eaafeacd0e20ebd48b67179a7278ee2df6e6ad3801ee4c2bcdc371941e"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/t5_text_encoder.onnx.data"
+
+[[model]]
+id = "sfx-large-dit"
+family = "cutout"
+file = "sfx-large-dit.onnx"
+bytes = 930150
+sha256 = "1b52abe1ac0f0b5c8208bed89db538ca860e030ebc09e8a1bb338ea11044531e"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/dit_step.onnx"
+
+[[model]]
+id = "sfx-large-dit-data"
+family = "cutout"
+file = "dit_step.onnx.data"
+bytes = 341714944
+sha256 = "9ccaac2be9c02fe6b320a6d4af2a90509b2b76ed61e70c6519ef298d75fe1bb2"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/dit_step.onnx.data"
+
+[[model]]
+id = "sfx-large-vae"
+family = "cutout"
+file = "sfx-large-vae.onnx"
+bytes = 250288
+sha256 = "896a3aa833b84a0a314d11b5b2630c73a1fbe86495e498c375d163d038acafb5"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/vae_decoder.onnx"
+
+[[model]]
+id = "sfx-large-vae-data"
+family = "cutout"
+file = "vae_decoder.onnx.data"
+bytes = 78289664
+sha256 = "a30eded351e419f97a2808d3e7bbe0ab683ba03f864b4dc717abc1798e33761a"
+licence = "Stability AI Community License"
+upstream = "https://huggingface.co/fernhoof/stable-audio-open-small/resolve/3278b34d2e551b21bc36787f3331106220c08559/vae_decoder.onnx.data"
+
+# TinyMusician (no licence file upstream): MusicGen at 15 layers, four
+# codebooks, 32 kHz mono. The BGM row; an unattended run never spends it
+# on a monetized cut.
+[[model]]
+id = "bgm-tokenizer"
+family = "cutout"
+file = "bgm-tokenizer.json"
+bytes = 2422169
+sha256 = "71c33c3bf57bf2e19b4f8ac686ad8d182a79f7cd1a4921889437c453420223f1"
+licence = "Unclear (no licence file upstream)"
+upstream = "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/tokenizer.json"
+
+[[model]]
+id = "bgm-config"
+family = "cutout"
+file = "bgm-config.json"
+bytes = 8264
+sha256 = "b2568a15382bf35ae5af135917f28ac5204d715da6b53e60b19a83c80a52d2ef"
+licence = "Unclear (no licence file upstream)"
+upstream = "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/config.json"
+
+[[model]]
+id = "bgm-text"
+family = "cutout"
+file = "bgm-text.onnx"
+bytes = 110076078
+sha256 = "5a7e4354596a15c47ed1669926f1ff8398b195e0a914f4e6a92b97618e7162d5"
+licence = "Unclear (no licence file upstream)"
+upstream = "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/text_encoder.onnx"
+
+[[model]]
+id = "bgm-codec"
+family = "cutout"
+file = "bgm-codec.onnx"
+bytes = 59796655
+sha256 = "4d87a6f86dd84fc967c9b45206acc96796aa93eb14cf7a9346fd06e04a3ad31e"
+licence = "Unclear (no licence file upstream)"
+upstream = "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/encodec_decode.onnx"
+
+[[model]]
+id = "bgm-decoder"
+family = "cutout"
+file = "bgm-decoder.onnx"
+bytes = 274356314
+sha256 = "e1a4481a24ec947c4c7cc6a7d742c0c03a9ccdf2a18c6589d4d2d157c8e60d70"
+licence = "Unclear (no licence file upstream)"
+upstream = "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/decoder_model_merged.onnx"

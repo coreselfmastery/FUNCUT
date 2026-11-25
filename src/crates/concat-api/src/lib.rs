@@ -775,9 +775,14 @@ impl Api {
                 id,
                 start,
                 track,
-            } => Ok(Reply::SoundsAdded(
-                self.sounds_add(&path, &id, start, track)?,
-            )),
+                file,
+            } => Ok(Reply::SoundsAdded(self.sounds_add(
+                &path,
+                id.as_deref(),
+                start,
+                track,
+                file.as_deref(),
+            )?)),
             Request::BgmStatus => Ok(Reply::Bgm(self.bgm_state())),
             Request::BgmPrepare { source } => {
                 self.bgm_prepare(source.as_deref())?;
@@ -809,9 +814,15 @@ impl Api {
                 start,
                 track,
                 monetized,
-            } => Ok(Reply::BgmImported(
-                self.bgm_import(&path, &ids, start, track, monetized)?,
-            )),
+                file,
+            } => Ok(Reply::BgmImported(self.bgm_import(
+                &path,
+                &ids,
+                start,
+                track,
+                monetized,
+                file.as_deref(),
+            )?)),
             Request::MagickStatus => Ok(Reply::Magick(self.magick_state())),
             Request::MagickPrepare => {
                 self.magick_prepare();
@@ -1983,6 +1994,24 @@ impl Api {
         }
     }
 
+    /// Copy a local audio file into one of a project's own folders.
+    /// The source keeps its name, so importing the same file twice is the
+    /// same file copied over itself rather than a second copy.
+    fn copy_local(file: &str, folder: &std::path::Path) -> Result<PathBuf, ApiError> {
+        let source = std::path::Path::new(file);
+        if !source.is_file() {
+            return Err(ApiError::failed(format!("there is no file {file}")));
+        }
+        let name = source
+            .file_name()
+            .ok_or_else(|| ApiError::failed(format!("{file} does not name a file")))?;
+        let into = folder.join(name);
+        std::fs::copy(source, &into).map_err(|error| {
+            ApiError::failed(format!("could not copy into the project: {error}"))
+        })?;
+        Ok(into)
+    }
+
     /// [`Request::SoundsAdd`]: download into the cache when it is not
     /// there yet, copy into the project's own `audio` folder, and add to
     /// the bin - laying it on a lane too when `start` is given, as one
@@ -1990,19 +2019,20 @@ impl Api {
     pub fn sounds_add(
         &mut self,
         path: &str,
-        id: &str,
+        id: Option<&str>,
         start: Option<f64>,
         track: Option<String>,
+        file: Option<&str>,
     ) -> Result<SoundsAdded, ApiError> {
-        let sound = self
-            .sounds_catalogue()?
-            .get(id)
-            .cloned()
-            .ok_or_else(|| ApiError::failed(format!("there is no sound {id}")))?;
         self.writable(path)?;
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let cached = sounds::fetch_sound(&self.dirs, &sound, &cancel, &mut |_, _| {})
-            .map_err(ApiError::failed)?;
+        // A generated accent carries its licence beside it; a monetized
+        // edit is not handed a non-commercial one, whatever the tool that
+        // asked for it believed.
+        if let Some(file) = file
+            && let Some(refusal) = self.generated_licence_refusal(path, file)?
+        {
+            return Err(ApiError::failed(refusal));
+        }
         let folder = {
             let session = self.session(path)?;
             let folder = PathBuf::from(session.path()).join("audio");
@@ -2011,12 +2041,29 @@ impl Api {
             })?;
             folder
         };
-        // The library's own file name: unique for ever, and the same sound
-        // imported twice is the same file, copied over itself.
-        let into = folder.join(&sound.file);
-        std::fs::copy(&cached, &into).map_err(|error| {
-            ApiError::failed(format!("could not copy into the project: {error}"))
-        })?;
+        // A shelf sound arrives from the cache under the library's own
+        // file name; a local file (a generated accent, a take) arrives
+        // under its own. Either way the project owns the copy.
+        let into = if let Some(file) = file {
+            Self::copy_local(file, &folder)?
+        } else {
+            let id = id.ok_or_else(|| {
+                ApiError::failed("name `id` (a shelf sound) or `file` (a local one)".to_owned())
+            })?;
+            let sound = self
+                .sounds_catalogue()?
+                .get(id)
+                .cloned()
+                .ok_or_else(|| ApiError::failed(format!("there is no sound {id}")))?;
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let cached = sounds::fetch_sound(&self.dirs, &sound, &cancel, &mut |_, _| {})
+                .map_err(ApiError::failed)?;
+            let into = folder.join(&sound.file);
+            std::fs::copy(&cached, &into).map_err(|error| {
+                ApiError::failed(format!("could not copy into the project: {error}"))
+            })?;
+            into
+        };
         let item = media::probe(&into.to_string_lossy())
             .map_err(ApiError::failed)?
             .to_new_media();
@@ -2261,8 +2308,9 @@ impl Api {
         start: Option<f64>,
         track: Option<String>,
         monetized: bool,
+        file: Option<&str>,
     ) -> Result<BgmImport, ApiError> {
-        if ids.is_empty() {
+        if file.is_none() && ids.is_empty() {
             return Err(ApiError::failed("no track ids given".to_owned()));
         }
         if ids.len() > 20 {
@@ -2270,7 +2318,19 @@ impl Api {
                 "at most 20 tracks a call; page through them".to_owned(),
             ));
         }
-        let effective_monetized = monetized || self.project_is_monetized(path)?;
+        // A local file is the caller's own - a generated bed, a licensed
+        // track they fetched themselves - so the shelf's catalogue has
+        // nothing to say about it. What a generated file does say is
+        // written beside it: the generator leaves `<file>.licence.json`,
+        // and a bed whose record forbids commercial use is refused here
+        // in a monetized edit, the same line MobyGratis is held to.
+        if let Some(file) = file
+            && let Some(refusal) = self.generated_licence_refusal(path, file)?
+        {
+            return Err(ApiError::failed(refusal));
+        }
+        let effective_monetized =
+            file.is_none() && (monetized || self.project_is_monetized(path)?);
         if effective_monetized {
             // The catalogue's own word when it is loaded; the id's shelf
             // prefix - the source's prefix and twelve hex, a contract
@@ -2309,7 +2369,10 @@ impl Api {
         // track that will not arrive refuses the whole request rather
         // than leaving half a set behind.
         let mut copies = Vec::new();
-        for id in ids {
+        if let Some(file) = file {
+            copies.push(Self::copy_local(file, &folder)?);
+        }
+        for id in ids.iter().filter(|_| file.is_none()) {
             let mut progress = |_, _| {};
             let cached = library
                 .fetch(id, &cancel, &mut progress)
@@ -2958,6 +3021,50 @@ impl Api {
                 "the project's creative brief monetized field must be a boolean".to_owned(),
             )),
         }
+    }
+
+    /// Why a generated file may not enter this edit, when it may not: the
+    /// licence record `sound_model.py generate` leaves beside its own
+    /// output, read against the project's monetized flag. A file with no
+    /// record is the caller's own and answers to nothing here.
+    fn generated_licence_refusal(
+        &self,
+        path: &str,
+        file: &str,
+    ) -> Result<Option<String>, ApiError> {
+        let record = std::path::PathBuf::from(format!("{file}.licence.json"));
+        let contents = match std::fs::read_to_string(&record) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Ok(None),
+        };
+        let record: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(record) => record,
+            Err(_) => return Ok(None),
+        };
+        if record
+            .get("commercial")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            return Ok(None);
+        }
+        if !self.project_is_monetized(path)? {
+            return Ok(None);
+        }
+        let model = record
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("a generated sound");
+        let licence = record
+            .get("licence")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("a non-commercial licence");
+        Ok(Some(format!(
+            "the edit is monetized and {model} writes under {licence}, which does not \
+             allow commercial use. Generate the bed with `sfx-large` (Stability AI \
+             Community Licence), shop the CC0 shelf, or mark the project non-monetized"
+        )))
     }
 
     fn session(&self, path: &str) -> Result<&Session, ApiError> {
@@ -4664,6 +4771,7 @@ mod tests {
             ids: vec!["lofi-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: false,
         }));
         assert!(
@@ -4683,6 +4791,7 @@ mod tests {
             ids: vec!["lofi-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: true,
         }));
         assert!(
@@ -4701,6 +4810,7 @@ mod tests {
             ids: vec!["lofi-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: false,
         }));
         assert!(
@@ -4714,11 +4824,73 @@ mod tests {
             ids: vec!["freepd-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: true,
         }));
         assert!(
             !freepd.message.contains("MobyGratis"),
             "the CC0 shelf is not refused by the monetized gate: {freepd}"
+        );
+    }
+
+    /// A generated bed carries the licence it was written under beside it
+    /// (`sound_model.py generate` writes `<file>.licence.json`). A
+    /// monetized edit refuses a non-commercial one and takes a commercial
+    /// one; a file with no record is the caller's own and is not asked.
+    #[test]
+    fn a_generated_bed_is_held_to_the_licence_written_beside_it() {
+        let (mut api, scratch, _events) = api();
+        let location = scratch.path().join("projects");
+        std::fs::create_dir_all(&location).expect("projects folder");
+        let name = "generated-bed";
+        let path = location.join(name);
+        let path_text = path.to_string_lossy().into_owned();
+        ok(api.dispatch(Request::ProjectCreate {
+            location: location.to_string_lossy().into_owned(),
+            name: name.to_owned(),
+            video: None,
+        }));
+        std::fs::write(path.join("creative-brief.json"), r#"{"monetized":true}"#)
+            .expect("persisted brief");
+
+        let bed = scratch.path().join("bed.wav");
+        std::fs::write(&bed, b"RIFF").expect("a file to point at");
+        let bed_text = bed.to_string_lossy().into_owned();
+        std::fs::write(
+            format!("{bed_text}.licence.json"),
+            r#"{"model":"tinymusician","licence":"CC-BY-NC-4.0 (MusicGen-small weights)","commercial":false}"#,
+        )
+        .expect("the generator's record");
+
+        let refused = err(api.dispatch(Request::BgmImport {
+            path: path_text.clone(),
+            ids: Vec::new(),
+            start: None,
+            track: None,
+            file: Some(bed_text.clone()),
+            monetized: false,
+        }));
+        assert!(
+            refused.message.contains("CC-BY-NC") && refused.message.contains("monetized"),
+            "the record's licence arms the gate whatever the caller says: {refused}"
+        );
+
+        std::fs::write(
+            format!("{bed_text}.licence.json"),
+            r#"{"model":"stable-audio-open-small","licence":"Stability AI Community License","commercial":true}"#,
+        )
+        .expect("a commercial record");
+        let allowed = err(api.dispatch(Request::BgmImport {
+            path: path_text,
+            ids: Vec::new(),
+            start: None,
+            track: None,
+            file: Some(bed_text),
+            monetized: false,
+        }));
+        assert!(
+            !allowed.message.contains("CC-BY-NC") && !allowed.message.contains("Stability"),
+            "a commercial bed passes the licence gate: {allowed}"
         );
     }
 }

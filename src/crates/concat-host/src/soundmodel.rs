@@ -11,6 +11,12 @@
 //! tokenizer. [`SOUND_MODELS`] is the whole set, [`installed`] says which
 //! files are already on disk, and [`download`] fetches only the missing
 //! ones, so a half-finished set resumes instead of starting again.
+//!
+//! Three generators live beside them, each a set of its own and each its
+//! own row: [`SFX_SMALL`] (TinyAudio-MF), [`SFX_LARGE`] (Stable Audio Open
+//! Small) and [`BGM`] (TinyMusician). The same download path serves all
+//! four sets; only the row id differs, and `sound_model.py generate`
+//! reads the files from the same folder.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -28,6 +34,43 @@ pub const SOUND_MODELS: [ModelId; 5] = [
     ModelId::ClapText,
 ];
 
+/// TinyAudio-MF: the small SFX generator. 87 M parameters, one flow step,
+/// ten seconds of 44.1 kHz audio per call - the cheapest of the three by
+/// a wide margin, which is why the accents use it.
+pub const SFX_SMALL: [ModelId; 5] = [
+    ModelId::SfxSmallPipeline,
+    ModelId::SfxSmallTokenizer,
+    ModelId::SfxSmallVae,
+    ModelId::SfxSmallText,
+    ModelId::SfxSmallFlow,
+];
+
+/// Stable Audio Open Small: the heavier SFX generator. 341 M parameters,
+/// eight distilled steps, 11.9 seconds of stereo per call. Spent on the
+/// one accent that carries the hook, not on every hit.
+pub const SFX_LARGE: [ModelId; 9] = [
+    ModelId::SfxLargeMeta,
+    ModelId::SfxLargeTokenizer,
+    ModelId::SfxLargeSeconds,
+    ModelId::SfxLargeVae,
+    ModelId::SfxLargeVaeData,
+    ModelId::SfxLargeT5,
+    ModelId::SfxLargeT5Data,
+    ModelId::SfxLargeDit,
+    ModelId::SfxLargeDitData,
+];
+
+/// TinyMusician: the BGM generator. MusicGen at 15 layers, four
+/// codebooks, 32 kHz mono, and no cache in its exported decoder - the
+/// slowest of the three per second of audio.
+pub const BGM: [ModelId; 5] = [
+    ModelId::BgmConfig,
+    ModelId::BgmTokenizer,
+    ModelId::BgmCodec,
+    ModelId::BgmText,
+    ModelId::BgmDecoder,
+];
+
 /// Where the sound models live: the app's own model folder, the one the
 /// vision models and the sidecar share.
 pub fn folder(data: &Path) -> PathBuf {
@@ -37,16 +80,12 @@ pub fn folder(data: &Path) -> PathBuf {
 /// The bytes a full set takes, for the row's size before anything is
 /// fetched.
 pub fn bytes() -> u64 {
-    SOUND_MODELS.iter().map(|id| id.spec().bytes).sum()
+    set_bytes(&SOUND_MODELS)
 }
 
 /// The bytes still to fetch.
 pub fn missing_bytes(data: &Path) -> u64 {
-    SOUND_MODELS
-        .iter()
-        .filter(|id| !installed(data, **id))
-        .map(|id| id.spec().bytes)
-        .sum()
+    set_missing_bytes(data, &SOUND_MODELS)
 }
 
 /// Whether one file is on disk and whole.
@@ -60,18 +99,14 @@ pub fn installed(data: &Path, id: ModelId) -> bool {
 
 /// Every file that is missing.
 pub fn missing(data: &Path) -> Vec<ModelId> {
-    SOUND_MODELS
-        .iter()
-        .copied()
-        .filter(|id| !installed(data, *id))
-        .collect()
+    set_missing(data, &SOUND_MODELS)
 }
 
 /// Whether the reader will find a working set: CLAP needs both towers and
 /// the tokenizer, and the labels need YAMNet, so a partial set is not
 /// installed however many files are on disk.
 pub fn ready(data: &Path) -> bool {
-    SOUND_MODELS.iter().all(|id| installed(data, *id))
+    set_ready(data, &SOUND_MODELS)
 }
 
 /// Fetch what is missing. `progress` is called with (received, total) over
@@ -81,7 +116,98 @@ pub fn download(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(), String> {
-    let wanted = missing(data);
+    set_download(data, &SOUND_MODELS, cancel, progress)
+}
+
+/// Remove the set. A model the user fetched is theirs to delete, and the
+/// reader degrades to measurements alone when it is gone.
+pub fn remove(data: &Path) -> Result<(), String> {
+    set_remove(data, &SOUND_MODELS)
+}
+
+/// The row id of the reader's own set: CLAP and YAMNet, one download.
+pub const SOUND_MODELS_ID: &str = "sound-models";
+
+/// Every row the settings sheet shows and `models.download` accepts, in
+/// the order the sheet lists them: the reader's set, then the three
+/// generators. The ids are also the words `sound_model.py generate` takes
+/// as `kind`, so a row and a generation name the same set.
+pub const SETS: [&str; 4] = [SOUND_MODELS_ID, "sfx-small", "sfx-large", "bgm"];
+
+/// The three generator sets, by the row id the settings sheet uses.
+pub fn generator_set(id: &str) -> Option<&'static [ModelId]> {
+    match id {
+        "sfx-small" => Some(&SFX_SMALL),
+        "sfx-large" => Some(&SFX_LARGE),
+        "bgm" => Some(&BGM),
+        _ => None,
+    }
+}
+
+/// The files one row downloads: the reader's five, or one generator's.
+/// The one table the settings sheet and the API both read.
+pub fn set_by_id(id: &str) -> Option<&'static [ModelId]> {
+    if id == SOUND_MODELS_ID {
+        return Some(&SOUND_MODELS);
+    }
+    generator_set(id)
+}
+
+/// What a row is for, in the words the sheet and `models.list` show.
+pub fn set_label(id: &str) -> &'static str {
+    match id {
+        SOUND_MODELS_ID => "Sound models (CLAP reader, YAMNet labels)",
+        "sfx-small" => "SFX - TinyAudio-MF, 87 M, one flow step",
+        "sfx-large" => "SFX - Stable Audio Open Small, 341 M, eight steps",
+        "bgm" => "Music - TinyMusician, MusicGen-small, 32 kHz mono",
+        _ => "",
+    }
+}
+
+/// The licence a row's files come under: one name when they agree, a
+/// list when they do not.
+pub fn set_licence(set: &[ModelId]) -> String {
+    let mut names: Vec<&str> = set.iter().map(|id| id.spec().licence).collect();
+    names.sort_unstable();
+    names.dedup();
+    names.join(", ")
+}
+
+/// The bytes a generator set takes.
+pub fn set_bytes(set: &[ModelId]) -> u64 {
+    set.iter().map(|id| id.spec().bytes).sum()
+}
+
+/// The bytes of a set still to fetch.
+pub fn set_missing_bytes(data: &Path, set: &[ModelId]) -> u64 {
+    set.iter()
+        .filter(|id| !installed(data, **id))
+        .map(|id| id.spec().bytes)
+        .sum()
+}
+
+/// Every file of a set that is missing.
+pub fn set_missing(data: &Path, set: &[ModelId]) -> Vec<ModelId> {
+    set.iter()
+        .copied()
+        .filter(|id| !installed(data, *id))
+        .collect()
+}
+
+/// Whether every file of a set is on disk and whole.
+pub fn set_ready(data: &Path, set: &[ModelId]) -> bool {
+    set.iter().all(|id| installed(data, *id))
+}
+
+/// Fetch what is missing from one set, smallest first. `progress` is
+/// called with (received, total) over the files still to fetch.
+pub fn set_download(
+    data: &Path,
+    set: &[ModelId],
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<(), String> {
+    let wanted = set_missing(data, set);
     if wanted.is_empty() {
         return Ok(());
     }
@@ -117,10 +243,9 @@ pub fn download(
     Ok(())
 }
 
-/// Remove the set. A model the user fetched is theirs to delete, and the
-/// reader degrades to measurements alone when it is gone.
-pub fn remove(data: &Path) -> Result<(), String> {
-    for id in SOUND_MODELS {
+/// Remove one set.
+pub fn set_remove(data: &Path, set: &[ModelId]) -> Result<(), String> {
+    for id in set {
         let file = folder(data).join(id.spec().file);
         if file.is_file() {
             std::fs::remove_file(&file)
@@ -151,6 +276,46 @@ mod tests {
         from_set.sort_unstable();
         from_registry.sort_unstable();
         assert_eq!(from_set, from_registry);
+    }
+
+    #[test]
+    fn the_generator_sets_cover_every_generator_in_the_registry() {
+        let mut from_sets: Vec<&str> = SFX_SMALL
+            .iter()
+            .chain(SFX_LARGE.iter())
+            .chain(BGM.iter())
+            .map(|id| id.spec().file)
+            .collect();
+        let mut from_registry: Vec<&str> = MODELS
+            .iter()
+            .filter(|spec| spec.id.kind() == "generate")
+            .map(|spec| spec.file)
+            .collect();
+        from_sets.sort_unstable();
+        from_registry.sort_unstable();
+        assert_eq!(from_sets, from_registry);
+        for (id, set) in [
+            ("sfx-small", &SFX_SMALL[..]),
+            ("sfx-large", &SFX_LARGE[..]),
+            ("bgm", &BGM[..]),
+        ] {
+            assert_eq!(generator_set(id), Some(set));
+        }
+        assert_eq!(generator_set("sound"), None);
+    }
+
+    #[test]
+    fn every_row_the_sheet_shows_is_one_the_api_can_fetch() {
+        for id in SETS {
+            let set = set_by_id(id).unwrap_or_else(|| panic!("{id} is not a set"));
+            assert!(!set.is_empty(), "{id} is empty");
+            assert!(!set_label(id).is_empty(), "{id} has no label");
+            assert!(!set_licence(set).is_empty(), "{id} has no licence");
+        }
+        assert_eq!(set_by_id("sound"), None);
+        assert_eq!(set_by_id("sfx"), None);
+        assert_eq!(set_licence(&BGM), "CC-BY-NC-4.0 (MusicGen-small weights)");
+        assert_eq!(set_licence(&SFX_SMALL), "MIT");
     }
 
     #[test]

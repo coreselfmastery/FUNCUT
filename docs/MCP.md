@@ -150,12 +150,15 @@ died with:
   `speed` (0.5–2) / `pauses` (0–1) override it, and `steps` (1–16) is
   Pocket's quality dial. These are the two dials the shipped voices
   actually honour — it is pacing, not a claimed emotion embedding.
-- `models_list` - every voice (tts) and transcriber (whisper) model this
-  build knows, with sizes and which are on disk; the ids are what
-  `models_download` takes.
+- `models_list` - every voice (tts), transcriber (whisper) and sound set
+  (`sound`) this build knows, with sizes, licences and which are on disk;
+  the ids are what `models_download` takes. The sound rows are
+  `sound-models` (the CLAP reader and YAMNet), `sfx-small`, `sfx-large`
+  and `bgm` - the three generators `sense_sound_model generate` writes
+  with.
 - `models_download` - one model from Concat's mirror, as a job a headless
-  caller can wait on with `analysis_wait`; `kind` is `tts` or `whisper`,
-  and a model already on disk ends at once.
+  caller can wait on with `analysis_wait`; `kind` is `tts`, `whisper` or
+  `sound` (the ids above), and a model already on disk ends at once.
 - `analysis_wait` - waits for any job (analysis, speech, model download or
   export) up to `timeoutSeconds` (60 default, 600 at most) and returns its
   status.
@@ -569,6 +572,13 @@ numpy and ONNX Runtime when installed, never required):
 - `plan` - every signal at once (beats, visual arc, BGM, style, the voice
   level) into a per-moment sound design with the evidence behind each
   choice.
+- `generate` - words to audio with one of the three downloaded
+  generators: `kind: "sfx-small"` (TinyAudio-MF, a one-step mean flow),
+  `"sfx-large"` (Stable Audio Open Small, the hook) or `"bgm"`
+  (TinyMusician, a music bed). The file lands in
+  `<project>/generated-audio/`, or a temporary folder without a project,
+  and `sounds_add` / `bgm_import` take it by `file`. See
+  [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
 
 *The words and the take, made to agree* — `sense_captions` (`captions`):
 

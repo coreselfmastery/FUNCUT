@@ -17698,15 +17698,23 @@ mod tests {
             }),
         ];
 
-        assert_eq!((sfx.next)(&log).expect("the first generator is asked").tool,
-                   "sense_sound_model");
+        assert_eq!(
+            (sfx.next)(&log).expect("the first generator is asked").tool,
+            "sense_sound_model"
+        );
         log.push(json!({ "tool": "generate", "ok": true, "model": "absent",
                          "generated": false }));
-        assert_eq!((sfx.next)(&log).expect("the shelf is asked").tool, "sounds_search");
+        assert_eq!(
+            (sfx.next)(&log).expect("the shelf is asked").tool,
+            "sounds_search"
+        );
         log.push(json!({ "sounds": [
             { "id": "hit-1", "duration": 0.8, "syncAt": 0.1 },
         ] }));
-        assert_eq!((sfx.next)(&log).expect("the first hit is added").tool, "sounds_add");
+        assert_eq!(
+            (sfx.next)(&log).expect("the first hit is added").tool,
+            "sounds_add"
+        );
         log.push(json!({ "clipId": "clip-1", "file": "/edits/Reel/audio/hit-1.ogg" }));
         let check = (sfx.next)(&log).expect("the first placement is checked");
         assert_eq!(check.tool, "sense_sound");
@@ -17716,20 +17724,34 @@ mod tests {
             "issues": [{ "code": "wrong_sound", "severity": "fix" }],
             "measured": { "moveBy": 0.0 },
         }));
-        assert_eq!((sfx.next)(&log).expect("the wrong hit is removed").tool, "clips_remove");
+        assert_eq!(
+            (sfx.next)(&log).expect("the wrong hit is removed").tool,
+            "clips_remove"
+        );
         log.push(json!({ "removed": 1 }));
-        assert_eq!((sfx.next)(&log).expect("the same peak is re-shopped").tool, "sounds_search");
+        assert_eq!(
+            (sfx.next)(&log).expect("the same peak is re-shopped").tool,
+            "sounds_search"
+        );
         log.push(json!({ "sounds": [
             { "id": "hit-2", "duration": 0.7, "syncAt": 0.1 },
         ] }));
-        assert_eq!((sfx.next)(&log).expect("the replacement is added").tool, "sounds_add");
+        assert_eq!(
+            (sfx.next)(&log).expect("the replacement is added").tool,
+            "sounds_add"
+        );
         log.push(json!({ "clipId": "clip-2", "file": "/edits/Reel/audio/hit-2.ogg" }));
         let replacement_check = (sfx.next)(&log).expect("the replacement is checked");
         assert_eq!(replacement_check.tool, "sense_sound");
-        assert_eq!(replacement_check.arguments["role"], json!("quick_transition"));
+        assert_eq!(
+            replacement_check.arguments["role"],
+            json!("quick_transition")
+        );
         log.push(json!({ "ok": true, "issues": [], "measured": { "moveBy": 0.0 } }));
-        assert_eq!((sfx.next)(&log).expect("the replacement is gained").tool,
-                   "clip_audio_levels_db");
+        assert_eq!(
+            (sfx.next)(&log).expect("the replacement is gained").tool,
+            "clip_audio_levels_db"
+        );
         log.push(json!({ "ok": true }));
 
         let next_peak = (sfx.next)(&log)

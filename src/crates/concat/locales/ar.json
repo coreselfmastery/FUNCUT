@@ -701,6 +701,7 @@
   "settings.modelReady": "النموذج جاهز",
   "settings.models": "النماذج",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "تُجلب النماذج في أول مرة تحتاج فيها ميزة إلى أحدها. هذا هو المكان الذي يبحث فيه التنزيل أولًا؛ وتُجرَّب كل المصادر الأخرى بعده.",
   "settings.newToken": "رمز مميّز جديد",
   "settings.noReleasesYet": "لم يصدر بعد أي إصدار من 0.2.5 فما بعد.",

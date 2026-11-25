@@ -701,6 +701,7 @@
   "settings.modelReady": "Model spreman",
   "settings.models": "Modeli",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Modeli se preuzimaju kad ih neka značajka prvi put zatreba. Ovdje preuzimanje traži prvo; ostali izvori se ipak isprobaju nakon toga.",
   "settings.newToken": "Novi token",
   "settings.noReleasesYet": "Još nema izdanja od 0.2.5 nadalje.",

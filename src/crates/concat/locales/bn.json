@@ -701,6 +701,7 @@
   "settings.modelReady": "মডেল প্রস্তুত",
   "settings.models": "মডেলস",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "কোনো ফিচারের প্রথমবার দরকার হলে মডেল আনা হয়। ডাউনলোড প্রথমে এখানে দেখে; এরপরও অন্য সব উৎস চেষ্টা করা হয়।",
   "settings.newToken": "নতুন টোকেন",
   "settings.noReleasesYet": "0.2.5 থেকে এখনও কোনো রিলিজ বের হয়নি।",

@@ -538,19 +538,24 @@ Real-ESRGAN enhance (BSD-3, 4.9 MB). The optional VLM critic (SmolVLM2
 fetch on demand into the app data dir. Stabilization is classical CV — no
 model at all.
 
-The picture's five doors are the same kind of optional file, and none of
-them is in `models/manifest.toml` yet: `movenet-a0` (Apache-2.0, ~15 MB,
-`action_class`) · `depth-anything-v2-small` (Apache-2.0, ~25 MB,
-`depth_map`) · `fastsam-s` (Apache-2.0, ~40 MB, `subject_mask`) ·
-`dinov2-small` (Apache-2.0, ~90 MB, `visual_embedding`) · `clip-vit-b32`
-(MIT, ~150 MB, `visual_embedding`). They live in `models/visual/`, or
-wherever `FUNCUT_VISUAL_MODELS` / `modelDir` says, and
+The picture reader's shelf is thirty ONNX doors
+([VISUAL-MODELS.md](VISUAL-MODELS.md)), and four of them are in
+`models/manifest.toml` with a real digest: `transnetv2` (MIT, 31 MB, a shot
+boundary) · `depth-anything-v2-small` (Apache-2.0, 27 MB quantized, a depth
+map) · `dinov2-small` (Apache-2.0, 24 MB quantized, a visual embedding) ·
+`clip-vit-b32-visual` (MIT, 89 MB quantized, CLIP's vision tower). Those four
+are one row in Settings > Models ("Picture models", 172 MB) and download
+into `cutout-models` like the cutout and sound models, digest-checked, which
+is the folder `sense_visual` reads - so a set fetched in the window is the
+set the AUTO EDIT's stock choice measures with. The other twenty-six are
+installed per model from the Hub through `sense_visual` (`hf_search` ->
+`hf_files` -> `download`), land in `models/visual/` or wherever
+`FUNCUT_VISUAL_MODELS` / `modelDir` says, and
 `sense_visual {action:"models"}` is the check: each row carries its file,
 its licence, its size, its door, and whether the file is present. A door
-whose file is absent answers `present: false` and measures nothing -
-the thirty-six readings beside them need no model at all: the classical ones
-are stdlib, and the model shelf behind them ([VISUAL-MODELS.md](VISUAL-MODELS.md),
-thirty ONNX doors) refuses by name when a file is absent.
+whose file is absent answers `present: false` and measures nothing - the
+eleven classical readings beside them need no model at all: they are stdlib,
+and every door refuses by name when a file is absent.
 
 ## Where the code is
 

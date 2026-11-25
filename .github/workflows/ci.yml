@@ -59,6 +59,10 @@ jobs:
       - run: python3 -m py_compile scripts/motion/check-geneva-pins.py
       - run: python3 scripts/motion/check-geneva-pins.py
       - run: python3 scripts/ci/check-ort-pins.py
+      # The audit's unsafe-block count is only honest while every block
+      # says why it is sound; this fails the job when one does not.
+      - run: python3 scripts/ci/check-unsafe-safety.py
+      - run: python3 -m py_compile scripts/benchmark.py
       - run: python3 -m py_compile scripts/motion/benchmark-geneva.py
       - run: python3 scripts/motion/benchmark-geneva.py --help >/dev/null
       - run: python3 scripts/motion/test-benchmark-geneva.py
@@ -135,6 +139,13 @@ jobs:
       # the ffmpeg CLI, and the selftest deliberately does not.
       - run: python3 src/crates/concat-mcp/sense/sound_sense.py selftest
         if: ${{ !cancelled() }}
+      # The sound model reader: the planner suite (plan answers without
+      # models, every accent cites its signal) runs stdlib-only; the ONNX
+      # checks skip cleanly when numpy is absent, so this belongs in the
+      # checks job. Its model-on acceptance test stays
+      # scripts/sound-model/bench.py. No network.
+      - run: python3 src/crates/concat-mcp/sense/sound_model.py selftest --spec -
+        if: ${{ !cancelled() }}
 
   # The analysis senses against real fixtures: beats, silence and scene
   # cuts measured on generated media, so the JSON the API parses is
@@ -176,15 +187,17 @@ jobs:
   engine:
     name: Engine tests and lints
     runs-on: ubuntu-24.04
-    # The steps that can run long have timeouts of their own, 150 minutes
+    # The steps that can run long have timeouts of their own, 300 minutes
     # between them, so a stuck step is named by its own timeout; this is
     # for a job stuck anywhere else. A warm run takes about twenty minutes,
-    # but a cold one on a shared runner now takes two and a half hours: the
+    # but a cold one on a shared runner has taken two and a half hours: the
     # 155 minutes this used to be left three minutes of margin on the run
     # that merged #173 (2h32m), and a run cancelled by its own ceiling is
-    # indistinguishable from a broken build on the report card. Two hundred
-    # minutes restores the margin without weakening any step's own limit.
-    timeout-minutes: 200
+    # indistinguishable from a broken build on the report card. The headless
+    # binaries' own cold link has a step of its own now, and the smoke and
+    # the 4 GiB benchmark reuse it, so the job keeps a wider ceiling than
+    # its longest measured run.
+    timeout-minutes: 240
     env:
       # See build-app.yml: the version the ort crate is built against.
       # scripts/ci/deps.lock pins the file.
@@ -204,6 +217,11 @@ jobs:
       # door to full debug information for a session that wants it.
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_PROFILE_DOCTEST_DEBUG: "0"
+      # The same trade for the dev profile. Without it the dev artifacts
+      # are a different set from the test ones above, so the smoke step's
+      # `cargo run` recompiled the whole dependency graph from nothing and
+      # spent its twenty minutes compiling, never launching the binary.
+      CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -247,12 +265,19 @@ jobs:
 
       # Ubuntu's packaged FFmpeg is older than the 7 the engine needs, so the
       # libraries come from BtbN, and FFMPEG_DIR tells the bindings where.
+      # The same bundle carries the binaries, and the 4 GB benchmark generates
+      # its own clip with them, so bin joins the PATH here rather than apt
+      # pulling a second, older FFmpeg for one step. The `test -x` names a
+      # bundle that stopped shipping them here, not forty minutes later.
       - name: FFmpeg development libraries
         run: |
           set -euo pipefail
           scripts/ci/fetch.sh ffmpeg-linux64 ffmpeg.tar.xz
           mkdir -p ffmpeg-dev
           tar -xf ffmpeg.tar.xz -C ffmpeg-dev --strip-components=1
+          test -x ffmpeg-dev/bin/ffmpeg
+          ffmpeg-dev/bin/ffmpeg -version | head -n 1
+          echo "$PWD/ffmpeg-dev/bin" >> "$GITHUB_PATH"
           echo "FFMPEG_DIR=$PWD/ffmpeg-dev" >> "$GITHUB_ENV"
 
       # ONNX Runtime as a shared library, linked dynamically, for the reason
@@ -352,6 +377,36 @@ jobs:
         timeout-minutes: 15
         working-directory: src
         run: cargo test --workspace --doc -j 1
+      # The dev-profile dependencies are now the ones the test build above
+      # already produced, but the window binary itself was only ever built
+      # as a test harness: its own Slint codegen and its link are still
+      # cold here, and they are the slowest single unit in the workspace.
+      # Build both headless binaries once, so the smoke and the 4 GiB
+      # benchmark run the artifacts rather than build their own: cargo
+      # resolves features per invocation, so a later `-p concat-cli` on its
+      # own would unify them differently and recompile the tree again.
+      - name: Build the headless binaries
+        timeout-minutes: 45
+        working-directory: src
+        run: cargo build -j 1 -p concat -p concat-cli
+      # The release and build lanes already run this against the bundled
+      # app; running it here too means a change that breaks the headless
+      # launch is named on the pull request, not after a release tag.
+      - name: The headless smoke runs on every change
+        # The binaries are the ones the step above built; this is a run,
+        # and the ceiling is a hang guard well above the measured seconds.
+        timeout-minutes: 60
+        working-directory: src
+        run: ./target/debug/concat --smoke
+      # The 4 GB laptop is the target, so a small run is held to that
+      # ceiling here: a generated 1080p clip, a few random preview frames
+      # and a short render, with each child's address space capped at 4 GiB.
+      - name: The small-machine run fits a 4 GB memory cap
+        # concat-cli is built in the headless step; this ceiling is for
+        # the generated clip, the previews and the render.
+        timeout-minutes: 40
+        working-directory: src
+        run: python3 ../scripts/benchmark.py --cli target/debug/concat-cli --scrubs 5 --render-frames 3 --memory-limit-mb 4096
       # SCH-02: the two committed plan schemas are generated from the
       # plan types and the template, never hand-edited. The drift test in
       # concat-mcp's own suite answers the same question; this step puts

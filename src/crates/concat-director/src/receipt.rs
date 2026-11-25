@@ -91,6 +91,10 @@ pub struct StageRecord {
     /// The failure's sentence, when it warned or failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
+    /// Wall-clock milliseconds the stage spent. `None` for a stage that
+    /// never ran; `Some(0)` for a resumed stage the record skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl StageRecord {
@@ -101,6 +105,7 @@ impl StageRecord {
             outcome: StageOutcome::Completed,
             calls,
             failure: None,
+            elapsed_ms: None,
         }
     }
 
@@ -111,7 +116,14 @@ impl StageRecord {
             outcome: StageOutcome::Skipped,
             calls: Vec::new(),
             failure: None,
+            elapsed_ms: Some(0),
         }
+    }
+
+    /// The same record, with the time the stage spent.
+    pub fn with_elapsed(mut self, elapsed: std::time::Duration) -> StageRecord {
+        self.elapsed_ms = Some(elapsed.as_millis().min(u128::from(u64::MAX)) as u64);
+        self
     }
 }
 
@@ -1501,6 +1513,20 @@ fn verdict_of(gates: &[GateRecord]) -> Verdict {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_stage_reports_the_time_it_spent() {
+        let stage = StageRecord::completed(Stage::Captions, vec!["edit_apply".to_owned()])
+            .with_elapsed(std::time::Duration::from_millis(1234));
+        assert_eq!(stage.elapsed_ms, Some(1234));
+        let wire = serde_json::to_value(&stage).expect("a stage serializes");
+        assert_eq!(wire["elapsedMs"], 1234);
+
+        let resumed = StageRecord::skipped(Stage::Transcribe);
+        assert_eq!(resumed.elapsed_ms, Some(0));
+        let never = StageRecord::completed(Stage::Export, Vec::new());
+        assert_eq!(never.elapsed_ms, None);
+    }
+
     fn gate(name: &str, status: GateStatus, required: bool) -> GateRecord {
         GateRecord::new(name, status, "measured", required)
     }
@@ -1904,6 +1930,7 @@ mod tests {
                 outcome: StageOutcome::Warned,
                 calls: Vec::new(),
                 failure: Some("motion bake refused".to_owned()),
+                elapsed_ms: None,
             },
         ];
         let receipt = AcceptanceReceipt::new("/p", "/p/out.mp4", stages, Vec::new(), Vec::new());

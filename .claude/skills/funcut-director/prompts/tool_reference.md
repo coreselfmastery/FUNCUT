@@ -168,7 +168,9 @@ The licensed live shelves a monetized brief MUST shop (Pexels, Pixabay):
 `openvid_status/prepare/search/search_batch/rank_for_slot/get/fetch/import`
 (937k clips;
 sources `pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square`
-with ±5 % slack; sorts `relevance|aesthetic|motion|temporal|shortest|longest|
+with ±5 % slack — the shelf's own footage is landscape, so a `vertical`
+filter answers empty and vertical reels shop the live `stock_search`
+shelves instead (see `prompts/broll_matching.md`); sorts `relevance|aesthetic|motion|temporal|shortest|longest|
 surprise`) · `bgm_status/prepare/search/fetch/import` (FreePD 1,025 CC0
 tracks; MobyGratis/OpenLo-Fi 166, free for NON-COMMERCIAL use only; sorts
 `relevance|shortest|longest|surprise`; run `sense_audio_repair {action:
@@ -176,8 +178,10 @@ tracks; MobyGratis/OpenLo-Fi 166, free for NON-COMMERCIAL use only; sorts
 that already carries music gets no bed) ·
 `sounds_search/add` (530 CC0 sounds; categories: Whoosh, Impact, Riser,
 Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
-`sounds_add` starts the file at `start`; the search result's `syncAt` says
-where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
+`sounds_add` starts the file at `start`; the search result's `syncAt` is
+the curator's PEAK CLAIM — the shelf audit measured it wrong by more than
+100 ms in 30% of files, so `sense_sound {action: "describe_sound"}`'s
+measured `peakAt` is the number placement trusts) · `magick_status/prepare/search/fetch/add` (shelves:
 `magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
 `openmoji` 4,565 emoji CC-BY 4.0)
 
@@ -238,7 +242,8 @@ brief?, autoSetup?, profile?}` · `emotion {action:
 extract|brand|gate|verify|template, project?}` · `voice_signals {action:
 extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
 `sense_discourse` · `sense_voice_quality` · `sense_prosody_style` ·
-`sense_audio_repair` · `sense_captions` · `sense_visual {action:
+`sense_audio_repair` · `sense_captions` · `sense_sound` ·
+`sense_sound_model` · `sense_visual {action:
 measure_motion|camera_motion|shot_scale|visual_sync|scene_cuts|visual_quality|
 palette|saliency|composition|motion_blur|tracks|measure_clips|bench|models|
 action_class|depth_map|subject_mask|visual_embedding|describe_scene|shot_boundaries|
@@ -261,15 +266,16 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   ONNX files), `download` (fetch it; `HF_TOKEN` for a gated repo, and a
   digest is pinned when none is given). `measure_clips` spends whatever is
   installed on the stock sheet; `enrich: false` keeps it classical and fast.
-- The six `sense_*` family tools are the consumption layer: `action` names
+- The eight `sense_*` family doors are the consumption layer: `action` names
   the reading (`sense_discourse {action: "score_script_quality", script}` —
   the ten discourse readings, the six voice-quality readings, the six
   prosody readings, the eight audio-repair actions, the five caption
-  readings and the picture's thirty-six — motion, camera travel and its
-  direction, shot scale, audio-visual sync, scene cuts, the technical
-  read, palette, saliency, the batch `measure_clips` read, the `bench`,
-  the `models` listing and the five model doors; `selftest: true` proves
-  one). Each reading names its own traps
+  readings, the two sound doors below and the picture's thirty-six —
+  motion, camera travel and its direction, shot scale, audio-visual sync,
+  scene cuts, the technical read, palette, saliency, the batch
+  `measure_clips` read, the `bench`, the `models` listing and the model
+  doors; `selftest: true` proves one).
+  Each reading names its own traps
   in its reply; the family schema documents the shared inputs. Three
   audio-repair actions are wired into the pipeline itself:
   `enhance_speech` (Phase 2 — a rough take is repaired before it is
@@ -279,6 +285,60 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   `identify_music` (Phase 13 — the copyright check on a take that carries
   music: an offline descriptor, never a title match; the user is warned
   before publishing).
+
+- `sense_sound` — what a sound file IS, measured (`sound_sense.py`, pure
+  standard library, no model). Four actions, Phase 18's measuring
+  instrument:
+  - `describe_sound` {path} — the measured read of one file: level
+    (`peakDbfs`, `rmsDbfs`, `crestDb`), timing (`attackMs`, `bodySec`,
+    `decaySec`, transients, and `peakAt` — where the file's peak
+    ACTUALLY falls), spectrum (`centroidHz`, bands, flatness, pitch
+    movement) and the six role fits with the evidence behind each.
+  - `rank_sounds` {role, paths|dir|index, limit?, maxDuration?,
+    minDuration?} — candidates scored for one of the six roles
+    (`quick_transition`, `cinematic_reveal`, `action_impact`,
+    `gentle_entrance`, `emotional_texture`, `tension_build`); each
+    candidate carries `measuredPeakAt` beside the manifest's `syncAt` so
+    the drift is visible. An `index` written by `index_library` ranks
+    without re-decoding the shelf.
+  - `check_placement` {path, clipStart, intendedAt|moment, inPoint?,
+    gainDb?, voiceLufs?, voicePeakDbfs?, recent?, toleranceMs?} — the
+    proof after placing: the measured peak against the moment it was
+    meant to land (a `sync_off` issue names `moveBy`), the level under
+    the voice, the role against the moment, and repetition inside
+    `repetitionWindowSec` (default 12, `maxSameRole` default 3). Every
+    issue names its fix; `recent` is the `[{path, role}]` list of what
+    you already placed.
+  - `index_library` {dir, out?} — measure the whole shelf once (530
+    sounds ≈ 2.5 min) into `sound-index.json`; rank against it after.
+- `sense_sound_model` — what a sound MEANS (`sound_model.py`; YAMNet's
+  521 AudioSet labels + a 512-d CLAP audio/text embedding; numpy +
+  onnxruntime when installed, NEVER required — without the models every
+  action still answers with `model: {state: "absent", reason}` and the
+  measured half only, and `rank` says `degraded` — a weaker answer it
+  admits, never hides). Four actions:
+  - `describe` {file} — one record per asset: identity, YAMNet labels,
+    the CLAP embedding + the description it best matches, the Sound
+    Sense measurements, quality flags, roles, `syncOffset` and trim
+    advice.
+  - `index` {dir, out?, workers?} — the shelf as one
+    `sound-model-index.json`, cached by size + mtime + model version
+    (default 2 workers).
+  - `rank` {index, query, role, limit?, maxDuration?} — a creative
+    description in words ("dark cinematic braam", two or three words)
+    scored by CLAP similarity fused with the measured role fit, the
+    weights fitted on the 530 shipped sounds.
+  - `plan` {index, beats, visual?, arc?, bgm?, style?, durationSec?,
+    voiceLufs?} — the per-moment sound design: every signal at once
+    (the beats' emphasis words and pauses, the visual events/cuts/motion
+    hits, the arc's acts, the bed's structure with its `cutSafePoints`)
+    into accents — each with file, `startAt`, `peakLandsAt`,
+    `syncOffset`, `gainDb` under the voice's LUFS and the why — plus
+    held silences and the music plan (change points, ducking spans, the
+    ending). Feed it Phase 3's arc, Phase 4's beats and Phase 13's bed
+    structure; execute its accents with `sounds_add` +
+    `clip_audio_levels_db`; prove each with `sense_sound {action:
+    "check_placement"}`.
 
 - The loop that uses them is the skill's Phase 1 and §4 (and
   `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE
@@ -292,7 +352,8 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
 - `emotion` is Phase 3's reader and Phase 13's gate (see
   `prompts/creative_direction.md` and the placement-gate floor E): `extract`
   on the transcript, `gate` on stock candidates before anything is placed,
-  `brand`/`template` for the brandKit, `verify` in Phase 23 on the export.
+  `brand`/`template` for the brandKit, `verify` in Phase 24 — and only on a
+  render the user asked for.
   Give it `project` and the brief and brandKit load themselves.
 - `measure_loudness` is the only proof a loudness target was met — EBU R128
   integrated LUFS, true peak and the error against `targetLufs` (−14

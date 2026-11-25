@@ -48,7 +48,7 @@ pub struct FramePipe {
     len: usize,
 }
 
-// Safety: the mapping is shared by design - that is what it is for - and
+// SAFETY: the mapping is shared by design - that is what it is for - and
 // the pointer is only handed out as slices bounded by the header the two
 // ends already agreed on. Send + Sync: rustix fd is Send+Sync; the atomics
 // are atomic; the slices are guarded by the protocol.
@@ -57,7 +57,7 @@ unsafe impl Sync for FramePipe {}
 
 impl Drop for FramePipe {
     fn drop(&mut self) {
-        // Safety: the mapping was created by `mmap` in `create`/`open` with
+        // SAFETY: the mapping was created by `mmap` in `create`/`open` with
         // exactly this length, and nothing else has unmapped it: the pipe
         // owns it, and this is the only unmap.
         unsafe {
@@ -95,7 +95,7 @@ impl FramePipe {
         rustix::fs::ftruncate(&fd, len as u64)
             .map_err(|source| format!("ftruncate {name:?}: {source}"))?;
         let ptr = map(&fd, len)?;
-        // Safety: the mapping is exactly `len` bytes and writable; the
+        // SAFETY: the mapping is exactly `len` bytes and writable; the
         // header sits inside it, page-aligned by the mapping.
         unsafe {
             let header = &mut *header_ptr(ptr);
@@ -135,7 +135,7 @@ impl FramePipe {
             ));
         }
         let ptr = map(&fd, len)?;
-        // Safety: the magic is the two ends' one handshake. A reader that
+        // SAFETY: the magic is the two ends' one handshake. A reader that
         // finds any other bytes in the header's first field is looking at a
         // segment that is not speaking this protocol.
         unsafe {
@@ -171,6 +171,8 @@ impl FramePipe {
             ptr,
             len,
         };
+        // SAFETY: the memfd was sized to `len` and mapped writable; the
+        // header sits inside the mapping.
         unsafe {
             let header = &mut *header_ptr(pipe.ptr);
             header.magic = MAGIC;
@@ -190,29 +192,34 @@ impl FramePipe {
 
     /// Frames the pipe holds at once.
     pub fn capacity(&self) -> u32 {
+        // SAFETY: `self.ptr` is a live mapping of at least `FRAMES_AT`
+        // bytes, so the header pointer is inside it.
         unsafe { (*header_ptr(self.ptr)).capacity }
     }
 
     /// The width every slot carries.
     pub fn width(&self) -> u32 {
+        // SAFETY: as `capacity`: the header is inside the live mapping.
         unsafe { (*header_ptr(self.ptr)).width }
     }
 
     /// The height every slot carries.
     pub fn height(&self) -> u32 {
+        // SAFETY: as `capacity`: the header is inside the live mapping.
         unsafe { (*header_ptr(self.ptr)).height }
     }
 
     /// How many frames have been published, whatever the capacity: the
     /// writer's own count of itself.
     pub fn sequence(&self) -> u32 {
+        // SAFETY: as `capacity`: the header is inside the live mapping.
         unsafe { (*header_ptr(self.ptr)).sequence.load(Ordering::Acquire) }
     }
 
     /// The slot `index` names, for writing: the bytes a renderer renders
     /// into. `None` when the index is past the capacity.
     pub fn slot_mut(&mut self, index: u32) -> Option<&mut [u8]> {
-        // Safety: `slot_ptr` bounds the pointer against the header the two
+        // SAFETY: `slot_ptr` bounds the pointer against the header the two
         // ends agreed on, and the mapping is writable.
         unsafe {
             self.slot_ptr(index)
@@ -222,7 +229,7 @@ impl FramePipe {
 
     /// The slot `index` names, for reading.
     pub fn slot(&self, index: u32) -> Option<&[u8]> {
-        // Safety: as `slot_mut`, for reading.
+        // SAFETY: as `slot_mut`, for reading.
         unsafe {
             self.slot_ptr(index)
                 .map(|(ptr, len)| std::slice::from_raw_parts(ptr, len))
@@ -232,6 +239,8 @@ impl FramePipe {
     /// Publish slot `index`: the acquire/release turnstile. A frame is
     /// bytes until this, and a reader after it is reading a whole one.
     pub fn publish(&mut self, index: u32) {
+        // SAFETY: the header is inside the live writable mapping, and the
+        // atomic sequence is the field the protocol shares.
         unsafe {
             let header = &*header_ptr(self.ptr);
             let sequence = header.sequence.load(Ordering::Acquire);
@@ -264,7 +273,7 @@ impl FramePipe {
     /// The mapping's length covers every slot the header names; the caller
     /// only receives a pointer inside it.
     unsafe fn slot_ptr(&self, index: u32) -> Option<(*mut u8, usize)> {
-        // Safety: the mapping's length covers every slot the header names;
+        // SAFETY: the mapping's length covers every slot the header names;
         // the header is inside it; the pointer returned stays inside it.
         unsafe {
             let header = &*header_ptr(self.ptr);
@@ -300,7 +309,7 @@ unsafe fn header_ptr(ptr: *mut u8) -> *mut Header {
 }
 
 fn map(fd: &rustix::fd::OwnedFd, len: usize) -> Result<*mut u8, String> {
-    // Safety: the fd is an open shm or memfd whose length covers `len`; the
+    // SAFETY: the fd is an open shm or memfd whose length covers `len`; the
     // mapping is shared and read-write, the two things the protocol is.
     unsafe {
         let ptr = rustix::mm::mmap(

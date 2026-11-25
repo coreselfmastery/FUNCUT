@@ -34,7 +34,8 @@ other sense script: one JSON spec in, one JSON object out.
 | `describe` | one file: identity, YAMNet labels, CLAP embedding + best-matching description, Sound Sense measurements, loudness/quality, roles, sync offset, trim advice |
 | `index` | the whole shelf, one record per file, cached by size, mtime and model version |
 | `rank` | a creative description and a role: candidates scored by CLAP fused with the measured role fit |
-| `selftest` | twelve checks, no network: the filterbank, the front-end, the weights, and - when models are installed - that YAMNet calls a whoosh a whoosh |
+| `plan` | every signal at once — the beats' emphasis and pauses, the visual events and cuts, the arc's acts, the bed's structure — into a per-moment accent design, held silences and the music plan, each choice with its evidence |
+| `selftest` | nineteen checks, no network: the filterbank, the front-end, the planner, and - when models are installed - that YAMNet calls a whoosh a whoosh |
 
 `numpy` and `onnxruntime` are used when installed and never required, the
 same rule `voice_quality.py` follows. Without them every tool still answers,
@@ -212,17 +213,26 @@ moves.
 
 ## 7. What is wired, and what is not
 
-Wired and tested: the three tools, the cache, the fused ranking with the
-measured weights, the graceful absence path, and twelve selftest checks.
+Wired and tested: the four tools (registered as the `sense_sound_model`
+MCP tool, on the Director's default allowlist), the cache, the fused
+ranking with the measured weights, the graceful absence path, and
+nineteen selftest checks (the ONNX checks skip cleanly when numpy is
+absent). The Director skill teaches all four actions: Phase 18 runs
+`plan`, `prompts/sfx_design.md` is the doctrine and
+`prompts/tool_reference.md` carries the full schema.
 
 Not wired, and this is the honest gap:
 
-1. **The Rust side.** `concat-mcp` registers the sense scripts in
-   `src/crates/concat-mcp/src/sense.rs`; `sound_model.py` is not registered
-   there yet, so the Director cannot call it. This is additive: one more
-   tool registration beside `sound_sense.py`'s.
-2. **The Director's selection path.** `AUTO EDIT` currently ranks sounds from
-   shelf metadata. The ranking above is not consumed by it yet.
+1. **AUTO EDIT's own sfx stage.** `AUTO EDIT` (the one-click spine)
+  still ranks sounds from shelf metadata and places on the manifest's
+  `syncAt`; the Director skill's measured path (above) is the agent's
+  route. Feeding AUTO EDIT's sfx stage through `rank` + `plan` +
+  `check_placement` is the remaining integration.
+2. **The BGM candidate page.** `bgm_search` still ranks text over
+  title/artist/category; the shelves' audio-aware candidate ranking
+  (CLAP over fetched candidates) is taught to the Director in
+  `prompts/music_and_duck.md` but not built into the shelf's own
+  search.
 3. **The download UI.** The settings sheet already has exactly the row this
    needs: `ModelData` in `src/crates/concat/ui/dialogs/settings.slint` (id,
    name, note, size, accuracy pips, installed, active, downloading, progress,

@@ -450,7 +450,11 @@ always win; maestro refines how a floor is met, never lowers it. See
   black opening, a push-in on every *other* shot for static cuts - issuing
   no edit at all on a cut that measured clean. The same fixed spine is
   callable headlessly as the `auto_edit` MCP tool; it edits a sibling
-  copy by default and returns the terminal state and receipt.
+  copy by default and returns the terminal state and receipt. The plan it
+  writes also carries a `youtube` package: the creative profile, five
+  title directions, three thumbnail `frameAt` concepts, up to three
+  transcript-backed Short windows with measured scores, and a
+  section-by-section retention map. See [docs/YOUTUBE.md](YOUTUBE.md).
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
   --mcp auto`), a 1200-second call timeout for patient work, servers
   allow-listed to `funcut`, and the per-tool allowlist active in the

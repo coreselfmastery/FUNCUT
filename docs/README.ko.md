@@ -1,13 +1,15 @@
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
+  <img src="https://cdn.jsdelivr.net/gh/coreselfmastery/FUNCUT@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
 </p>
 
 <h1 align="center">Concat</h1>
 <h3 align="center">Linux용 무료 오픈 소스 CapCut 대체재.</h3>
 
+<p align="center"><strong>FUNCUT</strong> is a fork of <a href="https://github.com/jub0t/Concat">Concat</a>. Downloads, releases and issue reports for this build live on the <a href="https://github.com/coreselfmastery/FUNCUT">FUNCUT repository</a>; this translation is inherited from upstream.</p>
+
 <div align="center">
 
-<img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
+<img src="https://cdn.jsdelivr.net/gh/coreselfmastery/FUNCUT@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
   <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
@@ -18,9 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="https://www.star-history.com/jub0t/concat"><img src="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" alt="Star History Rank" height="62" /></a>
+  <a href="https://www.star-history.com/coreselfmastery/FUNCUT"><img src="https://api.star-history.com/badge?repo=coreselfmastery/FUNCUT&type=rank" alt="Star History Rank" height="62" /></a>
   <a href="https://trendshift.io/repositories/191379?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-191379" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/191379/daily?language=Rust" alt="jub0t%2FConcat | Trendshift" width="250" height="55"/></a>
-  <a href="https://concatenate.pages.dev/#download"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
 </p>
 
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · **🇰🇷 한국어** · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
@@ -62,10 +64,10 @@ Concat은 Linux용 무료 오픈 소스 비디오 편집기이자 CapCut의 대�
 
 두 가지 길:
 
-1. **[웹사이트](https://concatenate.pages.dev/#download)** 가 당신의 기기에 맞는 빌드를 건네줍니다. 여기서 시작하세요.
+1. **[웹사이트](https://github.com/coreselfmastery/FUNCUT/releases)** 가 당신의 기기에 맞는 빌드를 건네줍니다. 여기서 시작하세요.
 2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** 에는 모든 플랫폼의 모든 빌드가 설치 프로그램, 패키지, 체크섬과 함께 있습니다. 직접 고르고 싶을 때.
 
-Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니다. 발견하면 [알려주세요](https://github.com/jub0t/Concat/issues).
+Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니다. 발견하면 [알려주세요](https://github.com/coreselfmastery/FUNCUT/issues).
 
 **플랫폼**
 
@@ -82,18 +84,18 @@ Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니
 > [!IMPORTANT]
 > 가장 좋은 기여는 [Releases](https://github.com/coreselfmastery/FUNCUT/releases) 페이지에서 빌드를 받아 써 보는 것입니다: 어디서 깨지는지 찾고, 어디가 더 나아질 수 있는지 말해 주세요.
 >
-> 코드를 쓸 준비가 되셨나요? [CONTRIBUTING.md](../CONTRIBUTING.md)에 설정, 트리 구조, 실행할 검사, 기여의 라이선스가 적혀 있습니다. 스크립트, 서비스, 에이전트에서 Concat을 다루시나요? [개발자 문서](https://concatenate.pages.dev/docs)에 Concat API와 전송 방식(JSON-RPC, gRPC)이 있습니다. 프로젝트는 [이 Discussion](https://github.com/jub0t/Concat/discussions/3)에서 공개되었습니다.
+> 코드를 쓸 준비가 되셨나요? [CONTRIBUTING.md](../CONTRIBUTING.md)에 설정, 트리 구조, 실행할 검사, 기여의 라이선스가 적혀 있습니다. 스크립트, 서비스, 에이전트에서 Concat을 다루시나요? [개발자 문서](https://concatenate.pages.dev/docs)에 Concat API와 전송 방식(JSON-RPC, gRPC)이 있습니다. 프로젝트는 [이 Discussion](https://github.com/coreselfmastery/FUNCUT/discussions/3)에서 공개되었습니다.
 > 
 > 기여자는 Discord 서버에서 `@Contributor` 역할을 받을 수 있습니다. 요청만 하세요.
 
 ## 스타 추이
 
-<a href="https://www.star-history.com/?repos=jub0t%2Fconcat&type=date&releases=&legend=bottom-right">
- <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jub0t/concat&type=date&legend=bottom-right" />
+<a href="https://www.star-history.com/?repos=coreselfmastery%2FFUNCUT&type=date&releases=&legend=bottom-right">
+ <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=coreselfmastery/FUNCUT&type=date&legend=bottom-right" />
 </a>
 
 ## 기여자
 
-<a href="https://github.com/jub0t/Concat/graphs/contributors">
-  <img alt="Contributors" src="https://contrib.rocks/image?repo=jub0t/concat">
+<a href="https://github.com/coreselfmastery/FUNCUT/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=coreselfmastery/FUNCUT">
 </a>

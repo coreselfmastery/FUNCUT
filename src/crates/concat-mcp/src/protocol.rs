@@ -1227,10 +1227,13 @@ mod tests {
         // sit between the remove, which is what the unsafe blocks say
         // (as in `the_environment_switches_are_read`).
         let _held = ENV.lock().expect("the environment's lock");
+        // SAFETY: the test holds `ENV`, so no other test reads or writes
+        // the process environment across these two calls.
         unsafe {
             std::env::set_var("CONCAT_MCP_ALLOW", list);
         }
         let serving = Serving::from_environment();
+        // SAFETY: the same `ENV` guard is still held.
         unsafe {
             std::env::remove_var("CONCAT_MCP_ALLOW");
         }
@@ -1296,6 +1299,7 @@ mod tests {
         // small enough to hold in context. `all` takes the whole
         // catalogue back.
         let _held = ENV.lock().expect("the environment's lock");
+        // SAFETY: the test holds `ENV` for the whole switch.
         unsafe {
             std::env::remove_var("CONCAT_MCP_ALLOW");
         }
@@ -1305,11 +1309,13 @@ mod tests {
             .map(|name| (*name).to_owned())
             .collect();
         assert_eq!(serving.allowed, Some(names));
+        // SAFETY: the same `ENV` guard is still held.
         unsafe {
             std::env::set_var("CONCAT_MCP_ALLOW", "all");
         }
         let serving = Serving::from_environment();
         assert_eq!(serving.allowed, None, "`all` serves everything");
+        // SAFETY: the same `ENV` guard is still held.
         unsafe {
             std::env::remove_var("CONCAT_MCP_ALLOW");
         }
@@ -1363,11 +1369,14 @@ mod tests {
         // tests are single-threaded through the runner's own guarantees
         // around these lines, which is what the unsafe blocks say.
         let _held = ENV.lock().expect("the environment's lock");
+        // SAFETY: the test holds `ENV`, so no other test reads or writes
+        // the process environment across these calls.
         unsafe {
             std::env::set_var("CONCAT_MCP_READ_ONLY", "1");
             std::env::set_var("CONCAT_MCP_ALLOW", "timeline_read");
         }
         let serving = Serving::from_environment();
+        // SAFETY: the same `ENV` guard is still held.
         unsafe {
             std::env::remove_var("CONCAT_MCP_READ_ONLY");
             std::env::remove_var("CONCAT_MCP_ALLOW");

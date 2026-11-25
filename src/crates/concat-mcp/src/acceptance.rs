@@ -519,6 +519,7 @@ pub fn check(
         },
         calls: answered,
         failure: (!failure.is_empty()).then_some(failure),
+        elapsed_ms: None,
     };
     let receipt = AcceptanceReceipt::new(
         check.project,

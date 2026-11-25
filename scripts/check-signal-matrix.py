@@ -11,7 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOGUE = ROOT / "src/crates/concat-mcp/sense/voice_signals.py"
-MATRIX = ROOT / ".claude/skills/funcut-director/prompts/signal_matrix.md"
+SKILL_DIR = ROOT / ".claude/skills/funcut-director"
+MATRIX = SKILL_DIR / "prompts/signal_matrix.md"
 TOOLS_RS = ROOT / "src/crates/concat-mcp/src/tools.rs"
 
 
@@ -50,6 +51,15 @@ def main() -> int:
         for entry in entries
     }
     families = {entry.get("family") for entry in entries if isinstance(entry.get("family"), str)}
+    unmapped = sorted(families - set(family_alias))
+    if unmapped:
+        # The map is hand-kept; a family the map does not know ships
+        # untaught and uncheckable, which is exactly how drift starts.
+        print(
+            "family_alias does not cover every runtime family: " + ", ".join(unmapped),
+            file=sys.stderr,
+        )
+        return 1
     matrix_text = MATRIX.read_text(encoding="utf-8")
     rows = re.findall(
         r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|",
@@ -108,6 +118,41 @@ def main() -> int:
             "declared counts do not match runtime catalogue: "
             f"declared {declared.group(1)} readings/{declared.group(2)} families, "
             f"actual {len(expected)} readings/{len(families)} families"
+        )
+
+    # The consumer guards: a reading with no mapped decision is a
+    # dashboard row, and a family no prompt teaches is a reading the
+    # Director was never told how to spend.
+    decision_rows = re.findall(
+        r"^\|\s*\d+\s*\|\s*`([^`]+)`\s*\|\s*`[^`]+`\s*\|\s*([^|]+)\|",
+        matrix_text,
+        flags=re.MULTILINE,
+    )
+    decisions = {reading: decision.strip() for reading, decision in decision_rows}
+    placeholder = re.compile(r"^(?:-+|tbd|todo|none|n/?a|\?)$", re.IGNORECASE)
+    for reading, decision in decisions.items():
+        if not decision or placeholder.match(decision):
+            errors.append(f"{reading}: the decision column is empty - a reading with no decision is a dashboard row")
+        elif len(decision.split()) < 3:
+            errors.append(f"{reading}: the decision '{decision}' is too thin to spend")
+    taught: dict[str, list[str]] = {}
+    for path in SKILL_DIR.rglob("*.md"):
+        if path.name == MATRIX.name:
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        for family in families:
+            spent = (
+                family_alias.get(family, "").lower() in text
+                or family.lower() in text
+            )
+            if spent:
+                taught.setdefault(family, []).append(path.name)
+    untaught = sorted(family for family in families if family not in taught)
+    if untaught:
+        errors.append(
+            "families no prompt or SKILL.md teaches: " + ", ".join(untaught)
+            + " (a family the skill never names is a reading the Director"
+            " cannot spend)"
         )
 
     if errors:

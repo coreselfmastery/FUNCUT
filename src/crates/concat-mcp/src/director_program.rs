@@ -13784,7 +13784,8 @@ mod tests {
         let first = (music.next)(log.as_slice()).expect("the bed is asked for");
         assert_eq!(first.tool, "sense_sound_model");
         assert_eq!(first.arguments["kind"], json!("bgm"));
-        log.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
+        log.push(json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }));
         assert_eq!(
             (music.next)(log.as_slice())
                 .map(|call| call.tool)
@@ -16180,7 +16181,8 @@ mod tests {
         // The model is not installed: the shelf takes the accent instead,
         // and every peak after this one is the shelf's too.
         let mut after = log.clone();
-        after.push(json!({ "tool": "generate", "ok": false, "model": "absent" }));
+        after.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                          "generated": false }));
         let shop = (sfx.next)(&after).expect("the shelf answers when the model is absent");
         assert_eq!(shop.tool, "sounds_search");
         // The calm line's peak is skipped: the shelf's answer for the loud

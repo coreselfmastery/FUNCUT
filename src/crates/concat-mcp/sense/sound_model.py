@@ -23,7 +23,7 @@ Neither model decides where a sound goes or how loud it is. Timing and level
 come from `sound_sense.py`; the Director decides. The models rank candidates
 and name what is in the file.
 
-THE THREE TOOLS
+THE FOUR TOOLS
 
   describe    one file: identity, YAMNet labels, CLAP embedding and a
               description matched from a phrase bank, the Sound Sense
@@ -35,6 +35,14 @@ THE THREE TOOLS
   rank        a creative description and a role: candidates scored by CLAP
               similarity fused with the measured role fit, using weights
               fitted on the 530 shipped sounds (see docs/SOUND-MODEL.md).
+  generate    words into a short sound or a music bed, with one of the
+              three downloaded generators (TinyAudio-MF, Stable Audio
+              Open Small, TinyMusician). The reply always answers: a
+              model that is not installed, a licence a monetized cut may
+              not spend (TinyMusician ships no licence file), or a
+              generation that comes back near-silent all reply without a
+              `path`, so the Director's stages shop the shelf instead of
+              shipping no bed and no accents (see docs/SOUND-GENERATION.md).
 
 MODELS ARE OPTIONAL, AND SAY SO
 
@@ -1427,6 +1435,66 @@ def selftest(spec=None):
     check("role weights cover the six roles", len(ROLE_WEIGHT) == 6, str(sorted(ROLE_WEIGHT)))
     check("transitions trust the model alone", ROLE_WEIGHT["quick_transition"] == 0.0)
 
+    # The generator's own contract: an absent model is an answer the
+    # Director's stages can read from the run log (ok: true, no `path`),
+    # never an error that ends the stage warned with no bed and no
+    # accents.
+    bogus, bogus_why = _generator({"kind": "not-a-kind"})
+    check("an unknown kind is an error, not an answer",
+          bogus is None and bogus_why.get("ok") is False, str(bogus_why))
+    resolved, absent_why = _generator({"kind": "sfx-small", "models": "/nowhere"})
+    if absent_why is not None:
+        check("an absent generator answers ok with no path",
+              absent_why.get("ok") is True and absent_why.get("model") == "absent"
+              and "path" not in absent_why and absent_why.get("generated") is False,
+              str(absent_why.get("reason") or absent_why))
+        reply = generate_sound({"kind": "sfx-small", "prompt": "a door slams",
+                                "models": "/nowhere"})
+        check("generate without a model still answers",
+              reply.get("ok") is True and reply.get("model") == "absent"
+              and "path" not in reply, str(reply.get("reason") or reply))
+    else:
+        check("generator present: absent-path skipped", True,
+              "the model files are installed")
+    check("generate without a prompt is an error",
+          generate_sound({"kind": "sfx-small", "prompt": "  "}).get("ok") is False
+          or _generator({"kind": "sfx-small"})[1] is not None,
+          "the empty prompt is refused before anything is written")
+    check("slug keeps words and drops the rest",
+          _slug("Hello, World! 42") == "hello-world-42", _slug("Hello, World! 42"))
+    check("seconds clamp to the model's own span",
+          (_gen_seconds({"seconds": 99}, {"seconds": 2.0, "maxSeconds": 4.0}) == 4.0
+           and _gen_seconds({}, {"seconds": 2.0, "maxSeconds": 4.0}) == 2.0
+           and _gen_seconds({"seconds": 0.1}, {"seconds": 2.0, "maxSeconds": 4.0}) == 0.5),
+          str(_gen_seconds({"seconds": 99}, {"seconds": 2.0, "maxSeconds": 4.0})))
+
+    # The licence gate: TinyMusician ships no licence file upstream, so a
+    # monetized project (the brief the API's own gate reads) must not
+    # spend it - the reply routes the Director to the FreePD shelf.
+    with tempfile.TemporaryDirectory() as project:
+        Path(project, "creative-brief.json").write_text(
+            json.dumps({"monetized": True}), encoding="utf-8")
+        check("the monetized brief is read",
+              _project_is_monetized({"project": project}) is True, project)
+        bgm_row = GEN_KINDS["bgm"]
+        refusal = _licence_refusal({"project": project}, "bgm", bgm_row)
+        check("a monetized cut cannot spend TinyMusician",
+              refusal is not None and refusal.get("model") == "refused"
+              and "path" not in refusal, str(refusal or "no refusal"))
+        check("a non-monetized cut may", 
+              _licence_refusal({"project": "/nowhere"}, "bgm", bgm_row) is None,
+              "no brief, no gate")
+        check("MIT accents pass the gate",
+              _licence_refusal({"project": project}, "sfx-small",
+                               GEN_KINDS["sfx-small"]) is None,
+              "MIT permits commercial use")
+        Path(project, "creative-brief.json").write_text(
+            json.dumps({"monetized": False}), encoding="utf-8")
+        check("a brief that says not monetized is obeyed",
+              _project_is_monetized({"project": project}) is False
+              and _licence_refusal({"project": project}, "bgm", bgm_row) is None,
+              "the brief's own word wins")
+
     models = Models(spec)
     check("models are absent without files or present with them",
           models.state in ("ready", "absent"), models.state or models.reason or "")
@@ -1525,11 +1593,22 @@ def _slug(text, limit=48):
 
 
 def _generator(spec):
-    """The kind's table row, or the reason it cannot run."""
+    """The kind's table row, or the reason it cannot run.
+
+    An absent generator is an ANSWER, not an error: the reply says
+    `model: "absent"` with `ok: true` the way the reader's own degrade
+    path does, because the Director's music and SFX stages read this
+    reply from the run log and shop the shelf when it carries no `path`.
+    A refusal phrased as an error never reaches that log - the runner
+    only records replies, not errors - and a stage that never sees the
+    absence ends warned, with no bed and no accents, which is a
+    regression the shelf was supposed to prevent.
+    """
     kind = str(spec.get("kind") or "sfx-small")
     row = GEN_KINDS.get(kind)
     if row is None:
-        return None, {"ok": False, "error": f"unknown kind {kind!r}: one of {sorted(GEN_KINDS)}"}
+        return None, {"tool": "generate", "ok": False,
+                      "error": f"unknown kind {kind!r}: one of {sorted(GEN_KINDS)}"}
     if np is None or ort is None or Tokenizer is None:
         missing = []
         if np is None:
@@ -1540,18 +1619,23 @@ def _generator(spec):
             missing.append("tokenizers")
         return None, {
             "tool": "generate",
-            "ok": False,
+            "ok": True,
             "model": "absent",
-            "error": "the generators need " + ", ".join(missing)
+            "generated": False,
+            "kind": kind,
+            "reason": "the generators need " + ", ".join(missing)
             + " (pip install numpy onnxruntime tokenizers)",
+            "missing": missing,
         }
     absent = [name for name in row["files"] if _model_file(spec, name) is None]
     if absent:
         return None, {
             "tool": "generate",
-            "ok": False,
+            "ok": True,
             "model": "absent",
-            "error": f"the {kind} model is not downloaded: missing {', '.join(absent)} "
+            "generated": False,
+            "kind": kind,
+            "reason": f"the {kind} model is not downloaded: missing {', '.join(absent)} "
             "(Settings > Models, or models_download)",
             "missing": absent,
         }
@@ -1799,17 +1883,69 @@ def _gen_musician(spec, prompt, seconds, seed, threads):
     return audio[: int(seconds * rate)], rate
 
 
+def _project_is_monetized(spec):
+    """The project's own word, from the same brief the API's licence gate
+    reads (`project_is_monetized`): `<project>/creative-brief.json`, the
+    `monetized` field. No brief, or no file, means not monetized - the
+    same default the API applies.
+    """
+    project = spec.get("project")
+    if not project:
+        return False
+    try:
+        brief = json.loads(
+            (Path(project) / "creative-brief.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return False
+    return bool(brief.get("monetized") is True)
+
+
+def _licence_refusal(spec, kind, row):
+    """The licence a monetized cut may not spend, spent anyway.
+
+    TinyMusician ships no licence file upstream, so a monetized edit
+    must not carry its output - the models table's own promise is that
+    "an unattended run never spends it on a monetized cut". The refusal
+    is an answer (`ok: true`, no `path`) so the Director's music stage
+    shops the FreePD shelf instead of ending the stage warned. MIT and
+    the Stability AI Community Licence permit commercial use (the
+    latter under its revenue threshold and terms, which the reply
+    carries so the operator sees them), so those two pass.
+    """
+    licence = str(row.get("licence") or "")
+    if kind == "bgm" and "unclear" in licence.lower() and _project_is_monetized(spec):
+        return {
+            "tool": "generate",
+            "ok": True,
+            "model": "refused",
+            "generated": False,
+            "kind": kind,
+            "licence": licence,
+            "reason": "the TinyMusician weights carry no licence file, so a "
+            "monetized edit cannot ship its output: shopping the FreePD "
+            "shelf instead (bgm_search, source freepd)",
+        }
+    return None
+
+
 def generate_sound(spec):
     """Write a short sound or a music bed from words.
 
     The kind names the model, the prompt names the sound, and the file
     lands where the caller can import it: inside `project` when one is
     named, so an auto edit never writes outside the folder it edits.
+    A model that is absent, a licence a monetized cut may not spend, or
+    a generation that comes back silent all answer without a `path`, so
+    the Director shops the shelf rather than shipping nothing.
     """
     resolved, refusal = _generator(spec)
     if refusal is not None:
         return refusal
     kind, row = resolved
+    licence_refusal = _licence_refusal(spec, kind, row)
+    if licence_refusal is not None:
+        return licence_refusal
     prompt = str(spec.get("prompt") or "").strip()
     if not prompt:
         return {
@@ -1833,6 +1969,29 @@ def generate_sound(spec):
     else:
         audio, rate = _gen_musician(spec, prompt, seconds, seed, threads)
         channels = 1
+    # The generated audio is checked before it is normalised, because a
+    # normaliser lifts any level to 0.89: a model that came back
+    # near-silent (its loudest sample 40 dB under full scale) wrote
+    # nothing a cut can spend, and the answer carries no `path`, so the
+    # Director shops the shelf rather than placing a silent file and
+    # calling the moment accented.
+    raw_peak = float(np.abs(audio).max()) if getattr(audio, "size", 0) else 0.0
+    if raw_peak < 0.02:
+        return {
+            "tool": "generate",
+            "ok": True,
+            "model": row["model"],
+            "generated": False,
+            "kind": kind,
+            "licence": row["licence"],
+            "prompt": prompt,
+            "reason": f"the generator wrote near-silence (peak {raw_peak:.4f}): "
+            "not placed - shopping the shelf instead",
+            "seed": seed,
+            "steps": steps,
+            "threads": threads,
+            "elapsedSec": _r(time.time() - started, 2),
+        }
     audio = _normalise(np.asarray(audio, np.float32), rate)
 
     project = spec.get("project")

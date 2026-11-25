@@ -194,7 +194,6 @@ impl Capability {
     pub fn of_tool(tool: &str) -> Option<Capability> {
         Some(match tool {
             "transcribe"
-            | "analysis_wait"
             | "voice_signals"
             | "emotion"
             | "sense_audio_repair"
@@ -589,9 +588,12 @@ impl AcceptanceReceipt {
                     // custom edit_apply batch for per-group styles and
                     // word accents instead of captions_add. Its stage is
                     // the reliable capability identity for that call.
-                    let stage_capability = record.stage == Stage::Captions
+                    let stage_capability = (record.stage == Stage::Captions
                         && tool == "edit_apply"
-                        && capability == Capability::Captions;
+                        && capability == Capability::Captions)
+                        || (record.stage == Stage::Transcribe
+                            && tool == "analysis_wait"
+                            && capability == Capability::Measurement);
                     if (named_capability || stage_capability) && !tools.contains(tool) {
                         tools.push(tool.clone());
                     }
@@ -1961,6 +1963,35 @@ mod tests {
                 Capability::Delivery,
             ]
         );
+    }
+
+    #[test]
+    fn analysis_wait_is_attributed_to_the_stage_that_owns_the_job() {
+        let preflight = [StageRecord::completed(
+            Stage::Preflight,
+            vec!["analysis_wait".to_owned()],
+        )];
+        let receipt = AcceptanceReceipt::new("/p", "timeline", preflight, Vec::new(), Vec::new());
+        let measurement = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Measurement)
+            .expect("measurement capability is listed");
+        assert!(!measurement.consumed);
+
+        let transcription = [StageRecord::completed(
+            Stage::Transcribe,
+            vec!["analysis_wait".to_owned()],
+        )];
+        let receipt =
+            AcceptanceReceipt::new("/p", "timeline", transcription, Vec::new(), Vec::new());
+        let measurement = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Measurement)
+            .expect("measurement capability is listed");
+        assert!(measurement.consumed);
+        assert_eq!(measurement.tools, vec!["analysis_wait".to_owned()]);
     }
 
     #[test]

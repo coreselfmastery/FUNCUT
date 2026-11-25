@@ -454,7 +454,7 @@ fn rewrite_media_paths(destination: &Path, source: &Path) -> Result<(), ApiError
 /// `run_over` is the run's own end - the watch leaves with it, so a
 /// finished run never keeps a thread parked on its caller's flag.
 fn watch_client_cancellation<'env>(
-    scope: &std::thread::Scope<'env, '_>,
+    scope: &'env std::thread::Scope<'env, '_>,
     client: &'env AtomicBool,
     lanes: &Arc<AtomicBool>,
     run_over: &Arc<AtomicBool>,
@@ -494,6 +494,9 @@ mod tests {
         let lanes = Arc::new(AtomicBool::new(false));
         let run_over = Arc::new(AtomicBool::new(false));
         std::thread::scope(|scope| {
+            // Ensure the watcher is released even if the assertion below
+            // fails: a failing test must not hang the scoped join.
+            let _run_ends = RunOverOnDrop(Arc::clone(&run_over));
             watch_client_cancellation(scope, &client, &lanes, &run_over);
             // The client hangs up mid-run: the watch carries the rise to
             // the lanes within its poll budget.
@@ -506,7 +509,6 @@ mod tests {
                 lanes.load(Ordering::Relaxed),
                 "the lanes were never told the client hung up"
             );
-            run_over.store(true, Ordering::Relaxed);
         });
     }
 

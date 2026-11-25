@@ -674,7 +674,10 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
             .iter()
             .find(|set| set["id"] == json!(id))
             .unwrap_or_else(|| panic!("{id} is not in {listed}"));
-        assert!(set["licence"].as_str().is_some_and(|said| !said.is_empty()), "{set}");
+        assert!(
+            set["licence"].as_str().is_some_and(|said| !said.is_empty()),
+            "{set}"
+        );
         assert!(set["downloaded"].is_boolean(), "{set}");
     }
     let bed = sound
@@ -682,7 +685,9 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
         .find(|set| set["id"] == json!("bgm"))
         .expect("the music set");
     assert!(
-        bed["licence"].as_str().is_some_and(|said| said.contains("CC-BY-NC")),
+        bed["licence"]
+            .as_str()
+            .is_some_and(|said| said.contains("CC-BY-NC")),
         "the music bed's licence is not the one it carries: {bed}"
     );
 

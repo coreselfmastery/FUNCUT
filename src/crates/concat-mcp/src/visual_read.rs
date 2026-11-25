@@ -56,6 +56,23 @@ pub struct VisualRead {
     pub scene_cuts: usize,
     /// The sheet's combined score: sharpness, noise, bars and motion.
     pub visual_score: Option<f64>,
+    /// The film-shot classifier's word for the shot, with its
+    /// confidence, when the door is installed: the labelled reading the
+    /// classical scale's three words cannot name - an `extreme_wide`
+    /// the geometry called merely wide.
+    pub shot_type: Option<(String, f64)>,
+    /// How much of the frame the depth door called near, with its
+    /// verdict: a deep shot establishes, a shallow one isolates, and
+    /// the drift a shot can carry differs by that room.
+    pub depth: Option<(f64, String)>,
+    /// The action door's top class with its score, when installed: what
+    /// the clip shows happening, read by a model rather than guessed
+    /// from the query's words.
+    pub action: Option<(String, f64)>,
+    /// The aesthetic door's own score, when installed - parsed here
+    /// where the choice can spend it, beside the sheet's combined
+    /// `visual_score` it already feeds.
+    pub aesthetic: Option<f64>,
 }
 
 impl VisualRead {
@@ -72,6 +89,7 @@ impl VisualRead {
         let quality = row.get("quality");
         let scale = row.get("shotScale");
         let saliency = row.get("saliency");
+        let models = row.get("models");
         Some(Self {
             path,
             motion_peak: motion.and_then(|row| number(&row["peakAt"])),
@@ -113,6 +131,33 @@ impl VisualRead {
                 .and_then(|scene| scene["cuts"].as_u64())
                 .unwrap_or(0) as usize,
             visual_score: number(&row["visualScore"]),
+            shot_type: models.and_then(|row| {
+                let said = row.get("shotType")?;
+                Some((
+                    said.get("label")?.as_str()?.to_owned(),
+                    said.get("p").and_then(Value::as_f64).unwrap_or(0.0),
+                ))
+            }),
+            depth: models.and_then(|row| {
+                let said = row.get("depth")?;
+                Some((
+                    said.get("nearShare")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.5),
+                    said.get("verdict")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ))
+            }),
+            action: models.and_then(|row| {
+                let said = row.get("action")?;
+                Some((
+                    said.get("label")?.as_str()?.to_owned(),
+                    said.get("score").and_then(Value::as_f64).unwrap_or(0.0),
+                ))
+            }),
+            aesthetic: models.and_then(|row| row.get("aesthetic").and_then(Value::as_f64)),
         })
     }
 
@@ -174,6 +219,19 @@ impl VisualRead {
     /// the read could not place it.
     pub fn shot_scale(&self) -> Option<concat_motion::continuity::ShotScale> {
         use concat_motion::continuity::ShotScale as Scale;
+        // The classifier's labelled word outranks the classical three
+        // when the door is installed: an `extreme_wide` the geometry
+        // called merely wide is the finer reading, and the one the
+        // ladder should walk. A label the ladder does not know falls
+        // through to the classical reading rather than discarding both.
+        if let Some((label, _)) = &self.shot_type {
+            match label.as_str() {
+                "extreme_wide" | "wide" => return Some(Scale::Wide),
+                "extreme_close_up" | "close_up" => return Some(Scale::CloseUp),
+                "medium" => return Some(Scale::Medium),
+                _ => {}
+            }
+        }
         match self.scale.as_str() {
             "wide" => Some(Scale::Wide),
             "medium" => Some(Scale::Medium),
@@ -280,6 +338,22 @@ pub const CONSUMERS: &[(&str, &str)] = &[
         "visual_score",
         "the stock ranking: the sheet's combined score breaks the choice",
     ),
+    (
+        "shot_type",
+        "the scale the ladder walks: the classifier's labelled word outranks the classical three when the door is installed",
+    ),
+    (
+        "depth",
+        "the drift's amount: a deep shot has room to travel, a shallow one isolates",
+    ),
+    (
+        "action",
+        "the choice's measured tiebreak: a candidate the action door could read outranks one it could not",
+    ),
+    (
+        "aesthetic",
+        "the choice's tiebreak beside the sheet's combined score, when two candidates tie on it",
+    ),
 ];
 
 #[cfg(test)]
@@ -326,6 +400,67 @@ mod tests {
     #[test]
     fn a_failed_row_is_not_a_candidate_judged_bad() {
         assert!(VisualRead::parse(&json!({ "path": "/x.mp4", "ok": false })).is_none());
+    }
+
+    /// The models block the enrich doors write: the shot-type label, the
+    /// depth share, the action class and the aesthetic score are parsed
+    /// when the doors are installed and absent when they are not - a
+    /// machine without the shelf answers with the classical readings,
+    /// never with zeros dressed as measurements.
+    #[test]
+    fn the_enrich_doors_readings_are_parsed_and_spent() {
+        // No models block: the enrich readings are all absent.
+        let bare = VisualRead::parse(&row()).expect("a measured row");
+        assert_eq!(bare.shot_type, None);
+        assert_eq!(bare.depth, None);
+        assert_eq!(bare.action, None);
+        assert_eq!(bare.aesthetic, None);
+        assert_eq!(
+            bare.shot_scale(),
+            Some(concat_motion::continuity::ShotScale::Wide),
+            "the classical scale answers when no door is installed"
+        );
+
+        let mut enriched = row();
+        enriched["models"] = json!({
+            "shotType": { "label": "medium_close_up", "p": 0.91 },
+            "depth": { "nearShare": 0.22, "verdict": "deep" },
+            "action": { "label": "running", "score": 0.74 },
+            "aesthetic": 0.63,
+        });
+        let read = VisualRead::parse(&enriched).expect("a measured row");
+        assert_eq!(
+            read.shot_type,
+            Some(("medium_close_up".to_owned(), 0.91)),
+            "{read:?}"
+        );
+        assert_eq!(read.depth, Some((0.22, "deep".to_owned())), "{read:?}");
+        assert_eq!(
+            read.action,
+            Some(("running".to_owned(), 0.74)),
+            "{read:?}"
+        );
+        assert_eq!(read.aesthetic, Some(0.63));
+
+        // The classifier's word outranks the classical three where the
+        // ladder knows it, and falls through to the classical reading
+        // where it does not: `medium_close_up` is not a word the
+        // ladder walks, so the geometry's `wide` stands.
+        assert_eq!(
+            read.shot_scale(),
+            Some(concat_motion::continuity::ShotScale::Wide),
+            "a label the ladder does not know falls through to the classical reading"
+        );
+        let mut relabelled = row();
+        relabelled["models"] = json!({
+            "shotType": { "label": "extreme_close_up", "p": 0.88 },
+        });
+        let read = VisualRead::parse(&relabelled).expect("a measured row");
+        assert_eq!(
+            read.shot_scale(),
+            Some(concat_motion::continuity::ShotScale::CloseUp),
+            "the classifier's labelled word outranks the classical wide"
+        );
     }
 
     #[test]

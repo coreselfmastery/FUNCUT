@@ -9328,13 +9328,51 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 pending_gate.sort_by(|left, right| {
                                     let class = refused(left).cmp(&refused(right));
                                     class.then_with(|| {
-                                        let left = visual_read_of(&reads, &left.local_path)
-                                            .and_then(|read| read.score())
-                                            .unwrap_or(0.0);
-                                        let right = visual_read_of(&reads, &right.local_path)
-                                            .and_then(|read| read.score())
-                                            .unwrap_or(0.0);
-                                        right.total_cmp(&left)
+                                        let read = |candidate: &StockCandidate| {
+                                            visual_read_of(&reads, &candidate.local_path)
+                                        };
+                                        let score = |candidate: &StockCandidate| {
+                                            read(candidate)
+                                                .and_then(|read| read.score())
+                                                .unwrap_or(0.0)
+                                        };
+                                        score(right)
+                                            .total_cmp(&score(left))
+                                            .then_with(|| {
+                                                // The aesthetic door's own
+                                                // score breaks the tie the
+                                                // sheet's combined score
+                                                // left: two candidates the
+                                                // sheet scored alike are
+                                                // separated by the door
+                                                // that scores beauty,
+                                                // when it is installed.
+                                                let beauty =
+                                                    |candidate: &StockCandidate| {
+                                                        read(candidate)
+                                                            .and_then(|read| read.aesthetic)
+                                                            .unwrap_or(0.0)
+                                                    };
+                                                beauty(right).total_cmp(&beauty(left)).then_with(|| {
+                                                    // The action door's answer
+                                                    // is the last tiebreak: a
+                                                    // candidate the door could
+                                                    // read outranks one it
+                                                    // could not, measured
+                                                    // beating unmeasured when
+                                                    // nothing else separates
+                                                    // them.
+                                                    let answered =
+                                                        |candidate: &StockCandidate| {
+                                                            read(candidate)
+                                                                .and_then(|read| {
+                                                                    read.action.as_ref()
+                                                                })
+                                                                .is_some()
+                                                        };
+                                                    answered(right).cmp(&answered(left))
+                                                })
+                                            })
                                     })
                                 });
                             }
@@ -9925,12 +9963,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // A wide shot has room to travel; a push reads
                             // on it where the same push on a medium is
                             // barely seen. The scale is the picture's own
-                            // reading, not the query's word.
+                            // reading, not the query's word - and when the
+                            // shot-type door is installed, its labelled
+                            // word is the finer reading the ladder walks.
                             if drift_enabled
                                 && read.and_then(VisualRead::shot_scale)
                                     == Some(concat_motion::continuity::ShotScale::Wide)
                             {
                                 drift += 0.02;
+                            }
+                            // The depth door's own reading: a deep shot
+                            // establishes and has room to travel, a
+                            // shallow one isolates and a push on it
+                            // crowds what it isolated.
+                            if drift_enabled {
+                                if let Some((near_share, _)) =
+                                    read.and_then(|read| read.depth.as_ref())
+                                {
+                                    if near_share < 0.4 {
+                                        drift += 0.01;
+                                    } else if near_share > 0.6 {
+                                        drift -= 0.01;
+                                    }
+                                }
                             }
                             let drift = round3(drift);
                             if drift_enabled {

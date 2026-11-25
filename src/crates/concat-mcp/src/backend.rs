@@ -52,6 +52,16 @@ pub trait Backend: Send {
         Vec::new()
     }
 
+    /// The mode this backend was opened in, so a run that fans its work
+    /// across lanes can open every lane the same way the run's own
+    /// backend was opened: a window backend's lanes are more connections
+    /// to the same server, a headless backend's lanes are APIs of this
+    /// process. A backend that is not one of the two real ones - a
+    /// test's - answers headless, the mode that needs no window.
+    fn mode(&self) -> Mode {
+        Mode::Headless
+    }
+
     /// The session is over: stop what is running, and wait for it.
     fn finish(&mut self) {}
 }
@@ -174,6 +184,10 @@ impl Backend for Window {
 
     fn describe(&self) -> Value {
         serde_json::json!({ "mode": "window", "address": self.client.address().to_string() })
+    }
+
+    fn mode(&self) -> Mode {
+        Mode::Window
     }
 }
 
@@ -355,5 +369,47 @@ mod tests {
         // and the project's own manifest is still on disk for the window
         // to open.
         assert!(std::path::Path::new(&path).join("concat.json").is_file());
+    }
+
+    /// The mode a backend names is the one its lanes open in: a window
+    /// connection answers window, so a run it serves mints more
+    /// connections to the same server; a headless API and a backend that
+    /// is neither of the two real ones - a test's - answer headless, the
+    /// mode that needs no window.
+    #[test]
+    fn the_mode_a_backend_names_is_the_one_its_lanes_open_in() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let home = scratch.path().to_path_buf();
+        let dirs = AppDirs {
+            config: home.join("config"),
+            data: home.join("data"),
+        };
+        let server = concat_server::Server::start(
+            concat_server::Config {
+                json: Some("127.0.0.1:0".parse().expect("an address")),
+                roots: vec![home.clone()],
+                ..concat_server::Config::default()
+            },
+            move |events| Ok(Api::with_dirs(dirs, events)),
+        )
+        .expect("a server");
+        let window = Window::connect(server.json_addr().expect("listening"), server.token())
+            .expect("a connection");
+        assert_eq!(window.mode(), Mode::Window);
+        drop(window);
+
+        // A backend that is neither of the two real ones - a test's -
+        // answers headless, the mode that needs no window; the real
+        // headless backend says the same through the same default.
+        struct Stranger;
+        impl Backend for Stranger {
+            fn call(&mut self, _request: Request) -> Result<Value, ApiError> {
+                Ok(json!({}))
+            }
+            fn describe(&self) -> Value {
+                json!({})
+            }
+        }
+        assert_eq!(Stranger.mode(), Mode::Headless);
     }
 }

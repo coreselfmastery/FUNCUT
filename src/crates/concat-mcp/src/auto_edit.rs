@@ -18,14 +18,16 @@
 //! that always works.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use concat_api::ApiError;
 use concat_director::{AutoEditState, RunOutcome, Runner};
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
-use crate::director::BackendToolCaller;
+use crate::director::{BackendToolCaller, LaneOpener};
 use crate::director_program::{auto_edit_program, auto_edit_source_from_view};
 use crate::tools::{Context, Outcome, Toolbox};
 
@@ -93,8 +95,36 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         .map_err(ApiError::invalid)?;
     let mut program = auto_edit_program(&program_source);
     let (runner, _events) = Runner::new(project.clone());
+    // The mode is read before the caller takes the backend: the lanes
+    // open the way this run's own backend was opened, so a run served by
+    // the window's server gets more connections to it and a headless
+    // run gets APIs of this process.
+    let lane_mode = backend.mode();
     let mut caller = BackendToolCaller::new(toolbox, backend, cancelled);
-    let outcome = runner.run(&mut program, &mut caller);
+    // The fan stages - the per-take repair, transcription and voice
+    // reads - run side by side here the way the window's own run runs
+    // them: every lane its own backend over a toolbox built for the
+    // run, stopped by one flag. The client's cancellation is a borrow
+    // the lanes cannot hold, so a scoped bridge carries it to their
+    // flag: a fan left running after its caller hung up is minutes of
+    // machine spent on an answer nobody will read.
+    let lane_cancel = Arc::new(AtomicBool::new(false));
+    let run_over = Arc::new(AtomicBool::new(false));
+    let outcome = std::thread::scope(|scope| {
+        watch_client_cancellation(scope, cancelled, &lane_cancel, &run_over);
+        // The guard covers the run's own frame: a panic between the
+        // calls the runner's per-call guards already catch must still
+        // end the watch, or the join below never returns.
+        let _run_ends = RunOverOnDrop(Arc::clone(&run_over));
+        let lanes = LaneOpener::new(
+            lane_mode,
+            Arc::new(Toolbox::new()),
+            Arc::clone(&lane_cancel),
+        );
+        let outcome = runner.run_with_lanes(&mut program, &mut caller, &lanes);
+        drop(_run_ends);
+        outcome
+    });
     let state = runner.state();
     let state_value = serde_json::to_value(&state).unwrap_or_else(|_| json!({}));
     // The report and the receipt are written beside the edit whatever the
@@ -418,9 +448,80 @@ fn rewrite_media_paths(destination: &Path, source: &Path) -> Result<(), ApiError
     })
 }
 
+/// Watches the client's cancellation for as long as the run goes, and
+/// carries a rise to the lanes' own flag: the context's flag is a
+/// borrow the lanes cannot hold, so a scoped thread does the holding.
+/// `run_over` is the run's own end - the watch leaves with it, so a
+/// finished run never keeps a thread parked on its caller's flag.
+fn watch_client_cancellation<'env>(
+    scope: &std::thread::Scope<'env, '_>,
+    client: &'env AtomicBool,
+    lanes: &Arc<AtomicBool>,
+    run_over: &Arc<AtomicBool>,
+) {
+    let lanes = Arc::clone(lanes);
+    let run_over = Arc::clone(run_over);
+    scope.spawn(move || {
+        while !run_over.load(Ordering::Relaxed) {
+            if client.load(Ordering::Relaxed) {
+                lanes.store(true, Ordering::Relaxed);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
+}
+
+/// Sets the run-over flag when it drops, however the run ends: a panic
+/// unwinds through the scope without running the statement that sets
+/// the flag, and the watch must leave with the run or the scope's own
+/// join hangs on it.
+struct RunOverOnDrop(Arc<AtomicBool>);
+
+impl Drop for RunOverOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_client_that_hangs_up_is_carried_to_the_lanes_flag() {
+        let client = AtomicBool::new(false);
+        let lanes = Arc::new(AtomicBool::new(false));
+        let run_over = Arc::new(AtomicBool::new(false));
+        std::thread::scope(|scope| {
+            watch_client_cancellation(scope, &client, &lanes, &run_over);
+            // The client hangs up mid-run: the watch carries the rise to
+            // the lanes within its poll budget.
+            client.store(true, Ordering::Relaxed);
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !lanes.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(
+                lanes.load(Ordering::Relaxed),
+                "the lanes were never told the client hung up"
+            );
+            run_over.store(true, Ordering::Relaxed);
+        });
+    }
+
+    #[test]
+    fn the_watch_leaves_with_the_run() {
+        let client = AtomicBool::new(false);
+        let lanes = Arc::new(AtomicBool::new(false));
+        // The run is already over: the watch must leave at once rather
+        // than park on the caller's flag - a returned scope is the proof.
+        let run_over = Arc::new(AtomicBool::new(true));
+        std::thread::scope(|scope| {
+            watch_client_cancellation(scope, &client, &lanes, &run_over);
+        });
+        assert!(!lanes.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn a_sibling_name_never_overwrites_an_earlier_edit() {

@@ -543,8 +543,8 @@ and the music bed AUTO EDIT places — see
 rerank model fetch on demand into the app data dir. Stabilization is
 classical CV — no model at all.
 
-The picture reader's shelf is thirty ONNX doors
-([VISUAL-MODELS.md](VISUAL-MODELS.md)), and four of them are in
+The picture reader's shelf is thirty ONNX models behind twenty-one door
+actions (several models share an action), and four of them are in
 `models/manifest.toml` with a real digest: `transnetv2` (MIT, 31 MB, a shot
 boundary) · `depth-anything-v2-small` (Apache-2.0, 27 MB quantized, a depth
 map) · `dinov2-small` (Apache-2.0, 24 MB quantized, a visual embedding) ·

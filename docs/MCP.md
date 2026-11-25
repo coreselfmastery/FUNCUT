@@ -432,17 +432,19 @@ return MCP `type: image` content blocks, so the model can actually look:
   creativeReady. `action "selftest"` proves the whole chain on a
   synthetic take.
 
-**The consumption layer** — the fifty-nine readings behind eight family
+**The consumption layer** — the eighty-two readings behind eight family
 tools, what the director DOES with the readings. One tool per family:
 `action` names the reading, the family's other arguments are the inputs
 it reads (`transcript` / `lines` / `script`, the acoustic ones also
 `audio`, the picture's a media path or decoded frames), `selftest: true`
 runs the reading's own proof, and every family shares the voiceover
 tools' honest degradation contract. The thirty-five readings behind the
-five voice doors, the sound shelf's eight behind the next two, then the
-picture's thirty-six behind the eighth (the nine classical readings, then
-the shelf's twenty-seven door actions, each naming the file, licence and
-consumer it carries - [VISUAL-MODELS.md](VISUAL-MODELS.md)):
+five voice doors, the sound shelf's nine behind the next two, then the
+picture's thirty-eight behind the eighth (the eleven classical readings,
+the shelf's twenty-one door actions - thirty model entries, several
+sharing an action - and the batch sheet, bench and install machinery,
+each model naming the file, licence and consumer it carries -
+[VISUAL-MODELS.md](VISUAL-MODELS.md)):
 
 *The script as language* — `sense_discourse` (`discourse`):
 
@@ -572,8 +574,12 @@ numpy and ONNX Runtime when installed, never required):
   `"sfx-large"` (Stable Audio Open Small, the hook) or `"bgm"`
   (TinyMusician, a music bed). The file lands in
   `<project>/generated-audio/`, or a temporary folder without a project,
-  and `sounds_add` / `bgm_import` take it by `file`. See
-  [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
+  and `sounds_add` / `bgm_import` take it by `file`. A model that is not
+  installed, a licence a monetized cut may not spend (TinyMusician ships
+  no licence file) and a generation that comes back near-silent all
+  *answer* - `ok: true`, `model: absent` / `refused`, `generated: false`,
+  no `path` - so the director shops the shelf instead of ending the
+  stage with nothing. See [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
 
 *The words and the take, made to agree* — `sense_captions` (`captions`):
 

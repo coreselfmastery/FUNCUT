@@ -3017,7 +3017,7 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         props.insert(
             "modelId".to_owned(),
             json!({ "type": "string", "enum": [
-                "movenet-a0", "transnetv2", "smolvlm2-500m", "vjepa2-vitl",
+                "movinet-a0", "transnetv2", "smolvlm2-500m", "vjepa2-vitl",
                 "film-shot-classifier", "scenegraph-vlm", "depth-anything-v2-small",
                 "midas-v21-small", "fastsam-s", "segformer-b0", "bytetrack-yolo",
                 "dinov2-small", "clip-vit-b32", "siglip2-base", "raft-small",

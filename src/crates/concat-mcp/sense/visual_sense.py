@@ -1147,7 +1147,7 @@ def _shape_size(shape, fallback=224):
 
 def action_class(spec):
     frames = _load_frames(spec)
-    path, why = _model_file(spec, "movenet-a0")
+    path, why = _model_file(spec, "movinet-a0")
     if not path:
         return {"ok": False, "error": why}
     try:
@@ -1708,7 +1708,7 @@ def measure_clips(spec):
 
 
 ENRICH_DOORS = ("dover-mobile", "film-shot-classifier",
-                "depth-anything-v2-small", "movenet-a0")
+                "depth-anything-v2-small", "movinet-a0")
 
 
 def _enrich_on(spec):
@@ -1823,14 +1823,14 @@ def bench(spec):
 VISUAL_MODELS = [
     # Tier 1 - action, scene and temporal understanding
     {
-        "id": "movenet-a0",
+        "id": "movinet-a0",
         "tier": 1,
-        "file": "movenet-a0.onnx",
+        "file": "movinet-a0.onnx",
         "bytes": 15_000_000,
         "licence": "Apache-2.0",
         "tool": "action_class",
         "signal": "temporal action class per window (600 Kinetics actions)",
-        "upstream": "https://www.kaggle.com/models/google/movenet",
+        "upstream": "https://tfhub.dev/google/movinet/a0/base/kinetics-600",
         "door": {"decoder": "logits", "time": 8, "size": 172},
     },
     {

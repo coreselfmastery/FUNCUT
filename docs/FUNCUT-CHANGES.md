@@ -86,7 +86,8 @@ playback cache.
   row instead of flattening every patch into the "embedding").
 - **Twenty-eight new family actions, and the guards to match.** The visual
   family is 38 readings behind one door; the family table, the schema's
-  `action` enum, the `modelId` enum and the count guard (`members == 81`) all
+  `action` enum, the `modelId` enum and the count guard (`members == 82`
+  after the generation merge added the sound model's fifth action) all
   moved together, and the visual selftest grew from 21 checks to 48 - the
   shelf's rows, **every one of the thirty doors through the real runner** with
   a stub session standing in for the weights, the Hub URL and the pin, the
@@ -112,6 +113,12 @@ playback cache.
 
 ## The picture reader (`visual_sense.py`)
 
+*(The earlier state of this work, kept for its record of what the gather
+spends; the counts here - sixteen readings, five hard-wired doors - are
+that era's, and the "not wired yet" list below it has since been closed:
+the shelf section above is the current word, and the enrichment doors
+are spent by `measure_clips` itself.)*
+
 - **The edit can see what a shot does, not just what it looks like in
   one frame.** `concat-mcp/sense/visual_sense.py` samples the frames a
   clip actually plays and measures per-frame optical flow (mean, peak,
@@ -120,12 +127,9 @@ playback cache.
   `left`/`right`/`up`/`down`/`zoom_in`/`zoom_out`), the shot scale from
   the subject's area, audio-visual sync, scene cuts, the technical read
   (sharpness, noise, brightness, contrast, letterbox, blown highlights),
-  the palette, and a classical saliency map. Sixteen readings behind the
-  eighth family door, `sense_visual`; 21 stdlib selftest checks in CI. The
-  five ONNX doors (MoViNet-A0, Depth Anything V2 Small, FastSAM/SAM, DINOv2/CLIP)
-  and the bounded `local_vlm` description are real doors: they run when
-  the model and `onnxruntime` are present and refuse with the reason when
-  they are not. None is required for the classical layer.
+  the palette, and a classical saliency map, behind the eighth family
+  door, `sense_visual`. The classical layer needs no model; a door that
+  is missing refuses with the reason.
 - **What the gather spends, not what it measures.** `measure_clips` is
   called once per slot after the contact sheet: it ranks the candidates
   on their combined `visualScore` and vetoes a soft, noisy, letterboxed,
@@ -149,14 +153,12 @@ playback cache.
   whether the cuts that landed on motion peaks score higher than the
   ones that landed on pauses. It is a measurement, not a claim, and it
   is what a future change should read before it moves a cut again.
-- **Not wired yet, said plainly.** `analyze_scenes` and `track_subject`
-  still feed stock inspection only; the scene read is merged into
-  `scene_cuts` when a caller hands it in, but the cut stage is still
-  driven by the voice's pauses and phrases. `palette` is recorded, not
-  spent: the sheet's colour temperature is the continuity seam today.
-  The ONNX doors are wired to nothing but the `models` listing and their
-  own selftest. Each is the next bench, in that order: motion peak, then
-  action class, then depth, then masks, then visual similarity.
+- **What was honestly open then, and where it stands now.**
+  `analyze_scenes` and `track_subject` still feed stock inspection;
+  `palette` is recorded and spent by the continuity seam; the doors are
+  wired through `measure_clips`'s enrichment (see the shelf section
+  above). The remaining benches, in order: action class, masks, visual
+  similarity on the cut stage.
 
 ## The sound model layer (`sound_model.py`)
 

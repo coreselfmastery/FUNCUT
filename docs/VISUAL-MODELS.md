@@ -64,7 +64,7 @@ chat models, not graphs, and `describe_scene` is their door.
 
 | Model | Tier | Signal | Size | Licence | Door | Decoder | Hub repo / file | Spends |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `movenet-a0` | 1 | temporal action class per window (600 Kinetics actions) | 15 MB | Apache-2.0 | `action_class` | `logits` | — |  |
+| `movinet-a0` | 1 | temporal action class per window (600 Kinetics actions) | 15 MB | Apache-2.0 | `action_class` | `logits` | — |  |
 | `transnetv2` | 1 | shot-boundary probability per frame | 30 MB | MIT | `shot_boundaries` | `prob` | `elya5/transnetv2` / `transnetv2.onnx` | the cut stage's own read: a boundary is where a cut can land, a pause is only where it must |
 | `smolvlm2-500m` | 1 | bounded scene description: environment, objects, activity | 546 MB | Apache-2.0 | `describe_scene` | `logits` | — | the repo's own local_vlm; schema-constrained, never free creative judgment |
 | `vjepa2-vitl` | 1 | self-supervised video embedding + action head | 1130 MB | MIT | `video_embedding` | `embedding` | — | a stronger temporal encoder than MoViNet and 75x the bytes; the bench decides |
@@ -115,7 +115,7 @@ adds a blur veto beside the technical one. When the shelf's doors are
 installed it also runs, per clip, at most `enrichDoors` (default 3) of
 `dover-mobile` (a measured taste prior, blended at a tenth of the score),
 `film-shot-classifier` (shot type), `depth-anything-v2-small` (near/far split)
-and `movenet-a0` (pose). With nothing installed the sheet is the classical one
+and `movinet-a0` (the action read). With nothing installed the sheet is the classical one
 and costs a `stat()` per door; `enrich: false` forces that path.
 
 ## The sheet, measured on real clips

@@ -176,15 +176,17 @@ jobs:
   engine:
     name: Engine tests and lints
     runs-on: ubuntu-24.04
-    # The steps that can run long have timeouts of their own, 150 minutes
+    # The steps that can run long have timeouts of their own, 245 minutes
     # between them, so a stuck step is named by its own timeout; this is
     # for a job stuck anywhere else. A warm run takes about twenty minutes,
     # but a cold one on a shared runner now takes two and a half hours: the
     # 155 minutes this used to be left three minutes of margin on the run
     # that merged #173 (2h32m), and a run cancelled by its own ceiling is
-    # indistinguishable from a broken build on the report card. Two hundred
-    # minutes restores the margin without weakening any step's own limit.
-    timeout-minutes: 200
+    # indistinguishable from a broken build on the report card. The ceiling
+    # keeps five minutes of margin above the steps' own budgets, the same
+    # shape 155 kept above 150; anything less and the longest legal run is
+    # cancelled by the job it belongs to.
+    timeout-minutes: 250
     env:
       # See build-app.yml: the version the ort crate is built against.
       # scripts/ci/deps.lock pins the file.
@@ -325,9 +327,16 @@ jobs:
       # everything already built.
       # A cold cache, one build job at a time, has run past 25 minutes; the
       # motion and adapter shelves grew the tree since that was measured,
-      # so the budget takes them.
+      # so the budget takes them. On 2026-11-25 the full-integration tree
+      # then had three runs die in this step, an hour in twice - the runner
+      # stopped answering, the step stayed in_progress and the log never
+      # uploaded, the same seam the debug profiles above were cut for; a
+      # runner that dies never reaches the cache's save, so the next run
+      # starts from whatever the branch had. Ninety minutes gives the cold
+      # path room to finish rather than die at the ceiling, the same trade
+      # every budget in this file has been set by.
       - name: Build the tests
-        timeout-minutes: 60
+        timeout-minutes: 90
         working-directory: src
         run: cargo nextest run --workspace --no-run --build-jobs 1
       # CONCAT_REQUIRE_GPU: the GPU tests fail rather than skip when no

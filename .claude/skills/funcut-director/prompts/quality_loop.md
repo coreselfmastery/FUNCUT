@@ -28,7 +28,8 @@ What the JSON beside the image tells you:
 | `audio.envelope` | 48-bucket loudness | look for long dead air or a flat mix |
 
 `watch_render {path: "<exported file>", audio: true}` does the same on the
-encoded movie. Use it in Phase 25 — the encoded file can differ from the
+encoded movie. Use it on the export the user asked for — the encoded file
+can differ from the
 preview.
 
 Pass `times: [...]` when you want specific moments (the hook, the reveal,

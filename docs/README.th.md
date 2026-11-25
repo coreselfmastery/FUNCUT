@@ -1,13 +1,15 @@
 <p align="center">
-  <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
+  <img src="https://cdn.jsdelivr.net/gh/coreselfmastery/FUNCUT@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
 </p>
 
 <h1 align="center">Concat</h1>
 <h3 align="center">ตัวแทน CapCut ที่ฟรี โอเพนซอร์ส สำหรับ Linux</h3>
 
+<p align="center"><strong>FUNCUT</strong> is a fork of <a href="https://github.com/jub0t/Concat">Concat</a>. Downloads, releases and issue reports for this build live on the <a href="https://github.com/coreselfmastery/FUNCUT">FUNCUT repository</a>; this translation is inherited from upstream.</p>
+
 <div align="center">
 
-<img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
+<img src="https://cdn.jsdelivr.net/gh/coreselfmastery/FUNCUT@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
   <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
@@ -18,9 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="https://www.star-history.com/jub0t/concat"><img src="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" alt="Star History Rank" height="62" /></a>
+  <a href="https://www.star-history.com/coreselfmastery/FUNCUT"><img src="https://api.star-history.com/badge?repo=coreselfmastery/FUNCUT&type=rank" alt="Star History Rank" height="62" /></a>
   <a href="https://trendshift.io/repositories/191379?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-191379" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/191379/daily?language=Rust" alt="jub0t%2FConcat | Trendshift" width="250" height="55"/></a>
-  <a href="https://concatenate.pages.dev/#download"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
 </p>
 
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · **🇹🇭 ไทย** · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
@@ -62,10 +64,10 @@ Concat คือโปรแกรมตัดต่อวิดีโอที�
 
 มีสองช่องทาง:
 
-1. **[เว็บไซต์](https://concatenate.pages.dev/#download)** จะให้บิลด์ที่เหมาะกับเครื่องของคุณ เริ่มที่นี่
+1. **[เว็บไซต์](https://github.com/coreselfmastery/FUNCUT/releases)** จะให้บิลด์ที่เหมาะกับเครื่องของคุณ เริ่มที่นี่
 2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** มีทุกบิลด์สำหรับทุกแพลตฟอร์ม พร้อมตัวติดตั้ง แพ็กเกจ และเช็กซัม สำหรับตอนที่คุณอยากเลือกเอง
 
-Concat อยู่ในช่วง **เบต้า**: ใช้งานได้แล้ว แต่ยังมีจุดที่ไม่เรียบร้อยอยู่บ้าง เจอเมื่อไหร่ [บอกเราได้เลย](https://github.com/jub0t/Concat/issues)
+Concat อยู่ในช่วง **เบต้า**: ใช้งานได้แล้ว แต่ยังมีจุดที่ไม่เรียบร้อยอยู่บ้าง เจอเมื่อไหร่ [บอกเราได้เลย](https://github.com/coreselfmastery/FUNCUT/issues)
 
 **แพลตฟอร์ม**
 
@@ -82,18 +84,18 @@ Concat อยู่ในช่วง **เบต้า**: ใช้งานไ
 > [!IMPORTANT]
 > วิธีที่ดีที่สุดในการมีส่วนร่วม คือดาวน์โหลดบิลด์จากหน้า [Releases](https://github.com/coreselfmastery/FUNCUT/releases) แล้วใช้งานจริง: หาว่าตรงไหนพัง และบอกว่าตรงไหนน่าจะดีขึ้นได้
 >
-> พร้อมเขียนโค้ดแล้วหรือยัง? [CONTRIBUTING.md](../CONTRIBUTING.md) อธิบายการตั้งค่า โครงสร้างของซอร์สโค้ด การตรวจสอบที่ต้องรัน และสัญญาอนุญาตของงานที่ส่งเข้ามา จะควบคุม Concat จากสคริปต์ บริการ หรือเอเจนต์ใช่ไหม? [เอกสารสำหรับนักพัฒนา](https://concatenate.pages.dev/docs) อธิบาย Concat API และช่องทางรับส่งข้อมูลของมัน ได้แก่ JSON-RPC และ gRPC ส่วน [Discussion นี้](https://github.com/jub0t/Concat/discussions/3) คือที่ที่โปรเจกต์ประกาศเปิดตัว
+> พร้อมเขียนโค้ดแล้วหรือยัง? [CONTRIBUTING.md](../CONTRIBUTING.md) อธิบายการตั้งค่า โครงสร้างของซอร์สโค้ด การตรวจสอบที่ต้องรัน และสัญญาอนุญาตของงานที่ส่งเข้ามา จะควบคุม Concat จากสคริปต์ บริการ หรือเอเจนต์ใช่ไหม? [เอกสารสำหรับนักพัฒนา](https://concatenate.pages.dev/docs) อธิบาย Concat API และช่องทางรับส่งข้อมูลของมัน ได้แก่ JSON-RPC และ gRPC ส่วน [Discussion นี้](https://github.com/coreselfmastery/FUNCUT/discussions/3) คือที่ที่โปรเจกต์ประกาศเปิดตัว
 > 
 > ผู้ร่วมพัฒนาขอรับบทบาท `@Contributor` ในเซิร์ฟเวอร์ Discord ได้ แค่บอกมา
 
 ## ประวัติการติดดาว
 
-<a href="https://www.star-history.com/?repos=jub0t%2Fconcat&type=date&releases=&legend=bottom-right">
- <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jub0t/concat&type=date&legend=bottom-right" />
+<a href="https://www.star-history.com/?repos=coreselfmastery%2FFUNCUT&type=date&releases=&legend=bottom-right">
+ <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=coreselfmastery/FUNCUT&type=date&legend=bottom-right" />
 </a>
 
 ## ผู้ร่วมพัฒนา
 
-<a href="https://github.com/jub0t/Concat/graphs/contributors">
-  <img alt="Contributors" src="https://contrib.rocks/image?repo=jub0t/concat">
+<a href="https://github.com/coreselfmastery/FUNCUT/graphs/contributors">
+  <img alt="Contributors" src="https://contrib.rocks/image?repo=coreselfmastery/FUNCUT">
 </a>

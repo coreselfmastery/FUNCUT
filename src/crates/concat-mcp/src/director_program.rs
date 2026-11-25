@@ -4556,6 +4556,788 @@ fn story_sections(runtime: f64, mode: &str, turn_at: f64, payoff_at: f64) -> Val
     ])
 }
 
+/// The first `count` words of a line, with an ellipsis when it was cut.
+fn first_words(text: &str, count: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= count {
+        return words.join(" ");
+    }
+    format!("{}…", words[..count].join(" "))
+}
+
+/// A brief field as text; the empty string when the run left it absent.
+fn brief_text(brief: &serde_json::Map<String, Value>, key: &str) -> String {
+    brief
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+/// The YouTube creative profile the narration's own words support. The
+/// profile changes pacing, vocabulary and packaging, not the edit's
+/// measured facts; the second value names the words that chose it.
+fn youtube_profile(moments: &[(f64, f64, String)]) -> (&'static str, &'static str) {
+    let text = moments
+        .iter()
+        .map(|(_, _, line)| line.as_str())
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
+    if has(&[
+        "invest", "market", "stock", "money", "finance", "economy", "bank", "price",
+    ]) {
+        ("finance", "the narration names money, markets or investing")
+    } else if has(&["learn", "explain", "how", "guide", "understand", "lesson"]) {
+        ("education", "the narration teaches or explains a process")
+    } else if has(&["secret", "history", "story", "happened", "mystery", "wreck"]) {
+        ("storytelling", "the narration carries a story with a turn")
+    } else if has(&["ai", "software", "technology", "code", "computer", "device"]) {
+        ("technology", "the narration is about a tool or a system")
+    } else if has(&["report", "news", "today", "latest", "announced"]) {
+        ("news", "the narration reports a current event")
+    } else if has(&["motivation", "mindset", "discipline", "habit", "success"]) {
+        ("motivation", "the narration is a mindset argument")
+    } else {
+        (
+            "general",
+            "the narration names no subject narrow enough to profile",
+        )
+    }
+}
+
+/// A line ends a thought when its last non-quote character is punctuation.
+fn sentence_ends(text: &str) -> bool {
+    text.trim()
+        .trim_end_matches(['"', '\'', '”', '’'])
+        .chars()
+        .last()
+        .is_some_and(|last| matches!(last, '.' | '!' | '?'))
+}
+
+/// The transcript's own candidate Shorts: sliding windows of whole lines,
+/// scored on the measurements the run already has - whether the opening
+/// asks a question, how strong the delivery is, whether the window lands
+/// on a payoff, and how much of it is actually spoken. The plan keeps the
+/// top three and says which measurement gave each its score.
+fn short_candidates(
+    moments: &[(f64, f64, String)],
+    read: &[EmotionLine],
+    runtime: f64,
+    aspect: &str,
+) -> Vec<Value> {
+    if moments.is_empty() || runtime < 5.0 {
+        return Vec::new();
+    }
+    let target = if aspect == "9:16" { 30.0 } else { 45.0 };
+    let min_len = 12.0_f64.min(runtime);
+    let max_len = 60.0_f64.min(runtime);
+    let mut candidates = Vec::new();
+    for (first, (start, _, opening)) in moments.iter().enumerate() {
+        let mut end = *start;
+        let mut last = first;
+        for (index, (_, stop, line)) in moments.iter().enumerate().skip(first) {
+            if *stop - *start > max_len {
+                break;
+            }
+            end = *stop;
+            last = index;
+            if end - *start >= target && sentence_ends(line) {
+                break;
+            }
+        }
+        let duration = end - *start;
+        if duration < min_len {
+            continue;
+        }
+        let spoken: String = moments[first..=last]
+            .iter()
+            .map(|(_, _, line)| line.as_str())
+            .collect::<Vec<&str>>()
+            .join(" ");
+        let hook = first_words(opening, 12);
+        let payoff = first_words(&moments[last].2, 12);
+        let question = opening.contains('?')
+            || hook.split_whitespace().take(3).any(|word| {
+                matches!(
+                    word.to_ascii_lowercase().as_str(),
+                    "why" | "how" | "what" | "who"
+                )
+            });
+        let payoff_signal = {
+            let lower = moments[last].2.to_ascii_lowercase();
+            lower.contains("that's why")
+                || lower.contains("so that")
+                || lower.contains("the result")
+                || lower.contains("which means")
+        };
+        let intensity = read
+            .iter()
+            .filter(|line| line.start >= *start && line.start <= end)
+            .map(|line| line.intensity)
+            .fold(0.0_f64, f64::max);
+        let coverage = moments[first..=last]
+            .iter()
+            .map(|(from, to, _)| (to - from).max(0.0))
+            .sum::<f64>()
+            / duration.max(0.1);
+        let mut score = 0.15 + coverage.min(1.0) * 0.25 + intensity * 0.25;
+        if question {
+            score += 0.15;
+        }
+        if payoff_signal {
+            score += 0.15;
+        }
+        if (20.0..=55.0).contains(&duration) {
+            score += 0.05;
+        }
+        let words = spoken.split_whitespace().count();
+        let standalone = words >= 20 && !hook.is_empty() && !payoff.is_empty();
+        let standalone_why = if standalone {
+            format!("the window opens with a hook and lands a payoff in {words} words")
+        } else {
+            format!("the window has {words} words; check that it still makes sense alone")
+        };
+        let why = format!(
+            "{} seconds, {:.0}% spoken, delivery {:.2}{}{}",
+            duration.round(),
+            coverage.min(1.0) * 100.0,
+            intensity,
+            if question {
+                ", opens on a question"
+            } else {
+                ""
+            },
+            if payoff_signal {
+                ", lands on a payoff"
+            } else {
+                ""
+            }
+        );
+        candidates.push(json!({
+            "start": round3(*start),
+            "end": round3(end),
+            "duration": round3(duration),
+            "hook": hook,
+            "payoff": payoff,
+            "score": round3(score.min(1.0)),
+            "scoreBreakdown": {
+                "base": 0.15,
+                "spokenCoverage": round3(coverage.min(1.0) * 0.25),
+                "delivery": round3(intensity * 0.25),
+                "question": if question { 0.15 } else { 0.0 },
+                "payoff": if payoff_signal { 0.15 } else { 0.0 },
+                "durationBand": if (20.0..=55.0).contains(&duration) { 0.05 } else { 0.0 },
+            },
+            "standalone": standalone,
+            "standaloneWhy": standalone_why,
+            "thumbnailAt": round3(*start + duration / 2.0),
+            "reframe": "9:16 fill, subject-aware crop",
+            "captions": "word-level, centered",
+            "why": why,
+            "text": spoken,
+        }));
+    }
+    candidates.sort_by(|left, right| {
+        right["score"]
+            .as_f64()
+            .unwrap_or_default()
+            .total_cmp(&left["score"].as_f64().unwrap_or_default())
+    });
+    let mut picked: Vec<Value> = Vec::new();
+    for candidate in candidates {
+        let start = candidate["start"].as_f64().unwrap_or_default();
+        if picked
+            .iter()
+            .any(|kept| (kept["start"].as_f64().unwrap_or_default() - start).abs() < 5.0)
+        {
+            continue;
+        }
+        picked.push(candidate);
+        if picked.len() == 3 {
+            break;
+        }
+    }
+    picked
+}
+
+/// The retention map: every story section, the measured risks inside it,
+/// and the one fix the edit vocabulary can honestly apply there.
+fn retention_map(sections: &Value, findings: &Value, runtime: f64) -> Value {
+    let overlap = |entry: &Value| -> f64 {
+        let start = entry["start"].as_f64().unwrap_or_default();
+        let end = entry["end"].as_f64().unwrap_or(start);
+        (end - start).max(0.0)
+    };
+    let empty = Vec::new();
+    let boring = findings["boringStretches"].as_array().unwrap_or(&empty);
+    let repeated = findings["repeatedExplanations"]
+        .as_array()
+        .unwrap_or(&empty);
+    let weak = findings["weakTransitions"].as_array().unwrap_or(&empty);
+    let list = sections.as_array().cloned().unwrap_or_default();
+    let map: Vec<Value> = list
+        .iter()
+        .map(|section| {
+            let role = section["role"].as_str().unwrap_or("body");
+            let start = section["start"].as_f64().unwrap_or_default();
+            let end = section["end"].as_f64().unwrap_or(runtime);
+            let span = (end - start).max(1.0);
+            let inside = |entry: &&Value| {
+                let at = entry["start"].as_f64().unwrap_or(-1.0);
+                at >= start && at < end
+            };
+            let boring_here: f64 = boring
+                .iter()
+                .filter(inside)
+                .map(overlap)
+                .fold(0.0_f64, f64::max);
+            let repeated_here = repeated.iter().filter(inside).count();
+            let weak_here = weak.iter().filter(inside).count();
+            let score = ((boring_here / span).min(1.0) * 0.7
+                + (repeated_here.min(2) as f64) * 0.1
+                + (weak_here.min(2) as f64) * 0.1)
+                .min(1.0);
+            let risk = if score >= 0.5 {
+                "high"
+            } else if score >= 0.2 {
+                "medium"
+            } else {
+                "low"
+            };
+            let reason = if boring_here > 0.0 {
+                format!(
+                    "{:.0} seconds inside this section read as a low-energy or same-mood stretch",
+                    boring_here
+                )
+            } else if repeated_here > 0 {
+                "the narration repeats an explanation here".to_owned()
+            } else if weak_here > 0 {
+                "the cut keeps the same act and mood across a transition here".to_owned()
+            } else {
+                "no measured retention risk in this section".to_owned()
+            };
+            let fix = match (risk, role) {
+                ("low", _) => "none: measured clean",
+                (_, "hook") => "open on the strongest measured question and cut the setup",
+                (_, "curiosity") => "move the first value delivery earlier and name the question",
+                (_, "progression") => {
+                    "rotate shot scale or entrance at the risk time; add a B-roll query change"
+                }
+                (_, "payoff") => {
+                    "hold the reveal long enough to land; do not cut away before the answer"
+                }
+                (_, "ending") => "end on the payoff and keep the next-video invitation short",
+                _ => "add a pattern break at the measured risk time",
+            };
+            json!({
+                "role": role,
+                "start": round3(start),
+                "end": round3(end),
+                "risk": risk,
+                "score": round3(score),
+                "reason": reason,
+                "fix": fix,
+            })
+        })
+        .collect();
+    json!(map)
+}
+
+/// Five title directions, each tied to a promise the video actually
+/// makes. The `promise` is the brief's own payoff or thesis, so a title
+/// cannot promise something the edit does not deliver.
+fn title_concepts(
+    subjects: &[String],
+    brief: &serde_json::Map<String, Value>,
+    shorts: &[Value],
+) -> Value {
+    let subject = subjects.first().map(String::as_str).unwrap_or("this story");
+    let thesis = brief_text(brief, "thesis");
+    let payoff = brief_text(brief, "payoff");
+    let gap = brief_text(brief, "curiosityGap");
+    let promise = if payoff.is_empty() {
+        thesis.clone()
+    } else {
+        payoff
+    };
+    let short_hook = shorts
+        .first()
+        .and_then(|short| short["hook"].as_str())
+        .unwrap_or_default();
+    let mut titles: Vec<Value> = Vec::new();
+    let mut push = |title: String, angle: &str, basis: &str| {
+        if title.trim().is_empty()
+            || titles
+                .iter()
+                .any(|kept| kept["title"].as_str() == Some(title.as_str()))
+        {
+            return;
+        }
+        titles.push(json!({
+            "title": title,
+            "angle": angle,
+            "promise": promise,
+            "basis": basis,
+            "honest": true,
+        }));
+    };
+    push(
+        format!("Why {subject} is not what you think"),
+        "curiosity",
+        &gap,
+    );
+    push(format!("What {subject} actually costs"), "stakes", &promise);
+    push(format!("How {subject} really works"), "how-to", &thesis);
+    push(
+        format!("Nobody explains {subject} like this"),
+        "contrarian",
+        &gap,
+    );
+    push(
+        if short_hook.is_empty() {
+            format!("The {subject} story, from the start")
+        } else {
+            format!("The moment {}", first_words(short_hook, 8))
+        },
+        "story",
+        &promise,
+    );
+    push(
+        format!("{subject}: the part that matters"),
+        "payoff",
+        &promise,
+    );
+    titles.truncate(5);
+    json!(titles)
+}
+
+/// Three thumbnail concepts. No image is rendered here: each names the
+/// frame a `preview_frame` call should sample and the text and
+/// composition a designer or the motion layer should apply.
+fn thumbnail_concepts(
+    sections: &Value,
+    subjects: &[String],
+    titles: &Value,
+    runtime: f64,
+) -> Value {
+    let section_at = |role: &str, fallback: f64| -> f64 {
+        sections
+            .as_array()
+            .and_then(|list| {
+                list.iter()
+                    .find(|section| section["role"].as_str() == Some(role))
+            })
+            .map(|section| {
+                let start = section["start"].as_f64().unwrap_or(fallback);
+                let end = section["end"].as_f64().unwrap_or(start);
+                (start + (end - start) * 0.5).clamp(0.0, runtime)
+            })
+            .unwrap_or(fallback)
+    };
+    let subject = subjects
+        .first()
+        .map(String::as_str)
+        .unwrap_or("the speaker");
+    let title = |index: usize| -> String {
+        titles
+            .as_array()
+            .and_then(|list| list.get(index))
+            .and_then(|entry| entry["title"].as_str())
+            .unwrap_or(subject)
+            .to_owned()
+    };
+    let concepts = [
+        (
+            section_at("hook", runtime * 0.1),
+            first_words(&title(0), 4),
+            "subject left, text right, high contrast",
+            "the opening question is the promise the thumbnail must carry",
+        ),
+        (
+            section_at("payoff", runtime * 0.8),
+            first_words(&title(1), 4),
+            "subject right, text left, one bright accent",
+            "the payoff frame is the proof the title can stand on",
+        ),
+        (
+            section_at("progression", runtime * 0.5),
+            first_words(&title(2), 4),
+            "centered subject, text top, shallow depth",
+            "the middle frame shows the work, not the claim",
+        ),
+    ];
+    json!(
+        concepts
+            .iter()
+            .map(|(frame, text, composition, reason)| json!({
+                "frameAt": round3(*frame),
+                "subject": subject,
+                "text": text.to_uppercase(),
+                "composition": composition,
+                "reason": reason,
+            }))
+            .collect::<Vec<Value>>()
+    )
+}
+
+/// One plan-level quality check: `pass`, `warn` or `fail`, with the
+/// measured value that decided it.
+fn quality_check(name: &str, ok: bool, warn_only: bool, detail: String) -> Value {
+    json!({
+        "check": name,
+        "verdict": if ok {
+            "pass"
+        } else if warn_only {
+            "warn"
+        } else {
+            "fail"
+        },
+        "detail": detail,
+    })
+}
+
+/// The plan-level quality report: the structure the edit promised, checked
+/// before a frame is rendered. It cannot see a black frame or a clipped
+/// sample - `watch_render` and `craft_critique` do that - so it says only
+/// what the plan can prove.
+fn youtube_quality(
+    sections: &Value,
+    findings: &Value,
+    variety: &Value,
+    titles: &Value,
+    thumbnails: &Value,
+    shorts: &[Value],
+    segments: &[Value],
+    runtime: f64,
+) -> Value {
+    let section = |role: &str| {
+        sections.as_array().and_then(|list| {
+            list.iter()
+                .find(|entry| entry["role"].as_str() == Some(role))
+        })
+    };
+    let span = |role: &str| -> f64 {
+        section(role)
+            .map(|entry| {
+                let start = entry["start"].as_f64().unwrap_or_default();
+                let end = entry["end"].as_f64().unwrap_or(start);
+                (end - start).max(0.0)
+            })
+            .unwrap_or(0.0)
+    };
+    let payoff_at = section("payoff")
+        .and_then(|entry| entry["start"].as_f64())
+        .unwrap_or_default();
+    let risk_count = findings["boringStretches"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or_default()
+        + findings["repeatedExplanations"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default()
+        + findings["weakTransitions"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default();
+    let repeats = variety["consecutiveShotScaleRepeats"]
+        .as_u64()
+        .unwrap_or_default()
+        + variety["consecutiveEntranceRepeats"]
+            .as_u64()
+            .unwrap_or_default()
+        + variety["consecutiveCategoryRepeats"]
+            .as_u64()
+            .unwrap_or_default();
+    let title_count = titles.as_array().map(Vec::len).unwrap_or_default();
+    let thumbnail_count = thumbnails.as_array().map(Vec::len).unwrap_or_default();
+    let thumbs_inside = thumbnails.as_array().is_some_and(|frames| {
+        frames.iter().all(|frame| {
+            frame["frameAt"]
+                .as_f64()
+                .is_some_and(|at| (0.0..=runtime + 0.05).contains(&at))
+        })
+    });
+    let shorts_inside = shorts.iter().all(|short| {
+        short["start"].as_f64().is_some_and(|at| at >= 0.0)
+            && short["end"].as_f64().is_some_and(|at| at <= runtime + 0.05)
+    });
+    let checks = vec![
+        quality_check(
+            "hook within 3.5 s",
+            span("hook") <= 3.5,
+            true,
+            format!("the hook section is {:.2} s", span("hook")),
+        ),
+        quality_check(
+            "payoff after the turn",
+            runtime <= 0.0 || (0.55..=0.99).contains(&(payoff_at / runtime)),
+            true,
+            format!(
+                "the payoff starts at {:.1}% of the runtime",
+                if runtime > 0.0 {
+                    payoff_at / runtime * 100.0
+                } else {
+                    0.0
+                }
+            ),
+        ),
+        quality_check(
+            "no measured retention risk",
+            risk_count == 0,
+            true,
+            format!("{risk_count} measured risk entries remain"),
+        ),
+        quality_check(
+            "no repeated neighbour",
+            repeats == 0,
+            true,
+            format!("{repeats} consecutive scale, entrance or category repeats"),
+        ),
+        quality_check(
+            "five title directions",
+            title_count == 5,
+            false,
+            format!("{title_count} titles are present"),
+        ),
+        quality_check(
+            "three thumbnail frames inside the runtime",
+            thumbnail_count == 3 && thumbs_inside,
+            false,
+            format!("{thumbnail_count} frames, all inside the timeline: {thumbs_inside}"),
+        ),
+        quality_check(
+            "every Short inside the runtime",
+            shorts_inside && (runtime < 5.0 || !shorts.is_empty()),
+            true,
+            format!("{} Short windows", shorts.len()),
+        ),
+        quality_check(
+            "every segment has a picture",
+            segments.iter().all(|segment| {
+                segment
+                    .pointer("/visual/type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| !kind.is_empty())
+            }),
+            false,
+            format!("{} segments carry a visual type", segments.len()),
+        ),
+        quality_check(
+            "the timeline is covered",
+            runtime <= 0.0
+                || segments
+                    .iter()
+                    .map(|segment| {
+                        let start = segment["start"].as_f64().unwrap_or_default();
+                        let end = segment["end"].as_f64().unwrap_or(start);
+                        (end - start).max(0.0)
+                    })
+                    .sum::<f64>()
+                    / runtime
+                    >= 0.95,
+            false,
+            format!(
+                "{:.1}% of the runtime is inside a segment",
+                if runtime > 0.0 {
+                    segments
+                        .iter()
+                        .map(|segment| {
+                            let start = segment["start"].as_f64().unwrap_or_default();
+                            let end = segment["end"].as_f64().unwrap_or(start);
+                            (end - start).max(0.0)
+                        })
+                        .sum::<f64>()
+                        / runtime
+                        * 100.0
+                } else {
+                    100.0
+                }
+            ),
+        ),
+    ];
+    let verdict = if checks.iter().any(|check| check["verdict"] == "fail") {
+        "fail"
+    } else if checks.iter().any(|check| check["verdict"] == "warn") {
+        "warn"
+    } else {
+        "pass"
+    };
+    json!({
+        "verdict": verdict,
+        "checks": checks,
+        "note": "plan-level checks only; black frames, clipping and caption placement are watch_render and craft_critique's business",
+    })
+}
+
+/// What a creative profile changes in the measured edit: how often a
+/// pattern break lands, how hard the motion hand pushes, how heavy the
+/// captions sit, and which second query the stock shelf sees. The
+/// profile is a lens on the same signals, never a replacement for them.
+fn youtube_profile_plan(
+    moments: &[(f64, f64, String)],
+    direction: VisualDirection,
+    runtime: f64,
+) -> Value {
+    let (profile, why) = youtube_profile(moments);
+    let (motion_delta, breaks_every, qualifier, caption_weight, target_shot_seconds) = match profile
+    {
+        "finance" => (0.05, 18.0, "financial documentary detail", 750, 3.5),
+        "education" => (0.0, 18.0, "clean explanatory visual", 700, 3.0),
+        "storytelling" => (-0.05, 30.0, "cinematic story detail", 600, 4.5),
+        "technology" => (0.05, 16.0, "technology product detail", 800, 2.8),
+        "news" => (0.1, 14.0, "newsroom evidence", 800, 2.5),
+        "motivation" => (0.1, 15.0, "motivational cinematic", 800, 2.5),
+        _ => (0.0, 20.0, "cinematic establishing detail", 700, 3.5),
+    };
+    let motion = (direction.motion_intensity() + motion_delta).clamp(0.2, 0.9);
+    json!({
+        "profile": profile,
+        "why": why,
+        "pacing": {
+            "targetShotSeconds": target_shot_seconds,
+            "patternBreakEvery": breaks_every,
+            "measuredRuntime": round3(runtime),
+        },
+        "motion": {
+            "intensity": round3(motion),
+            "reason": format!("{profile} adds {motion_delta:+.2} to the measured direction's own motion hand"),
+        },
+        "captions": { "weight": caption_weight },
+        "broll": { "qualifier": qualifier },
+    })
+}
+
+/// Give every B-roll query the profile's own second door. The first
+/// query stays the words the span plays, so the shelf still ranks the
+/// meaning first; the profile's qualifier is an additional candidate,
+/// not a replacement for what the narration said.
+fn apply_profile_queries(segments: &mut [Value], profile_plan: &Value) {
+    let profile = profile_plan["profile"].as_str().unwrap_or("general");
+    let qualifier = profile_plan["broll"]["qualifier"]
+        .as_str()
+        .unwrap_or("cinematic establishing detail");
+    for segment in segments {
+        let Some(query) = segment
+            .pointer("/visual/query")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let mut queries: Vec<Value> = segment
+            .pointer("/visual/queries")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        queries.push(json!(format!("{query}, {qualifier}")));
+        segment["visual"]["queries"] = json!(queries);
+        segment["visual"]["profile"] = json!(profile);
+        if let Some(description) = segment
+            .pointer("/visual/description")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
+            segment["visual"]["description"] = json!(format!("{description}; {qualifier}"));
+        }
+    }
+}
+
+/// The YouTube package the plan carries: mode, creative profile, title
+/// and thumbnail directions, the Shorts the transcript supports, and the
+/// section-by-section retention map. It is derived from the same
+/// measurements as the edit; nothing here invents a claim the plan cannot
+/// support.
+fn youtube_package(
+    mode: &str,
+    aspect: &str,
+    runtime: f64,
+    sections: &Value,
+    segments: &[Value],
+    brief: &serde_json::Map<String, Value>,
+    subjects: &[String],
+    moments: &[(f64, f64, String)],
+    read: &[EmotionLine],
+    findings: &Value,
+    variety: &Value,
+    profile_plan: &Value,
+) -> Value {
+    let profile = (
+        profile_plan["profile"].as_str().unwrap_or("general"),
+        profile_plan["why"]
+            .as_str()
+            .unwrap_or("the narration names no subject narrow enough to profile"),
+    );
+    let youtube_mode = if aspect == "9:16" {
+        "short"
+    } else if runtime > 60.0 {
+        "longform"
+    } else {
+        "reel"
+    };
+    let mut shorts = short_candidates(moments, read, runtime, aspect);
+    if shorts.is_empty() && runtime >= 5.0 {
+        let text = moments
+            .iter()
+            .map(|(_, _, line)| line.as_str())
+            .collect::<Vec<&str>>()
+            .join(" ");
+        shorts.push(json!({
+            "start": 0.0,
+            "end": round3(runtime),
+            "duration": round3(runtime),
+            "hook": first_words(&text, 12),
+            "payoff": first_words(&text, 12),
+            "score": 0.5,
+            "why": "the whole take is short enough to stand alone; no longer window was measured",
+            "text": text,
+        }));
+    }
+    let titles = title_concepts(subjects, brief, &shorts);
+    if let Some(list) = titles.as_array() {
+        for (index, short) in shorts.iter_mut().enumerate() {
+            if let Some(title) = list.get(index % list.len()) {
+                short["title"] = title["title"].clone();
+            }
+        }
+    }
+    let thumbnails = thumbnail_concepts(sections, subjects, &titles, runtime);
+    let retention = retention_map(sections, findings, runtime);
+    let quality = youtube_quality(
+        sections,
+        findings,
+        variety,
+        &titles,
+        &thumbnails,
+        &shorts,
+        segments,
+        runtime,
+    );
+    json!({
+        "mode": youtube_mode,
+        "editMode": mode,
+        "profile": profile.0,
+        "profileWhy": profile.1,
+        "profilePlan": profile_plan.clone(),
+        "titles": titles,
+        "thumbnails": thumbnails,
+        "shorts": shorts,
+        "retentionMap": retention,
+        "quality": quality,
+        "publishingChecklist": [
+            "render each thumbnail's frameAt with preview_frame and choose one",
+            "check the chosen title against the video's actual payoff",
+            "review captions and the first three seconds at full size",
+            "confirm the music and stock licences before publishing",
+            "read the export back and check duration, aspect and audio",
+        ],
+        "note": "frameAt and short times are seconds on the finished timeline; no thumbnail image is rendered by this plan",
+    })
+}
+
 /// The retention pass: find the stretches a viewer would leave, the
 /// explanations the script repeats, and the cuts that keep the same act
 /// and mood so they read as a continuation rather than a turn. The plan
@@ -5091,10 +5873,20 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             json!(format!("viewers interested in {}", subjects.join(" and "))),
         );
     }
-    let spoken: Vec<String> = takes
+    let transcript_moments: Vec<(f64, f64, String)> = takes
         .iter()
         .flat_map(|take| spoken_lines(log, &take.take))
-        .filter_map(|line| line["text"].as_str().map(str::to_owned))
+        .filter_map(|line| {
+            Some((
+                line["start"].as_f64()?,
+                line["end"].as_f64()?,
+                line["text"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    let spoken: Vec<String> = transcript_moments
+        .iter()
+        .map(|(_, _, text)| text.clone())
         .collect();
     if let Some(first) = spoken.first() {
         // The opening line is the thesis; the first real question the
@@ -5131,11 +5923,27 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     let aspect = aspect_of(view);
     let direction = choose_direction(&spoken, &subjects, &read, runtime, aspect);
     let alternatives = direction_alternatives(&spoken, &subjects, &read, runtime, aspect);
+    let profile_plan = youtube_profile_plan(&transcript_moments, direction, runtime);
     brief.insert("referenceStyle".to_owned(), json!(direction.reference()));
     brief.insert("tone".to_owned(), json!(direction.tone()));
     vary_segments(&mut segments, direction);
+    apply_profile_queries(&mut segments, &profile_plan);
     let retention_findings = retention_analysis(&spoken, &segments, &read, runtime);
     let variety = visual_variety(&segments);
+    let youtube = youtube_package(
+        mode,
+        aspect,
+        runtime,
+        &sections,
+        &segments,
+        &brief,
+        &subjects,
+        &transcript_moments,
+        &read,
+        &retention_findings,
+        &variety,
+        &profile_plan,
+    );
     brief.insert(
         "platform".to_owned(),
         json!(if aspect_of(view) == "9:16" {
@@ -6044,19 +6852,25 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // richer style bible; this is the floor the deterministic fallback
     // can prove, so the same validator can judge both paths.
     let style = json!({
-        "name": format!("{} / {look} / {orientation}", direction.label()),
+        "name": format!(
+            "{} / {} / {look} / {orientation}",
+            direction.label(),
+            profile_plan["profile"].as_str().unwrap_or("general")
+        ),
         "palette": palette,
         "grade": look,
         "captions": {
             "font": caption_font,
-            "weight": direction.caption_weight(),
+            "weight": profile_plan["captions"]["weight"]
+                .as_i64()
+                .unwrap_or_else(|| direction.caption_weight()),
             "emphasisColor": palette[1],
             "position": if orientation == "vertical" { "center" } else { "lower-third" },
         },
         "motion": {
             "language": direction.motion_language(),
             "easing": direction.motion_easing(),
-            "intensity": direction.motion_intensity(),
+            "intensity": profile_plan["motion"]["intensity"].clone(),
         },
         "sound": {
             "duckDb": duck,
@@ -6075,7 +6889,12 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // the turn and the retention pass's own boring stretches and repeated
     // explanations, so a clean fallback still has a rhythm a viewer can
     // feel - and a longform cut gets enough of them to pass its own gate.
-    let wanted_breaks = ((runtime / 20.0).ceil() as usize).max(2);
+    let wanted_breaks = ((runtime
+        / profile_plan["pacing"]["patternBreakEvery"]
+            .as_f64()
+            .unwrap_or(20.0))
+    .ceil() as usize)
+        .max(2);
     let mut pattern_breaks: Vec<f64> = (1..=wanted_breaks)
         .map(|index| round3(runtime * index as f64 / (wanted_breaks + 1) as f64))
         .collect();
@@ -6151,6 +6970,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         "style": style,
         "retention": retention,
         "visualVariety": variety,
+        "youtube": youtube,
         "signalLog": signal_log,
         "export": {
             "output": source.export,
@@ -11653,6 +12473,50 @@ mod tests {
         assert!(!analysis["weakTransitions"].as_array().unwrap().is_empty());
     }
 
+    /// The Short finder keeps whole lines, scores the measured hook and
+    /// payoff, and never returns two windows that start in the same place.
+    #[test]
+    fn the_short_finder_scores_questions_and_keeps_windows_apart() {
+        let moments = vec![
+            (0.0, 3.0, "Why did the ship sink?".to_owned()),
+            (
+                3.0,
+                8.0,
+                "The harbour master had logged a storm.".to_owned(),
+            ),
+            (
+                8.0,
+                14.0,
+                "That's why the crates were still aboard.".to_owned(),
+            ),
+            (14.0, 20.0, "The next ship left at dawn.".to_owned()),
+            (20.0, 26.0, "Why did nobody answer the radio?".to_owned()),
+            (
+                26.0,
+                32.0,
+                "The recording was erased that night.".to_owned(),
+            ),
+        ];
+        let candidates = short_candidates(&moments, &[], 32.0, "9:16");
+        assert!(!candidates.is_empty(), "a 32 second take has a Short");
+        assert!(candidates.len() <= 3, "the plan keeps the top three");
+        assert!(
+            candidates[0]["why"]
+                .as_str()
+                .is_some_and(|why| why.contains("opens on a question")),
+            "the opening question is named as the reason: {:?}",
+            candidates[0]
+        );
+        for pair in candidates.windows(2) {
+            let left = pair[0]["start"].as_f64().unwrap();
+            let right = pair[1]["start"].as_f64().unwrap();
+            assert!(
+                (left - right).abs() >= 5.0,
+                "candidate windows are distinct: {left} and {right}"
+            );
+        }
+    }
+
     /// A measured stress inside a span outranks the direction's rotation:
     /// the entrance lands on the word, and two stressed neighbours
     /// alternate accents instead of repeating one.
@@ -16282,6 +17146,134 @@ mod tests {
             ask = (plan.next)(&log).expect("the stage keeps going");
         }
         assert_eq!(ask.tool, "plan_validate");
+        let plan = &ask.arguments["plan"];
+        let roles: Vec<&str> = plan["sections"]
+            .as_array()
+            .expect("the plan has story sections")
+            .iter()
+            .filter_map(|section| section["role"].as_str())
+            .collect();
+        for role in ["hook", "curiosity", "progression", "payoff", "ending"] {
+            assert!(
+                roles.contains(&role),
+                "the story skeleton is missing {role}: {roles:?}"
+            );
+        }
+        assert!(
+            plan["retention"]["analysis"]["boringStretches"].is_array(),
+            "the retention pass writes its analysis"
+        );
+        assert!(
+            plan["visualVariety"]["consecutiveShotScaleRepeats"].is_number(),
+            "the variety pass writes its repeat counts"
+        );
+        assert!(
+            plan["signalLog"]
+                .as_array()
+                .is_some_and(|log| !log.is_empty()),
+            "the plan names the signals behind its decisions"
+        );
+        let youtube = &plan["youtube"];
+        assert_eq!(youtube["mode"], json!("reel"));
+        assert_eq!(youtube["profile"], json!("storytelling"));
+        assert_eq!(
+            youtube["profilePlan"]["profile"], youtube["profile"],
+            "the profile plan names the same profile the package does"
+        );
+        assert!(
+            youtube["profilePlan"]["pacing"]["patternBreakEvery"].is_number()
+                && youtube["profilePlan"]["motion"]["intensity"].is_number()
+                && youtube["profilePlan"]["broll"]["qualifier"].is_string(),
+            "the profile plan names its pacing, motion and B-roll qualifier"
+        );
+        assert_eq!(
+            plan["style"]["motion"]["intensity"], youtube["profilePlan"]["motion"]["intensity"],
+            "the style's motion hand is the profile plan's own intensity"
+        );
+        assert_eq!(
+            plan["segments"][0]["visual"]["profile"], youtube["profile"],
+            "the B-roll query carries the profile it was shopped for"
+        );
+        assert!(
+            plan["segments"][0]["visual"]["queries"]
+                .as_array()
+                .is_some_and(|queries| queries.len() >= 3),
+            "the profile adds its own query door beside the direction's"
+        );
+        assert_eq!(
+            youtube["titles"].as_array().map(Vec::len),
+            Some(5),
+            "five title directions are offered"
+        );
+        assert_eq!(
+            youtube["thumbnails"].as_array().map(Vec::len),
+            Some(3),
+            "three thumbnail frames are offered"
+        );
+        let shorts = youtube["shorts"]
+            .as_array()
+            .filter(|shorts| !shorts.is_empty())
+            .expect("the transcript supports at least one Short window");
+        let short = &shorts[0];
+        assert!(
+            short["scoreBreakdown"].is_object()
+                && short["standalone"].is_boolean()
+                && short["title"].is_string()
+                && short["reframe"].is_string()
+                && short["captions"].is_string(),
+            "each Short names its score, standalone check and vertical treatment: {short}"
+        );
+        assert!(
+            short["thumbnailAt"].as_f64().is_some_and(
+                |at| at >= 0.0 && at <= plan["segments"][0]["end"].as_f64().unwrap_or(0.0)
+            ),
+            "the Short's thumbnail frame sits inside the cut"
+        );
+        assert_eq!(
+            youtube["retentionMap"].as_array().map(Vec::len),
+            plan["sections"].as_array().map(Vec::len),
+            "every story section has a retention entry"
+        );
+        assert!(
+            youtube["thumbnails"]
+                .as_array()
+                .is_some_and(|frames| frames.iter().all(|frame| {
+                    frame["frameAt"].as_f64().is_some_and(|at| at >= 0.0)
+                        && frame["text"].as_str().is_some_and(|text| !text.is_empty())
+                })),
+            "each thumbnail names a frame and its text"
+        );
+        assert_eq!(
+            youtube["quality"]["verdict"],
+            json!("pass"),
+            "the plan-level quality report passes a clean plan: {}",
+            youtube["quality"]
+        );
+        assert!(
+            youtube["quality"]["checks"]
+                .as_array()
+                .is_some_and(|checks| checks.len() >= 7
+                    && checks.iter().all(|check| {
+                        check["check"].is_string()
+                            && check["verdict"].is_string()
+                            && check["detail"].is_string()
+                    })),
+            "every quality check names what it measured"
+        );
+        let checks = youtube["quality"]["checks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for named in [
+            "every segment has a picture",
+            "the timeline is covered",
+            "every Short inside the runtime",
+        ] {
+            assert!(
+                checks.iter().any(|check| check["check"] == json!(named)),
+                "the quality report names {named}"
+            );
+        }
         let checked =
             crate::tools::validate_plan_tool(ask.arguments.clone()).expect("the plan validates");
         assert_eq!(

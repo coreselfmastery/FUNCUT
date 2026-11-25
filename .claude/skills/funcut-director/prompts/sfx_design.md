@@ -2,7 +2,8 @@
 
 Sound is half the edit and the first thing an amateur edit skips. The
 rules are short because the discipline is short: variety, placement,
-restraint.
+restraint — and every placement decided by a MEASUREMENT, not a
+filename.
 
 ## The anti-repetition law
 
@@ -42,14 +43,55 @@ intent, not as a bucket:
 
 Queries are ANDed and prefix-matched: **two or three words, no sentences**
 — "coin drop", not "coins dropping onto a wooden table in slow motion".
+The map is the QUERY vocabulary — which candidates you pull. What decides
+between them is the measurement below.
 
-## Placement: the peak, not the start
+## Measured selection (rank the file, not the name)
 
-The transient lands ON the cut, not after it. `sounds_add` places the
-clip's START at the time you give — so give `peakAt − lead`, where lead
-is the sound's attack (~80–150 ms; a riser's whole body leads its drop).
-The plan carries `sfx.peakAt` per hit; do the subtraction at placement,
+The shelf's own audit (docs/SOUND-SENSE.md) measured the 530 files and
+found the manifest's `syncAt` peak claim wrong by more than 100 ms in
+30% of them — a name-led pick that trusts it lands its accent on the
+wrong frame. So the ears decide:
+
+- **A role, shopped by hand**: `sense_sound {action: "rank_sounds",
+  role, dir|paths, limit}` — candidates scored on the six measured role
+  fits (`quick_transition`, `cinematic_reveal`, `action_impact`,
+  `gentle_entrance`, `emotional_texture`, `tension_build`), each with
+  the evidence behind it and `measuredPeakAt` beside the manifest's
+  `syncAt` so the drift is visible.
+- **A description, shopped semantically**: `sense_sound_model {action:
+  "rank", index, query, role}` — CLAP similarity ("dark cinematic
+  braam") fused with the measured fit. Without the models installed it
+  says `degraded` and ranks by measurement alone — a weaker answer it
+  admits, never hides.
+- **The whole design at once**: `sense_sound_model {action: "plan",
+  index, beats, visual, arc, bgm, durationSec, voiceLufs}` — the edit's
+  own signals (emphasis words, pauses, reveals, cuts, motion hits, the
+  arc's acts, the bed's structure) become a per-moment accent plan:
+  file, `startAt`, `peakLandsAt`, `syncOffset`, `gainDb` under the
+  voice's LUFS, held silences, and the why per accent. Plan first, then
+  place its accents.
+
+The one measured decision the name-led path already had — the level
+from the prosody ear's peak strength — stays; measurement replaces the
+SELECTION and the SYNC, not the gain discipline.
+
+## Placement: the measured peak, not the start
+
+`sounds_add` places the clip's START at the time you give, and the
+transient must land ON the cut, not after it. The number that decides
+is the MEASURED `peakAt` — from `rank_sounds`' candidates or one
+`describe_sound` call — never the manifest's `syncAt` (wrong by >100 ms
+in 30% of the shelf): give `start = peakAt_target − measuredPeakAt`
+(and the same subtraction as the head trim if the file needs one),
 then set the level with `clip_audio_levels_db`.
+
+**Prove every placed accent**: `sense_sound {action:
+"check_placement", path, clipStart, intendedAt, gainDb, voiceLufs,
+recent}` — the measured peak against the moment it was meant to land
+(a `sync_off` issue names the exact `moveBy`), the level under the
+voice, the role against the moment, and repetition inside the window.
+A placement nobody checked is a guess with a good filename.
 
 ## Levels
 

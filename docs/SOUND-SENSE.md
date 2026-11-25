@@ -5,10 +5,12 @@ tracks by title, artist and category. Until now nothing in the editor had
 ever **opened the file**. This page is the audit that proves it, and the
 measurement engine that closes it.
 
-Status: **the engine ships in this change** (`sound_sense.py`, four tools,
-24 selftests). **The Director does not call it yet** - §6 names the exact
-places it goes, and why that is a second change rather than a sentence in
-this one.
+Status: **the engine ships** (`sound_sense.py`, four tools, 37 selftest
+checks), it is registered as the `sense_sound` MCP tool, it is ON the
+Director's default allowlist, and the Director skill teaches it: Phase 18
+plans and proves every accent with it, `prompts/sfx_design.md` is its
+doctrine and `prompts/tool_reference.md` carries its full schema — see
+§6 for the exact places it goes.
 
 ## 1. What was verified in the tree
 
@@ -274,15 +276,19 @@ modelled one.
 
 ## 6. Wiring it to the Director
 
-Nothing below is done in this change. Each item names the function that
-gains a call, so the second change is mechanical rather than a redesign.
+Status update: the DIRECTOR-SKILL half of this section is done — Phase 18
+of `.claude/skills/funcut-director/SKILL.md` plans with `sense_sound_model
+{action: "plan"}`, proves every accent with `check_placement`, and shops
+by measurement; `prompts/sfx_design.md` and `prompts/music_and_duck.md`
+carry the doctrine; `prompts/tool_reference.md` carries the schemas. What
+remains is the ENGINE half: the AUTO EDIT stages below still run the
+name-led path, and each item names the function that gains a call, so
+that change is mechanical rather than a redesign.
 
-**The sidecar itself** - mirror `audiorepair` exactly:
-`const SOUND_SENSE_PY: &str = include_str!("../sense/sound_sense.py");`,
-one `fs::write` line in `sense.rs`'s `runtime()`, one `Action` variant and
-catalogue entry beside `Action::SenseFamily("audiorepair")`
-(`tools.rs:1145`), one dispatch arm. The tool takes `tool`, and the four
-verbs above.
+**The sidecar itself** - shipped as described: `sound_sense.py` is
+embedded in `sense.rs`, registered as `Action::SenseFamily("sound")` and
+served on the Director's allowlist as `sense_sound`. The tool takes
+`tool`, and the four verbs above.
 
 **The sfx stage** (`director_program.rs`, the `SfxPending::Pick` arm at
 `:10220` onward):

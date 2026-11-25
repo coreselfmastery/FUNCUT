@@ -102,3 +102,26 @@ not measured is named unmeasured; never cite a value that was not returned.
 
 The decision recipes that turn measurements into a cut seam, shot density
 and cut type are in `prompts/signal_recipes.md`.
+
+## Beyond the voice: the sound doors' readings
+
+This matrix is the VOICE catalogue. The sound shelf has its own measured
+readings behind two more family doors, spent the same way — every
+placement cites the reading that earned it:
+
+- `sense_sound` measures what a sound file IS: the six role fits
+  (`quick_transition`, `cinematic_reveal`, `action_impact`,
+  `gentle_entrance`, `emotional_texture`, `tension_build`), the measured
+  `peakAt` (where the file's peak actually falls — the manifest's
+  `syncAt` claim is wrong by >100 ms in 30% of the shelf), attack, body,
+  decay and spectral shape. Consumers: SFX selection, placement sync,
+  placement proof (`check_placement`).
+- `sense_sound_model` adds what it MEANS: YAMNet labels, CLAP similarity
+  to the description the read gave, and the `plan` action that turns the
+  edit's own beats, arc, visual events and bed structure into a
+  per-moment accent design. Consumers: SFX selection, BGM candidate
+  ranking, the accent plan, the music change points.
+
+Their schemas and exact arguments are in `prompts/tool_reference.md`;
+their doctrine is `prompts/sfx_design.md` (SFX) and
+`prompts/music_and_duck.md` (BGM).

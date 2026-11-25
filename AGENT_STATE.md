@@ -1,5 +1,21 @@
 # AGENT_STATE.md — the mission's running state
 
+## Addendum — 2026-11-25, main at `4c204d0a`
+
+Main has moved past the `.15` snapshot below: PRs #211–#216 landed
+(NVIDIA decode/encode, sound sense `sense_sound`, sound model
+`sense_sound_model` with CLAP + YAMNet — five new rows, `models/manifest.toml`
+now 28 — the optional-numpy selftest fix, and the Geneva docs
+reconciliation). The Director's surface is 108 of 116 tools with SEVEN
+sense family doors (43 member tools). This change wires the two sound
+doors into the Director skill (Phase 18 plans with `plan`, proves with
+`check_placement`; `sfx_design.md`, `music_and_duck.md`,
+`tool_reference.md`, `signal_matrix.md` updated), fixes the stale counts
+(14 families / 70 readings, 108 tools) and extends
+`scripts/check-signal-matrix.py` to guard them. Open: #214 (safe, one
+file), #217 and #218 (both branch pre-#216 and need a rebase before
+merge — see the audit in this branch's report).
+
 ## Current state — 2026-11-23, the `.15` release
 
 - The `.15` release tree is `573a661`; all seven checks on that commit are

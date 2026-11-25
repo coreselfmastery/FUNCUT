@@ -29,6 +29,7 @@
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::dirs::AppDirs;
@@ -120,6 +121,13 @@ fn install(sink: Option<Sink>, extra: Option<Box<dyn log::Log>>) -> Result<(), S
 /// installs a save here; the hook calls it before the process dies.
 static PANIC_SAVE: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
 
+/// Set while the hook is running its save. A save that panics enters the
+/// hook again; this stops the second entry from running the same save and
+/// recursing. It cannot catch that panic under `panic = "abort"`, so the
+/// save itself must not panic - the guard only keeps the failure to one
+/// attempt and one log line.
+static IN_PANIC_SAVE: AtomicBool = AtomicBool::new(false);
+
 /// Registers the last-chance save. Replaces any previous one.
 pub fn save_on_panic(save: impl Fn() + Send + Sync + 'static) {
     *PANIC_SAVE
@@ -128,12 +136,20 @@ pub fn save_on_panic(save: impl Fn() + Send + Sync + 'static) {
 }
 
 fn run_panic_save() {
+    if IN_PANIC_SAVE.swap(true, Ordering::SeqCst) {
+        log::error!("panic save: a save panicked; not running it again");
+        return;
+    }
     // Never wait on the lock in a panic hook: a panic while the callback
     // is being replaced would hang the process instead of aborting it.
     let save = PANIC_SAVE.try_lock().ok().and_then(|guard| guard.clone());
     if let Some(save) = save {
+        // `catch_unwind` is best-effort: the shipping profile aborts, so a
+        // panic here still ends the process. The guard above is what keeps
+        // it from re-entering the hook first.
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| save()));
     }
+    IN_PANIC_SAVE.store(false, Ordering::SeqCst);
 }
 
 /// Sends panics to the log before they reach wherever they were going.
@@ -415,8 +431,13 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// The panic-save tests share one process-wide hook; run them one at a
+    /// time so neither sees the other's callback.
+    static PANIC_TESTS: Mutex<()> = Mutex::new(());
+
     #[test]
     fn the_panic_hook_runs_the_registered_save() {
+        let _held = PANIC_TESTS.lock().expect("the panic-save tests' lock");
         let hits = Arc::new(AtomicUsize::new(0));
         let seen = Arc::clone(&hits);
         save_on_panic(move || {
@@ -424,6 +445,23 @@ mod tests {
         });
         run_panic_save();
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_panic_save_does_not_reenter_itself() {
+        let _held = PANIC_TESTS.lock().expect("the panic-save tests' lock");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&hits);
+        save_on_panic(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            run_panic_save();
+        });
+        run_panic_save();
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "a save that re-enters the hook runs once, not until the stack dies"
+        );
     }
 
     #[test]

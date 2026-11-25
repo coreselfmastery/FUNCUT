@@ -1394,28 +1394,34 @@ def selftest(spec=None):
     def check(name, ok, detail=""):
         checks.append({"check": name, "ok": bool(ok), "detail": detail})
 
+    # Measuring, ranking and planning are stdlib-only by contract; only the
+    # ONNX paths need numpy. Failing the whole selftest on a missing optional
+    # dependency reported a working planner as broken, which is the opposite
+    # of what a selftest is for.
     if np is None:
-        check("numpy present", False, "pip install numpy")
-        return {"tool": "selftest", "ok": False, "checks": checks}
+        check("model paths", True,
+              "skipped: numpy not installed (pip install numpy onnxruntime)")
+    else:
+        filters = _slaney_filters()
+        check("filterbank is 513x64", filters.shape == (513, 64), str(filters.shape))
+        check("filterbank peaks near 1.0", abs(float(filters.max()) - 0.018149) < 5e-4,
+              f"max {filters.max():.6f}")  # slaney norm, first band, 50-14000 Hz
+        check("filterbank band 0 rises then falls",
+              int(np.argmax(filters[:, 0])) in (2, 3),
+              f"peak bin {int(np.argmax(filters[:, 0]))}")
 
-    filters = _slaney_filters()
-    check("filterbank is 513x64", filters.shape == (513, 64), str(filters.shape))
-    check("filterbank peaks near 1.0", abs(float(filters.max()) - 0.018149) < 5e-4,
-          f"max {filters.max():.6f}")  # slaney norm, first band, 50-14000 Hz
-    check("filterbank band 0 rises then falls",
-          int(np.argmax(filters[:, 0])) in (2, 3), f"peak bin {int(np.argmax(filters[:, 0]))}")
+        features = clap_features(_tone())
+        check("clap features are (1, 1, 1001, 64)", features.shape == (1, 1, 1001, 64),
+              str(features.shape))
+        loudest = int(np.argmax(features[0, 0].mean(axis=0)))
+        check("a 1 kHz tone lands in one band", 8 <= loudest <= 40, f"band {loudest}")
+        check("features are dB, floored at -100",
+              -100.0 <= float(features.min()) and float(features.max()) < 40.0,
+              f"{features.min():.1f}..{features.max():.1f}")
 
-    features = clap_features(_tone())
-    check("clap features are (1, 1, 1001, 64)", features.shape == (1, 1, 1001, 64),
-          str(features.shape))
-    loudest = int(np.argmax(features[0, 0].mean(axis=0)))
-    check("a 1 kHz tone lands in one band", 8 <= loudest <= 40, f"band {loudest}")
-    check("features are dB, floored at -100",
-          -100.0 <= float(features.min()) and float(features.max()) < 40.0,
-          f"{features.min():.1f}..{features.max():.1f}")
-
-    silent = clap_features(np.zeros(CLAP_RATE))
-    check("silence is floored", float(silent.max()) == CLAP_FLOOR_DB, f"{silent.max():.1f}")
+        silent = clap_features(np.zeros(CLAP_RATE))
+        check("silence is floored", float(silent.max()) == CLAP_FLOOR_DB,
+              f"{silent.max():.1f}")
 
     check("role weights cover the six roles", len(ROLE_WEIGHT) == 6, str(sorted(ROLE_WEIGHT)))
     check("transitions trust the model alone", ROLE_WEIGHT["quick_transition"] == 0.0)

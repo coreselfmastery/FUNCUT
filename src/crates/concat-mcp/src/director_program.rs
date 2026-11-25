@@ -11346,8 +11346,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             gain_db: f64,
             /// Where the clip was laid: what a correction moves from.
             start: f64,
-            /// The sound's identity, spent for anti-repetition at the add.
-            id: String,
             /// The family the peak's emotion named, for a re-shop.
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
@@ -11726,7 +11724,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     at,
                                     gain_db,
                                     start,
-                                    id,
                                     queries,
                                     tried,
                                     clip_id: clip_id.clone(),
@@ -11750,7 +11747,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             at,
                             gain_db,
                             start,
-                            id: _,
                             queries,
                             tried,
                             clip_id,

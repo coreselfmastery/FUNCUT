@@ -115,10 +115,7 @@ jobs:
       # audiorepair (the clean and the music - the three writing tools
       # write to a scratch dir and prove their files) and captions (the
       # words and the take made to agree, including the seal round trip).
-      # soundmodel has no selftest here on purpose: it needs numpy and
-      # ONNX Runtime, which this job does not install, and its own
-      # acceptance test is scripts/sound-model/bench.py. Pure stdlib plus
-      # ffmpeg, synthetic fixtures, no network.
+      # Pure stdlib plus ffmpeg, synthetic fixtures, no network.
       - run: python3 src/crates/concat-mcp/sense/discourse.py selftest
         if: ${{ !cancelled() }}
       - run: python3 src/crates/concat-mcp/sense/voice_quality.py selftest
@@ -134,6 +131,13 @@ jobs:
       # and library-index checks. Pure stdlib - decoding a real .ogg needs
       # the ffmpeg CLI, and the selftest deliberately does not.
       - run: python3 src/crates/concat-mcp/sense/sound_sense.py selftest
+        if: ${{ !cancelled() }}
+      # The sound model reader: the planner suite (plan answers without
+      # models, every accent cites its signal) runs stdlib-only; the ONNX
+      # checks skip cleanly when numpy is absent, so this belongs in the
+      # checks job. Its model-on acceptance test stays
+      # scripts/sound-model/bench.py. No network.
+      - run: python3 src/crates/concat-mcp/sense/sound_model.py selftest --spec -
         if: ${{ !cancelled() }}
 
   # The analysis senses against real fixtures: beats, silence and scene

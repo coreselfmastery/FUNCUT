@@ -46,7 +46,10 @@ Then, once, over the whole piece:
 
 - All 12 above pass AFTER the last edit (a fix invalidates the previous
   pass — re-run the thirds you touched).
-- `export_wait` reports the file written, with the size.
+- The timeline is the deliverable: `project_save` wrote it, `timeline_read`
+  confirms the clips, and `watch_render {project, audio: true}` watched the
+  OPEN timeline. An export exists only if the user asked for one — and then
+  `export_wait` reports the file written, with the size.
 - The journal's recap is written and the plan is archived in the project.
 - Only now does the word "done" exist. If a platform target was given,
   the aspect/duration/loudness promises were measured, not assumed.

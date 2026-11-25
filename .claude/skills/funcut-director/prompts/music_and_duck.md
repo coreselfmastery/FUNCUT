@@ -36,13 +36,38 @@ adds on top of the code's words:
 - **Vocal-free** for narration pieces, always.
 
 Listen with the numbers the search returns (category is the shelf's own
-word — "upbeat", "late-night", "scoring"); trust but verify with one
-`preview_frame` of the mix at a speech moment.
+word — "upbeat", "late-night", "scoring") — that is the FIRST pass,
+title and category words only. The second pass measures the shortlist:
+
+- **Rank the candidates by what they sound like.** A bed wants sustain
+  and tonal body, not transients: `sense_sound {action: "rank_sounds",
+  role: "emotional_texture", paths: [<the fetched top candidates>]}`
+  scores each file's measured fit, and when the sound models are
+  installed `sense_sound_model {action: "rank", index, query: "<the
+  arc's own words, two or three — 'tense building orchestral'>"}`
+  scores CLAP similarity against the description the read actually
+  gave. A candidate whose category says "epic" but whose measurement
+  reads thin and airy is a transition, not a bed — the ears overrule
+  the shelf's words.
+- **Read the structure BEFORE placing, not after.**
+  `sense_audio_repair {action: "analyze_music_structure", audio}` on
+  the CHOSEN track returns the BPM, the bar grid, sections with roles,
+  the drops, the energy curve and `cutSafePoints` — and that map
+  decides where a section change may land musically. Feed the same
+  map to `sense_sound_model {action: "plan", bgm: {candidates: [...]}}`
+  and the planner puts the bed's change points on safe cuts and ducks
+  around the voice's own emphasis. Choosing first and analyzing later
+  leaves the structure unused; the map comes first.
+
+Trust but verify with one `preview_frame` of the mix at a speech
+moment.
 
 ## Placement and the grid
 
 `analyze_beats` on the chosen track gives `{bpm, beatsMs[],
-downbeatsMs[]}`. Align:
+downbeatsMs[]}` — the beat grid. The deeper map — sections with roles,
+drops and `cutSafePoints` — comes from `sense_audio_repair {action:
+"analyze_music_structure"}` at Choice time (above); use both. Align:
 
 - Section changes to DOWNBEATS (compute the nearest downbeat to each
   section boundary; nudge the boundary or the track's start by the

@@ -515,6 +515,12 @@ enhance / remove / normalize WRITE a new file; the input is never touched):
 - `enhance_speech` - the measured chain (highpass, de-esser, compressor at
   the take's own level, gate over the measured floor, limiter, loudnorm)
   with every decision's why and the before/after table.
+- `diagnose_take` - the take measured first, the repair plan named second:
+  every finding (noise floor, clipping, level) with its fix, why and the
+  measurement that triggered it - the diagnosis the repair below consumes.
+- `repair_by_diagnosis` - executes a diagnosis's plan arm by arm (and says
+  so when every arm measured under its trigger: nothing worth repairing);
+  writes a new file, the input is never touched.
 - `remove_hiss_hum_rumble` - finds the hum (50/60 Hz families) and notches
   it, cuts the rumble, denoises the hiss at measured strength — and says
   so when the take is cleaner than the cure.

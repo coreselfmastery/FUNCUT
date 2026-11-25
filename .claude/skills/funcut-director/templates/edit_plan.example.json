@@ -345,6 +345,65 @@
     "emphasisColor": "#7fd8ff",
     "background": null
   },
+  "signalLog": [
+    {
+      "at": 0.0,
+      "decision": "bgm",
+      "signals": ["musicSegments", "noiseFloor"],
+      "confidence": 0.91,
+      "note": "The take measured dry (no embedded music) with a quiet floor, so an ambient lofi bed enters under the hook and ducks under every line."
+    },
+    {
+      "at": 1.2,
+      "decision": "caption",
+      "signals": ["emphasisWords", "wordConfidence"],
+      "confidence": 0.88,
+      "note": "The hook's emphasis lands on \"mountain\", so the first caption line carries the accent treatment on that word with confidence above the caption gate."
+    },
+    {
+      "at": 3.0,
+      "decision": "cut",
+      "signals": ["pause.class=breath", "speechRate.pace"],
+      "confidence": 0.83,
+      "note": "A classified breath closes the hook at 3.0 s and the pace read says conversational, so the section changes there and not mid-word."
+    },
+    {
+      "at": 9.0,
+      "decision": "cut",
+      "signals": ["topics", "arc"],
+      "confidence": 0.8,
+      "note": "The topic tiling marks the explanation's turn at 9.0 s and the arc moves from curiosity to dawning understanding, so the visual register changes with it."
+    },
+    {
+      "at": 14.5,
+      "decision": "cut",
+      "signals": ["emphasisWords", "prosody"],
+      "confidence": 0.87,
+      "note": "The reveal sentence's emphasis and terminal pitch rise land at 14.5 s, so the payoff shot starts exactly there."
+    },
+    {
+      "at": 14.5,
+      "decision": "sfx",
+      "signals": ["emphasisWords", "loudness"],
+      "confidence": 0.85,
+      "note": "One cinematic impact accents the reveal word, placed by the measured peakAt (never the manifest syncAt) and proven with check_placement."
+    },
+    {
+      "at": 14.5,
+      "decision": "motion",
+      "signals": ["prosody", "entities"],
+      "confidence": 0.82,
+      "note": "The reveal comp eases out per the emotion read and animates the entity the line names (the salt ions), not a generic particle sweep."
+    },
+    {
+      "at": 18.6,
+      "decision": "cut",
+      "signals": ["sentence", "speakerChanges"],
+      "confidence": 0.79,
+      "note": "The closing sentence turns declarative at 18.6 s with no speaker change, so the CTA card holds one continuous framing to the end."
+    }
+  ],
+
   "grade": {
     "filter": "concat.teal-orange",
     "intensityKey": "amount",

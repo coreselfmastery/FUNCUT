@@ -49,7 +49,7 @@ reaches it.
   `stock_contact_sheet` shows B-roll candidates before you choose them;
   `motion_frame` now returns an inline image, not just a path. A file PATH to
   a PNG is not a picture you can see. Only inline `type: image` blocks are.
-- The default Director surface is the 106-tool creative surface. The
+- The default Director surface is the 108-tool creative surface. The
   composition reads `scene_analysis`, `scene_timeline`, `motion_preview` and
   `geneva_explain` are opt-in (the farm pair and the two destructive tools are
   off by design); if one is not served, use the served equivalent
@@ -221,7 +221,7 @@ taboo hit is a blocker — replace the query, never the taboo.
 
 **Phase 4 — Read what the voiceover IS (the acoustic score).**
 `voice_signals {audio: <the voiceover>, transcript: <the transcribe output>,
-script: <the author's text when a script exists>, emotion: <the Phase-1b
+script: <the author's text when a script exists>, emotion: <the Phase 3
 extract>, language: <the hint used>}` — one call,
 the whole reading. The script, when there is one, is the wording's
 authority: the call aligns it against the transcript (misheard words
@@ -258,8 +258,8 @@ discourse). The Rust ears (prosody, forensics, speakers, NER) need the
 `voice-signals` binary built (`cargo build -p voice-signals`); without it
 the Python signals still answer and the reply says which ear was absent —
 never guess the missing ones. **Spend every reading, not just the family:**
-`prompts/signal_matrix.md` maps all 25 families and 50+ readings to the
-decision each one informs. Every family and every reading you spend must
+`prompts/signal_matrix.md` maps all 14 families and 70 named readings
+to the decision each one informs. Every family and every reading you spend must
 appear in the plan's `signalLog` with its confidence and one-sentence basis;
 a reading that was absent is named unmeasured, never cited at confidence 0.
 **Turn the reading into cuts with `prompts/signal_recipes.md`:** score the
@@ -271,10 +271,17 @@ takes the cut style, Phase 15's SFX peaks land on the emphasis words and
 the BGM obeys the noise-floor decision, the captions drop or re-check the
 gated words, and a speaker change is staged like a scene change. The
 deeper consumption readings — script quality, restarts, fillers, rhythm
-and meter, music structure, caption alignment — live behind the five
-family tools (`sense_discourse`, `sense_voice_quality`,
-`sense_prosody_style`, `sense_audio_repair`, `sense_captions`), each
-`action` naming one reading. Three of them are wired into the pipeline,
+and meter, music structure, caption alignment, what a sound file IS and
+what it MEANS — live behind the seven family doors (`sense_discourse`,
+`sense_voice_quality`, `sense_prosody_style`, `sense_audio_repair`,
+`sense_captions`, `sense_sound`, `sense_sound_model`), each `action`
+naming one reading. The two sound doors are Phase 18's instruments:
+`sense_sound` measures the file (its true `peakAt`, attack, the six
+role fits) and proves a placed accent with `check_placement`;
+`sense_sound_model` adds what it MEANS (YAMNet labels, CLAP similarity)
+and `plan`s the whole accent design from the edit's own beats, arc,
+visual events and bed structure. Both degrade loudly to
+measurement-only answers when the models are absent — never silently. Three of them are wired into the pipeline,
 not left to judgment: `sense_voice_quality {action:
 "classify_recording_quality"}` + `sense_audio_repair {action:
 "enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 2),
@@ -283,8 +290,8 @@ chosen (Phase 13), and `sense_audio_repair {action: "identify_music"}` as
 the copyright check on a take that already carries music (Phase 13). The
 rest are called where the edit needs them, each as its door's `action`
 (`sense_discourse {action: "score_script_quality"}` before the read,
-`sense_discourse {action: "detect_restarts"}` + `sense_discourse
-{action: "classify_filler_type"}` for the punch-up, `sense_prosody_style
+`sense_voice_quality {action: "detect_restarts"}` + `sense_voice_quality
+{action: "classify_filler_type"}` for the punch-up, `sense_audio_repair
 {action: "analyze_music_structure"}` when cutting to music,
 `sense_captions {action: "align_captions"}` + `sense_captions {action:
 "clean_subtitles"}` before burning captions). A bare reading name is
@@ -654,11 +661,25 @@ guess. Never let a caption cover a face, a number, or another caption.
 whether a bed exists at all; the bed is cut to the beat grid and ducked per
 act to the plan's `duckDb`; every SFX peak lands on a measured emphasis
 word or cut, not merely near one; no machine-gun repetition; leave breath
-between accents. `sounds_add` and `clip_audio_levels_db` are the tools;
-If the user exports, `measure_loudness` on that export is the proof; on the timeline, `watch_render {project, audio: true}` gives the audio envelope. If the take already carries
-music, do not stack a bed; warn about the unknown licence in the report.
+between accents. The spine is MEASURED, not named: `sense_sound_model
+{action: "plan"}` turns the edit's own signals (beats with emphasis and
+pauses, visual reveals and cuts, the arc's acts, the bed's structure)
+into a per-moment accent design — each accent names its file, measured
+`syncOffset`, gain under the voice's LUFS and the signal that earned it.
+Execute its accents with `sounds_add` + `clip_audio_levels_db`, and
+prove EVERY placed accent with `sense_sound {action:
+"check_placement"}` (peak on the moment, level under the voice, no
+repetition — the reply names the fix when it is wrong). Shopping a role
+by hand instead: `sense_sound {action: "rank_sounds"}`; trusting a
+shelf name or the manifest's `syncAt` over the measured `peakAt` is the
+mistake the shelf audit measured (30% of files wrong by >100 ms).
+Full doctrine: `prompts/sfx_design.md`. If the user exports,
+`measure_loudness` on that export is the proof; on the timeline,
+`watch_render {project, audio: true}` gives the audio envelope. If the
+take already carries music, do not stack a bed; warn about the unknown
+licence in the report.
 
-**Full editor power.** The served surface is the whole 106-tool director
+**Full editor power.** The served surface is the whole 108-tool director
 catalogue; use it where the line earns it: `clip_mask` for a shape or face
 that must share the frame, `track_subject` when the mask or label follows a
 moving person, `template_instantiate` for a designed opener/lower third/end
@@ -1004,9 +1025,9 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/broll_matching.md` | choosing B-roll queries and slot descriptions, shopping by the slot, scoring results, the fallback ladder, aspect fit |
 | `prompts/cuts_and_pacing.md` | the eighteen cut types, J/L feel, pacing curves by mode |
 | `prompts/transitions_guide.md` | the 122 transitions (classic 22 + the 100 viral pack), the clip-patch mechanics, when a plain cut wins |
-| `prompts/sfx_design.md` | sound design: categories, semantic mapping, sync peaks, anti-repetition |
+| `prompts/sfx_design.md` | sound design: measured role ranking, semantic categories, peak-true placement with check_placement, anti-repetition |
 | `prompts/motion_comps.md` | designing graphics: which comp, worked plans, density floors |
-| `prompts/music_and_duck.md` | BGM choice, beat alignment, ducking keyframes, longform structure |
+| `prompts/music_and_duck.md` | BGM choice (measured candidates, structure before placement), beat alignment, ducking keyframes, longform structure |
 | `prompts/text_animation.md` | titles, captions, kinetic text, zones, color methodology |
 | `prompts/color_grading.md` | the filter recipes per niche, and how a grade is actually applied |
 | `prompts/keyframes_motion.md` | motion grammar: Ken Burns, parallax, punch zooms, entrances/exits |

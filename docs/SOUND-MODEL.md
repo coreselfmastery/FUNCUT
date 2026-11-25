@@ -218,25 +218,33 @@ moves.
 
 ## 7. What is wired, and what is not
 
-Wired and tested: the three tools, the cache, the fused ranking with the
-measured weights, the graceful absence path, and twelve selftest checks.
+Wired and tested: the tools (describe, index, rank, plan, generate), the
+cache, the fused ranking with the measured weights, the graceful absence
+path, the licence gate on generated beds, and the selftest's thirty
+checks.
 
-Not wired, and this is the honest gap:
+The four gaps below are the history of this page - each is now closed or
+narrowed, and the honest remainder is named:
 
-1. **The Rust side.** `concat-mcp` registers the sense scripts in
-   `src/crates/concat-mcp/src/sense.rs`; `sound_model.py` is not registered
-   there yet, so the Director cannot call it. This is additive: one more
-   tool registration beside `sound_sense.py`'s.
-2. **The Director's selection path.** `AUTO EDIT` currently ranks sounds from
-   shelf metadata. The ranking above is not consumed by it yet.
-3. **The download UI.** The settings sheet already has exactly the row this
-   needs: `ModelData` in `src/crates/concat/ui/dialogs/settings.slint` (id,
-   name, note, size, accuracy pips, installed, active, downloading, progress,
-   transferred, eta, problem, manual). A CLAP row is a row, not a new dialog,
-   and the Rust side follows `concat-vision/src/models.rs`: pinned URL,
-   licence, size, hash, download into the data directory.
-4. **The music join.** Beat grid and sections from the Rust analysis, merged
-   with the CLAP music embedding, into one BGM record.
+1. **The Rust side - CLOSED.** `concat-mcp` registers the family in
+   `src/crates/concat-mcp/src/sense.rs` (`sense_sound_model`, the
+   `soundmodel` family, five members), and it is on the Director's
+   default allowlist.
+2. **The Director's selection path - TAUGHT; the runner still shops the
+   metadata.** The Director skill's Phase 18 makes `plan` the source of
+   SFX decisions and `check_placement` the proof of every placement
+   (`prompts/sfx_design.md`). The one-click `AUTO EDIT` spine still
+   ranks its accents from shelf metadata and places on the manifest's
+   `syncAt` - the measured `peakAt` path is the Director's, and wiring
+   the runner to it is the remaining bench.
+3. **The download UI - CLOSED.** Settings > Models carries the reader's
+   set (CLAP's towers, YAMNet) beside the three generator rows, fetched
+   through the same verified path as every other model.
+4. **The music join - PARTLY.** The bed's structure now reads through
+   `analyze_music_structure` (sections, energy, cutSafePoints) and the
+   skill teaches ranking candidates on what the audio is; the CLAP
+   embedding over the 1,191-track BGM shelf itself is still unbuilt -
+   the shelf's titles are searched, its audio is not yet embedded.
 
 Pinned sources for that work, all verified today:
 

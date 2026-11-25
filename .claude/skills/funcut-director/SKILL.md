@@ -49,8 +49,8 @@ reaches it.
   `stock_contact_sheet` shows B-roll candidates before you choose them;
   `motion_frame` now returns an inline image, not just a path. A file PATH to
   a PNG is not a picture you can see. Only inline `type: image` blocks are.
-- The default Director surface is the 108-tool creative surface (the
-  116-tool catalogue minus the eight off-by-default doors). The
+- The default Director surface is the 109-tool creative surface (the
+  117-tool catalogue minus the eight off-by-default doors). The
   composition reads `scene_analysis`, `scene_timeline`, `motion_preview` and
   `geneva_explain` are opt-in (the farm pair and the two destructive tools are
   off by design); if one is not served, use the served equivalent
@@ -719,7 +719,7 @@ accents. `sounds_add` and `clip_audio_levels_db` are the tools;
 If the user exports, `measure_loudness` on that export is the proof; on the timeline, `watch_render {project, audio: true}` gives the audio envelope. If the take already carries
 music, do not stack a bed; warn about the unknown licence in the report.
 
-**Full editor power.** The served surface is the whole 108-tool director
+**Full editor power.** The served surface is the whole 109-tool director
 catalogue; use it where the line earns it: `clip_mask` for a shape or face
 that must share the frame, `track_subject` when the mask or label follows a
 moving person, `template_instantiate` for a designed opener/lower third/end

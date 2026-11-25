@@ -7822,7 +7822,7 @@ mod tests {
             pasted, names,
             "the paste-ready whole-catalogue list is the catalogue, comma for comma"
         );
-        // And the count the comment claims: "108 of the 116 tools".
+        // And the count the comment claims: "109 of the 117 tools".
         if let Some(rest) = forge.split(" of the ").nth(1) {
             let said: usize = rest
                 .split(|c: char| !c.is_ascii_digit())

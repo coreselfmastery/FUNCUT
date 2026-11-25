@@ -43,8 +43,8 @@ export CONCAT_MCP_ROOTS=/workspace/video
 concat --mcp headless
 ```
 
-`CONCAT_MCP_ALLOW=all` serves the whole 116-tool catalogue. Without it the
-server serves the 106-tool director surface, which includes `auto_edit`.
+`CONCAT_MCP_ALLOW=all` serves the whole 117-tool catalogue. Without it the
+server serves the 109-tool director surface, which includes `auto_edit`.
 `CONCAT_MCP_ROOTS` is the only tree the server may write to; point it at
 the sandbox's work folder, not at the repository.
 

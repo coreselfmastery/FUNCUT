@@ -2025,6 +2025,14 @@ impl Api {
         file: Option<&str>,
     ) -> Result<SoundsAdded, ApiError> {
         self.writable(path)?;
+        // A generated accent carries its licence beside it; a monetized
+        // edit is not handed a non-commercial one, whatever the tool that
+        // asked for it believed.
+        if let Some(file) = file
+            && let Some(refusal) = self.generated_licence_refusal(path, file)?
+        {
+            return Err(ApiError::failed(refusal));
+        }
         let folder = {
             let session = self.session(path)?;
             let folder = PathBuf::from(session.path()).join("audio");
@@ -2311,8 +2319,16 @@ impl Api {
             ));
         }
         // A local file is the caller's own - a generated bed, a licensed
-        // track they fetched themselves - so the shelf's licence gate has
-        // nothing to say about it. The shelf ids still answer to it.
+        // track they fetched themselves - so the shelf's catalogue has
+        // nothing to say about it. What a generated file does say is
+        // written beside it: the generator leaves `<file>.licence.json`,
+        // and a bed whose record forbids commercial use is refused here
+        // in a monetized edit, the same line MobyGratis is held to.
+        if let Some(file) = file
+            && let Some(refusal) = self.generated_licence_refusal(path, file)?
+        {
+            return Err(ApiError::failed(refusal));
+        }
         let effective_monetized =
             file.is_none() && (monetized || self.project_is_monetized(path)?);
         if effective_monetized {
@@ -3005,6 +3021,50 @@ impl Api {
                 "the project's creative brief monetized field must be a boolean".to_owned(),
             )),
         }
+    }
+
+    /// Why a generated file may not enter this edit, when it may not: the
+    /// licence record `sound_model.py generate` leaves beside its own
+    /// output, read against the project's monetized flag. A file with no
+    /// record is the caller's own and answers to nothing here.
+    fn generated_licence_refusal(
+        &self,
+        path: &str,
+        file: &str,
+    ) -> Result<Option<String>, ApiError> {
+        let record = std::path::PathBuf::from(format!("{file}.licence.json"));
+        let contents = match std::fs::read_to_string(&record) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Ok(None),
+        };
+        let record: serde_json::Value = match serde_json::from_str(&contents) {
+            Ok(record) => record,
+            Err(_) => return Ok(None),
+        };
+        if record
+            .get("commercial")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        {
+            return Ok(None);
+        }
+        if !self.project_is_monetized(path)? {
+            return Ok(None);
+        }
+        let model = record
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("a generated sound");
+        let licence = record
+            .get("licence")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("a non-commercial licence");
+        Ok(Some(format!(
+            "the edit is monetized and {model} writes under {licence}, which does not \
+             allow commercial use. Generate the bed with `sfx-large` (Stability AI \
+             Community Licence), shop the CC0 shelf, or mark the project non-monetized"
+        )))
     }
 
     fn session(&self, path: &str) -> Result<&Session, ApiError> {
@@ -4770,6 +4830,67 @@ mod tests {
         assert!(
             !freepd.message.contains("MobyGratis"),
             "the CC0 shelf is not refused by the monetized gate: {freepd}"
+        );
+    }
+
+    /// A generated bed carries the licence it was written under beside it
+    /// (`sound_model.py generate` writes `<file>.licence.json`). A
+    /// monetized edit refuses a non-commercial one and takes a commercial
+    /// one; a file with no record is the caller's own and is not asked.
+    #[test]
+    fn a_generated_bed_is_held_to_the_licence_written_beside_it() {
+        let (mut api, scratch, _events) = api();
+        let location = scratch.path().join("projects");
+        std::fs::create_dir_all(&location).expect("projects folder");
+        let name = "generated-bed";
+        let path = location.join(name);
+        let path_text = path.to_string_lossy().into_owned();
+        ok(api.dispatch(Request::ProjectCreate {
+            location: location.to_string_lossy().into_owned(),
+            name: name.to_owned(),
+            video: None,
+        }));
+        std::fs::write(path.join("creative-brief.json"), r#"{"monetized":true}"#)
+            .expect("persisted brief");
+
+        let bed = scratch.path().join("bed.wav");
+        std::fs::write(&bed, b"RIFF").expect("a file to point at");
+        let bed_text = bed.to_string_lossy().into_owned();
+        std::fs::write(
+            format!("{bed_text}.licence.json"),
+            r#"{"model":"tinymusician","licence":"CC-BY-NC-4.0 (MusicGen-small weights)","commercial":false}"#,
+        )
+        .expect("the generator's record");
+
+        let refused = err(api.dispatch(Request::BgmImport {
+            path: path_text.clone(),
+            ids: Vec::new(),
+            start: None,
+            track: None,
+            file: Some(bed_text.clone()),
+            monetized: false,
+        }));
+        assert!(
+            refused.message.contains("CC-BY-NC") && refused.message.contains("monetized"),
+            "the record's licence arms the gate whatever the caller says: {refused}"
+        );
+
+        std::fs::write(
+            format!("{bed_text}.licence.json"),
+            r#"{"model":"stable-audio-open-small","licence":"Stability AI Community License","commercial":true}"#,
+        )
+        .expect("a commercial record");
+        let allowed = err(api.dispatch(Request::BgmImport {
+            path: path_text,
+            ids: Vec::new(),
+            start: None,
+            track: None,
+            file: Some(bed_text),
+            monetized: false,
+        }));
+        assert!(
+            !allowed.message.contains("CC-BY-NC") && !allowed.message.contains("Stability"),
+            "a commercial bed passes the licence gate: {allowed}"
         );
     }
 }

@@ -387,7 +387,7 @@ pub const MODELS: [ModelSpec; 33] = [
         upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/tokenizer.json",
         bytes: 2_422_169,
         sha256: "71c33c3bf57bf2e19b4f8ac686ad8d182a79f7cd1a4921889437c453420223f1",
-        licence: "Unclear (no licence file upstream)",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
     },
     ModelSpec {
         id: ModelId::BgmConfig,
@@ -395,7 +395,7 @@ pub const MODELS: [ModelSpec; 33] = [
         upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/config.json",
         bytes: 8_264,
         sha256: "b2568a15382bf35ae5af135917f28ac5204d715da6b53e60b19a83c80a52d2ef",
-        licence: "Unclear (no licence file upstream)",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
     },
     ModelSpec {
         id: ModelId::BgmText,
@@ -403,7 +403,7 @@ pub const MODELS: [ModelSpec; 33] = [
         upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/text_encoder.onnx",
         bytes: 110_076_078,
         sha256: "5a7e4354596a15c47ed1669926f1ff8398b195e0a914f4e6a92b97618e7162d5",
-        licence: "Unclear (no licence file upstream)",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
     },
     ModelSpec {
         id: ModelId::BgmCodec,
@@ -411,7 +411,7 @@ pub const MODELS: [ModelSpec; 33] = [
         upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/encodec_decode.onnx",
         bytes: 59_796_655,
         sha256: "4d87a6f86dd84fc967c9b45206acc96796aa93eb14cf7a9346fd06e04a3ad31e",
-        licence: "Unclear (no licence file upstream)",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
     },
     ModelSpec {
         id: ModelId::BgmDecoder,
@@ -419,7 +419,7 @@ pub const MODELS: [ModelSpec; 33] = [
         upstream: "https://huggingface.co/itsmax/TinyMusician/resolve/792d2e061a079802d192b9ab82933ce5406103fd/onnx/decoder_model_merged.onnx",
         bytes: 274_356_314,
         sha256: "e1a4481a24ec947c4c7cc6a7d742c0c03a9ccdf2a18c6589d4d2d157c8e60d70",
-        licence: "Unclear (no licence file upstream)",
+        licence: "CC-BY-NC-4.0 (MusicGen-small weights)",
     },
 ];
 

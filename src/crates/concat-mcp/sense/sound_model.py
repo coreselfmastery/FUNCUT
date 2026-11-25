@@ -56,6 +56,7 @@ not one that is broken.
 from __future__ import annotations
 
 import array
+import gc
 import json
 import math
 import os
@@ -1468,32 +1469,41 @@ def selftest(spec=None):
            and _gen_seconds({"seconds": 0.1}, {"seconds": 2.0, "maxSeconds": 4.0}) == 0.5),
           str(_gen_seconds({"seconds": 99}, {"seconds": 2.0, "maxSeconds": 4.0})))
 
-    # The licence gate: TinyMusician ships no licence file upstream, so a
-    # monetized project (the brief the API's own gate reads) must not
-    # spend it - the reply routes the Director to the FreePD shelf.
+    # The licence gate, through the door the Director calls: a monetized
+    # ask is an ANSWER (`ok: true`, `reason: "licence"`, no `path`) so the
+    # music stage's pad/shelf fallback is reachable in a real run, and the
+    # `monetized` flag can only tighten the brief, never loosen it.
     with tempfile.TemporaryDirectory() as project:
         Path(project, "creative-brief.json").write_text(
             json.dumps({"monetized": True}), encoding="utf-8")
-        check("the monetized brief is read",
-              _project_is_monetized({"project": project}) is True, project)
-        bgm_row = GEN_KINDS["bgm"]
-        refusal = _licence_refusal({"project": project}, "bgm", bgm_row)
-        check("a monetized cut cannot spend TinyMusician",
-              refusal is not None and refusal.get("model") == "refused"
-              and "path" not in refusal, str(refusal or "no refusal"))
-        check("a non-monetized cut may", 
-              _licence_refusal({"project": "/nowhere"}, "bgm", bgm_row) is None,
-              "no brief, no gate")
-        check("MIT accents pass the gate",
-              _licence_refusal({"project": project}, "sfx-small",
-                               GEN_KINDS["sfx-small"]) is None,
-              "MIT permits commercial use")
+        resolved, refusal = _generator({"kind": "bgm", "project": project})
+        check("a monetized brief refuses the CC-BY-NC bed",
+              resolved is None and refusal.get("ok") is True
+              and refusal.get("reason") == "licence"
+              and refusal.get("generated") is False and "path" not in refusal,
+              str(refusal or "no refusal"))
+        check("the caller's flag tightens without a brief",
+              _generator({"kind": "bgm", "monetized": True})[1]
+              .get("reason") == "licence",
+              "the flag alone is enough")
+        check("a monetized ask of a commercial model passes",
+              _generator({"kind": "sfx-small", "monetized": True,
+                          "project": project})[1] is None
+              or _generator({"kind": "sfx-small", "monetized": True})[1]
+              .get("reason") != "licence",
+              "MIT is commercial")
+        check("the flag cannot loosen a monetized brief",
+              _generator({"kind": "bgm", "monetized": False,
+                          "project": project})[1]
+              .get("reason") == "licence",
+              "the brief's own word wins")
         Path(project, "creative-brief.json").write_text(
             json.dumps({"monetized": False}), encoding="utf-8")
-        check("a brief that says not monetized is obeyed",
-              _project_is_monetized({"project": project}) is False
-              and _licence_refusal({"project": project}, "bgm", bgm_row) is None,
-              "the brief's own word wins")
+        reply = _generator({"kind": "bgm", "project": project})[1]
+        check("a brief that says not monetized frees the bed",
+              reply is None or reply.get("reason") != "licence",
+              "the gate is the brief's, not a blanket (the model may still be "
+              "absent, which is a different answer)")
 
     models = Models(spec)
     check("models are absent without files or present with them",
@@ -1514,11 +1524,70 @@ def selftest(spec=None):
                   "" if embedding is None else f"{embedding.size}")
 
     checks.extend(_plan_selftest(spec))
+    checks.extend(_licence_selftest())
 
     failed = [c for c in checks if not c["ok"]]
     return {"tool": "selftest", "ok": not failed, "checks": checks,
             "passed": len(checks) - len(failed), "total": len(checks),
             "model": {"state": models.state, "reason": models.reason}}
+
+
+def _licence_selftest():
+    """The licence table and the gate that spends it, without any model."""
+    checks = []
+    kinds = {kind: row for kind, row in GEN_KINDS.items()}
+    checks.append({
+        "check": "the SFX generators are licensed for commercial work",
+        "ok": kinds["sfx-small"].get("commercial") is True
+        and kinds["sfx-large"].get("commercial") is True,
+        "detail": ", ".join(f"{k}:{kinds[k].get('commercial')}" for k in ("sfx-small", "sfx-large")),
+    })
+    checks.append({
+        "check": "the music generator is not: MusicGen-small is CC-BY-NC",
+        "ok": kinds["bgm"].get("commercial") is False
+        and "NC" in kinds["bgm"]["licence"],
+        "detail": kinds["bgm"]["licence"],
+    })
+    with tempfile.TemporaryDirectory(prefix="funcut-licence-") as project:
+        brief = Path(project) / "creative-brief.json"
+        checks.append({
+            "check": "a project with no brief is not monetized",
+            "ok": _project_monetized(project) is False,
+            "detail": "",
+        })
+        brief.write_text('{"monetized": true}')
+        checks.append({
+            "check": "a brief that says monetized is read as monetized",
+            "ok": _project_monetized(project) is True,
+            "detail": "",
+        })
+        _row, refusal = _generator({"kind": "bgm", "project": project})
+        checks.append({
+            "check": "a monetized project is refused the CC-BY-NC bed",
+            "ok": refusal is not None and refusal.get("reason") == "licence"
+            and "CC-BY-NC" in str(refusal.get("licence")),
+            "detail": str((refusal or {}).get("reason")),
+        })
+        brief.write_text('{"monetized": false}')
+        _row, refusal = _generator({"kind": "bgm", "project": project})
+        checks.append({
+            "check": "a non-monetized project is not refused on licence",
+            "ok": refusal is None or refusal.get("reason") != "licence",
+            "detail": str((refusal or {}).get("reason")),
+        })
+        _row, refusal = _generator({"kind": "bgm", "project": project, "monetized": True})
+        checks.append({
+            "check": "a caller that says monetized is refused even without a brief",
+            "ok": refusal is not None and refusal.get("reason") == "licence",
+            "detail": str((refusal or {}).get("reason")),
+        })
+        _row, refusal = _generator({"kind": "sfx-small", "project": project, "monetized": True})
+        checks.append({
+            "check": "the commercial generators are never refused on licence",
+            "ok": refusal is None or refusal.get("reason") != "licence",
+            "detail": str((refusal or {}).get("reason")),
+        })
+    return checks
 
 
 # ── Generation ──────────────────────────────────────────────────────────
@@ -1531,10 +1600,21 @@ def selftest(spec=None):
 #   bgm        TinyMusician        MusicGen 15 layers, four codebooks, 32 kHz
 #
 # Every one is ONNX plus a Hugging Face tokenizer, so the dependency is the
-# same numpy + onnxruntime + tokenizers the reader already asks for. The
-# sessions are built per call: a generation is seconds to minutes of work
-# and the process exits afterwards, so a cached session would only hold
-# memory between calls that never come.
+# same numpy + onnxruntime + tokenizers the reader already asks for.
+#
+# Memory is the constraint on the laptops this runs on. Sessions are built
+# lazily inside one call and released when it ends - `_release_sessions`
+# drops the graphs before the process exits, so a caller that asks for a
+# sound twice in one spec never pays for the load twice, and a caller that
+# asks once pays for nothing after the file is written. A model whose
+# weights would not fit the machine's free memory is refused before the
+# load rather than swapping the editor out.
+#
+# `commercial` is the licence, not a preference: TinyMusician is a
+# MusicGen-small export, and MusicGen-small's weights are CC-BY-NC 4.0, so
+# a bed it writes may not go into monetized work. The generator reads the
+# project's own `creative-brief.json` and refuses that bed instead of
+# writing a file the edit cannot legally ship.
 
 GEN_KINDS = {
     "sfx-small": {
@@ -1550,6 +1630,7 @@ GEN_KINDS = {
         "maxSeconds": 30.0,
         "steps": 1,
         "licence": "MIT",
+        "commercial": True,
     },
     "sfx-large": {
         "model": "stable-audio-open-small",
@@ -1568,6 +1649,9 @@ GEN_KINDS = {
         "maxSeconds": 11.9,
         "steps": 8,
         "licence": "Stability AI Community License",
+        # Free for commercial work under $1M annual revenue, with the
+        # licence's own attribution terms; not a public-domain grant.
+        "commercial": True,
     },
     "bgm": {
         "model": "tinymusician",
@@ -1581,7 +1665,12 @@ GEN_KINDS = {
         "seconds": 8.0,
         "maxSeconds": 10.0,
         "steps": None,
-        "licence": "unclear (no licence file upstream)",
+        # The repository carries no licence file, but its `base_model` is
+        # facebook/musicgen-small, whose weights are CC-BY-NC 4.0: an
+        # export of those weights is bound by them, so this is the licence
+        # however the repository is labelled.
+        "licence": "CC-BY-NC-4.0 (MusicGen-small weights)",
+        "commercial": False,
     },
 }
 
@@ -1592,23 +1681,97 @@ def _slug(text, limit=48):
     return (kept[:limit].strip("-") or "sound")
 
 
+def _project_monetized(project):
+    """Whether the project's own brief claims the work is monetized.
+
+    The same file and the same field the API's licence gate reads
+    (`creative-brief.json`, top-level `monetized`), so a generated bed and
+    an imported shelf track are held to one rule. No brief, or no flag, is
+    non-monetized - a legacy project says nothing; a brief that cannot be
+    read is monetized, because a broken file is not permission.
+    """
+    if not project:
+        return False
+    brief = Path(project) / "creative-brief.json"
+    try:
+        text = brief.read_text()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return True
+    return data.get("monetized") is True
+
+
+def _available_bytes():
+    """What the machine can hand out without swapping: None when unknown."""
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return None
+
+
+def _set_bytes(spec, row):
+    """The bytes one kind's files take on disk, as installed."""
+    total = 0
+    for name in row["files"]:
+        path = _model_file(spec, name)
+        if path is not None:
+            total += path.stat().st_size
+    return total
+
+
 def _generator(spec):
     """The kind's table row, or the reason it cannot run.
 
-    An absent generator is an ANSWER, not an error: the reply says
-    `model: "absent"` with `ok: true` the way the reader's own degrade
-    path does, because the Director's music and SFX stages read this
-    reply from the run log and shop the shelf when it carries no `path`.
-    A refusal phrased as an error never reaches that log - the runner
-    only records replies, not errors - and a stage that never sees the
-    absence ends warned, with no bed and no accents, which is a
-    regression the shelf was supposed to prevent.
+    The order is the order of the answers: a model this project may not
+    use is refused before anything is read, a model that is not downloaded
+    is refused before anything is loaded, and a model that will not fit is
+    refused before it swaps the machine.
+
+    And every one of those refusals is an ANSWER, not an error: the reply
+    says `ok: true` with no `path` (the reader's own degrade pattern),
+    because the Director's music and SFX stages read this reply from the
+    run log and shop the shelf when it carries no `path`. A refusal
+    phrased as an error never reaches that log - the runner only records
+    replies, not errors - and a stage that never sees the refusal ends
+    warned, with no bed and no accents, which is a regression the shelf
+    fallback was written to prevent.
     """
     kind = str(spec.get("kind") or "sfx-small")
     row = GEN_KINDS.get(kind)
     if row is None:
+        # A spelling mistake is an error, not an answer: nothing downstream
+        # can usefully react to it.
         return None, {"tool": "generate", "ok": False,
                       "error": f"unknown kind {kind!r}: one of {sorted(GEN_KINDS)}"}
+    # The brief is the authority; a caller that says the work is monetized
+    # can only tighten it, never loosen it - an unattended run knows its
+    # own plan, and a project whose brief was never written does not.
+    monetized = spec.get("monetized") is True or _project_monetized(spec.get("project"))
+    if not row.get("commercial", True) and monetized:
+        # An ANSWER, not an error: the Director's music stage reads this
+        # reply from the run log, sees `reason: "licence"` with no `path`,
+        # and asks sfx-large for a pad or shops the FreePD shelf instead.
+        return None, {
+            "tool": "generate",
+            "ok": True,
+            "generated": False,
+            "model": row["model"],
+            "kind": kind,
+            "licence": row["licence"],
+            "reason": "licence",
+            "detail": f"{row['model']} writes under {row['licence']}, which does not "
+            "allow monetized work: this project's brief says it is monetized. "
+            "Use the CC0 shelf, `sfx-large` (Stability AI Community Licence) for a "
+            "written bed, or mark the project non-monetized",
+        }
     if np is None or ort is None or Tokenizer is None:
         missing = []
         if np is None:
@@ -1639,24 +1802,59 @@ def _generator(spec):
             "(Settings > Models, or models_download)",
             "missing": absent,
         }
+    needed = _set_bytes(spec, row)
+    available = _available_bytes()
+    if available is not None and needed and needed * 1.35 > available:
+        return None, {
+            "tool": "generate",
+            "ok": False,
+            "model": row["model"],
+            "reason": "memory",
+            "error": f"the {kind} model needs about {needed * 1.35 / 1e9:.2f} GB and "
+            f"{available / 1e9:.2f} GB is free: close what you can, or use a smaller "
+            "kind (`sfx-small` is 0.35 GB)",
+        }
     return (kind, row), None
+
+
+# The graphs one call has open, by file and thread count: a call that
+# writes several sounds loads each graph once, and `_release_sessions`
+# lets them go before the process ends.
+_SESSIONS = {}
 
 
 def _session(name, spec, threads):
     path = _model_file(spec, name)
+    key = (str(path), threads)
+    held = _SESSIONS.get(key)
+    if held is not None:
+        return held
     options = ort.SessionOptions()
     options.intra_op_num_threads = threads
     options.inter_op_num_threads = 1
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     options.log_severity_level = 3
-    return ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+    session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+    _SESSIONS[key] = session
+    return session
+
+
+def _release_sessions():
+    """Drop every graph this call loaded, and the arena behind them."""
+    if not _SESSIONS:
+        return
+    _SESSIONS.clear()
+    gc.collect()
 
 
 def _threads(spec):
     named = spec.get("threads")
     if isinstance(named, (int, float)) and named >= 1:
         return min(int(named), 16)
-    return max(1, min(4, os.cpu_count() or 2))
+    # Half the cores, never more than four: this runs beside a window that
+    # is drawing frames, and on a four-core laptop all four threads make
+    # the editor stutter for a sound it is not yet playing.
+    return max(1, min(4, (os.cpu_count() or 2) // 2))
 
 
 def _gen_seconds(spec, row):
@@ -1883,52 +2081,6 @@ def _gen_musician(spec, prompt, seconds, seed, threads):
     return audio[: int(seconds * rate)], rate
 
 
-def _project_is_monetized(spec):
-    """The project's own word, from the same brief the API's licence gate
-    reads (`project_is_monetized`): `<project>/creative-brief.json`, the
-    `monetized` field. No brief, or no file, means not monetized - the
-    same default the API applies.
-    """
-    project = spec.get("project")
-    if not project:
-        return False
-    try:
-        brief = json.loads(
-            (Path(project) / "creative-brief.json").read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError):
-        return False
-    return bool(brief.get("monetized") is True)
-
-
-def _licence_refusal(spec, kind, row):
-    """The licence a monetized cut may not spend, spent anyway.
-
-    TinyMusician ships no licence file upstream, so a monetized edit
-    must not carry its output - the models table's own promise is that
-    "an unattended run never spends it on a monetized cut". The refusal
-    is an answer (`ok: true`, no `path`) so the Director's music stage
-    shops the FreePD shelf instead of ending the stage warned. MIT and
-    the Stability AI Community Licence permit commercial use (the
-    latter under its revenue threshold and terms, which the reply
-    carries so the operator sees them), so those two pass.
-    """
-    licence = str(row.get("licence") or "")
-    if kind == "bgm" and "unclear" in licence.lower() and _project_is_monetized(spec):
-        return {
-            "tool": "generate",
-            "ok": True,
-            "model": "refused",
-            "generated": False,
-            "kind": kind,
-            "licence": licence,
-            "reason": "the TinyMusician weights carry no licence file, so a "
-            "monetized edit cannot ship its output: shopping the FreePD "
-            "shelf instead (bgm_search, source freepd)",
-        }
-    return None
-
-
 def generate_sound(spec):
     """Write a short sound or a music bed from words.
 
@@ -1943,9 +2095,6 @@ def generate_sound(spec):
     if refusal is not None:
         return refusal
     kind, row = resolved
-    licence_refusal = _licence_refusal(spec, kind, row)
-    if licence_refusal is not None:
-        return licence_refusal
     prompt = str(spec.get("prompt") or "").strip()
     if not prompt:
         return {
@@ -2010,12 +2159,13 @@ def generate_sound(spec):
         except ValueError:
             return {"ok": False, "error": "`out` must stay inside `project`"}
     channels, frames = _write_float_wav(path, audio, rate)
-    return {
+    reply = {
         "ok": True,
         "tool": "generate",
         "kind": kind,
         "model": row["model"],
         "licence": row["licence"],
+        "commercial": row.get("commercial", True),
         "prompt": prompt,
         "path": str(path),
         "seconds": _r(frames / rate, 3),
@@ -2028,6 +2178,32 @@ def generate_sound(spec):
         "threads": threads,
         "elapsedSec": _r(time.time() - started, 2),
     }
+    _write_licence_record(path, reply)
+    return reply
+
+
+def _write_licence_record(path, reply):
+    """Leave the licence beside the file it governs.
+
+    The project folder outlives this process and travels with the edit, so
+    the record - not the tool's reply - is what a later import can check.
+    A record that cannot be written is not fatal: the reply still carries
+    the licence, and a reader without one treats the file as it treats any
+    other unlabelled media.
+    """
+    record = {
+        "model": reply["model"],
+        "kind": reply["kind"],
+        "licence": reply["licence"],
+        "commercial": reply["commercial"],
+        "prompt": reply["prompt"],
+        "seed": reply["seed"],
+    }
+    try:
+        beside = Path(str(reply["path"]) + ".licence.json")
+        beside.write_text(json.dumps(record, indent=2) + "\n")
+    except OSError:
+        pass
 
 
 TOOLS = {
@@ -2053,6 +2229,8 @@ def command(spec):
         return handler(spec)
     except Exception as exc:  # noqa: BLE001 - a sidecar reports, it does not traceback
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        _release_sessions()
 
 
 def main(argv):

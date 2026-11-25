@@ -3415,11 +3415,15 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         );
         props.insert(
             "threads".to_owned(),
-            json!({ "type": "integer", "minimum": 1, "description": "generate: CPU threads; four by default." }),
+            json!({ "type": "integer", "minimum": 1, "description": "generate: CPU threads; half the cores by default, never more than four, so the window keeps one to draw with." }),
         );
         props.insert(
             "project".to_owned(),
             string("generate: the project folder to write into - the file lands in <project>/generated-audio/; absent writes to a temporary folder."),
+        );
+        props.insert(
+            "monetized".to_owned(),
+            json!({ "type": "boolean", "description": "generate: say so when the work is monetized. bgm is CC-BY-NC 4.0, so a monetized ask is refused with reason \"licence\" before anything is loaded; the flag can only tighten the project's brief, never loosen it." }),
         );
     }
     json!({

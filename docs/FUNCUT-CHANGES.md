@@ -293,9 +293,9 @@ The reader names a sound; three more models write one, in the same
 - **Stable Audio Open Small** (`sfx-large`, 341 M, Stability AI Community
   License) - eight distilled steps, 11.9 s stereo. Measured 23.5 s for
   4 s: the hook.
-- **TinyMusician** (`bgm`, ~135 M, no licence file upstream) - MusicGen
-  small as ONNX, four codebooks, 32 kHz. Measured 38.3 s for 3.9 s: the
-  bed, and the reason the bed is written only for a short cut.
+- **TinyMusician** (`bgm`, ~135 M, CC-BY-NC 4.0) - MusicGen small as
+  ONNX, four codebooks, 32 kHz. Measured 38.3 s for 3.9 s: the bed, and
+  the reason the bed is written only for a short cut.
 
 The download side is the existing one: three sets in
 `concat-host/src/soundmodel.rs` (`SFX_SMALL`, `SFX_LARGE`, `BGM`), three
@@ -317,9 +317,39 @@ on configuration: the sfx stage writes each accent (the hook with
 rest of the run when the model says it is absent; the music stage writes
 the bed when the cut is 8 s or shorter - its decoder has no usable
 cache, so cost is the square of the length - and keeps the shelf for
-longer cuts. The three licences are not equal - MIT, the Stability Community
-License, and unclear - so the reply carries the licence of the model that
-wrote the file. See [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
+longer cuts. See [docs/SOUND-GENERATION.md](SOUND-GENERATION.md).
+
+The three licences are not equal, and the layer now says so instead of
+leaving it to the reader:
+
+- TinyMusician's repository carries no licence file, but its card names
+  `facebook/musicgen-small` as its base, and those weights are
+  **CC-BY-NC 4.0** - an export of them inherits it. The table, the
+  settings row and the reply all say CC-BY-NC now; "unclear" was wrong.
+- `generate` refuses `bgm` in a project whose `creative-brief.json` says
+  monetized (`reason: "licence"`, before anything is loaded), and
+  AUTO EDIT's plan is monetized by default - so the bed it writes for a
+  monetized cut is a warm ambient pad from `sfx-large` (community
+  licence), asked for after the music model refuses. A project marked
+  non-monetized still gets the music model.
+- `generate` writes `<file>.licence.json` beside what it writes, and
+  `sounds_add` / `bgm_import` read that record: a non-commercial bed
+  cannot be imported into a monetized edit even if the caller's request
+  says otherwise, which is the same authority rule MobyGratis follows.
+
+Two limits are now answered before the load rather than after: the
+generator measures the model's bytes against `MemAvailable` and refuses
+with `reason: "memory"` when a kind would push the laptop into swap, and
+sessions are built inside a call and released when it ends, so nothing is
+held between calls. Threads default to half the cores (at most four), so
+the editor keeps one to draw with.
+
+The download is one table now: `concat_host::soundmodel::set_by_id` is
+read by the settings sheet's rows, by `models_list` (which grew a `sound`
+list of ids, sizes, licences and what is on disk) and by
+`models_download { kind: "sound", id: ... }`, so a headless run and the
+sheet fetch the same four sets - `sound-models`, `sfx-small`,
+`sfx-large`, `bgm`.
 
 ## The sound reader (`sound_sense.py`)
 

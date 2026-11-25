@@ -111,7 +111,7 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
     let lane_cancel = Arc::new(AtomicBool::new(false));
     let run_over = Arc::new(AtomicBool::new(false));
     let outcome = std::thread::scope(|scope| {
-        watch_client_cancellation(scope, cancelled, &lane_cancel, &run_over);
+        watch_client_cancellation(scope, cancelled, &lane_cancel, &run_over, &runner);
         // The guard covers the run's own frame: a panic between the
         // calls the runner's per-call guards already catch must still
         // end the watch, or the join below never returns.
@@ -121,7 +121,12 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             Arc::new(Toolbox::new()),
             Arc::clone(&lane_cancel),
         );
-        let outcome = runner.run_with_lanes(&mut program, &mut caller, &lanes);
+        let outcome = runner.run_with_lanes_and_cancellation(
+            &mut program,
+            &mut caller,
+            &lanes,
+            cancelled,
+        );
         drop(_run_ends);
         outcome
     });
@@ -458,13 +463,20 @@ fn watch_client_cancellation<'env>(
     client: &'env AtomicBool,
     lanes: &Arc<AtomicBool>,
     run_over: &Arc<AtomicBool>,
+    runner: &Runner,
 ) {
     let lanes = Arc::clone(lanes);
     let run_over = Arc::clone(run_over);
+    let runner = runner.clone();
     scope.spawn(move || {
         while !run_over.load(Ordering::Relaxed) {
             if client.load(Ordering::Relaxed) {
+                // Stop both sides of the fan: the backend flag releases
+                // in-flight lane calls, and the runner flag makes the
+                // joined failure a cancellation with rollback rather
+                // than an ordinary failed/warned stage.
                 lanes.store(true, Ordering::Relaxed);
+                runner.cancel();
                 return;
             }
             std::thread::sleep(Duration::from_millis(250));
@@ -489,15 +501,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_client_that_hangs_up_is_carried_to_the_lanes_flag() {
+    fn a_client_that_hangs_up_is_carried_to_the_runner_and_lanes() {
         let client = AtomicBool::new(false);
         let lanes = Arc::new(AtomicBool::new(false));
         let run_over = Arc::new(AtomicBool::new(false));
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         std::thread::scope(|scope| {
             // Ensure the watcher is released even if the assertion below
             // fails: a failing test must not hang the scoped join.
             let _run_ends = RunOverOnDrop(Arc::clone(&run_over));
-            watch_client_cancellation(scope, &client, &lanes, &run_over);
+            watch_client_cancellation(scope, &client, &lanes, &run_over, &runner);
             // The client hangs up mid-run: the watch carries the rise to
             // the lanes within its poll budget.
             client.store(true, Ordering::Relaxed);
@@ -509,6 +522,10 @@ mod tests {
                 lanes.load(Ordering::Relaxed),
                 "the lanes were never told the client hung up"
             );
+            assert!(
+                runner.cancelled(),
+                "the runner was not told to cancel and roll back"
+            );
         });
     }
 
@@ -519,10 +536,12 @@ mod tests {
         // The run is already over: the watch must leave at once rather
         // than park on the caller's flag - a returned scope is the proof.
         let run_over = Arc::new(AtomicBool::new(true));
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         std::thread::scope(|scope| {
-            watch_client_cancellation(scope, &client, &lanes, &run_over);
+            watch_client_cancellation(scope, &client, &lanes, &run_over, &runner);
         });
         assert!(!lanes.load(Ordering::Relaxed));
+        assert!(!runner.cancelled());
     }
 
     #[test]

@@ -14648,8 +14648,10 @@ mod tests {
         let first = (music.next)(log.as_slice()).expect("the bed is asked for");
         assert_eq!(first.tool, "sense_sound_model");
         assert_eq!(first.arguments["kind"], json!("bgm"));
-        log.push(json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
-                      "reason": "the model is not downloaded" }));
+        log.push(
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }),
+        );
         assert_eq!(
             (music.next)(log.as_slice())
                 .map(|call| call.tool)

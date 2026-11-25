@@ -985,6 +985,68 @@ fn caption_groups(segment: &Value, fillers: &[String]) -> Vec<CaptionGroup> {
     groups
 }
 
+/// Split a caption group at the speaker changes the ear measured: the
+/// words either side of a turn belong to different voices, and one
+/// block reading across the change says one voice said them both. A
+/// read that measured no speakers - or a group that never crosses a
+/// turn - comes back as it went in, its words' offsets untouched; a
+/// word the ear could not attribute keeps the speaker the group was
+/// holding, so a turn the diarization only half-timed does not shred
+/// the caption.
+fn split_at_speaker_changes(group: CaptionGroup, read: Option<&VoiceRead>) -> Vec<CaptionGroup> {
+    let Some(read) = read else {
+        return vec![group];
+    };
+    let mut holding: Option<u64> = None;
+    let mut splits: Vec<usize> = Vec::new();
+    for (index, word) in group.words.iter().enumerate() {
+        let speaker = read.speaker_at(word.start).or(holding);
+        if holding.is_some_and(|seen| speaker != Some(seen)) && index > 0 {
+            splits.push(index);
+        }
+        holding = speaker;
+    }
+    if splits.is_empty() {
+        return vec![group];
+    }
+    let mut parts: Vec<CaptionGroup> = Vec::new();
+    let mut from = 0usize;
+    for split in splits
+        .iter()
+        .copied()
+        .chain(std::iter::once(group.words.len()))
+    {
+        if split <= from {
+            continue;
+        }
+        let words = &group.words[from..split];
+        let mut text = String::new();
+        let mut rebuilt: Vec<CaptionWord> = Vec::new();
+        for word in words {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            let at = text.chars().count();
+            text.push_str(&word.text);
+            rebuilt.push(CaptionWord {
+                text: word.text.clone(),
+                start: word.start,
+                end: word.end,
+                at,
+            });
+        }
+        parts.push(CaptionGroup {
+            take: group.take.clone(),
+            start: words.first().map(|word| word.start).unwrap_or(group.start),
+            end: words.last().map(|word| word.end).unwrap_or(group.end),
+            text,
+            words: rebuilt,
+        });
+        from = split;
+    }
+    parts
+}
+
 /// Where the shopping of one B-roll slot stands. The stage shops every
 /// slot first - search, fetch, look, choose - so the continuity gate
 /// can judge the whole picture run before anything is imported, and a
@@ -9996,31 +10058,46 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                             .collect()
                                     })
                                     .unwrap_or_default();
-                                for mut group in caption_groups(&segment, &fillers) {
-                                    group.take = take.clone();
-                                    // The opening bound must land inside a
-                                    // surviving piece (a caption whose
-                                    // first word was cut has no start to
-                                    // show at), but the closing bound is
-                                    // allowed to sit at the join the cut
-                                    // made: a group whose last word ends
-                                    // exactly at the piece's edge - a take
-                                    // trimmed to its last word, or a
-                                    // trailing pause the tighten took -
-                                    // still shows its words, so the bound
-                                    // maps to the nearest surviving second
-                                    // at or before it, the same mercy the
-                                    // B-roll slot bounds already get.
-                                    let (Some(at), Some(to)) = (
-                                        timeline_at(view, &media, &take, group.start),
-                                        timeline_at_or_before(view, &media, &take, group.end),
-                                    ) else {
-                                        continue;
-                                    };
-                                    if to - at < 0.25 {
-                                        continue;
+                                for base in caption_groups(&segment, &fillers) {
+                                    // The words either side of a speaker
+                                    // change belong to different voices:
+                                    // the split keeps one block from
+                                    // reading across the turn. No turns
+                                    // measured and the group goes in as
+                                    // it came.
+                                    for mut group in
+                                        split_at_speaker_changes(base, take_read)
+                                    {
+                                        group.take = take.clone();
+                                        // The opening bound must land inside a
+                                        // surviving piece (a caption whose
+                                        // first word was cut has no start to
+                                        // show at), but the closing bound is
+                                        // allowed to sit at the join the cut
+                                        // made: a group whose last word ends
+                                        // exactly at the piece's edge - a take
+                                        // trimmed to its last word, or a
+                                        // trailing pause the tighten took -
+                                        // still shows its words, so the bound
+                                        // maps to the nearest surviving second
+                                        // at or before it, the same mercy the
+                                        // B-roll slot bounds already get.
+                                        let (Some(at), Some(to)) = (
+                                            timeline_at(view, &media, &take, group.start),
+                                            timeline_at_or_before(
+                                                view,
+                                                &media,
+                                                &take,
+                                                group.end,
+                                            ),
+                                        ) else {
+                                            continue;
+                                        };
+                                        if to - at < 0.25 {
+                                            continue;
+                                        }
+                                        groups.push((at, to, group));
                                     }
-                                    groups.push((at, to, group));
                                 }
                             }
                         }
@@ -12128,6 +12205,84 @@ mod tests {
         }
     }
 
+    /// A caption group never spans a speaker change: the words either
+    /// side of a turn become their own blocks, each with its own text
+    /// and its own word offsets; a read that measured no speakers, or a
+    /// group that never crosses a turn, goes in and out unchanged.
+    #[test]
+    fn a_caption_group_never_spans_a_speaker_change() {
+        let group = |words: &[(&str, f64, f64)]| {
+            let mut text = String::new();
+            let mut timed: Vec<CaptionWord> = Vec::new();
+            for (word, start, end) in words {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                let at = text.chars().count();
+                text.push_str(word);
+                timed.push(CaptionWord {
+                    text: (*word).to_owned(),
+                    start: *start,
+                    end: *end,
+                    at,
+                });
+            }
+            CaptionGroup {
+                take: "/voiceover/take.wav".to_owned(),
+                start: words.first().map(|(_, start, _)| *start).unwrap_or(0.0),
+                end: words.last().map(|(_, _, end)| *end).unwrap_or(0.0),
+                text,
+                words: timed,
+            }
+        };
+        let one = group(&[
+            ("right", 1.0, 1.2),
+            ("yes", 1.3, 1.5),
+            ("i", 1.7, 1.8),
+            ("agree", 1.9, 2.3),
+        ]);
+        // No speakers measured: the group comes back as it went in.
+        let untouched = split_at_speaker_changes(one.clone(), None);
+        assert_eq!(untouched.len(), 1);
+        assert_eq!(untouched[0].text, one.text);
+        // A turn inside the group: the words either side become their
+        // own blocks, each carrying its own text and offsets.
+        let mut read = crate::voice_read::VoiceRead::default();
+        read.take_wide.speaker_turns = vec![
+            crate::voice_read::SpeakerTurn {
+                start: 0.0,
+                end: 1.6,
+                speaker: 0,
+            },
+            crate::voice_read::SpeakerTurn {
+                start: 1.6,
+                end: 9.0,
+                speaker: 1,
+            },
+        ];
+        let parts = split_at_speaker_changes(one, Some(&read));
+        assert_eq!(
+            parts.len(),
+            2,
+            "{:?}",
+            parts.iter().map(|part| part.text.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(parts[0].text, "right yes");
+        assert_eq!(parts[0].start, 1.0);
+        assert_eq!(parts[0].end, 1.5);
+        assert_eq!(parts[1].text, "i agree");
+        assert_eq!(
+            parts[1].words[0].at, 0,
+            "the second part's offsets restart at its own text"
+        );
+        assert_eq!(parts[1].words[1].at, 2);
+        // A group one speaker holds throughout goes in and out whole.
+        let held = group(&[("held", 3.0, 3.4), ("through", 3.5, 3.9)]);
+        let parts = split_at_speaker_changes(held.clone(), Some(&read));
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].text, held.text);
+    }
+
     /// The program the button runs: the whole unattended spine in the
     /// runner's register - the model preflight, the static handoff, the
     /// fanned repair and transcription (every take at the same time),
@@ -13756,6 +13911,22 @@ mod tests {
         // exists to put a helper between a raw field and the decision, and
         // `noise_floor_dbfs` reaches the bed through `wants_bed`, which is
         // a consumer even though the program never spells the field.
+        // A whole field access: the needle `.field` followed by anything
+        // but a name character, so `.speaker` does not match inside
+        // `.speaker_seconds` and `.speaker_at(` does not count as the
+        // field. The program body and every helper's block are both read
+        // by this one rule, so a prefix collision can no longer spend a
+        // field on either side of the guard.
+        fn accesses(text: &str, field: &str) -> bool {
+            let needle = format!(".{field}");
+            text.match_indices(&needle).any(|(at, _)| {
+                let after = &text[at + needle.len()..];
+                !after
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+        }
         let helper_reads: Vec<(&str, Vec<&str>)> = source
             .split("\n    pub fn ")
             .skip(1)
@@ -13773,7 +13944,13 @@ mod tests {
                     .iter()
                     .copied()
                     .filter(|field| {
-                        block.contains(&format!(".{field}")) || block.contains(&format!("{field}:"))
+                        // A helper reads the field when it names a whole
+                        // access: `.speaker` inside `.speaker_seconds` is
+                        // a different field's access, and counting it
+                        // would let a helper that never read `speaker`
+                        // spend it - the guard's own false positive, the
+                        // one the split consumer now spends for real.
+                        accesses(block, field) || block.contains(&format!("{field}:"))
                     })
                     .collect();
                 Some((name, uses))
@@ -13784,18 +13961,10 @@ mod tests {
                 uses.contains(&field) && body.contains(&format!(".{helper}("))
             })
         };
-        // Match a complete field access: .speaker_at( is a helper call,
-        // not a read of a field named speaker.
-        let field_access = |field: &str| {
-            let needle = format!(".{field}");
-            body.match_indices(&needle).any(|(at, _)| {
-                let after = &body[at + needle.len()..];
-                !after
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-        };
+        // Match a complete field access anywhere: `.speaker_at(` is a
+        // helper call, not a read of a field named `speaker`, and
+        // `.speaker_seconds` never spends a field named `speaker`.
+        let field_access = |field: &str| accesses(body, field);
         let unspent: Vec<&str> = fields
             .iter()
             .copied()

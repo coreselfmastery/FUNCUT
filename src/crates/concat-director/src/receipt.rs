@@ -1037,25 +1037,27 @@ fn signal_evidence_gate(
     let mut claimed = std::collections::BTreeSet::new();
     let mut failures = Vec::new();
     // The Rust ears: a reading taken without the voice-signals binary
-    // says so in its own notes, and the run lost more than half its
-    // readings - every accent, the duck's deepening, the tighten
-    // guards, the entity cards - while the Python half still answered,
-    // so the run completed over a reading nobody said was halved. The
-    // packaged app ships the binary; a from-source build that lacks it
-    // still edits, but the edit is a warned one, not an accepted one,
-    // and the receipt names the half that was read.
+    // says so in its own `degradations` - the same field the reply's
+    // `VoiceRead` parses and the runner's warning list carries - and
+    // the run lost more than half its readings: every accent, the
+    // duck's deepening, the tighten guards, the entity cards, while
+    // the Python half still answered. The packaged app ships the
+    // binary; a from-source build that lacks it still edits, but the
+    // edit is a warned one, not an accepted one, and the gate names
+    // the half that was read.
     let earless = profiles
         .iter()
         .filter(|profile| {
             profile.get("ok").and_then(Value::as_bool) == Some(true)
                 && profile
-                    .get("notes")
+                    .get("degradations")
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .any(|note| {
-                        note.as_str()
-                            .is_some_and(|said| said.contains("the voice-signals binary is not built"))
+                    .any(|degradation| {
+                        degradation
+                            .as_str()
+                            .is_some_and(|said| said.contains("voice-signals binary absent"))
                     })
         })
         .count();
@@ -1744,11 +1746,11 @@ mod tests {
         });
         let earless = json!({
             "ok": true,
-            "notes": [
-                "the voice-signals binary is not built; build it with \
-                 `cargo build -p voice-signals` (prosody, forensics, \
-                 speakers and NER entities are absent from this reading)"
+            "status": "degraded",
+            "degradations": [
+                "voice-signals binary absent: prosody/forensics/speakers/NER missing"
             ],
+            "notes": [],
             "signalConfidence": {
                 "perSignal": [
                     {"signal":"pauses","confidence":0.8},
@@ -1773,11 +1775,12 @@ mod tests {
             "{evidence}"
         );
         assert!(evidence.contains("cargo build -p voice-signals"), "{evidence}");
-        // The same profiles with the note gone pass: the check rides on
-        // the note the reading itself carries, never on a guess.
+        // The same profiles with the degradation gone pass: the check
+        // rides on the field the reading itself wrote, never on a guess.
         let healed = json!({
             "ok": true,
-            "notes": [],
+            "status": "ok",
+            "degradations": [],
             "signalConfidence": {
                 "perSignal": [
                     {"signal":"pauses","confidence":0.8},

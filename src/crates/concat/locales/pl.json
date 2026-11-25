@@ -701,6 +701,7 @@
   "settings.modelReady": "Model gotowy",
   "settings.models": "Modele",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Modele są pobierane, gdy funkcja po raz pierwszy ich potrzebuje. Tutaj pobieranie szuka najpierw; każde inne źródło jest próbowane potem.",
   "settings.newToken": "Nowy token",
   "settings.noReleasesYet": "Nie ma jeszcze żadnego wydania od 0.2.5.",

@@ -642,6 +642,17 @@ pub enum Command {
         #[serde(default)]
         ripple: bool,
     },
+    /// Points a placed clip at a different in-point without moving it on
+    /// the timeline or changing its length: the shot's first frame becomes
+    /// the source second named, so an entrance can land on the movement a
+    /// visual read found rather than on the clip's own zero. Clamped to the
+    /// media the clip actually plays; a still has no source to move.
+    SetClipSource {
+        /// The clip to re-point.
+        clip_id: String,
+        /// The new in-point, in seconds, floored at 0 and at the media's end.
+        source_start: f64,
+    },
     /// Cuts each named clip in two at one playhead time. The head keeps the
     /// id and the transition; the tail is minted fresh and stays
     /// source-continuous. A clip the time misses (or grazes within the
@@ -1170,6 +1181,7 @@ impl Command {
             Command::AddClip { start, .. }
             | Command::AddClipAtFirstFree { start, .. }
             | Command::AddClipsInSequence { start, .. } => bad([*start]),
+            Command::SetClipSource { source_start, .. } => bad([*source_start]),
             Command::AddShapeClip {
                 start,
                 duration,
@@ -1401,6 +1413,7 @@ pub fn apply(
         | Command::AddMotionClip { .. }
         | Command::MoveClips { .. }
         | Command::TrimClip { .. }
+        | Command::SetClipSource { .. }
         | Command::SplitClips { .. }
         | Command::RemoveSpans { .. }
         | Command::FreezeFrame { .. }

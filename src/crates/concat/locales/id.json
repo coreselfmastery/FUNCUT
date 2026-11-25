@@ -701,6 +701,7 @@
   "settings.modelReady": "Model siap",
   "settings.models": "Model",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Model diunduh saat pertama kali sebuah fitur membutuhkannya. Di sinilah unduhan mencari lebih dulu; semua sumber lain tetap dicoba setelahnya.",
   "settings.newToken": "Token baru",
   "settings.noReleasesYet": "Belum ada rilis dari 0.2.5 ke atas.",

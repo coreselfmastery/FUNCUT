@@ -701,6 +701,7 @@
   "settings.modelReady": "Модель готова",
   "settings.models": "Модели",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Модели загружаются, когда функция впервые в них нуждается. Здесь загрузка ищет в первую очередь; остальные источники всё равно проверяются после.",
   "settings.newToken": "Новый токен",
   "settings.noReleasesYet": "Выпусков начиная с 0.2.5 пока нет.",

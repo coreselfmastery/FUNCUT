@@ -25,7 +25,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **116 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **117 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs a 25-phase measured pipeline, and maestro, a vendored design and
@@ -36,7 +36,7 @@ with one click.
 
 | What | Count | Where it lives |
 | --- | --- | --- |
-| MCP tools | **116** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
+| MCP tools | **117** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 52 requests + 7 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **55** plus `batch`, the atomic wrapper | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
@@ -200,7 +200,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **116 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **117 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -538,6 +538,25 @@ Real-ESRGAN enhance (BSD-3, 4.9 MB). The optional VLM critic (SmolVLM2
 fetch on demand into the app data dir. Stabilization is classical CV — no
 model at all.
 
+The picture reader's shelf is thirty ONNX doors
+([VISUAL-MODELS.md](VISUAL-MODELS.md)), and four of them are in
+`models/manifest.toml` with a real digest: `transnetv2` (MIT, 31 MB, a shot
+boundary) · `depth-anything-v2-small` (Apache-2.0, 27 MB quantized, a depth
+map) · `dinov2-small` (Apache-2.0, 24 MB quantized, a visual embedding) ·
+`clip-vit-b32-visual` (MIT, 89 MB quantized, CLIP's vision tower). Those four
+are one row in Settings > Models ("Picture models", 172 MB) and download
+into `cutout-models` like the cutout and sound models, digest-checked, which
+is the folder `sense_visual` reads - so a set fetched in the window is the
+set the AUTO EDIT's stock choice measures with. The other twenty-six are
+installed per model from the Hub through `sense_visual` (`hf_search` ->
+`hf_files` -> `download`), land in `models/visual/` or wherever
+`FUNCUT_VISUAL_MODELS` / `modelDir` says, and
+`sense_visual {action:"models"}` is the check: each row carries its file,
+its licence, its size, its door, and whether the file is present. A door
+whose file is absent answers `present: false` and measures nothing - the
+eleven classical readings beside them need no model at all: they are stdlib,
+and every door refuses by name when a file is absent.
+
 ## Where the code is
 
 | Layer | Path |
@@ -552,7 +571,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (116 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
+| The MCP server (117 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

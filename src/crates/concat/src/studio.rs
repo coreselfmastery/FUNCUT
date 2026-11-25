@@ -731,6 +731,8 @@ pub struct Models {
     pub voices: Rc<VecModel<ModelData>>,
     /// The sound models - CLAP and YAMNet - as one row.
     pub sound_models: Rc<VecModel<ModelData>>,
+    /// The picture reader's models as one row.
+    pub picture_models: Rc<VecModel<ModelData>>,
     /// The Version page's releases, and beside each its day or that it
     /// is this one.
     pub versions: Rc<VecModel<SharedString>>,
@@ -820,6 +822,7 @@ impl Models {
             transcribers: Rc::new(VecModel::default()),
             voices: Rc::new(VecModel::default()),
             sound_models: Rc::new(VecModel::default()),
+            picture_models: Rc::new(VecModel::default()),
             versions: Rc::new(VecModel::default()),
             version_details: Rc::new(VecModel::default()),
             seats: Rc::new(VecModel::default()),
@@ -12406,6 +12409,7 @@ impl Studio {
         sync(&models.transcribers, self.settings.transcriber_rows());
         sync(&models.voices, self.settings.voice_rows());
         sync(&models.sound_models, self.settings.sound_rows());
+        sync(&models.picture_models, self.settings.visual_rows());
         sync(&models.versions, self.settings.version_rows());
         sync(&models.version_details, self.settings.version_details());
         app.set_relink(self.relink.data());

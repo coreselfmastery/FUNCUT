@@ -238,7 +238,11 @@ brief?, autoSetup?, profile?}` · `emotion {action:
 extract|brand|gate|verify|template, project?}` · `voice_signals {action:
 extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
 `sense_discourse` · `sense_voice_quality` · `sense_prosody_style` ·
-`sense_audio_repair` · `sense_captions` · `measure_loudness {path,
+`sense_audio_repair` · `sense_captions` · `sense_visual {action:
+measure_motion|camera_motion|shot_scale|visual_sync|scene_cuts|visual_quality|
+palette|saliency|composition|motion_blur|tracks|measure_clips|bench|models|
+action_class|depth_map|subject_mask|visual_embedding|describe_scene|shot_boundaries|
+film_shot_type|optical_flow|aesthetic|pose|…|hf_search|hf_files|download, …}` · `measure_loudness {path,
 targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
 `footage_plan_suggest {transcript: {segments: [{start,end,text}]}, beats?}`
 (the dialogue gaps and monotony runs that want B-roll, named before the plan is written)
@@ -248,11 +252,24 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   family, and why), `decisionPolicy` (which signals drive each decision) and
   `directorHints` (the cut style, the caption gate, the BGM call). The plan's
   `signalLog` cites its signals; `plan_validate` holds the citations.
-- The five `sense_*` family tools are the consumption layer: `action` names
+- `sense_visual` is the picture's door: eleven readings need nothing
+  installed (motion, camera, shot scale, sync, scene cuts, quality, palette,
+  saliency, composition, blur, tracks), and thirty ONNX doors add what a
+  classical read cannot (a shot boundary, depth, an embedding, an action, a
+  mask, a pose). A door with no file refuses with the reason. Install one
+  from the Hub in three calls - `hf_search` (find a repo), `hf_files` (its
+  ONNX files), `download` (fetch it; `HF_TOKEN` for a gated repo, and a
+  digest is pinned when none is given). `measure_clips` spends whatever is
+  installed on the stock sheet; `enrich: false` keeps it classical and fast.
+- The six `sense_*` family tools are the consumption layer: `action` names
   the reading (`sense_discourse {action: "score_script_quality", script}` —
   the ten discourse readings, the six voice-quality readings, the six
-  prosody readings, the six audio-repair actions and the five caption
-  readings; `selftest: true` proves one). Each reading names its own traps
+  prosody readings, the eight audio-repair actions, the five caption
+  readings and the picture's thirty-six — motion, camera travel and its
+  direction, shot scale, audio-visual sync, scene cuts, the technical
+  read, palette, saliency, the batch `measure_clips` read, the `bench`,
+  the `models` listing and the five model doors; `selftest: true` proves
+  one). Each reading names its own traps
   in its reply; the family schema documents the shared inputs. Three
   audio-repair actions are wired into the pipeline itself:
   `enhance_speech` (Phase 2 — a rough take is repaired before it is

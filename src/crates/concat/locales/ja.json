@@ -701,6 +701,7 @@
   "settings.modelReady": "モデルの準備ができました",
   "settings.models": "モデル",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "モデルは機能が初めて必要とした時に取得されます。ここで指定した場所を最初に探し、その後も他の配布元をすべて試します。",
   "settings.newToken": "新しいトークン",
   "settings.noReleasesYet": "0.2.5 以降のリリースはまだありません。",

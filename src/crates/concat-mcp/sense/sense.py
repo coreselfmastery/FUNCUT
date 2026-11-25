@@ -78,6 +78,10 @@ try:
     import sound_model as soundmodel_read
 except Exception:  # pragma: no cover
     soundmodel_read = None
+try:
+    import visual_sense as visual_read
+except Exception:  # pragma: no cover
+    visual_read = None
 
 
 # ---------------------------------------------------------------------------
@@ -2302,6 +2306,7 @@ _FAMILY = {
     "captions": captions_read,
     "sound": sound_read,
     "soundmodel": soundmodel_read,
+    "visual": visual_read,
 }
 
 
@@ -2315,7 +2320,7 @@ def family_command(cmd, spec):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "discourse", "voiceq", "prosody", "audiorepair", "captions", "sound", "soundmodel", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "discourse", "voiceq", "prosody", "audiorepair", "captions", "sound", "soundmodel", "visual", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -2356,7 +2361,7 @@ def main():
         elif args.cmd == "voice":
             out = voice_command(spec)
         elif args.cmd in ("discourse", "voiceq", "prosody", "audiorepair", "captions",
-                          "sound", "soundmodel"):
+                          "sound", "soundmodel", "visual"):
             # The family doors shell out to ffmpeg themselves (the repair
             # writers filter through it), and they resolve the binary from
             # FUNCUT_FFMPEG or PATH alone - neither of which carries the

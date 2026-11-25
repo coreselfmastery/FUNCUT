@@ -109,8 +109,10 @@ jobs:
       # The consumption layer's family selftests: discourse (the script
       # as language), voiceq (the take's health), prosody (the delivery),
       # audiorepair (the clean and the music - the three writing tools
-      # write to a scratch dir and prove their files) and captions (the
-      # words and the take made to agree, including the seal round trip).
+      # write to a scratch dir and prove their files), captions (the
+      # words and the take made to agree, including the seal round trip)
+      # and visual (the picture - motion, camera, scale, scene, quality,
+      # palette, saliency and the batch read the gather spends).
       # soundmodel has no selftest here on purpose: it needs numpy and
       # ONNX Runtime, which this job does not install, and its own
       # acceptance test is scripts/sound-model/bench.py. Pure stdlib plus
@@ -124,6 +126,8 @@ jobs:
       - run: python3 src/crates/concat-mcp/sense/audio_repair.py selftest
         if: ${{ !cancelled() }}
       - run: python3 src/crates/concat-mcp/sense/captions.py selftest
+        if: ${{ !cancelled() }}
+      - run: python3 src/crates/concat-mcp/sense/visual_sense.py selftest
         if: ${{ !cancelled() }}
       # The sound reader: six synthetic sounds whose expected read is
       # arithmetic, plus the peak-position, wrong-sound, level, repetition

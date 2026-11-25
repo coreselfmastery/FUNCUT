@@ -572,8 +572,17 @@ mod tests {
         // measured read of a file, the fused ranking, the placement check
         // and the per-moment sound design are 37 fields, each the input
         // of a real answer rather than prose; without them the schema
-        // refused the caller's own file. Function, not prose.
-        assert!(total < 268_000, "{total}: {sizes:?}");
+        // refused the caller's own file. Function, not prose. The
+        // picture's door (`sense_visual`) then lands on the same table -
+        // sixteen readings' inputs, the frame sources, the subject boxes,
+        // the bench's rows, the model doors - and the merged tree
+        // measures 273,832 - the three doors at their terse form, the
+        // shelf's `modelId` enum (thirty ids, the whole shelf nameable in
+        // one call), the Hub's repo/file/token and the two enrichment
+        // switches. A
+        // reading the director cannot call is a reading the edit paid for
+        // and never read.
+        assert!(total < 274_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -639,11 +648,21 @@ mod tests {
         // `auto_edit` is the whole fixed spine as one call - the project,
         // the optional script, the stock shelf and the copy switch -
         // 247,603 measured after trimming its prose; function, not prose.
-        // 249,000 -> 256,000 at 108: the same two sound doors ride the
+        // 249,000 -> 256,000 at 108: the sound layer's two doors ride the
         // director's surface (the sfx stage shops with them), and their
-        // fields are the price of the shelf being shoppable at all.
+        // fields are the price of the shelf being shoppable at all. The
+        // picture's door rides it too: the director spends motion,
+        // camera, scale and quality on its cuts, its stock veto and its
+        // captions, and a reading it cannot call is a reading the edit
+        // paid for and never read. 256,000 -> 262,000 at 109: the merged
+        // tree measures 260,160 - the three doors are already at their
+        // terse form, and the fields, not the prose, are what they cost.
+        // 262,000 -> 263,000 at 109: the shelf's Hub actions (`hf_search`,
+        // `hf_files`) and the sheet's two enrichment switches are what a
+        // director needs to install a door and then spend it - 262,135
+        // measured, function, not prose.
         assert!(
-            director < 256_000,
+            director < 263_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

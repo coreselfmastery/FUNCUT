@@ -701,6 +701,7 @@
   "settings.modelReady": "Model ready",
   "settings.models": "Models",
   "settings.soundModels": "Sound",
+  "settings.pictureModels": "Picture models",
   "settings.modelsFetchedFirstTime": "Models are fetched the first time a feature needs one. This is where the download looks first; every other source is still tried after it.",
   "settings.newToken": "New token",
   "settings.noReleasesYet": "No release from 0.2.5 on is out yet.",

@@ -3844,8 +3844,8 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
 /// placement reader must verify. Without this, check_placement falls back
 /// to the file's own detected role, so a wrong-family file can validate
 /// itself by definition.
-fn sfx_role_for_queries(queries: &[&'static str]) -> &'static str {
-    match queries.first().copied().unwrap_or("whoosh") {
+fn sfx_role_for_query(query: &str) -> &'static str {
+    match query {
         "stinger" => "cinematic_reveal",
         "drone" | "riser" => "tension_build",
         "chime" | "pop" | "swell" => "gentle_entrance",
@@ -11312,6 +11312,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
             tried: usize,
+            /// The exact shelf word whose results this state is reading.
+            query: &'static str,
         },
         /// The add's reply is in: the clip is on the lane. The placement
         /// is verified against the file the timeline will actually play
@@ -11332,6 +11334,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
             tried: usize,
+            /// The exact shelf word that selected this file.
+            query: &'static str,
         },
         /// The check's reply is in: move the clip onto the moment, drop
         /// it as the wrong sound, or let it stand and gain it.
@@ -11536,6 +11540,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     id: path.to_owned(),
                                     queries: queries.clone(),
                                     tried,
+                                    query: queries[0],
                                 });
                                 return Some(call(
                                     "sounds_add",
@@ -11547,16 +11552,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 ));
                             }
                             ai_accent = Some(false);
+                            let query = queries[tried % queries.len()];
                             pending = Some(SfxPending::Pick {
                                 at,
                                 gain_db,
                                 queries: queries.clone(),
                                 tried,
+                                query,
                             });
                             return Some(call(
                                 "sounds_search",
                                 json!({
-                                    "query": queries[tried % queries.len()],
+                                    "query": query,
                                     "limit": 3,
                                 }),
                             ));
@@ -11566,6 +11573,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries,
                             mut tried,
+                            query,
                         }) => {
                             // The search's answer: the first hit this run
                             // has not already spent, accents being short -
@@ -11619,6 +11627,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     id: id.clone(),
                                     queries,
                                     tried,
+                                    query,
                                 });
                                 return Some(call(
                                     "sounds_add",
@@ -11641,6 +11650,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     gain_db,
                                     queries,
                                     tried,
+                                    query,
                                 });
                                 return Some(call(
                                     "sounds_search",
@@ -11662,6 +11672,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             id,
                             queries,
                             tried,
+                            query,
                         }) => {
                             // The accent is spent the moment it is placed:
                             // the id goes on the `used` list whether the
@@ -11727,7 +11738,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "sense_sound",
                                     json!({
                                         "action": "check_placement",
-                                        "role": sfx_role_for_queries(&queries),
+                                        "role": sfx_role_for_query(query),
                                         "path": file,
                                         "clipStart": start,
                                         "intendedAt": at,
@@ -11739,7 +11750,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                         }
                         Some(SfxPending::Verify {
-                            at: _,
+                            at,
                             gain_db,
                             start,
                             id: _,
@@ -11854,7 +11865,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 }),
                             ));
                         }
-                        Some(SfxPending::Reshop { at, gain_db, queries, mut tried }) => {
+                        Some(SfxPending::Reshop {
+                            at,
+                            gain_db,
+                            queries,
+                            mut tried,
+                        }) => {
                             // The broken accent is off the lane; the family's
                             // next word shops the peak again, and the peak
                             // goes unaccented when the family is spent - the
@@ -11868,6 +11884,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     gain_db,
                                     queries,
                                     tried,
+                                    query,
                                 });
                                 return Some(call(
                                     "sounds_search",
@@ -11958,16 +11975,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }),
                         ));
                     }
+                    let query = queries[rotation % queries.len()];
                     pending = Some(SfxPending::Pick {
                         at,
                         gain_db,
                         queries: queries.clone(),
                         tried: 0,
+                        query,
                     });
                     Some(call(
                         "sounds_search",
                         json!({
-                            "query": queries[rotation % queries.len()],
+                            "query": query,
                             "limit": 3,
                         }),
                     ))
@@ -17707,7 +17726,7 @@ mod tests {
         log.push(json!({ "clipId": "clip-2", "file": "/edits/Reel/audio/hit-2.ogg" }));
         let replacement_check = (sfx.next)(&log).expect("the replacement is checked");
         assert_eq!(replacement_check.tool, "sense_sound");
-        assert_eq!(replacement_check.arguments["role"], json!("action_impact"));
+        assert_eq!(replacement_check.arguments["role"], json!("quick_transition"));
         log.push(json!({ "ok": true, "issues": [], "measured": { "moveBy": 0.0 } }));
         assert_eq!((sfx.next)(&log).expect("the replacement is gained").tool,
                    "clip_audio_levels_db");

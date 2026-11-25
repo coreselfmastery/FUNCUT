@@ -39,10 +39,7 @@ pub const SET_ID: &str = "picture-models";
 /// fetched by: what a caller choosing the row is shown, so the picture
 /// set is licensed as visibly as the sound sets are.
 pub fn licences() -> String {
-    let mut said: Vec<&'static str> = VISUAL_MODELS
-        .iter()
-        .map(|id| id.spec().licence)
-        .collect();
+    let mut said: Vec<&'static str> = VISUAL_MODELS.iter().map(|id| id.spec().licence).collect();
     said.sort_unstable();
     said.dedup();
     said.join("; ")

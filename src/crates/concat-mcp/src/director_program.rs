@@ -11297,13 +11297,64 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             /// How many of those words have already come back spent.
             tried: usize,
         },
-        /// The add's reply is in: gain the clip it placed.
-        Gain {
-            /// The sound's library id, spent for anti-repetition.
-            id: String,
-            /// The level the accent lands at, in dB, carried from the
-            /// pick that earned it.
+        /// The add's reply is in: the clip is on the lane. The placement
+        /// is verified against the file the timeline will actually play
+        /// before the accent is gained - the manifest's `syncAt` is
+        /// metadata, and the peak is where the file says it is.
+        Add {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
             gain_db: f64,
+            /// Where the clip was laid: what a correction moves from.
+            start: f64,
+            /// The sound's identity - a shelf id or a written file's path -
+            /// spent for anti-repetition.
+            id: String,
+            /// The family the peak's emotion named, for a re-shop when
+            /// the check drops what was placed.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+        },
+        /// The check's reply is in: move the clip onto the moment, drop
+        /// it as the wrong sound, or let it stand and gain it.
+        Verify {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// Where the clip was laid: what a correction moves from.
+            start: f64,
+            /// The sound's identity, spent for anti-repetition at the add.
+            id: String,
+            /// The family the peak's emotion named, for a re-shop.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The clip the add placed.
+            clip_id: String,
+            /// The copy the add made, which is what the check measures.
+            file: String,
+        },
+        /// The move's reply is in: gain the clip it moved.
+        Level {
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The clip the move kept.
+            clip_id: String,
+        },
+        /// The remove's reply is in: the family's next word, or the peak
+        /// goes unaccented.
+        Reshop {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
         },
     }
     steps.push(
@@ -11450,16 +11501,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .and_then(|path| path.as_str())
                             {
                                 ai_accent = Some(true);
-                                pending = Some(SfxPending::Gain {
-                                    id: path.to_owned(),
+                                // The model's own reply measured the file it
+                                // wrote: `syncOffset` is where the peak sits
+                                // in it, and the placement backs that lead-up
+                                // out - the accent's own transient meets the
+                                // moment the emphasis measured, not the
+                                // file's first byte.
+                                let sync = written
+                                    .and_then(|reply| reply.get("syncOffset"))
+                                    .and_then(|sync| sync.as_f64())
+                                    .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                                    .unwrap_or(0.0);
+                                let start = round3((at - sync).max(0.0));
+                                pending = Some(SfxPending::Add {
+                                    at,
                                     gain_db,
+                                    start,
+                                    id: path.to_owned(),
+                                    queries: queries.clone(),
+                                    tried,
                                 });
                                 return Some(call(
                                     "sounds_add",
                                     json!({
                                         "path": sfx_project,
                                         "file": path,
-                                        "start": round3(at),
+                                        "start": start,
                                     }),
                                 ));
                             }
@@ -11520,21 +11587,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 // into the file the sound lands its peak:
                                 // the add is offset by exactly that, so the
                                 // peak meets the moment the emphasis
-                                // measured - not the file's first byte.
+                                // measured - not the file's first byte. The
+                                // check below then holds that placement
+                                // against the file itself, which is where a
+                                // stale manifest answer is caught.
                                 let sync = hit["syncAt"]
                                     .as_f64()
                                     .filter(|sync| sync.is_finite() && *sync >= 0.0)
                                     .unwrap_or(0.0);
-                                pending = Some(SfxPending::Gain {
-                                    id: id.clone(),
+                                let start = round3((at - sync).max(0.0));
+                                pending = Some(SfxPending::Add {
+                                    at,
                                     gain_db,
+                                    start,
+                                    id: id.clone(),
+                                    queries,
+                                    tried,
                                 });
                                 return Some(call(
                                     "sounds_add",
                                     json!({
                                         "path": sfx_project,
                                         "id": id,
-                                        "start": round3((at - sync).max(0.0)),
+                                        "start": start,
                                     }),
                                 ));
                             }
@@ -11564,32 +11639,222 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             placed += 1;
                             rotation = rotation.wrapping_add(1);
                         }
-                        Some(SfxPending::Gain { id, gain_db }) => {
-                            used.push(id);
+                        Some(SfxPending::Add {
+                            at,
+                            gain_db,
+                            start,
+                            id,
+                            queries,
+                            tried,
+                        }) => {
+                            // The accent is spent the moment it is placed:
+                            // the id goes on the `used` list whether the
+                            // check below keeps it or drops it, because a
+                            // hit that measured badly is not a hit this
+                            // run shops again for the next peak.
+                            used.push(id.clone());
                             placed += 1;
                             rotation = rotation.wrapping_add(1);
-                            // The accent lands at the level the mix can
-                            // hold: the add's own reply names the clip it
-                            // placed, and the dB-aware levels call is what
-                            // gives the accent a gain instead of the
-                            // source's own unity.
-                            if let Some(clip) = log
-                                .last()
+                            let added = log.last();
+                            let clip = added
                                 .and_then(|reply| reply.pointer("/clipId"))
-                                .and_then(|clip| clip.as_str())
-                            {
+                                .and_then(|clip| clip.as_str());
+                            let file = added
+                                .and_then(|reply| reply.get("file"))
+                                .and_then(|file| file.as_str());
+                            if clip.is_none() {
+                                // No clip came back (a refused add under the
+                                // warn policy): the id still counts as
+                                // spent. Falling through, not returning
+                                // `None` - the runner would read that as the
+                                // accents being done and drop every peak
+                                // after this one.
+                            } else if file.is_none() {
+                                // An add that names no copy cannot be
+                                // verified: the accent is gained at the
+                                // level the mix can hold, and the placement
+                                // stands on the add's own say-so.
                                 return Some(call(
                                     "clip_audio_levels_db",
                                     json!({
                                         "path": sfx_project,
-                                        "clipId": clip,
+                                        "clipId": clip.unwrap_or_default(),
+                                        "baseDb": gain_db,
+                                        "replaceAutomation": true,
+                                    }),
+                                ));
+                            } else {
+                                let clip_id = clip.unwrap_or_default().to_owned();
+                                let file = file.unwrap_or_default().to_owned();
+                                // The placement is held against the file
+                                // itself: the check measures the copy the
+                                // timeline will actually play, so a manifest
+                                // `syncAt` that drifted - or was never there
+                                // - is caught here and corrected, not
+                                // inherited by the viewer.
+                                pending = Some(SfxPending::Verify {
+                                    at,
+                                    gain_db,
+                                    start,
+                                    id,
+                                    queries,
+                                    tried,
+                                    clip_id,
+                                    file,
+                                });
+                                return Some(call(
+                                    "sense_sound",
+                                    json!({
+                                        "action": "check_placement",
+                                        "path": file,
+                                        "clipStart": start,
+                                        "intendedAt": at,
+                                        "gainDb": gain_db,
+                                        "toleranceMs": 40,
+                                        "clipId": clip_id,
+                                    }),
+                                ));
+                            }
+                        }
+                        Some(SfxPending::Verify {
+                            at: _,
+                            gain_db,
+                            start,
+                            id: _,
+                            queries,
+                            tried,
+                            clip_id,
+                            file: _,
+                        }) => {
+                            let checked = log.last();
+                            let issues = checked
+                                .and_then(|reply| reply.get("issues"))
+                                .and_then(|issues| issues.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let codes = issues
+                                .iter()
+                                .filter_map(|issue| issue.get("code"))
+                                .filter_map(|code| code.as_str())
+                                .collect::<Vec<_>>();
+                            if checked.and_then(|reply| reply.get("ok")) != Some(&json!(true)) {
+                                // The check itself could not answer: the
+                                // placement stands as laid, said plainly -
+                                // unverified is not the same claim as
+                                // verified, and neither is a refusal to
+                                // place. The accent is gained and the run
+                                // moves on.
+                                return Some(call(
+                                    "clip_audio_levels_db",
+                                    json!({
+                                        "path": sfx_project,
+                                        "clipId": clip_id,
                                         "baseDb": gain_db,
                                         "replaceAutomation": true,
                                     }),
                                 ));
                             }
-                            // No clip came back (a refused add under the warn
-                            // policy): the id still counts as spent.
+                            if codes.contains(&"peak_cut") || codes.contains(&"wrong_sound") {
+                                // The transient was trimmed out, or the file
+                                // measures as another family's sound: no move
+                                // can put that right. The clip comes off, and
+                                // the family's next word shops the peak
+                                // again - a broken accent is not left on the
+                                // lane to be heard as one.
+                                pending = Some(SfxPending::Reshop {
+                                    at,
+                                    gain_db,
+                                    queries,
+                                    tried,
+                                });
+                                return Some(call(
+                                    "clips_remove",
+                                    json!({
+                                        "path": sfx_project,
+                                        "clipIds": [clip_id],
+                                        "ripple": false,
+                                    }),
+                                ));
+                            }
+                            if codes.contains(&"sync_off") {
+                                // The peak measures off the moment: the check
+                                // says by how much, and the move lands the
+                                // transient on the moment the emphasis
+                                // measured. One move, clamped to the
+                                // timeline's own start, then the level.
+                                let move_by = checked
+                                    .and_then(|reply| reply.pointer("/measured/moveBy"))
+                                    .and_then(|shift| shift.as_f64())
+                                    .filter(|shift| shift.is_finite())
+                                    .unwrap_or(0.0);
+                                let corrected = round3((start + move_by).max(0.0));
+                                pending = Some(SfxPending::Level {
+                                    gain_db,
+                                    clip_id: clip_id.clone(),
+                                });
+                                return Some(call(
+                                    "clips_move",
+                                    json!({
+                                        "path": sfx_project,
+                                        "moves": [
+                                            { "clipId": clip_id, "start": corrected },
+                                        ],
+                                    }),
+                                ));
+                            }
+                            // As directed: the placement stands, and the
+                            // accent is gained at the level the mix can
+                            // hold - the dB-aware levels call is what gives
+                            // it a gain instead of the source's own unity.
+                            return Some(call(
+                                "clip_audio_levels_db",
+                                json!({
+                                    "path": sfx_project,
+                                    "clipId": clip_id,
+                                    "baseDb": gain_db,
+                                    "replaceAutomation": true,
+                                }),
+                            ));
+                        }
+                        Some(SfxPending::Level { gain_db, clip_id }) => {
+                            // The move is in: the clip sits on the moment, and
+                            // the level is what it was waiting for.
+                            return Some(call(
+                                "clip_audio_levels_db",
+                                json!({
+                                    "path": sfx_project,
+                                    "clipId": clip_id,
+                                    "baseDb": gain_db,
+                                    "replaceAutomation": true,
+                                }),
+                            ));
+                        }
+                        Some(SfxPending::Reshop { at, gain_db, queries, mut tried }) => {
+                            // The broken accent is off the lane; the family's
+                            // next word shops the peak again, and the peak
+                            // goes unaccented when the family is spent - the
+                            // bookkeeping was done at the add, so this walk
+                            // spends words only.
+                            tried += 1;
+                            if tried < queries.len() {
+                                let query = queries[(rotation + tried) % queries.len()];
+                                pending = Some(SfxPending::Pick {
+                                    at,
+                                    gain_db,
+                                    queries,
+                                    tried,
+                                });
+                                return Some(call(
+                                    "sounds_search",
+                                    json!({
+                                        "query": query,
+                                        "limit": 3,
+                                    }),
+                                );
+                            }
+                            // The family is spent twice over: the peak stays
+                            // unaccented, the way a mixer with a thin shelf
+                            // leaves it.
                         }
                         None => {
                             // The next call is a fresh shop.
@@ -17109,10 +17374,22 @@ mod tests {
         after.push(json!({ "sounds": [{ "id": "s1" }] }));
         let add = (sfx.next)(&after).expect("the sound is added");
         assert_eq!(add.tool, "sounds_add");
-        // The accent is gained the moment it lands: an add left at the
-        // source's unity would sum past full scale under the voice's own
-        // loudest moment.
-        after.push(json!({ "mediaIds": ["m2"], "clipId": "clip-9" }));
+        // The placement is held against the file before it is gained: the
+        // check measures the copy the timeline will actually play, so a
+        // manifest `syncAt` that drifted is caught here, not heard.
+        after.push(json!({ "mediaIds": ["m2"], "clipId": "clip-9",
+                          "file": "/edits/Reel/audio/s1.ogg" }));
+        let check = (sfx.next)(&after).expect("the placement is checked");
+        assert_eq!(check.tool, "sense_sound");
+        assert_eq!(check.arguments["action"], json!("check_placement"));
+        assert_eq!(check.arguments["intendedAt"], json!(1.0));
+        // As directed: the accent is gained the moment it stands - an add
+        // left at the source's unity would sum past full scale under the
+        // voice's own loudest moment.
+        after.push(json!({
+            "ok": true, "issues": [],
+            "measured": { "moveBy": 0.0 },
+        }));
         let gain = (sfx.next)(&after).expect("the accent is gained");
         assert_eq!(gain.tool, "clip_audio_levels_db");
         assert_eq!(gain.arguments["clipId"], json!("clip-9"));
@@ -17123,6 +17400,180 @@ mod tests {
             None,
             "the calm line's peak never earns an accent"
         );
+    }
+
+    /// The placement the check answers is the one the run keeps: a peak
+    /// that measures off the moment is moved onto it, a file that measures
+    /// as another family's sound comes off the lane and the family's next
+    /// word shops the peak again, and a check that cannot answer leaves
+    /// the placement as laid rather than pretending it verified one.
+    #[test]
+    fn the_placement_is_measured_corrected_or_dropped() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        // One fresh program per scenario: the derived step keeps its own
+        // rotation and spent ids, and a second scenario must not inherit
+        // the first one's shopping.
+        let fresh_sfx = || {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(sfx) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "sfx")
+                .expect("the program has an sfx stage")
+            else {
+                panic!("the sfx stage is derived");
+            };
+            sfx
+        };
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                "sourceStart": 0.0, "speed": 1.0,
+            }]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let log = vec![
+            view.clone(),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found it" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 4.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot",
+                                "impact-heavy (hard hits, distorted risers)"),
+                ],
+            }),
+        ];
+        // Every walk starts the same way: the generator is asked first and
+        // answers absent, so the shelf is the only accent there is. The
+        // peak sits at 1.0 s - inside the hook, whose family is impact,
+        // riser, whoosh - and the first search shops the family's first
+        // word, the rotation walking each later ask from a different one.
+        let shelf = {
+            let mut start = log.clone();
+            start.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                              "generated": false }));
+            start
+        };
+
+        // The hit carries a `syncAt` the manifest believes: the placement
+        // lays the file by it, and the check then catches the drift. Every
+        // walk asks the generator first, hears it answer absent, and only
+        // then shops the shelf.
+        let mut drift = log.clone();
+        let mut sfx = fresh_sfx();
+        let asked = (sfx.next)(&drift).expect("the generator is asked first");
+        assert_eq!(asked.tool, "sense_sound_model");
+        drift = shelf.clone();
+        let search = (sfx.next)(&drift).expect("the shelf is asked");
+        assert_eq!(search.tool, "sounds_search");
+        drift.push(json!({ "sounds": [
+            { "id": "hit-1", "duration": 0.8, "syncAt": 0.1 },
+        ] }));
+        let add = (sfx.next)(&drift).expect("the hit is placed");
+        assert_eq!(add.tool, "sounds_add");
+        assert_eq!(add.arguments["start"], json!(0.9));
+        drift.push(json!({ "clipId": "clip-1", "file": "/edits/Reel/audio/hit-1.ogg" }));
+        let check = (sfx.next)(&drift).expect("the placement is checked");
+        assert_eq!(check.tool, "sense_sound");
+        assert_eq!(check.arguments["intendedAt"], json!(1.0));
+        // The file's own peak sits 0.25 s later than the manifest said: the
+        // check prescribes the move, and the spine makes it.
+        drift.push(json!({
+            "ok": true,
+            "issues": [{ "code": "sync_off", "severity": "fix" }],
+            "measured": { "moveBy": 0.25, "peakAt": 0.35 },
+        }));
+        let moved = (sfx.next)(&drift).expect("the clip is moved onto the moment");
+        assert_eq!(moved.tool, "clips_move");
+        assert_eq!(
+            moved.arguments["moves"][0]["start"],
+            json!(1.15),
+            "the corrected start is the laid start plus the measured drift"
+        );
+        drift.push(json!({ "moved": 1 }));
+        let gained = (sfx.next)(&drift).expect("the moved clip is gained");
+        assert_eq!(gained.tool, "clip_audio_levels_db");
+
+        // A file that measures as another family's sound is not left on the
+        // lane to be heard as the accent it was asked for: it comes off,
+        // and the family's next word shops the peak again.
+        let mut wrong = log.clone();
+        let mut sfx = fresh_sfx();
+        (sfx.next)(&wrong).expect("the generator is asked first");
+        wrong = shelf.clone();
+        (sfx.next)(&wrong).expect("the shelf is asked");
+        wrong.push(json!({ "sounds": [
+            { "id": "hit-2", "duration": 0.6, "syncAt": 0.05 },
+        ] }));
+        let add2 = (sfx.next)(&wrong).expect("the second hit is placed");
+        assert_eq!(add2.tool, "sounds_add");
+        wrong.push(json!({ "clipId": "clip-2", "file": "/edits/Reel/audio/hit-2.ogg" }));
+        let check2 = (sfx.next)(&wrong).expect("the second placement is checked");
+        assert_eq!(check2.tool, "sense_sound");
+        wrong.push(json!({
+            "ok": true,
+            "issues": [{ "code": "wrong_sound", "severity": "fix" }],
+            "measured": { "moveBy": 0.0 },
+        }));
+        let removed = (sfx.next)(&wrong).expect("the wrong sound comes off");
+        assert_eq!(removed.tool, "clips_remove");
+        assert_eq!(removed.arguments["clipIds"], json!(["clip-2"]));
+        wrong.push(json!({ "removed": 1 }));
+        let research = (sfx.next)(&wrong).expect("the family's next word is shopped");
+        assert_eq!(research.tool, "sounds_search");
+        assert_eq!(
+            research.arguments["query"],
+            json!("whoosh"),
+            "the rotation had walked once by the add, so the re-shop is the family's third word"
+        );
+
+        // A check that cannot answer leaves the placement as laid: the run
+        // says so by gaining it, never by claiming it was verified.
+        let mut blind = log.clone();
+        let mut sfx = fresh_sfx();
+        (sfx.next)(&blind).expect("the generator is asked first");
+        blind = shelf.clone();
+        (sfx.next)(&blind).expect("the shelf is asked");
+        blind.push(json!({ "sounds": [
+            { "id": "hit-3", "duration": 0.9, "syncAt": 0.2 },
+        ] }));
+        let add3 = (sfx.next)(&blind).expect("the third hit is placed");
+        assert_eq!(add3.tool, "sounds_add");
+        blind.push(json!({ "clipId": "clip-3", "file": "/edits/Reel/audio/hit-3.ogg" }));
+        let check3 = (sfx.next)(&blind).expect("the third placement is checked");
+        assert_eq!(check3.tool, "sense_sound");
+        blind.push(json!({ "ok": false, "error": "the sidecar could not decode it" }));
+        let gained3 = (sfx.next)(&blind).expect("the unverified accent is still gained");
+        assert_eq!(gained3.tool, "clip_audio_levels_db");
+        assert_eq!(gained3.arguments["clipId"], json!("clip-3"));
     }
 
     /// The plan the run writes is the one it measured, and it says which

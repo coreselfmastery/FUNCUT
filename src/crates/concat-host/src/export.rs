@@ -45,9 +45,9 @@ pub struct ExportSpec {
     /// Let the platform's hardware encoder lead where there is one; the
     /// export sheet's "Automatic" and "GPU" say yes, its "CPU" says no.
     pub hardware: bool,
-    /// The person named the machine's own video hardware (VAAPI), which
-    /// leads every codec's encoder list with the software one as the
-    /// fallback; see [`concat_media::vaapi_encode_available`].
+    /// The person named the machine's own video hardware, which leads
+    /// every codec's encoder list with the software one as the fallback;
+    /// see [`concat_media::hardware_encode_available`].
     pub vaapi: bool,
     /// An HDR timeline written as HDR, its own HLG or PQ, rather than
     /// tone-mapped to SDR. Nothing for an SDR timeline.

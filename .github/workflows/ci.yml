@@ -106,14 +106,17 @@ jobs:
       # readings, their sources and the conservative fallbacks on a synthetic take.
       - run: python3 src/crates/concat-mcp/sense/voice_signals.py selftest
         if: ${{ !cancelled() }}
-      # The consumption layer's six family selftests: discourse (the
-      # script as language), voiceq (the take's health), prosody (the
-      # delivery), audiorepair (the clean and the music - the three
-      # writing tools write to a scratch dir and prove their files),
-      # captions (the words and the take made to agree, including the
-      # seal round trip) and visual (the picture - motion, camera, scale,
-      # scene, quality, palette, saliency and the batch read the gather
-      # spends). Pure stdlib plus ffmpeg, synthetic fixtures, no network.
+      # The consumption layer's family selftests: discourse (the script
+      # as language), voiceq (the take's health), prosody (the delivery),
+      # audiorepair (the clean and the music - the three writing tools
+      # write to a scratch dir and prove their files), captions (the
+      # words and the take made to agree, including the seal round trip)
+      # and visual (the picture - motion, camera, scale, scene, quality,
+      # palette, saliency and the batch read the gather spends).
+      # soundmodel has no selftest here on purpose: it needs numpy and
+      # ONNX Runtime, which this job does not install, and its own
+      # acceptance test is scripts/sound-model/bench.py. Pure stdlib plus
+      # ffmpeg, synthetic fixtures, no network.
       - run: python3 src/crates/concat-mcp/sense/discourse.py selftest
         if: ${{ !cancelled() }}
       - run: python3 src/crates/concat-mcp/sense/voice_quality.py selftest

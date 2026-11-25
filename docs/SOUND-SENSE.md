@@ -234,32 +234,43 @@ Every one of those 61 was placed by the Director's sfx stage at
 cut it was chosen for, and nothing downstream could tell. Median
 confidence in the top role across the shelf: 0.93.
 
-## 5. Why not CLAP yet
+## 5. The models, measured against these numbers
 
-A 27M-parameter CLAP would rank by a learned audio-text space, and it is
-a genuinely better answer to "does this sound like the sentence". It is
-not in this change for one structural reason: **the sense layer is
-standard-library Python plus an ffmpeg CLI**, by design, so that it works
-on a stock install with no pip (see `sense/README.md`). Text-audio CLAP
-inference needs ONNX Runtime or PyTorch - hundreds of MB and a second
-runtime next to the one the app already links.
+The model layer exists now: `sense/sound_model.py`, with YAMNet naming
+what a file contains and CLAP ranking it against a written description.
+It is a separate module for the reason this one is standard-library only:
+**this file stays arithmetic over a decoded buffer**, so an issue it
+reports always arrives with the measurement that proves it, while the
+models - which need numpy and ONNX Runtime - are optional and say so
+when absent.
 
-The precedent for a model that is worth it exists: `vlm.py` downloads
-llama.cpp and a 0.5B model on request into the app's data directory and
-degrades to a deterministic scorer without it. A CLAP upgrade takes the
-same shape, and this interface is built for it:
+The question the upgrade had to answer was whether a model beats these
+measurements. On the same 530 sounds, same labels, P@64:
 
-- `rank_sounds` returns a `fit` per candidate plus the evidence. A CLAP
-  re-ranker re-scores the same list; nothing above it changes.
-- CLAP similarity is **not** a calibrated probability and **not** an
-  audio-quality score. Any upgrade must be calibrated against labelled
-  FUNCUT sounds before its number is allowed next to a measured one, and
-  the reply must say which engine produced which number - the rule
-  `craft_critique` already follows with `engine: "heuristic"`.
+| Role | CLAP alone | These measurements |
+| --- | --- | --- |
+| quick_transition | **0.62** | 0.38 |
+| gentle_entrance | **0.73** | 0.64 |
+| action_impact | 0.59 | **0.64** |
+| tension_build | 0.31 | **0.44** |
+| emotional_texture | 0.31 | **0.42** |
+| cinematic_reveal | 0.23 | 0.23 |
 
-Until then, every number this module returns is arithmetic over a decoded
-buffer, which is the property a correction loop needs: an issue it
-reports always arrives with the measurement that proves it.
+So the model wins the transitions by a wide margin - the role §4 called
+the weakest, at 1.7x lift, because foley and whooshes measure alike on
+every static reading - and loses where physics is the point: a riser has
+to climb, a texture has to sustain. The fused ranking weights the two
+per role, fitted on that table, and on transitions the weight on these
+measurements is **zero**: they do not merely fail to help, they pull the
+model down from 0.62 to 0.42.
+
+`docs/SOUND-MODEL.md` holds the full table, the weight sweep, the model
+licences and sizes, and the acceptance test that reproduces the numbers
+(`scripts/sound-model/bench.py`). The rule from the first draft of this
+section still stands and is now enforced in code: CLAP similarity is not
+a calibrated probability and not a quality score, every reply names the
+engine behind each number, and no measured number is ever replaced by a
+modelled one.
 
 ## 6. Wiring it to the Director
 

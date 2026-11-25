@@ -84,6 +84,57 @@ sha256 = "1940a93ee08283a0a7286183186357b1688fe9fa8ede74604b424586aaddf112"
 licence = "BSD-3-Clause"
 upstream = "https://huggingface.co/CoderViking/realesr-general-x4v3-onnx/resolve/c6a971706797c7502945a2b4c4274fce4900d4ab/realesr-general-x4v3.onnx"
 
+# The sound readers. CLAP puts a sound and a description in one space;
+# YAMNet names what a recording contains. In the cutout family for the
+# same reason Enhance is: the family is the engine table a row is checked
+# against, and all five live in the vision crate's table beside the
+# cutout models. Apache-2.0 throughout - docs/SOUND-MODEL.md section 2
+# says why these were chosen over the stronger non-commercial models.
+[[model]]
+id = "clap-audio"
+family = "cutout"
+file = "clap_audio.onnx"
+bytes = 34301667
+sha256 = "3fcff2c8824e7bcb83a983f2a49edab3b60cbcf4872ac70efee517355173bd1f"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/onnx/audio_model_quantized.onnx"
+
+[[model]]
+id = "clap-text"
+family = "cutout"
+file = "clap_text.onnx"
+bytes = 126603263
+sha256 = "1a3df8b197e249816e08415fd040434c44762b2eea7eb7bf8a48a0f0bf3c14e5"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/onnx/text_model_quantized.onnx"
+
+[[model]]
+id = "clap-tokenizer"
+family = "cutout"
+file = "clap_tokenizer.json"
+bytes = 2108774
+sha256 = "dc239041d98de27ffc3975473a1a23e3db4c937b23c138c38bbc66588bd247e5"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/tokenizer.json"
+
+[[model]]
+id = "yamnet"
+family = "cutout"
+file = "yamnet.onnx"
+bytes = 16093603
+sha256 = "1510041dce24a2e9e84ec546807ac408ae496da6d1ed41bc3ccba649623f8e19"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf/yamnet.onnx"
+
+[[model]]
+id = "yamnet-classes"
+family = "cutout"
+file = "yamnet_class_map.csv"
+bytes = 14096
+sha256 = "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf/yamnet_class_map.csv"
+
 # ── Text to speech ───────────────────────────────────────────────────────
 # src/crates/concat-speech/src/tts.rs. Kokoro v1.0 multi-language, the
 # official sherpa-onnx conversions; the two differ only in quantisation.

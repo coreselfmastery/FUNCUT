@@ -16,7 +16,7 @@ use crate::stage::Stage;
 /// repair writes (which overwrite a fixed `out` path). Mutating timeline
 /// calls are never here - an ambiguous `clip_add` must stop, not
 /// double-place. This is the watcher's own list
-/// (`scripts/auto_director.py`), word for word, beside the five family
+/// (`scripts/auto_director.py`), word for word, beside the seven family
 /// doors the server now serves those same readings through
 /// (`sense_audio_repair {action: "enhance_speech", ...}` and its
 /// siblings): a door and the member it opens are the same work, and a

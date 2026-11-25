@@ -567,17 +567,19 @@ mod tests {
         // stock_fetch, stock_import) rode the catalogue with their own
         // schemas - the rights-cleared shelves a monetized edit may shop -
         // function again; the number is CI's to measure on the merged tree.
-        // 260,000 -> 264,000 at 115: the picture's door (`sense_visual`)
-        // carries sixteen readings' inputs in one schema - the frame
-        // sources, the subject boxes, the bench's rows, the model doors -
-        // and the director's surface takes the same schema; function
-        // again, measured by CI. 264,000 -> 266,000, still at 115: the
-        // merged tree measures 265,334 with the door's descriptions
-        // already cut to their terse form - the fields themselves are the
-        // growth (frame sources, model doors, the bench's rows), and a
-        // reading the director cannot call is a reading the edit paid for
-        // and never read.
-        assert!(total < 266_000, "{total}: {sizes:?}");
+        // 260,000 -> 268,000 at 116: the sound layer's two doors
+        // (sense_sound, sense_sound_model) cost ~5k between them - the
+        // measured read of a file, the fused ranking, the placement check
+        // and the per-moment sound design are 37 fields, each the input
+        // of a real answer rather than prose; without them the schema
+        // refused the caller's own file. Function, not prose. The
+        // picture's door (`sense_visual`) then lands on the same table -
+        // sixteen readings' inputs, the frame sources, the subject boxes,
+        // the bench's rows, the model doors - and the merged tree
+        // measures 271,857 - the three doors at their terse form, and the
+        // fields are the growth. A reading the director cannot call is a
+        // reading the edit paid for and never read.
+        assert!(total < 274_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -643,17 +645,17 @@ mod tests {
         // `auto_edit` is the whole fixed spine as one call - the project,
         // the optional script, the stock shelf and the copy switch -
         // 247,603 measured after trimming its prose; function, not prose.
-        // 249,000 -> 256,000, at 107 on the surface: the picture's door
-        // (`sense_visual`) - sixteen readings, the frame inputs every
-        // family's reads take, the five model doors' own names and the
-        // bench's pre-measured rows, in one schema - rides beside the five
-        // voice families. Function again: the director spends motion,
+        // 249,000 -> 256,000 at 108: the sound layer's two doors ride the
+        // director's surface (the sfx stage shops with them), and their
+        // fields are the price of the shelf being shoppable at all. The
+        // picture's door rides it too: the director spends motion,
         // camera, scale and quality on its cuts, its stock veto and its
         // captions, and a reading it cannot call is a reading the edit
-        // paid for and never read. The number is CI's to measure on the
-        // merged tree; the headroom is the schema's own.
+        // paid for and never read. 256,000 -> 262,000 at 109: the merged
+        // tree measures 260,160 - the three doors are already at their
+        // terse form, and the fields, not the prose, are what they cost.
         assert!(
-            director < 256_000,
+            director < 262_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

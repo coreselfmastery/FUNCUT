@@ -37,6 +37,17 @@ pub enum ModelId {
     /// Real-ESRGAN's compact general model: a picture four times its size
     /// with its noise and compression gone, what Enhance is made of.
     Enhance,
+    /// CLAP's audio tower: a sound into the 512-d space it shares with
+    /// text, so "a deep cinematic braam" can be compared with the file.
+    ClapAudio,
+    /// CLAP's text tower: the other half of that space.
+    ClapText,
+    /// CLAP's tokenizer: text into the ids the text tower reads.
+    ClapTokenizer,
+    /// YAMNet: 521 AudioSet classes, what a sound file contains.
+    Yamnet,
+    /// YAMNet's class names, in the order the model scores them.
+    YamnetNames,
 }
 
 /// One model as the table describes it.
@@ -60,7 +71,7 @@ pub struct ModelSpec {
 }
 
 /// Every downloadable model.
-pub const MODELS: [ModelSpec; 5] = [
+pub const MODELS: [ModelSpec; 10] = [
     ModelSpec {
         id: ModelId::Person,
         file: "rvm-mobilenetv3.onnx",
@@ -101,6 +112,52 @@ pub const MODELS: [ModelSpec; 5] = [
         sha256: "1940a93ee08283a0a7286183186357b1688fe9fa8ede74604b424586aaddf112",
         licence: "BSD-3-Clause",
     },
+    // The sound models. Apache-2.0 throughout, which is why they were
+    // chosen over the stronger music models that carry a non-commercial
+    // licence (docs/SOUND-MODEL.md section 2).
+    ModelSpec {
+        id: ModelId::ClapAudio,
+        file: "clap_audio.onnx",
+        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/onnx/audio_model_quantized.onnx",
+        bytes: 34_301_667,
+        sha256: "3fcff2c8824e7bcb83a983f2a49edab3b60cbcf4872ac70efee517355173bd1f",
+        licence: "Apache-2.0",
+    },
+    ModelSpec {
+        id: ModelId::ClapText,
+        file: "clap_text.onnx",
+        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/onnx/text_model_quantized.onnx",
+        bytes: 126_603_263,
+        sha256: "1a3df8b197e249816e08415fd040434c44762b2eea7eb7bf8a48a0f0bf3c14e5",
+        licence: "Apache-2.0",
+    },
+    ModelSpec {
+        id: ModelId::ClapTokenizer,
+        file: "clap_tokenizer.json",
+        upstream: "https://huggingface.co/Xenova/clap-htsat-unfused/resolve/c28f2883575e590e04d3146ff0713c2448d691ba/tokenizer.json",
+        bytes: 2_108_774,
+        sha256: "dc239041d98de27ffc3975473a1a23e3db4c937b23c138c38bbc66588bd247e5",
+        licence: "Apache-2.0",
+    },
+    ModelSpec {
+        id: ModelId::Yamnet,
+        file: "yamnet.onnx",
+        // A community ONNX conversion of Google's Apache-2.0 weights:
+        // record both, and check the conversion against the original
+        // before trusting a label it produces.
+        upstream: "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf/yamnet.onnx",
+        bytes: 16_093_603,
+        sha256: "1510041dce24a2e9e84ec546807ac408ae496da6d1ed41bc3ccba649623f8e19",
+        licence: "Apache-2.0",
+    },
+    ModelSpec {
+        id: ModelId::YamnetNames,
+        file: "yamnet_class_map.csv",
+        upstream: "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf/yamnet_class_map.csv",
+        bytes: 14_096,
+        sha256: "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
+        licence: "Apache-2.0",
+    },
 ];
 
 impl ModelId {
@@ -112,6 +169,24 @@ impl ModelId {
             .expect("every model is in the table")
     }
 
+    /// Which layer of the app a model serves. The settings sheet groups
+    /// its rows by this, and the sidecars ask for their own kind, so a
+    /// download lands where the reader that needs it already looks.
+    pub fn kind(self) -> &'static str {
+        match self {
+            ModelId::Person
+            | ModelId::Object
+            | ModelId::BrushEncoder
+            | ModelId::BrushDecoder
+            | ModelId::Enhance => "vision",
+            ModelId::ClapAudio
+            | ModelId::ClapText
+            | ModelId::ClapTokenizer
+            | ModelId::Yamnet
+            | ModelId::YamnetNames => "sound",
+        }
+    }
+
     /// The name a mask store records for masks this model made.
     pub fn name(self) -> &'static str {
         match self {
@@ -120,6 +195,11 @@ impl ModelId {
             ModelId::BrushEncoder => "slimsam-77-encoder",
             ModelId::BrushDecoder => "slimsam-77-decoder",
             ModelId::Enhance => "realesr-general-x4v3",
+            ModelId::ClapAudio => "clap-htsat-audio",
+            ModelId::ClapText => "clap-htsat-text",
+            ModelId::ClapTokenizer => "clap-htsat-tokenizer",
+            ModelId::Yamnet => "yamnet",
+            ModelId::YamnetNames => "yamnet-classes",
         }
     }
 }

@@ -43,7 +43,7 @@ export CONCAT_MCP_ROOTS=/workspace/video
 concat --mcp headless
 ```
 
-`CONCAT_MCP_ALLOW=all` serves the whole 114-tool catalogue. Without it the
+`CONCAT_MCP_ALLOW=all` serves the whole 116-tool catalogue. Without it the
 server serves the 106-tool director surface, which includes `auto_edit`.
 `CONCAT_MCP_ROOTS` is the only tree the server may write to; point it at
 the sandbox's work folder, not at the repository.
@@ -135,7 +135,44 @@ If you build from source instead of installing a release, run
 `cargo build --release -p concat`. The binary is
 `src/target/release/concat`.
 
-## 6. Troubleshooting
+## 6. A Kaggle notebook
+
+A notebook is the same headless machine with two differences that matter:
+there is no root and no display, and the home folder is thrown away when
+the session ends - only `/kaggle/working` survives a *Save Version*. Put
+the launcher and the data folder there and the install is kept with the
+notebook; leave them in `$HOME` and every session installs again.
+
+```sh
+git clone https://github.com/coreselfmastery/FUNCUT.git
+cd FUNCUT
+export XDG_DATA_HOME=/kaggle/working/.local/share
+./install-linux.sh --bin-dir /kaggle/working/bin
+export PATH="/kaggle/working/bin:$PATH"
+concat --version && concat --smoke
+```
+
+Run the two exports in the first cell of every later session too: the
+binary and the models are still in `/kaggle/working`, but `PATH` and
+`XDG_DATA_HOME` start empty. `concat --smoke` proves the binary and its
+libraries load before an agent is pointed at it.
+
+- **FUSE.** A notebook image may not carry libfuse2. The installer
+  checks and, where it is missing, writes a launcher that runs the
+  AppImage extracted - expected, and the message says so.
+- **No display.** Run `concat --mcp headless` as in section 2. The window
+  cannot open here, and nothing in the MCP path asks it to.
+- **Disk.** The app plus the core models is roughly 2 GB of the 20 GB in
+  `/kaggle/working`; `--no-models` gives a quick run with the downloads
+  left to Settings, and `--with-openvid` is not worth the 435 MB here.
+- **A GPU runtime is a T4.** `nvidia-smi` names it. FUNCUT decodes HEVC,
+  AV1 and 10-bit on NVDEC and offers NVENC on the export sheet's GPU row;
+  the exceptions and what still needs real-hardware acceptance are in
+  [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+- **Network.** The clone, the release and the first model download all
+  need it; turn Internet on in the notebook settings.
+
+## 7. Troubleshooting
 
 - **`no GPU or software renderer is available`** - install
   `mesa-vulkan-drivers`; the headless edit still runs, but preview sheets

@@ -46,6 +46,7 @@ pub mod record;
 pub mod reverse;
 mod route;
 pub mod session;
+pub mod soundmodel;
 pub mod sounds;
 pub mod stabilize;
 pub mod stock;

@@ -58,13 +58,14 @@ engine. Other shapes:
 ./install-linux.sh --deb      # through apt, asks for sudo
 ./install-linux.sh --rpm      # through dnf, asks for sudo
 ./install-linux.sh --list     # show what the releases hold, install nothing
+./install-linux.sh --bin-dir DIR   # the launcher into DIR, not ~/.local/bin
 ```
 
 The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-the **115 tools** this build carries - so if the fork has a published
+the **117 tools** this build carries - so if the fork has a published
 release, that is the one you want. (A release the workflows build is
 published by the run itself - `draft: false` in release.yml - so it is
 visible to this script the moment the run goes green; see the note
@@ -186,19 +187,21 @@ arguments. Three changes made the surface one an agent can actually hold:
   units and their traps live in the schema - where an agent reads them
   when it calls - and the deep semantics live in the director skill's
   `prompts/tool_reference.md`, where they always did.
-- **The thirty-three consumption-layer readings are grouped behind five
-  family tools** (`sense_discourse`, `sense_voice_quality`,
-  `sense_prosody_style`, `sense_audio_repair`, `sense_captions`), the
+- **The consumption-layer readings are grouped behind eight family
+  tools** (`sense_discourse`, `sense_voice_quality`,
+  `sense_prosody_style`, `sense_audio_repair`, `sense_captions`, the
+  sound readers `sense_sound`, `sense_sound_model`, and the picture's
+  `sense_visual`), the
   `action` argument naming the reading - 133 tools became **105**, and
-  not one reading was lost. The picture's sixteen arrived as the sixth
-  family, `sense_visual` (motion, camera, shot scale, sync, scene cuts,
-  quality, palette, saliency, the batch `measure_clips` read and its
-  `bench`, the `models` listing and the five ONNX / VLM doors). The
-  footage layer then grew the count to **115 tools**
-  (`openvid_rank_for_slot`, `footage_continuity`,
-  `footage_plan_suggest`) and the window's playhead arrived as
-  `timeline_seek`.
-- **The default surface is the director's** - 107 of the 115, the creative
+  not one reading was lost. The footage layer then grew the count to 114
+  (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`)
+  and the window's playhead arrived as `timeline_seek`; the sound
+  readers brought it to 116 (`sense_sound`, `sense_sound_model`), and
+  the picture's sixteen arrived as the last family, `sense_visual`
+  (motion, camera, shot scale, sync, scene cuts, quality, palette,
+  saliency, the batch `measure_clips` read and its `bench`, the `models`
+  listing and the five ONNX / VLM doors), for **117 tools**.
+- **The default surface is the director's** - 109 of the 117, the creative
   loop the skill documents plus its remedies; `tools/list` now serves
   what the allowlist serves (a tool off the list is neither listed nor
   callable). The eight left off are the ones a director never calls by

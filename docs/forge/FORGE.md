@@ -69,7 +69,7 @@ type = "stdio"
 command = "concat"
 args = ["--mcp", "auto"]   # window when open, headless otherwise
 [servers.transport.env]
-CONCAT_MCP_ALLOW = "analysis_wait,…,watch_render"   # 107 of the 115 tools
+CONCAT_MCP_ALLOW = "analysis_wait,…,watch_render"   # 109 of the 117 tools
 ```
 
 Check it: `forge mcp` should list `funcut` as connected, with the tool count.

@@ -147,7 +147,7 @@ pub struct Serving {
 /// The tools a director's agent needs: the creative loop the funcut-director
 /// skill documents (measure, plan, edit, verify, export), plus the remedies
 /// its own refusals point at (the library prepares, the model downloads)
-/// and the five sense family doors. This is the default surface an agent
+/// and the eight sense family doors. This is the default surface an agent
 /// meets when an operator names no list: small enough to hold in context,
 /// whole enough to direct a cut. Everything else the build carries (the
 /// farm, the specialist motion reads, the debugging aids) is one
@@ -185,6 +185,8 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "sense_prosody_style",
     "sense_audio_repair",
     "sense_captions",
+    "sense_sound",
+    "sense_sound_model",
     "sense_visual",
     // The analysis senses.
     "analyze_silence",

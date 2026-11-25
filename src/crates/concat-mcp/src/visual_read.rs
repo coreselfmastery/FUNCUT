@@ -56,6 +56,23 @@ pub struct VisualRead {
     pub scene_cuts: usize,
     /// The sheet's combined score: sharpness, noise, bars and motion.
     pub visual_score: Option<f64>,
+    /// The learned shot type, when the film-shot door is installed:
+    /// `wide`, `medium`, `close`, `extreme close`, `insert`, `aerial` or
+    /// whatever the checkpoint names. The fallback for `scale` when the
+    /// classical measure could not place the shot.
+    pub learned_scale: Option<String>,
+    /// How sure the learned classifier was, 0..1.
+    pub learned_scale_p: Option<f64>,
+    /// The share of the frame the depth door placed near the camera,
+    /// 0..1. A deep staging and a flat one are different shots.
+    pub depth_near: Option<f64>,
+    /// Which edge the near field hugs, from the depth door's own words:
+    /// `nearer at the bottom`, `nearer at the top`, or a centred read.
+    /// The caption band's second vote when saliency found no blob.
+    pub depth_verdict: Option<String>,
+    /// Where the top of a person's box sits, 0..1 down the frame, when
+    /// the pose door found a body.
+    pub person_top: Option<f64>,
 }
 
 impl VisualRead {
@@ -68,6 +85,10 @@ impl VisualRead {
         let path = row.get("path").and_then(Value::as_str)?.to_owned();
         let number = |at: &Value| at.as_f64();
         let motion = row.get("motion");
+        // The installed doors' readings ride under `models`, one block per
+        // door that ran. Absent when nothing is installed, which is the
+        // classical read alone.
+        let doors = row.get("models").filter(|models| models.is_object());
         let camera = row.get("camera");
         let quality = row.get("quality");
         let scale = row.get("shotScale");
@@ -113,6 +134,21 @@ impl VisualRead {
                 .and_then(|scene| scene["cuts"].as_u64())
                 .unwrap_or(0) as usize,
             visual_score: number(&row["visualScore"]),
+            learned_scale: doors
+                .and_then(|doors| doors["shotType"]["label"].as_str())
+                .map(str::to_owned),
+            learned_scale_p: doors.and_then(|doors| number(&doors["shotType"]["p"])),
+            depth_near: doors.and_then(|doors| number(&doors["depth"]["nearShare"])),
+            depth_verdict: doors
+                .and_then(|doors| doors["depth"]["verdict"].as_str())
+                .map(str::to_owned),
+            // The pose door answers one body's keypoints; the box's top
+            // edge is where the head is, which is the caption band's
+            // business. A door that found nobody leaves it `None`.
+            person_top: doors
+                .and_then(|doors| doors["pose"]["bbox"].as_array())
+                .and_then(|box_| box_.get(1))
+                .and_then(Value::as_f64),
         })
     }
 
@@ -171,13 +207,60 @@ impl VisualRead {
     }
 
     /// The shot's scale as the continuity gate names it, or `None` when
-    /// the read could not place it.
+    /// the read could not place it. The classical measure names it from
+    /// the subject's area; when that could not place the shot, the
+    /// learned classifier's label stands in - but only when it was sure,
+    /// because a guess at scale would move the drift and the cut rhythm
+    /// on no evidence.
     pub fn shot_scale(&self) -> Option<concat_motion::continuity::ShotScale> {
         use concat_motion::continuity::ShotScale as Scale;
         match self.scale.as_str() {
             "wide" => Some(Scale::Wide),
             "medium" => Some(Scale::Medium),
             "close_up" => Some(Scale::CloseUp),
+            _ => {
+                if self.learned_scale_p.is_some_and(|p| p < 0.5) {
+                    return None;
+                }
+                let label = self.learned_scale.as_deref()?.to_lowercase();
+                if label.contains("wide") {
+                    Some(Scale::Wide)
+                } else if label.contains("medium") {
+                    Some(Scale::Medium)
+                } else if label.contains("close") || label.contains("insert") {
+                    Some(Scale::CloseUp)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Whether a subject already fills the frame: half of the picture or
+    /// more sits at the lens, by the depth door's own measure. A shot
+    /// this tight needs no push - the drift would crop the thing it
+    /// pushes into - and it is the reading a scale the classical measure
+    /// could not place still leaves behind.
+    pub fn tight(&self) -> bool {
+        self.depth_near.is_some_and(|near| near >= 0.5)
+    }
+
+    /// Where the eye lands: the saliency blob when the classical read
+    /// found one, and otherwise the doors' votes - depth names the edge
+    /// the near field hugs, and a pose box names the head. Same words,
+    /// so the caption band reads one answer whichever side measured it.
+    pub fn focus(&self) -> Option<&str> {
+        if let Some(focus) = self.saliency_focus() {
+            return Some(focus);
+        }
+        match self.depth_verdict.as_deref() {
+            Some(verdict) if verdict.contains("bottom") => return Some("lower"),
+            Some(verdict) if verdict.contains("top") => return Some("upper"),
+            _ => {}
+        }
+        match self.person_top {
+            Some(top) if top < 0.33 => Some("upper"),
+            Some(top) if top > 0.5 => Some("lower"),
             _ => None,
         }
     }
@@ -280,6 +363,26 @@ pub const CONSUMERS: &[(&str, &str)] = &[
         "visual_score",
         "the stock ranking: the sheet's combined score breaks the choice",
     ),
+    (
+        "learned_scale",
+        "the shot's scale when the classical measure could not place it: the drift and the cut rhythm read the same gate word",
+    ),
+    (
+        "learned_scale_p",
+        "the scale fallback's confidence floor: a classifier that was not sure does not move the drift",
+    ),
+    (
+        "depth_near",
+        "the caption band's second vote: the near field is where the words must not go",
+    ),
+    (
+        "depth_verdict",
+        "the caption band when saliency found no blob: the edge the near field hugs is where the eye already is",
+    ),
+    (
+        "person_top",
+        "the caption band when saliency and depth are silent: a head in the upper third puts the words low",
+    ),
 ];
 
 #[cfg(test)]
@@ -321,6 +424,71 @@ mod tests {
             read.shot_scale(),
             Some(concat_motion::continuity::ShotScale::Wide)
         );
+    }
+
+    /// A row with the doors' blocks, the shape `measure_clips` writes when
+    /// the shelf's files are installed.
+    fn doored() -> Value {
+        let mut row = row();
+        row["models"] = json!({
+            "shotType": { "label": "close shot", "p": 0.81 },
+            "depth": { "nearShare": 0.31, "verdict": "nearer at the bottom" },
+            "pose": { "present": true, "keypoints": 17, "bbox": [0.4, 0.12, 0.6, 0.9] },
+        });
+        row
+    }
+
+    #[test]
+    fn the_doors_are_parsed_and_spent() {
+        let read = VisualRead::parse(&doored()).expect("a measured row");
+        assert_eq!(read.learned_scale.as_deref(), Some("close shot"));
+        assert_eq!(read.learned_scale_p, Some(0.81));
+        assert_eq!(read.depth_near, Some(0.31));
+        assert_eq!(read.depth_verdict.as_deref(), Some("nearer at the bottom"));
+        assert_eq!(read.person_top, Some(0.12));
+        // Saliency still leads when it found a blob.
+        assert_eq!(read.focus(), Some("lower"));
+    }
+
+    #[test]
+    fn the_learned_scale_stands_in_only_when_the_classical_read_cannot() {
+        let mut row = doored();
+        row["shotScale"] = json!({ "scale": "unknown" });
+        let read = VisualRead::parse(&row).expect("a measured row");
+        assert_eq!(
+            read.shot_scale(),
+            Some(concat_motion::continuity::ShotScale::CloseUp)
+        );
+        // And it stands down when the classifier was not sure.
+        row["models"]["shotType"]["p"] = json!(0.31);
+        let unsure = VisualRead::parse(&row).expect("a measured row");
+        assert_eq!(unsure.shot_scale(), None);
+    }
+
+    #[test]
+    fn with_no_saliency_the_doors_place_the_caption_band() {
+        let mut row = doored();
+        row["saliency"] = json!({ "focus": "" });
+        let read = VisualRead::parse(&row).expect("a measured row");
+        // Depth says the near field is at the bottom, so the eye is low.
+        assert_eq!(read.focus(), Some("lower"));
+        // Without depth, the head's own place decides.
+        row["models"]["depth"] = json!({});
+        let posed = VisualRead::parse(&row).expect("a measured row");
+        assert_eq!(posed.focus(), Some("upper"));
+        // And a body whose head sits mid-frame says nothing at all.
+        row["models"]["pose"]["bbox"] = json!([0.4, 0.42, 0.6, 0.9]);
+        let centred = VisualRead::parse(&row).expect("a measured row");
+        assert_eq!(centred.focus(), None);
+    }
+
+    #[test]
+    fn a_row_with_no_doors_reads_classically() {
+        let read = VisualRead::parse(&row()).expect("a measured row");
+        assert_eq!(read.learned_scale, None);
+        assert_eq!(read.depth_near, None);
+        assert_eq!(read.person_top, None);
+        assert_eq!(read.focus(), Some("lower"));
     }
 
     #[test]

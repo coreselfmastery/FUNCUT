@@ -92,6 +92,17 @@ playback cache.
   a stub session standing in for the weights, the Hub URL and the pin, the
   enrichment and both vetoes. A door that cannot decode its own output shape
   now fails in CI rather than on a user's clip.
+- **The doors the sheet can spend, and the four decisions that spend
+  them.** `ENRICH_DOORS` was four ids, three of which no window download
+  ever provided - so in the app only depth ever ran. It is now the six doors
+  whose read a sheet has an argument for, and each reading has a named
+  consumer in the program: the taste prior orders the sheet, the learned
+  shot type stands in for a scale the classical measure could not place
+  (at a 0.5 confidence floor), the depth map holds the drift when the near
+  field fills half the frame and places the caption band when saliency found
+  no blob, and a pose box puts the words away from a head in the upper
+  third. The action class is recorded and named, not spent: a boundary needs
+  two windows of it.
 - **A picture row in the window, with digests that were computed, not
   guessed.** Settings > Models carries "Picture models" beside the sound
   row: TransNetV2, Depth Anything V2, DINOv2 and CLIP's vision tower, 172 MB

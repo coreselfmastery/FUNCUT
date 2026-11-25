@@ -1707,8 +1707,15 @@ def measure_clips(spec):
     }
 
 
-ENRICH_DOORS = ("dover-mobile", "film-shot-classifier",
-                "depth-anything-v2-small", "movenet-a0")
+# The doors whose read a sheet can spend, in the order to try them: the
+# taste prior and the shot's own type order clips, depth and the body's
+# pose place a caption band, the action class names what a shot is doing,
+# and the last three are quality and salience, which answer only when the
+# earlier ones are not installed. A door outside this list is still on the
+# shelf and still answers `door` when called by name - it just needs an
+# argument a sheet does not have (a text query, a track, a second frame).
+ENRICH_DOORS = ("dover-mobile", "laion-aesthetic", "film-shot-classifier",
+                "depth-anything-v2-small", "movenet-pose", "movenet-a0")
 
 
 def _enrich_on(spec):
@@ -1758,7 +1765,12 @@ def _enrich(spec, frames):
                             "verdict": decoded.get("verdict")}
         elif model["tool"] == "action_class":
             top = (decoded.get("top") or [{}])[0]
-            out["action"] = {"label": top.get("label"), "score": top.get("score")}
+            out["action"] = {"label": top.get("label"),
+                             "score": top.get("p", top.get("score"))}
+        elif model["tool"] == "pose":
+            out["pose"] = {"present": bool(decoded.get("present")),
+                           "keypoints": decoded.get("keypoints"),
+                           "bbox": decoded.get("bbox")}
     return out
 
 
@@ -1837,7 +1849,7 @@ VISUAL_MODELS = [
         "id": "transnetv2",
         "tier": 1,
         "file": "transnetv2.onnx",
-        "bytes": 30_000_000,
+        "bytes": 31_250_929,
         "licence": "MIT",
         "tool": "shot_boundaries",
         "signal": "shot-boundary probability per frame",
@@ -1907,7 +1919,7 @@ VISUAL_MODELS = [
         "id": "depth-anything-v2-small",
         "tier": 2,
         "file": "depth-anything-v2-small.onnx",
-        "bytes": 27_300_000,
+        "bytes": 27_258_801,
         "licence": "Apache-2.0",
         "tool": "depth_map",
         "signal": "per-pixel relative depth",
@@ -1967,7 +1979,7 @@ VISUAL_MODELS = [
         "id": "dinov2-small",
         "tier": 3,
         "file": "dinov2-small.onnx",
-        "bytes": 84_400_000,
+        "bytes": 24_446_700,
         "licence": "Apache-2.0",
         "tool": "visual_embedding",
         "signal": "384-d visual embedding per frame",
@@ -1980,7 +1992,7 @@ VISUAL_MODELS = [
         "id": "clip-vit-b32",
         "tier": 3,
         "file": "clip-vit-b32-visual.onnx",
-        "bytes": 150_000_000,
+        "bytes": 89_117_001,
         "licence": "MIT",
         "tool": "visual_embedding",
         "signal": "image-text similarity embedding",

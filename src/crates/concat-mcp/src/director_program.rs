@@ -1141,9 +1141,12 @@ fn continuity_manifest(shopped: &[SlotChoice], reads: &[VisualRead]) -> Vec<Valu
 
 /// Where the eye lands in the picture under a timeline second: the video
 /// clip covering the moment, joined to its media path and the visual
-/// read the gather measured. `None` when no measured clip covers it, so
-/// the caption keeps the band the frame's aspect gave it rather than
-/// guessing from a shot nobody read.
+/// read the gather measured. The answer is the read's own [`focus`] - the
+/// saliency blob when the classical read found one, and otherwise the
+/// doors': depth names the edge the near field hugs, a pose box names the
+/// head. `None` when no measured clip covers it, so the caption keeps the
+/// band the frame's aspect gave it rather than guessing from a shot
+/// nobody read.
 fn visual_focus_at(log: &[Value], at: f64) -> Option<String> {
     let view = latest_view(log)?;
     let media = media_paths(view);
@@ -1161,7 +1164,7 @@ fn visual_focus_at(log: &[Value], at: f64) -> Option<String> {
     reads
         .iter()
         .find(|read| read.path == path)
-        .and_then(|read| read.saliency_focus())
+        .and_then(|read| read.focus())
         .map(str::to_owned)
 }
 
@@ -6646,6 +6649,13 @@ fn signal_brief(log: &[Value]) -> Value {
                 "passing": reads.iter().filter(|read| read.passes()).count(),
                 "montages": reads.iter().filter(|read| read.montage()).count(),
                 "scales": scales,
+                // The doors' own readings, counted: a taste prior, a
+                // learned scale, a depth map and a body are what separate
+                // a sheet the classical reads made from one the shelf
+                // judged.
+                "taste": reads.iter().filter(|read| read.learned_scale.is_some()).count(),
+                "depth": reads.iter().filter(|read| read.depth_near.is_some()).count(),
+                "bodies": reads.iter().filter(|read| read.person_top.is_some()).count(),
                 "signals": [
                     "visualMotion",
                     "shotScale",
@@ -8338,6 +8348,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "samples": 6,
                                     "width": 64,
                                     "maxClips": 3,
+                                    // Every door the shelf has installed:
+                                    // the taste prior, the shot's type, its
+                                    // depth and its bodies steer the scale,
+                                    // the drift and the caption band.
+                                    "enrich": true,
+                                    "enrichDoors": 6,
                                 }),
                             ));
                         }
@@ -8897,7 +8913,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let hold_scale = read.and_then(VisualRead::shot_scale)
                                 == Some(concat_motion::continuity::ShotScale::CloseUp)
                                 && !shop.force_push;
-                            let drift_enabled = !moving && !hold_scale;
+                            // A frame whose near field already fills half of
+                            // it is a close shot even when the scale read
+                            // could not place it: the depth door measures how
+                            // much of the picture sits at the lens, and the
+                            // drift would crop the subject it pushes into.
+                            let tight =
+                                read.is_some_and(|read| read.tight()) && !shop.force_push;
+                            let drift_enabled = !moving && !hold_scale && !tight;
                             if drift_enabled {
                                 commands.push(json!({
                                     "op": "setClipKey",

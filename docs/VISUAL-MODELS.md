@@ -128,6 +128,24 @@ enrichment and one with the depth door installed:
 | `testsrc2` - a moving subject | 0.6329 | 0.6329 | `models.depth = {nearShare 0.1139, "nearer at the bottom"}` |
 | `smptebars` - a still pattern | 0.4762 | 0.4762 | the same read, and the same score |
 
+### What the AUTO EDIT spends
+
+`measure_clips` asks the doors only when a sheet is being built for an edit,
+and only the doors whose read a sheet can spend, in this order (`ENRICH_DOORS`
+in `visual_sense.py`, up to `enrichDoors` per clip):
+
+| Door | Reading | Where the program spends it |
+| --- | --- | --- |
+| `dover-mobile`, `laion-aesthetic` | a 0–10 taste prior | the sheet's score, a tenth of it - it orders candidates, it never vetoes |
+| `film-shot-classifier` | the shot's type, with a probability | `shot_scale()`, when the classical measure could not place the shot and the classifier was at least 0.5 sure: the drift and the cut rhythm read the same gate word |
+| `depth-anything-v2-small` | `nearShare`, `verdict` | two decisions: `tight()` holds the drift when half the frame sits at the lens, and the verdict places the caption band when saliency found no blob |
+| `movenet-pose` | a body's box | the caption band: a head in the upper third puts the words low |
+| `movenet-a0` | the action class | recorded in the sheet and named in the critic's brief - a cut boundary needs two windows of it, which is the next step, not this one |
+
+The guard in `director_program.rs` (`every_reading_inside_a_family_has_a_consumer`)
+holds the Rust side to this table: a field `visual_read.rs` parses and no
+helper in the program calls fails the test by name.
+
 So the ranking is the classical one's: motion beats a still frame by 0.157.
 The doors add their readings under `models` per row, and the only one wired
 into `visualScore` today is the aesthetic taste prior - depth, shot type and

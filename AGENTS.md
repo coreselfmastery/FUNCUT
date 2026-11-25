@@ -45,6 +45,7 @@ tuned for small low-memory Linux laptops and extended with:
 | [docs/EMOTION.md](docs/EMOTION.md) | The emotion read and the gate that drives easing, colour, sound, duck, stock |
 | [docs/SOUND-SENSE.md](docs/SOUND-SENSE.md) | What a sound file measures, the six roles it is scored for, and where the shelf's metadata lies |
 | [docs/SOUND-GENERATION.md](docs/SOUND-GENERATION.md) | The three text-to-audio models (TinyAudio-MF, Stable Audio Open Small, TinyMusician): download, the `generate` action, and how AUTO EDIT spends them |
+| [docs/YOUTUBE.md](docs/YOUTUBE.md) | The YouTube package on an AUTO EDIT plan: profile, titles, thumbnail frames, Shorts and the retention map |
 | [docs/MOTION.md](docs/MOTION.md) | The Geneva comp document, its ops, presets, storyboard, farm |
 | [docs/MAESTRO.md](docs/MAESTRO.md) · [docs/CLIPSKILLS.md](docs/CLIPSKILLS.md) | The two judgment shelves |
 | [docs/STOCK_LICENSING.md](docs/STOCK_LICENSING.md) | What the stock shelf's clips are licensed as (read before publishing) |
@@ -173,10 +174,11 @@ restarted mid-build at higher parallelism.
 
 ## The report card: what runs, and how each lane fails
 
-Seven workflows. Three checks are required on `main` by branch protection
-(`enforce_admins` is on, force pushes and deletions are off), all from
-`ci.yml`: `Format, locales and models`, `The analysis senses against real
-fixtures`, `Engine tests and lints`. The rest - `Build app`, `Geneva`,
+Seven workflows. `main` requires a pull request (zero approvals, so one
+maintainer can merge their own) and three checks, all from `ci.yml`:
+`Format, locales and models`, `The analysis senses against real fixtures`,
+`Engine tests and lints`. `enforce_admins` is on, conversation resolution
+is required, and force pushes and deletions are off. The rest - `Build app`, `Geneva`,
 `Nix`, `Dependency security audit`, `Release` - are the lanes that turn
 red without blocking a merge, so read them before calling `main` green.
 
@@ -187,7 +189,24 @@ one has:
   fixtures` had a 15-minute ceiling and needed 15m16s; a timeout counts as
   a failure, so the lane was red on a working tree. Ceilings are for hangs,
   so they sit well above the measured worst case now (30 minutes there,
-  200 for the engine job, whose cold build has run 2h31m58s).
+  240 for the engine job, whose cold build has run 2h31m58s).
+- **A step that spends its whole budget compiling.** The engine job builds
+  its test binaries with debug information off (`CARGO_PROFILE_TEST_DEBUG`
+  and `CARGO_PROFILE_DOCTEST_DEBUG`), which made the dev profile a
+  different artifact set - so the smoke step's `cargo run` recompiled the
+  whole dependency graph and hit its 20-minute ceiling without ever
+  launching the binary. `CARGO_PROFILE_DEV_DEBUG: "0"` aligns the dev
+  artifacts with the ones the test build already produced, and the
+  headless binaries' own Slint codegen and link get a step of their own.
+  Cargo resolves features per invocation, so the later `-p concat-cli`
+  build unified them differently and recompiled the tree again; the smoke
+  and the 4 GiB benchmark now run the binaries that step built.
+- **A benchmark with no ffmpeg to make its clip with.** The 4 GiB step
+  generates its source clip with `ffmpeg`, and the engine job installs the
+  BtbN bundle for its *libraries* only - no CLI on the PATH - so the step
+  died on `no --video and no ffmpeg`. The pinned bundle carries the
+  executables too; `ffmpeg-dev/bin` joins the PATH now, with a `test -x`
+  in the install step so a bundle without them fails there instead.
 - **A retry that gives up too early.** `scripts/ci/fetch.sh` retried the
   release CDN five times over 62 seconds while the CDN was returning 500s
   for 61 of them. Backoff is 2/4/8/16/32s per attempt, digest re-verified

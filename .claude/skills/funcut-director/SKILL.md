@@ -227,7 +227,7 @@ taboo hit is a blocker — replace the query, never the taboo.
 
 **Phase 4 — Read what the voiceover IS (the acoustic score).**
 `voice_signals {audio: <the voiceover>, transcript: <the transcribe output>,
-script: <the author's text when a script exists>, emotion: <the Phase-1b
+script: <the author's text when a script exists>, emotion: <the Phase 3
 extract>, language: <the hint used>}` — one call,
 the whole reading. The script, when there is one, is the wording's
 authority: the call aligns it against the transcript (misheard words
@@ -260,13 +260,15 @@ neutral reading — and **`decisionPolicy`** — the table that says which
 signals drive each decision (cut: pause class, emphasis, pace; caption:
 emphasis, word confidence, script; graphic: entities, sentence type; BGM:
 noise floor, music segments; transition: speaker change, topic,
-discourse). **Spend every reading, not just the family:** every family
-and every reading you spend must appear in the plan's `signalLog` with
-its confidence and one-sentence basis; a reading that was absent is
-named unmeasured, never cited at confidence 0.
-`prompts/signal_matrix.md` maps all 14 families and 70 named readings to the
-decision each one informs — the catalogue in `voice_signals.py` is the
-authority behind those two numbers.
+discourse). The Rust ears (prosody, forensics, speakers, NER) need the
+`voice-signals` binary built (`cargo build -p voice-signals`); without it
+the Python signals still answer and the reply says which ear was absent —
+never guess the missing ones. **Spend every reading, not just the family:**
+`prompts/signal_matrix.md` maps all 14 families and 70 named readings
+to the decision each one informs — the catalogue in `voice_signals.py` is
+the authority behind those two numbers. Every family and every reading you spend must
+appear in the plan's `signalLog` with its confidence and one-sentence basis;
+a reading that was absent is named unmeasured, never cited at confidence 0.
 **Turn the reading into cuts with `prompts/signal_recipes.md`:** score the
 seam, set the density, choose the cut type, and use the conservative fallback
 when confidence is low. The reading is not a dashboard; it is the cut.
@@ -281,7 +283,14 @@ family tools (`sense_discourse`, `sense_voice_quality`,
 `sense_prosody_style`, `sense_audio_repair`, `sense_captions`, plus the
 three measurement doors below: `sense_sound`, `sense_sound_model`,
 `sense_visual`), each
-`action` naming one reading. Three of them are wired into the pipeline,
+`action` naming one reading. The two sound doors are Phase 18's
+instruments: `sense_sound` measures the file (its true `peakAt`,
+attack, the six role fits) and proves a placed accent with
+`check_placement`; `sense_sound_model` adds what it MEANS (YAMNet
+labels, CLAP similarity) and `plan`s the whole accent design from the
+edit's own beats, arc, visual events and bed structure. All the doors
+degrade loudly to measurement-only answers when the models are absent —
+never silently. Three of them are wired into the pipeline,
 not left to judgment: `sense_voice_quality {action:
 "classify_recording_quality"}` + `sense_audio_repair {action:
 "enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 2),
@@ -712,7 +721,9 @@ trim, the voice-overlap masking and the repetition constraints
 `syncAt` (61 of the 530 bundled sounds contradict theirs). **Verify
 every placement:** `sense_sound {action: "check_placement"}` on the
 placed clip — peak alignment, role fit, level, repetition — and fix
-what it flags before moving on. When the shelf cannot meet a moment,
+what it flags before moving on (the reply names the fix when it is
+wrong). Shopping a role by hand instead: `sense_sound {action:
+"rank_sounds"}`. When the shelf cannot meet a moment,
 `sense_sound_model {action: "generate", kind, prompt, seconds, seed,
 project}` writes it (sfx-small default, sfx-large for the hook; the
 reply carries its licence, and a monetized project is never given a
@@ -1070,9 +1081,9 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/broll_matching.md` | choosing B-roll queries and slot descriptions, shopping by the slot, scoring results, the fallback ladder, aspect fit |
 | `prompts/cuts_and_pacing.md` | the eighteen cut types, J/L feel, pacing curves by mode |
 | `prompts/transitions_guide.md` | the 122 transitions (classic 22 + the 100 viral pack), the clip-patch mechanics, when a plain cut wins |
-| `prompts/sfx_design.md` | sound design: categories, semantic mapping, sync peaks, anti-repetition |
+| `prompts/sfx_design.md` | sound design: measured role ranking, semantic categories, peak-true placement with check_placement, anti-repetition |
 | `prompts/motion_comps.md` | designing graphics: which comp, worked plans, density floors |
-| `prompts/music_and_duck.md` | BGM choice, beat alignment, ducking keyframes, longform structure |
+| `prompts/music_and_duck.md` | BGM choice (measured candidates, structure before placement), beat alignment, ducking keyframes, longform structure |
 | `prompts/text_animation.md` | titles, captions, kinetic text, zones, color methodology |
 | `prompts/color_grading.md` | the filter recipes per niche, and how a grade is actually applied |
 | `prompts/keyframes_motion.md` | motion grammar: Ken Burns, parallax, punch zooms, entrances/exits |

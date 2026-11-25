@@ -56,9 +56,14 @@ each through the program's own paths rather than a mock-up:
 ```sh
 python3 scripts/benchmark.py                 # generates a testsrc2 clip with ffmpeg
 python3 scripts/benchmark.py --video my.mp4  # or scrubs and renders your own
+python3 scripts/benchmark.py --memory-limit-mb 4096  # the 4 GB laptop's ceiling
 ```
 
-It prints a markdown block; paste it under Results below.
+`--memory-limit-mb` caps each child's address space, so a run that only
+fits because the machine has RAM to spare fails instead of quietly
+measuring the wrong machine. CI runs a short version of this under a
+4 GiB cap on every change; the long run is still the target machine's
+to do. It prints a markdown block; paste it under Results below.
 
 ## Results
 

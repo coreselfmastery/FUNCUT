@@ -210,6 +210,10 @@ fn routed(
     trust: Trust,
     redirects: u32,
 ) -> ureq::Agent {
+    debug_assert!(
+        !connect.is_zero() && !read.is_zero(),
+        "a network agent needs bounded connect and read timeouts"
+    );
     let tls = match trust {
         Trust::System => tls(),
         Trust::Shipped => shipped_tls(),

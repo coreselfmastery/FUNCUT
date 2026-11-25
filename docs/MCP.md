@@ -521,6 +521,12 @@ enhance / remove / normalize WRITE a new file; the input is never touched):
 - `enhance_speech` - the measured chain (highpass, de-esser, compressor at
   the take's own level, gate over the measured floor, limiter, loudnorm)
   with every decision's why and the before/after table.
+- `diagnose_take` - the take measured first, the repair plan named second:
+  every finding (noise floor, clipping, level) with its fix, why and the
+  measurement that triggered it - the diagnosis the repair below consumes.
+- `repair_by_diagnosis` - executes a diagnosis's plan arm by arm (and says
+  so when every arm measured under its trigger: nothing worth repairing);
+  writes a new file, the input is never touched.
 - `remove_hiss_hum_rumble` - finds the hum (50/60 Hz families) and notches
   it, cuts the rumble, denoises the hiss at measured strength — and says
   so when the take is cleaner than the cure.
@@ -716,7 +722,17 @@ sound accents, save the timeline, look at the result and score it.
 
 The reply carries `project` (the folder to open next), `copy`, `outcome`
 (`completed`, `completed-with-warnings`, `failed` or `cancelled`) and the
-runner's full `state` with its stage-by-stage receipt. It also writes
+runner's full `state` with its stage-by-stage receipt. Every stage record
+carries `elapsedMs` - the wall-clock time that stage spent - and the
+resumed stages carry `0`, so a slow run names its slow stage instead of
+leaving it to guesswork. The plan also carries a `youtube` package: the
+mode and creative profile, five title directions, three thumbnail
+`frameAt` concepts, up to three transcript-backed Short windows with
+their scores, a section-by-section retention map, a `profilePlan` that
+says what the creative profile changed in pacing, motion, captions and
+the B-roll query, and a plan-level `quality` report. See
+[docs/YOUTUBE.md](YOUTUBE.md); no thumbnail image is rendered, and the
+`frameAt` times are `preview_frame` targets. It also writes
 `auto-edit-report.json` and, when the run reached the end,
 `auto-edit-receipt.json` beside the edit. A failed or cancelled run is
 returned as an error outcome with the same state, so an agent can read

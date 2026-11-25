@@ -160,6 +160,89 @@ are spent by `measure_clips` itself.)*
   above). The remaining benches, in order: action class, masks, visual
   similarity on the cut stage.
 
+## YouTube package (2026-11-24)
+
+- **The AUTO EDIT plan carries a publishing half.** A `youtube` object
+  names the mode (`short`, `reel` or `longform`), the creative profile
+  the narration's words support, five title directions tied to the
+  brief's actual payoff, three thumbnail concepts with the `frameAt`
+  second to sample, up to three transcript-backed Short windows with
+  their measured scores, and a section-by-section retention map with the
+  one fix the edit vocabulary can apply. See
+  [`docs/YOUTUBE.md`](YOUTUBE.md).
+- **The Short finder measures instead of guessing.** It slides whole
+  transcript lines to the target length and scores the opening question,
+  the delivery intensity, a payoff phrase, the spoken coverage and the
+  duration band. It keeps the top three and refuses two candidates that
+  start within five seconds of each other.
+- **The package is honest about its limits.** Titles carry the brief's
+  promise, not a new claim. Thumbnails are frames and text, not rendered
+  images. Short scores rank candidates inside one run; they do not
+  predict views or retention.
+- **The quality report also checks the spine.** Two more plan-level
+  checks: every segment names a visual type, and the segments cover at
+  least 95% of the measured runtime. They sit beside the hook, payoff,
+  retention, repeat, title, thumbnail and Short checks.
+- **Each Short is an actionable package, not a window.** A Short now
+  carries the parts of its score, a standalone check with its reason,
+  the frame to sample for its thumbnail, its vertical reframe, its
+  caption treatment and the title direction that fits it. None of these
+  is a rendered Short; they are the decisions a Short project starts
+  from.
+- **The profile is spent, not labelled.** `youtube.profilePlan` records
+  the pattern-break density, motion intensity, caption weight and B-roll
+  qualifier the creative profile chose, and the plan applies them: the
+  style's motion intensity, the caption weight, the pattern-break count
+  and a third stock query all come from it. The measured hook, turn,
+  payoff and retention risk still win.
+- **The package carries a plan-level quality report.** `youtube.quality`
+  checks the hook length, payoff position, measured retention risks,
+  neighbour repeats, title count, thumbnail frames and Short bounds, and
+  returns `pass`, `warn` or `fail` with the value behind each check. It
+  says it cannot see a black frame or a clipped sample; `watch_render`
+  and `craft_critique` do that.
+- **The plan test covers the package.** It asserts the mode, profile,
+  five titles, three thumbnail frames, a non-empty Short list and one
+  retention entry per section. The plan remains valid to `plan_validate`,
+  which accepts the additional section without requiring it.
+
+## Hardening pass (2026-11-24)
+
+- **The panic save runs once.** A panic inside the last-chance save used to
+  re-enter the panic hook and recurse; `logs::run_panic_save` now guards
+  with `IN_PANIC_SAVE` and logs the second entry. The save still cannot
+  survive `panic = "abort"` itself, and the comment says so instead of
+  implying `catch_unwind` can.
+- **AUTO EDIT names its slow stage.** `StageRecord` carries `elapsedMs`;
+  the runner fills it for completed, warned and failed stages, and a
+  resumed stage reports `0`. `docs/MCP.md` tells the agent to read it.
+- **The plan test checks the plan's shape.** `the_plan_the_run_writes_validates`
+  now asserts the five story roles, the retention analysis, the variety
+  counts and a non-empty `signalLog`, not only that the validator accepts
+  the document.
+- **Every unsafe block has a SAFETY comment.** The count is 108 blocks and
+  108 comments; `scripts/ci/check-unsafe-safety.py` fails the format job
+  when a new block arrives without one.
+- **CI runs the headless smoke and a 4 GB cap.** `cargo run -p concat --
+  --smoke` now runs on every change, and `scripts/benchmark.py
+  --memory-limit-mb 4096` holds a generated preview and render to the
+  target laptop's address space.
+- **The smoke runs, it does not compile.** The dev profile now carries the
+  same `debug = 0` as the test and doctest profiles, so its artifacts are
+  the ones nextest already built, and a `Build the headless binaries` step
+  pays the window binary's Slint codegen and link once. The smoke and the
+  4 GB benchmark reuse that build. Their ceilings are 60 and 40 minutes,
+  with room for a cache miss; a timeout is a failure, so the number is for
+  hangs, not for a slow compile. The engine job also puts the fetched
+  FFmpeg's `bin` on `PATH`, so the 4 GB benchmark can generate the clip it
+  measures instead of stopping with "no --video and no ffmpeg".
+- **Translated READMEs point at this fork.** Downloads, releases, issues,
+  discussions, star history and contributors now name
+  `coreselfmastery/FUNCUT`, with a line crediting upstream Concat.
+- **`main` requires a pull request.** Branch protection now requires a PR
+  (zero approvals), the three `ci.yml` checks, admins, conversation
+  resolution, and still refuses force pushes and deletions.
+
 ## The sound model layer (`sound_model.py`)
 
 The reader measures; this layer names. YAMNet (521 AudioSet classes, 3.7 M

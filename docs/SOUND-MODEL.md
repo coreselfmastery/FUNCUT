@@ -34,7 +34,8 @@ other sense script: one JSON spec in, one JSON object out.
 | `describe` | one file: identity, YAMNet labels, CLAP embedding + best-matching description, Sound Sense measurements, loudness/quality, roles, sync offset, trim advice |
 | `index` | the whole shelf, one record per file, cached by size, mtime and model version |
 | `rank` | a creative description and a role: candidates scored by CLAP fused with the measured role fit |
-| `selftest` | twelve checks, no network: the filterbank, the front-end, the weights, and - when models are installed - that YAMNet calls a whoosh a whoosh |
+| `plan` | every signal at once — the beats' emphasis and pauses, the visual events and cuts, the arc's acts, the bed's structure — into a per-moment accent design, held silences and the music plan, each choice with its evidence |
+| `selftest` | nineteen checks, no network: the filterbank, the front-end, the planner, and - when models are installed - that YAMNet calls a whoosh a whoosh |
 
 The same module also writes sound: `plan` turns every signal into one sound
 design, and `generate` writes a short sound or a music bed with one of three

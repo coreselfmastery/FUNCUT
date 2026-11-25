@@ -54,6 +54,10 @@ model wins transitions (0.62 against 0.38), the measurements win risers
 (0.44 against 0.31) and textures — which is why both indexes are spent,
 never one alone.
 
+**Queries are ANDed and prefix-matched** — two or three words, no
+sentences: "coin drop", not "coins dropping onto a wooden table in slow
+motion".
+
 ## The role vocabulary
 
 Six jobs. The tools accept the plain word or the role name:
@@ -131,6 +135,13 @@ Density is a knob, not a feeling: `maxAccentsPer10s` (default 4) and
 noise the viewer stops hearing. Silence is a design choice — the
 plan's `silence[]` marks the held room before a reveal; let a few cuts
 land dry so the next one is heard.
+
+**Prove every placed accent**: `sense_sound {action:
+"check_placement", path, clipStart, intendedAt, gainDb, voiceLufs,
+recent}` — the measured peak against the moment it was meant to land
+(a `sync_off` issue names the exact `moveBy`), the level under the
+voice, the role against the moment, and repetition inside the window.
+A placement nobody checked is a guess with a good filename.
 
 ## Levels
 

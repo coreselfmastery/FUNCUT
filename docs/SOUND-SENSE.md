@@ -12,7 +12,8 @@ Phase 18 verifies every placed accent with `check_placement`, and the
 measured `peakAt` is what a cut lands on, not the manifest's `syncAt`
 (this page's own audit found 61 of the 530 shipped sounds carry a
 `syncAt` the file contradicts). What §6 planned is now the doctrine in
-`prompts/sfx_design.md`.
+`prompts/sfx_design.md`, and `prompts/tool_reference.md` carries its
+full schema.
 
 ## 1. What was verified in the tree
 
@@ -278,15 +279,19 @@ modelled one.
 
 ## 6. Wiring it to the Director
 
-Nothing below is done in this change. Each item names the function that
-gains a call, so the second change is mechanical rather than a redesign.
+Status update: the DIRECTOR-SKILL half of this section is done — Phase 18
+of `.claude/skills/funcut-director/SKILL.md` plans with `sense_sound_model
+{action: "plan"}`, proves every accent with `check_placement`, and shops
+by measurement; `prompts/sfx_design.md` and `prompts/music_and_duck.md`
+carry the doctrine; `prompts/tool_reference.md` carries the schemas. What
+remains is the ENGINE half: the AUTO EDIT stages below still run the
+name-led path, and each item names the function that gains a call, so
+that change is mechanical rather than a redesign.
 
-**The sidecar itself** - mirror `audiorepair` exactly:
-`const SOUND_SENSE_PY: &str = include_str!("../sense/sound_sense.py");`,
-one `fs::write` line in `sense.rs`'s `runtime()`, one `Action` variant and
-catalogue entry beside `Action::SenseFamily("audiorepair")`
-(`tools.rs:1145`), one dispatch arm. The tool takes `tool`, and the four
-verbs above.
+**The sidecar itself** - shipped as described: `sound_sense.py` is
+embedded in `sense.rs`, registered as `Action::SenseFamily("sound")` and
+served on the Director's allowlist as `sense_sound`. The tool takes
+`tool`, and the four verbs above.
 
 **The sfx stage** (`director_program.rs`, the `SfxPending::Pick` arm at
 `:10220` onward):

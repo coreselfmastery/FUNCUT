@@ -93,6 +93,22 @@ def make_clip(where, ffmpeg):
     return clip
 
 
+def memory_limit(megabytes):
+    """A child setup that caps this process's address space, or None."""
+    if not megabytes:
+        return None
+    try:
+        import resource
+    except ImportError:  # Windows has no RLIMIT_AS.
+        return None
+    limit = int(megabytes) * 1024 * 1024
+
+    def apply():
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+    return apply
+
+
 def vmhwm(pid):
     try:
         for line in pathlib.Path(f"/proc/{pid}/status").read_text().splitlines():
@@ -122,7 +138,7 @@ def human(bytes_):
 class Api:
     """One `concat-cli api` process: a request a line, a reply a line."""
 
-    def __init__(self, cli):
+    def __init__(self, cli, limit):
         self.proc = subprocess.Popen(
             cli + ["api"],
             stdin=subprocess.PIPE,
@@ -130,6 +146,7 @@ class Api:
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
+            preexec_fn=limit,
         )
         self.next = 0
 
@@ -171,8 +188,8 @@ def find_project_path(reply, under):
     raise RuntimeError("project.create's reply named no folder")
 
 
-def scrub(cli, video, where, scrubs):
-    api = Api(cli)
+def scrub(cli, video, where, scrubs, limit):
+    api = Api(cli, limit)
     try:
         api.call("version", None)
         api.call("project.create", {"location": str(where), "name": "benchmark"})
@@ -211,13 +228,14 @@ def scrub(cli, video, where, scrubs):
         api.close()
 
 
-def render(cli, video, where, frames):
+def render(cli, video, where, frames, limit):
     out = where / "benchmark-render.mp4"
     began = time.perf_counter()
     proc = subprocess.Popen(
         cli + ["render", str(video), str(out), "--frames", str(frames), "--fade", "0"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        preexec_fn=limit,
     )
     peak = 0
     while proc.poll() is None:
@@ -234,9 +252,16 @@ def main():
     parser.add_argument("--cli", help="the concat-cli to run; PATH or cargo when absent")
     parser.add_argument("--scrubs", type=int, default=120, help="preview.frame asks (default 120)")
     parser.add_argument("--render-frames", type=int, default=300, help="render frames (default 300)")
+    parser.add_argument(
+        "--memory-limit-mb",
+        type=int,
+        default=0,
+        help="cap each child's address space in MiB (0 = no cap); use 4096 for the 4 GB laptop",
+    )
     args = parser.parse_args()
 
     cli = find_cli(args.cli)
+    limit = memory_limit(args.memory_limit_mb)
     ffmpeg = shutil.which("ffmpeg")
     with tempfile.TemporaryDirectory(prefix="concat-benchmark-") as work:
         where = pathlib.Path(work)
@@ -248,8 +273,8 @@ def main():
             video = make_clip(where, ffmpeg)
         random.seed(20261031)
 
-        fps, seconds, scrub_peak = scrub(cli, video, where, args.scrubs)
-        render_seconds, render_peak = render(cli, video, where, args.render_frames)
+        fps, seconds, scrub_peak = scrub(cli, video, where, args.scrubs, limit)
+        render_seconds, render_peak = render(cli, video, where, args.render_frames, limit)
 
         cpu, total, kernel = machine_facts()
         source = "a generated 60 s 1080p30 testsrc2 clip" if generated else str(video)
@@ -258,6 +283,7 @@ def main():
 | --- | --- |
 | Machine | {cpu}, {total} RAM, kernel {kernel} |
 | Source | {source} |
+| Memory cap | {f"{args.memory_limit_mb} MiB" if args.memory_limit_mb else "none"} |
 | Scrub: {args.scrubs} random instants, `preview.frame` | **{fps:.1f} frames/s** ({seconds:.1f} s in all) |
 | Export: `concat-cli render`, {args.render_frames} frames | **{render_seconds:.1f} s** ({args.render_frames / render_seconds:.1f} frames/s) |
 | Peak RSS while scrubbing | **{human(scrub_peak)}** |

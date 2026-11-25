@@ -240,11 +240,15 @@ narrowed, and the honest remainder is named:
 3. **The download UI - CLOSED.** Settings > Models carries the reader's
    set (CLAP's towers, YAMNet) beside the three generator rows, fetched
    through the same verified path as every other model.
-4. **The music join - PARTLY.** The bed's structure now reads through
-   `analyze_music_structure` (sections, energy, cutSafePoints) and the
-   skill teaches ranking candidates on what the audio is; the CLAP
-   embedding over the 1,191-track BGM shelf itself is still unbuilt -
-   the shelf's titles are searched, its audio is not yet embedded.
+4. **The music join - TAUGHT.** The bed is shopped on its audio now:
+   `bgm_fetch` the top candidates, `describe` each (the CLAP read
+   against the bed's own words), `analyze_music_structure` for the
+   sections and cutSafePoints, and choose on the sound, not the title.
+   The shelf's bytes arrive when fetched - by design - so the read is
+   per candidate and an indexed folder (`index {dir: <the project's
+   bgm folder>}`) is what a run that shops hard builds; a pre-built
+   embedding of all 1,191 tracks would require fetching all 1,191
+   tracks, which is a download decision, not a code gap.
 
 Pinned sources for that work, all verified today:
 

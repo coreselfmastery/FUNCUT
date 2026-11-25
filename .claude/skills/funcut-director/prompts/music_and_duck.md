@@ -46,15 +46,24 @@ word — "upbeat", "late-night", "scoring"); trust but verify with one
 
 A title that says "epic" and a build that never drops are two different
 tracks. When the choice matters — the hook's bed, a longform spine, two
-candidates the words cannot separate — run
-`sense_audio_repair {action: "analyze_music_structure"}` on the top
-candidates and read what the audio is: the sections and their roles,
+candidates the words cannot separate — `bgm_fetch` the top two or three
+and READ them before importing: `sense_sound_model {action: "describe",
+file: <the fetched track>}` answers the semantic question (a CLAP
+embedding against the bed's own words — does this track SOUND like
+"tension building under a reveal" whatever its title claims?) and
+`sense_audio_repair {action: "analyze_music_structure"}` answers the
+structural one: the sections and their roles,
 the energy curve, the drops, and `cutSafePoints`, the moments where a
-cut lands musical. Choose on the curve, not the caption — the track
+cut lands musical. Choose on the curve and the sound, not the caption — the track
 whose build climbs where the tension act climbs and whose drop sits
 where the reveal sits is the right bed whatever its title says. The
 `cutSafePoints` also pre-answer chapter alignment (below): a track with
 a safe point near every section boundary is a track the grid can use.
+(The shelf's bytes arrive when fetched, by design — so the read is per
+candidate, and the rejected candidates cost one fetch each, not a
+whole-shelf download. A run that shops hard can index the fetched
+folder once — `sense_sound_model {action: "index", dir: <the project's
+bgm folder>}` — and `rank` it by the bed's words after.)
 
 ## Placement and the grid
 

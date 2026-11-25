@@ -8084,11 +8084,13 @@ fn whisper_preflight(log: &[Value]) -> Option<ToolCall> {
     };
     // The wait's own replies, newest first: the wait is a poll of one
     // job, and the last poll's word is the job's word. A job that
-    // settled - done, failed, cancelled - is the gate's to judge; a
-    // job still running gets one more wait, the same two-wait budget
-    // the words stage's own lanes work on.
+    // settled - done, failed, cancelled - is the gate's to judge. The
+    // transcriber stage itself gives a lane two waits; preflight keeps
+    // the same budget, so a job still running after the second wait
+    // fails here rather than polling indefinitely.
+    let waits = log.iter().filter(|reply| reply.get("state").is_some()).count();
     if let Some(last) = log.iter().rev().find(|reply| reply.get("state").is_some()) {
-        if last["state"] != "running" {
+        if last["state"] != "running" || waits >= 2 {
             return None;
         }
         let job = last["job"].as_str()?;
@@ -12110,9 +12112,13 @@ mod tests {
         // settled job - done or failed - is the gate's to judge, and
         // the derive answers nothing more.
         let running = json!({ "job": "j1", "path": "base.bin", "state": "running" });
-        let ask = whisper_preflight(&[started.clone(), running]).expect("another wait");
+        let ask = whisper_preflight(&[started.clone(), running.clone()]).expect("another wait");
         assert_eq!(ask.tool, "analysis_wait");
         assert_eq!(ask.arguments["job"], json!("j1"));
+        assert!(
+            whisper_preflight(&[started.clone(), running.clone(), running]).is_none(),
+            "two running waits exhaust the preflight budget"
+        );
         for settled in ["done", "failed", "cancelled"] {
             let word = json!({ "job": "j1", "path": "base.bin", "state": settled });
             assert!(

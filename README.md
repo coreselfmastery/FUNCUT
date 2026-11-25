@@ -252,6 +252,67 @@ It copies the project to a sibling by default, writes a stage receipt and report
 - [`clip-skills`](docs/CLIPSKILLS.md) — editing craft: where to cut, audio spine, B-roll matching, pacing, grading, voice processing, export numbers.
 - [`Forge`](docs/forge/FORGE.md) — the harness that drives a director run with any vision-capable model.
 
+### What the picture reader measures, and who spends it
+
+`sense_visual` is the picture's door: **38 actions** behind one tool - **11
+measure with nothing installed** (no model, no download, no `onnxruntime`, just
+the standard library and an ffmpeg), **21 are model doors**, and 6 are the
+machinery that makes them usable (the batch sheet, the bench, the shelf
+listing, the two Hub actions and the download). The shelf is **30 ONNX
+checkpoints**, each a registry row with its file, size, licence, decoder and
+consumer ([VISUAL-MODELS.md](docs/VISUAL-MODELS.md)).
+
+| The reading | What it answers | Who spends it in an edit |
+|---|---|---|
+| `measure_motion` | where the frame actually moves, and when the movement starts | the cut lands on the motion peak instead of a pause; the motion preset enters on it; the SFX syncs to it |
+| `camera_motion` | pan, tilt, zoom or still | no Ken Burns push on a shot already moving; a static shot with a moving subject is the one that gets one |
+| `shot_scale` | wide, medium, close-up | cut rhythm (the widest to the tightest), caption room, stock framing |
+| `visual_sync` | does this sound onset match this movement onset | which SFX belongs to which moment |
+| `scene_cuts` | where the shot changes inside a clip | a montage clip is not a single take; a cut is placed on a real seam |
+| `visual_quality` | sharpness, noise, bars, blown highlights | the stock veto: soft or noisy footage never reaches the ranking |
+| `palette` | the dominant colours | motion style, shot-to-shot continuity, stock similarity |
+| `saliency` | where the eye lands | the caption band moves away from the subject |
+| `composition` | rule of thirds, balance, headroom | the stock score's taste term; a caption has somewhere to sit |
+| `motion_blur` | a pan's smear, not a subject's movement | a second veto, so "motion" that is really blur sinks |
+| `tracks` | one subject's identity across frames | do not cut when the subject would jump; captions follow the subject |
+
+Behind them, the shelf adds the readings a classical measure cannot produce -
+**TransNetV2** (shot boundaries: a cut lands where the shot changes),
+**Depth Anything V2 / MiDaS** (depth: parallax layers, depth-aware captions),
+**DINOv2 / CLIP / SigLIP2** (visual and text-matched similarity: "a shot that
+looks like this"), **MoViNet / V-JEPA-2 / the film-shot classifier** (action and
+shot type: reject the wrong footage, pick the Foley and the preset),
+**FastSAM / SegFormer-B0 / ByteTrack / Grounding DINO** (masks, scene classes,
+identities, "find a shot with a laptop"), **DOVER / the LAION predictor**
+(a taste prior that orders candidates), **ViNet-S / SMBlurDetect** (attention
+and blur), **MoveNet / MediaPipe hands / EyeGaze / MicroExpNet / SyncNet / AQA**
+(pose, gesture, eyeline, expression, lip-sync, how well an action was done),
+and **SmolVLM2 / Florence-2 / UForm** (bounded scene descriptions).
+
+**Nothing is required, and nothing is silent.** A door with no file, no `numpy`
+or no `onnxruntime` refuses and names the file it looked for. The AUTO EDIT
+button spends whatever is installed: `measure_clips` adds composition to the
+stock score, a blur veto beside the technical one, and - when the doors are
+there - a measured taste prior, depth, shot type and action, at most three
+doors per clip (`enrich: false` keeps the sheet classical and fast).
+
+**Installing a model takes one call, from the Hub:**
+
+```text
+sense_visual {action: "hf_search", query: "depth anything onnx"}   → repos
+sense_visual {action: "hf_files", hfRepo: "onnx-community/depth-anything-v2-small"}
+sense_visual {action: "download", modelId: "depth-anything-v2-small",
+              hfRepo: "onnx-community/depth-anything-v2-small",
+              file: "onnx/model_quantized.onnx"}
+```
+
+Rows with a verified Hub repo download with just `{action: "download", modelId}`
+(TransNetV2, Depth Anything V2, DINOv2, CLIP). A gated repo takes `HF_TOKEN`.
+With `sha256` the digest is checked before anything is kept; without it the
+digest that arrived is pinned in the folder's `index.json` and checked on every
+later download. The files land in the app's own model folder, which is the
+folder the reader reads - download it once and the picture reader uses it.
+
 ### Perception and emotion
 
 Only inline image content blocks are visible to a vision model: `preview_frame`, `motion_frame`, `watch_render`, `stock_contact_sheet`. A text-only model is told to rely on rankings and measured facts.

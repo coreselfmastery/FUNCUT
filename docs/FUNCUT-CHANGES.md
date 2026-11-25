@@ -61,16 +61,46 @@ playback cache.
   so a clip whose "motion" is a pan's smear sinks behind a clean one, and a
   shot composed on a third beats a centred one. The rows carry
   `composition` and `blur`, and `CONSUMERS` names what spends each.
-- **Downloading is an operator's act, not the module's.** `download` takes
-  the URL the operator names, streams it, verifies the `sha256` it was
-  given, and keeps nothing on a mismatch. The registry's `upstream` is the
-  model's own page, never a guessed file URL.
-- **Twenty new family actions, and the guards to match.** The visual family
-  is 36 readings behind one door; the family table, the schema's `action`
-  enum, the `modelId` enum and the count guard (`members == 79`) all moved
-  together, and the visual selftest grew from 21 checks to 29 - the shelf's
-  rows, every decoder on a synthetic array, the classical pair, the box
-  linker and both vetoes.
+- **A door installs itself from the Hub, in three calls.** `hf_search`
+  asks the Hub's own API for ONNX repos; `hf_files` lists the ONNX files in
+  one repo with their sizes; `download` fetches the file the operator picks
+  - `hfRepo` + `file`, or a row's own verified repo, or any `url`. A gated
+  repo takes `token` or `HF_TOKEN`, and the token is never echoed back. With
+  `sha256` the digest is checked before anything is kept; without it the
+  digest that arrived is **pinned** in the folder's `index.json` and checked
+  on every later download of that file, so a swapped file is caught from the
+  second read on. Four rows carry a repo verified by a real download here
+  (`transnetv2`, `depth-anything-v2-small`, `dinov2-small`, `clip-vit-b32`);
+  the rest name their upstream page and take a repo from `hf_search`, because
+  a guessed file URL is worse than none.
+- **The folder the app downloads into is the folder the reader reads.**
+  The reader now resolves the app's own `cutout-models` folder the way the
+  sound reader does, so "download it in the model page and the picture reader
+  uses it" is true without either side knowing about the other.
+- **Verified on real weights, not on shapes.** In this tree: TransNetV2 found
+  a cut at frame 39 of a synthetic 100-frame clip at p 0.9996 (its input is
+  100x27x48 channels-last, raw 0-255 - the row carries that, and the runner
+  grew a non-square aspect to hold it); Depth Anything V2 produced a 518x518
+  map with the near/far split the synthetic frame deserved; DINOv2 produced a
+  CLS embedding (its output is `(1, 257, 384)`, so the decoder pools the CLS
+  row instead of flattening every patch into the "embedding").
+- **Twenty-eight new family actions, and the guards to match.** The visual
+  family is 38 readings behind one door; the family table, the schema's
+  `action` enum, the `modelId` enum and the count guard (`members == 81`) all
+  moved together, and the visual selftest grew from 21 checks to 48 - the
+  shelf's rows, **every one of the thirty doors through the real runner** with
+  a stub session standing in for the weights, the Hub URL and the pin, the
+  enrichment and both vetoes. A door that cannot decode its own output shape
+  now fails in CI rather than on a user's clip.
+- **The sheet spends what is installed, and says what it skipped.**
+  `measure_clips` runs at most `enrichDoors` (default 3) of the shelf's cheap
+  doors per clip - a measured taste prior (blended at a tenth of the score),
+  shot type, depth and pose - on the frames it already decoded, with a
+  session cache so a model loads once per process. With nothing installed the
+  sheet is the classical one and costs a `stat()` per door; `enrich: false`
+  forces that path. The four captioning rows are `vlm: true` and the generic
+  runner refuses them with a pointer to `describe_scene`, rather than feeding
+  a chat model a 3x224x224 tensor.
 
 ## The picture reader (`visual_sense.py`)
 

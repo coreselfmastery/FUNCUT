@@ -981,6 +981,35 @@ def _shot_scale(frames, spec, work_width):
 # The ONNX doors. Real doors: they run when the file, numpy and
 # onnxruntime are all present, and refuse with the reason when not.
 # ---------------------------------------------------------------------------
+def _model_candidates(spec):
+    """Where a visual model may already be, in the order to try.
+
+    The app keeps its models in `<data>/app.concat.editor/cutout-models`
+    (see `concat-host/src/dirs.rs`), the same folder the settings sheet
+    downloads into and the sound reader reads. Reading it here is what
+    makes "download it in the model page and the picture reader uses it"
+    true without either side knowing about the other. `modelDir` in the
+    spec still wins, which is what the bench and the tests use.
+    """
+    if spec.get("modelDir"):
+        return [Path(str(spec["modelDir"]))]
+    if os.environ.get("FUNCUT_VISUAL_MODELS"):
+        return [Path(os.environ["FUNCUT_VISUAL_MODELS"])]
+    data = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    dirs = []
+    if os.environ.get("FUNCUT_APP_DIR"):
+        dirs.append(Path(os.environ["FUNCUT_APP_DIR"]) / "portable" / "cutout-models")
+    dirs.append(data / "app.concat.editor" / "cutout-models")
+    for folder in ("funcut", "FUNCUT", "concat", "Concat"):
+        dirs.append(data / folder / "cutout-models")
+        dirs.append(data / folder / "models")
+    try:
+        dirs.append(Path(__file__).resolve().parents[4] / "models" / "visual")
+    except IndexError:
+        pass
+    return dirs
+
+
 def _model_file(spec, default_id):
     named = spec.get("model")
     if named:
@@ -989,15 +1018,7 @@ def _model_file(spec, default_id):
             return str(path), None
         return None, f"no model file at {named}"
     wanted = spec.get("modelId") or default_id
-    dirs = []
-    if spec.get("modelDir"):
-        dirs.append(str(spec["modelDir"]))
-    if os.environ.get("FUNCUT_VISUAL_MODELS"):
-        dirs.append(os.environ["FUNCUT_VISUAL_MODELS"])
-    try:
-        dirs.append(str(Path(__file__).resolve().parents[4] / "models" / "visual"))
-    except IndexError:
-        pass
+    dirs = [str(candidate) for candidate in _model_candidates(spec)]
     for model in VISUAL_MODELS:
         if model["id"] != wanted:
             continue
@@ -1005,6 +1026,14 @@ def _model_file(spec, default_id):
             candidate = Path(directory) / model["file"]
             if candidate.is_file():
                 return str(candidate), None
+        # A file fetched by name (a Hub repo with no row of its own) is
+        # recorded in index.json: the door follows the record.
+        pinned = (_pins(spec).get(wanted) or {}).get("file", "")
+        if pinned:
+            for directory in dirs:
+                candidate = Path(directory) / pinned
+                if candidate.is_file():
+                    return str(candidate), None
         return None, (
             f"the {wanted} model is not on disk: put {model['file']} in "
             f"{dirs[0] if dirs else 'a model directory'} or pass `model`"
@@ -1012,23 +1041,48 @@ def _model_file(spec, default_id):
     return None, f"unknown model id {wanted!r}: one of {[m['id'] for m in VISUAL_MODELS]}"
 
 
+_SESSIONS = {}
+
+
 def _onnx_session(path):
+    """One session per file per process: loading a model is the slow part.
+
+    A door that runs twice on the same file (a clip measured for stock and
+    again for the bench) pays the load once. The key is the path and its
+    mtime, so a replaced checkpoint is a new session.
+    """
     if np is None:
         raise RuntimeError("numpy is not installed: the ONNX doors need numpy")
+    try:
+        stamp = os.stat(path).st_mtime_ns
+    except OSError:
+        stamp = 0
+    key = (os.path.abspath(path), stamp)
+    cached = _SESSIONS.get(key)
+    if cached is not None:
+        return cached
     try:
         import onnxruntime as ort
     except Exception as exc:  # pragma: no cover - depends on the machine
         raise RuntimeError(f"onnxruntime is not installed: {exc}")
     options = ort.SessionOptions()
     options.intra_op_num_threads = max(1, min(4, os.cpu_count() or 1))
-    return ort.InferenceSession(path, sess_options=options,
-                                providers=["CPUExecutionProvider"])
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(path, sess_options=options,
+                                   providers=["CPUExecutionProvider"])
+    if len(_SESSIONS) >= 4:
+        _SESSIONS.clear()
+    _SESSIONS[key] = session
+    return session
 
 
-def _resize_square(rgb, w, h, size):
-    out = bytearray(size * size * 3)
-    for y in range(size):
-        sy = y * h // size
+def _resize_square(rgb, w, h, size, height=None):
+    """Nearest-neighbour to (height or size) x size; the odd sizes are real:
+    TransNetV2's input is 27 high and 48 wide."""
+    out_h = height or size
+    out = bytearray(size * out_h * 3)
+    for y in range(out_h):
+        sy = y * h // out_h
         for x in range(size):
             sx = x * w // size
             i, j = (sy * w + sx) * 3, (y * size + x) * 3
@@ -1036,7 +1090,7 @@ def _resize_square(rgb, w, h, size):
     return bytes(out)
 
 
-def _tensor(frames, size, time=None, mean=0.0, std=255.0):
+def _tensor(frames, size, time=None, mean=0.0, std=255.0, height=None):
     """A float32 NCHW (or NTCHW) tensor from the sampled frames."""
     chosen = frames
     if time:
@@ -1047,19 +1101,20 @@ def _tensor(frames, size, time=None, mean=0.0, std=255.0):
             chosen = chosen + [chosen[-1]] * (time - len(chosen))
     else:
         chosen = [chosen[len(chosen) // 2]]
+    out_h = height or size
     planes = []
     for _, rgb, w, h in chosen:
-        square = _resize_square(rgb, w, h, size)
-        channel = [0.0] * (size * size * 3)
-        for i in range(size * size):
+        square = _resize_square(rgb, w, h, size, out_h)
+        channel = [0.0] * (size * out_h * 3)
+        for i in range(size * out_h):
             for c in range(3):
-                channel[c * size * size + i] = (square[i * 3 + c] - mean) / std
+                channel[c * size * out_h + i] = (square[i * 3 + c] - mean) / std
         planes.append(channel)
     flat = [value for plane in planes for value in plane]
     if time:
-        shape = (1, len(planes), 3, size, size)
+        shape = (1, len(planes), 3, out_h, size)
     else:
-        shape = (1, 3, size, size)
+        shape = (1, 3, out_h, size)
     return np.asarray(flat, dtype=np.float32).reshape(shape)
 
 
@@ -1231,13 +1286,15 @@ def visual_embedding(spec):
         size = max(64, min(640, _int(spec, "size", _shape_size(layer.shape))))
         tensor = _tensor(frames, size, mean=0.5, std=0.5)
         output = session.run(None, {layer.name: tensor})[0]
-        vector = np.asarray(output).reshape(-1).astype("float32")
+        pooled, tokens = _pooled(output)
+        vector = np.asarray(pooled, dtype="float32").reshape(-1)
         limit = max(16, min(1024, _int(spec, "dimensions", 512)))
         return {
             "ok": True,
             "tool": "visual_embedding",
             "model": Path(path).name,
             "dimensions": int(vector.shape[0]),
+            "tokens": tokens,
             "norm": _r(float(np.linalg.norm(vector)), 4),
             "embedding": [_r(float(value), 5) for value in vector[:limit]],
             "truncated": bool(vector.shape[0] > limit),
@@ -1500,13 +1557,18 @@ def visual_sync(spec):
     }
 
 
-def _visual_score(motion, quality, intent, scene=None, comp=None, blur=None):
+def _visual_score(motion, quality, intent, scene=None, comp=None, blur=None,
+                  aesthetic=None):
     sharp = min(1.0, quality.get("sharpness", 0.0) / 20.0)
     noise = max(0.0, 1.0 - min(1.0, quality.get("noise", 0.0) / 15.0))
     bars = max(0.0, 1.0 - quality.get("letterbox", 0.0))
     peak = min(1.0, motion.get("peak", 0.0) / 0.15)
     taste = min(1.0, float((comp or {}).get("score", 0.5)))
     score = 0.26 * sharp + 0.17 * noise + 0.13 * bars + 0.32 * peak + 0.12 * taste
+    # A measured taste prior, when the aesthetic door is installed, blends
+    # a tenth of the score: it orders candidates, it never vetoes one.
+    if isinstance(aesthetic, (int, float)):
+        score = 0.9 * score + 0.1 * max(0.0, min(1.0, float(aesthetic) / 10.0))
     if quality.get("verdict") != "pass":
         score *= 0.45
     # A pan's smear reads as motion and is not one: the movement is the
@@ -1594,7 +1656,9 @@ def measure_clips(spec):
                 "onsets": motion["onsets"],
                 "still": motion["still"],
             }
-            score = _visual_score(motion_row, quality, intent, scene_row, comp, blur)
+            doors = _enrich(sub, frames) if _enrich_on(spec) else {}
+            score = _visual_score(motion_row, quality, intent, scene_row, comp, blur,
+                                  aesthetic=doors.get("aesthetic"))
             rows.append({
                 "path": path,
                 "ok": True,
@@ -1609,6 +1673,7 @@ def measure_clips(spec):
                 "scene": scene_row,
                 "composition": comp,
                 "blur": blur,
+                "models": doors,
                 "visualScore": score,
                 "notes": _notes(motion_row, quality, camera, intent, scene_row,
                                 comp, blur),
@@ -1632,11 +1697,69 @@ def measure_clips(spec):
             "closeUps": sum(1 for row in good
                             if row["shotScale"]["scale"] == "close_up"),
         },
+        "enriched": sum(1 for row in good if row.get("models")),
         "note": "One compact read per candidate. The score is the sheet's ranking: "
-                "sharpness, noise, bars, measured motion and composition, with "
-                "two vetoes - a technical one (soft, noisy, letterboxed) and a "
-                "blur one (a pan's smear is not an entrance).",
+                "sharpness, noise, bars, measured motion, composition and - when "
+                "the shelf's doors are installed - aesthetic taste, with two "
+                "vetoes: a technical one (soft, noisy, letterboxed) and a blur "
+                "one (a pan's smear is not an entrance). `enrich: false` keeps "
+                "the sheet to the classical reads.",
     }
+
+
+ENRICH_DOORS = ("dover-mobile", "film-shot-classifier",
+                "depth-anything-v2-small", "movenet-a0")
+
+
+def _enrich_on(spec):
+    flag = spec.get("enrich", True)
+    if isinstance(flag, str):
+        return flag.strip().lower() not in ("0", "false", "no", "off")
+    return bool(flag)
+
+
+def _ready_door(spec, model_id):
+    """Whether this door would run right now: a file on disk and a runtime."""
+    path, _ = _model_file(spec, model_id)
+    return bool(path) and np is not None and _has_onnxruntime()
+
+
+def _enrich(spec, frames):
+    """The shelf's cheap reads on a clip the sheet already measured.
+
+    Only doors that are installed run, at most `enrichDoors` of them, and
+    each sees one frame - the middle one - so a stock sheet stays a sheet
+    rather than a batch of inferences. With nothing installed this is an
+    empty dict and costs a stat() per door.
+    """
+    budget = max(0, min(6, _int(spec, "enrichDoors", 3)))
+    if budget == 0:
+        return {}
+    middle = [frames[len(frames) // 2]]
+    out = {}
+    for model_id in ENRICH_DOORS:
+        if budget <= 0:
+            break
+        if not _ready_door(spec, model_id):
+            continue
+        budget -= 1
+        reading = _generic_door({**spec, "samples": 1}, model_id, frames=middle)
+        if not reading.get("ok"):
+            continue
+        model = _model_row(model_id)
+        decoded = reading.get("decoded") or {}
+        if model["tool"] == "aesthetic":
+            out["aesthetic"] = decoded.get("score")
+        elif model["tool"] == "film_shot_type":
+            top = (decoded.get("top") or [{}])[0]
+            out["shotType"] = {"label": top.get("label"), "p": top.get("p")}
+        elif model["tool"] == "depth_map":
+            out["depth"] = {"nearShare": decoded.get("nearShare"),
+                            "verdict": decoded.get("verdict")}
+        elif model["tool"] == "action_class":
+            top = (decoded.get("top") or [{}])[0]
+            out["action"] = {"label": top.get("label"), "score": top.get("score")}
+    return out
 
 
 def bench(spec):
@@ -1719,7 +1842,10 @@ VISUAL_MODELS = [
         "tool": "shot_boundaries",
         "signal": "shot-boundary probability per frame",
         "upstream": "https://github.com/soCzech/TransNetV2",
-        "door": {"decoder": "prob", "size": 48, "time": 16,
+        "hfRepo": "elya5/transnetv2",
+        "hfFile": "transnetv2.onnx",
+        "door": {"decoder": "prob", "size": 48, "height": 27, "time": 100,
+                 "layout": "nhwc", "std": 1.0,
                  "note": "the cut stage's own read: a boundary is where a cut "
                          "can land, a pause is only where it must"},
     },
@@ -1732,6 +1858,7 @@ VISUAL_MODELS = [
         "tool": "describe_scene",
         "signal": "bounded scene description: environment, objects, activity",
         "upstream": "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+        "vlm": True,
         "door": {"decoder": "logits", "size": 384,
                  "note": "the repo's own local_vlm; schema-constrained, never "
                          "free creative judgment"},
@@ -1785,6 +1912,8 @@ VISUAL_MODELS = [
         "tool": "depth_map",
         "signal": "per-pixel relative depth",
         "upstream": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small",
+        "hfRepo": "onnx-community/depth-anything-v2-small",
+        "hfFile": "onnx/model_quantized.onnx",
         "door": {"decoder": "depth", "size": 518},
     },
     {
@@ -1843,6 +1972,8 @@ VISUAL_MODELS = [
         "tool": "visual_embedding",
         "signal": "384-d visual embedding per frame",
         "upstream": "https://huggingface.co/facebook/dinov2-small",
+        "hfRepo": "onnx-community/dinov2-small",
+        "hfFile": "onnx/model_quantized.onnx",
         "door": {"decoder": "embedding", "size": 224},
     },
     {
@@ -1854,6 +1985,8 @@ VISUAL_MODELS = [
         "tool": "visual_embedding",
         "signal": "image-text similarity embedding",
         "upstream": "https://huggingface.co/openai/clip-vit-base-patch32",
+        "hfRepo": "Xenova/clip-vit-base-patch32",
+        "hfFile": "onnx/vision_model_quantized.onnx",
         "door": {"decoder": "embedding", "size": 224},
     },
     {
@@ -2016,6 +2149,7 @@ VISUAL_MODELS = [
         "tool": "describe_scene",
         "signal": "lightweight captioning / VQA",
         "upstream": "https://huggingface.co/microsoft/Florence-2-base",
+        "vlm": True,
         "door": {"decoder": "logits", "size": 384},
     },
     {
@@ -2027,6 +2161,7 @@ VISUAL_MODELS = [
         "tool": "describe_scene",
         "signal": "lightweight captioning / VQA (UForm)",
         "upstream": "https://huggingface.co/unum-cloud/uform-gen2-qwen-500m",
+        "vlm": True,
         "door": {"decoder": "logits", "size": 384},
     },
     {
@@ -2050,6 +2185,7 @@ VISUAL_MODELS = [
         "tool": "describe_scene",
         "signal": "the small VLM variant, for 4 GB machines",
         "upstream": "https://huggingface.co/HuggingFaceTB/SmolVLM2-256M-Video-Instruct",
+        "vlm": True,
         "door": {"decoder": "logits", "size": 384},
     },
 ]
@@ -2102,16 +2238,32 @@ def _decode_depth(raw):
     }
 
 
+def _pooled(raw):
+    """One vector from a transformer's output: the CLS row, or the mean.
+
+    DINOv2 and CLIP export `(1, 1 + patches, dim)`, not a vector; flattening
+    that would mix every patch into the "embedding". The CLS token is the
+    row the models are trained to pool from, so it is the row taken.
+    """
+    a = _np().asarray(raw, dtype=_np().float32)
+    while a.ndim > 2 and a.shape[0] == 1:
+        a = a[0]
+    if a.ndim == 2 and a.shape[0] > 1:
+        return a[0], int(a.shape[0])
+    return a.reshape(-1), 1
+
+
 def _decode_embedding(raw):
-    a = _np().asarray(raw, dtype=_np().float32).reshape(-1)
-    norm = float(_np().linalg.norm(a))
+    pooled, tokens = _pooled(raw)
+    norm = float(_np().linalg.norm(pooled))
     if norm < 1e-6:
         raise RuntimeError("the model returned an all-zero embedding")
-    unit = a / norm
+    unit = pooled / norm
     return {
         "dim": int(unit.size),
+        "tokens": tokens,
         "norm": _r(norm),
-        "vector": [_r(float(value)) for value in unit[: int(unit.size)]],
+        "vector": [_r(float(value)) for value in unit],
     }
 
 
@@ -2283,11 +2435,21 @@ def _decode_flow(raw):
         raise RuntimeError(f"expected a (2, H, W) flow field, got {list(a.shape)}")
     dx, dy = a[0], a[1]
     mag = _np().sqrt(dx * dx + dy * dy)
+    mean = float(mag.mean())
+    mx, my = float(dx.mean()), float(dy.mean())
+    if mean <= STILL:
+        direction = "still"
+    elif abs(mx) >= abs(my):
+        direction = "right" if mx > 0 else "left"
+    else:
+        direction = "down" if my > 0 else "up"
     return {
         "shape": [int(a.shape[1]), int(a.shape[2])],
-        "mean": _r(float(mag.mean())),
+        "mean": _r(mean),
         "peak": _r(float(mag.max())),
-        "direction": _travel(float(dx.mean()), float(dy.mean()), "static"),
+        # The pixels' own direction; the camera travelled the other way.
+        "direction": direction,
+        "travel": _travel(mx, my, "pan") if mean > STILL else "still",
     }
 
 
@@ -2312,7 +2474,7 @@ def _model_row(model_id):
     return None
 
 
-def _generic_door(spec, model_id):
+def _generic_door(spec, model_id, frames=None):
     """One ONNX door, driven by the registry row: preprocess, run, decode.
 
     The decoder is chosen by the row, so a model's file is the only thing
@@ -2321,6 +2483,11 @@ def _generic_door(spec, model_id):
     model = _model_row(model_id)
     if model is None:
         return {"ok": False, "error": f"unknown model id {model_id!r}"}
+    if model.get("vlm"):
+        return {"ok": False, "model": model_id, "tool": model["tool"],
+                "error": ("this door is a vision-language model, not an ONNX "
+                          "graph: call `describe_scene`, which asks the local "
+                          "VLM helper with a bounded schema")}
     path, why = _model_file(spec, model_id)
     if not path:
         return {"ok": False, "model": model_id, "tool": model["tool"],
@@ -2332,15 +2499,17 @@ def _generic_door(spec, model_id):
         return {"ok": False, "model": model_id, "error": f"{model_id}: {exc}"}
     door = model.get("door") or {}
     try:
-        frames = _load_frames(spec)
+        if frames is None:
+            frames = _load_frames(spec)
         layer = session.get_inputs()[0]
         shape = list(layer.shape)
         temporal = len(shape) == 5
         size = max(32, min(1024, _int(spec, "size",
                                      door.get("size") or _shape_size(shape, 224))))
-        time = max(2, min(32, _int(spec, "time", door.get("time") or 8))) if temporal else None
+        time = max(2, min(128, _int(spec, "time", door.get("time") or 8))) if temporal else None
         tensor = _tensor(frames, size, time,
-                         door.get("mean", 0.0), door.get("std", 255.0))
+                         door.get("mean", 0.0), door.get("std", 255.0),
+                         door.get("height"))
         if door.get("layout") == "nhwc":
             tensor = tensor.transpose(0, 2, 3, 1) if not temporal else \
                 tensor.transpose(0, 1, 3, 4, 2)
@@ -2709,6 +2878,14 @@ CLASSICAL = [
      "signal": "sync score correlating audio onset with flow onset",
      "licence": "-", "bytes": 0,
      "spends": "sound design, cut timing"},
+    {"id": "scene-cuts", "tool": "scene_cuts",
+     "signal": "shot changes inside a clip: cuts and dissolves, from frame difference",
+     "licence": "-", "bytes": 0,
+     "spends": "the cut stage: a montage clip is not one take, and a seam is a cut site"},
+    {"id": "saliency-contrast", "tool": "saliency",
+     "signal": "where the eye lands, as a grid and a focus box",
+     "licence": "-", "bytes": 0,
+     "spends": "the caption band, which moves away from it"},
     {"id": "palette-kmeans", "tool": "palette",
      "signal": "dominant colours per scene",
      "licence": "-", "bytes": 0,
@@ -2733,15 +2910,7 @@ CLASSICAL = [
 
 
 def models(spec):
-    dirs = []
-    if spec.get("modelDir"):
-        dirs.append(str(spec["modelDir"]))
-    if os.environ.get("FUNCUT_VISUAL_MODELS"):
-        dirs.append(os.environ["FUNCUT_VISUAL_MODELS"])
-    try:
-        dirs.append(str(Path(__file__).resolve().parents[4] / "models" / "visual"))
-    except IndexError:
-        pass
+    dirs = [str(candidate) for candidate in _model_candidates(spec)]
     rows = []
     for model in VISUAL_MODELS:
         found = None
@@ -2750,11 +2919,13 @@ def models(spec):
             if candidate.is_file():
                 found = str(candidate)
                 break
+        pin = _pins(spec).get(model["id"]) or {}
         rows.append({
             **model,
             "present": found is not None,
             "path": found,
             "onDiskBytes": Path(found).stat().st_size if found else 0,
+            "pinned": pin.get("sha256"),
             "ready": found is not None and np is not None,
         })
     present = [row["id"] for row in rows if row["present"]]
@@ -2773,9 +2944,10 @@ def models(spec):
         "classical": CLASSICAL,
         "note": "Every door runs when its file is present AND numpy + onnxruntime "
                 "are installed; otherwise it refuses with the reason. The "
-                "classical readings need neither a file nor a runtime. Nothing "
-                "here downloads a model: `download` does, with the URL the "
-                "operator names and the digest verified.",
+                "classical readings need neither a file nor a runtime. `download` "
+                "is the only thing that fetches: it uses a row's own Hub repo "
+                "when the row has one, or `url`/`hfRepo`+`file`, and pins what "
+                "arrived.",
     }
 
 
@@ -2787,33 +2959,194 @@ def _has_onnxruntime():
         return False
 
 
+HF_API = "https://huggingface.co/api"
+
+
+def _stamp():
+    import time
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def urllib_quote(text):
+    from urllib.parse import quote
+    return quote(str(text), safe="")
+
+
+def _model_dir(spec, create=True):
+    """Where a download lands: the folder the reader reads.
+
+    `modelDir`, then `FUNCUT_VISUAL_MODELS`, then the first app folder that
+    already exists, then the repo's own `models/visual` - so a download
+    from the model page and a download from the tool land in one place.
+    """
+    directory = _model_candidates(spec)[0]
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _pin_path(spec):
+    return _model_dir(spec, create=False) / "index.json"
+
+
+def _pins(spec):
+    try:
+        return json.loads(_pin_path(spec).read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - a missing or broken index is no pins
+        return {}
+
+
+def _pin(spec, model_id, record):
+    pins = _pins(spec)
+    pins[model_id] = record
+    try:
+        _pin_path(spec).write_text(json.dumps(pins, indent=2, sort_keys=True),
+                                   encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _hf_token(spec):
+    """The token, from the call or the environment; never echoed back."""
+    token = spec.get("token") or os.environ.get("HF_TOKEN") or ""
+    return str(token)
+
+
+def _hf_url(repo, file, revision="main"):
+    repo = str(repo or "").strip().strip("/")
+    file = str(file or "").strip().lstrip("/")
+    if not repo or not file:
+        return ""
+    if not repo.startswith("http"):
+        repo = f"https://huggingface.co/{repo}"
+    return f"{repo}/resolve/{revision or 'main'}/{file}"
+
+
+def _hf_get(path, token="", timeout=30):
+    import urllib.request
+    request = urllib.request.Request(f"{HF_API}{path}",
+                                     headers={"User-Agent": "funcut-visual-sense"})
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(request, timeout=timeout) as reply:
+        return json.loads(reply.read().decode("utf-8", "replace"))
+
+
+def hf_search(spec):
+    """Find ONNX repositories on the Hugging Face Hub by name.
+
+    The Hub is the only place this module will look: a repo name and a file
+    inside it are what a download needs, and guessing either is how a
+    door ends up pointed at the wrong weights.
+    """
+    query = str(spec.get("query") or spec.get("q") or "").strip()
+    if not query:
+        return {"ok": False, "error": "give `query`, e.g. \"transnetv2\""}
+    limit = max(1, min(50, _int(spec, "limit", 10)))
+    try:
+        rows = _hf_get(f"/models?search={urllib_quote(query)}&filter=onnx"
+                       f"&limit={limit}&full=false", _hf_token(spec))
+    except Exception as exc:  # noqa: BLE001 - the network's answer, or none
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}",
+                "note": "the Hub is unreachable; pass `hfRepo` and `file` "
+                        "directly if you know them"}
+    found = []
+    for row in rows if isinstance(rows, list) else []:
+        found.append({
+            "repo": row.get("id") or row.get("modelId"),
+            "downloads": row.get("downloads"),
+            "likes": row.get("likes"),
+            "updated": row.get("lastModified"),
+            "gated": bool(row.get("gated")),
+            "licence": ((row.get("cardData") or {}).get("license")
+                        if isinstance(row.get("cardData"), dict) else None),
+        })
+    return {"ok": True, "tool": "hf_search", "query": query, "repos": found,
+            "note": "Then `hf_files` for one repo: the ONNX files with their "
+                    "sizes, and `download` with the repo and the file you pick."}
+
+
+def hf_files(spec):
+    """The ONNX files inside one Hub repo, with sizes when the Hub says."""
+    repo = str(spec.get("hfRepo") or spec.get("repo") or "").strip()
+    if not repo:
+        return {"ok": False, "error": "give `hfRepo`, e.g. \"Xenova/clip-vit-base-patch32\""}
+    try:
+        row = _hf_get(f"/models/{repo}?blobs=true", _hf_token(spec))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    files = []
+    for item in (row.get("siblings") or []):
+        name = item.get("rfilename") or ""
+        if not name.lower().endswith(".onnx"):
+            continue
+        files.append({"file": name, "bytes": item.get("size"),
+                      "lfs": bool(item.get("lfs"))})
+    files.sort(key=lambda item: item["bytes"] or 0)
+    return {"ok": True, "tool": "hf_files", "repo": repo, "files": files[:40],
+            "licence": (row.get("cardData") or {}).get("license")
+            if isinstance(row.get("cardData"), dict) else None,
+            "note": "Pass `hfRepo` and `file` to `download`; a quantized file is "
+                    "usually the one a laptop wants."}
+
+
 def download(spec):
-    """Fetch one model file, verify what arrived, and say where it went."""
+    """Fetch one model file from an address the caller names, and pin it.
+
+    Three ways to name the file, in this order: `url` (any address),
+    `hfRepo` + `file` (the Hub's own resolve URL, with `HF_TOKEN` when the
+    repo is gated), or the registry's `download` when a row carries one.
+    With `sha256` the digest is checked before anything is kept. Without
+    it the digest of what arrived is **pinned** in the folder's
+    `index.json` and checked on every later `download` of the same file:
+    trust on first use, recorded, not silent.
+    """
     wanted = spec.get("modelId") or spec.get("id")
     model = _model_row(wanted) if wanted else None
-    if model is None:
+    if model is None and not (spec.get("url") or spec.get("hfRepo")):
         return {"ok": False, "error": f"unknown model id {wanted!r}: one of "
                                       f"{[row['id'] for row in VISUAL_MODELS]}"}
-    url = spec.get("url") or model.get("download")
+    url = str(spec.get("url") or "").strip()
+    if not url and spec.get("hfRepo"):
+        url = _hf_url(spec.get("hfRepo"), spec.get("file"), spec.get("revision"))
+    if not url and model:
+        if model.get("hfRepo") and model.get("hfFile"):
+            url = _hf_url(model["hfRepo"], model["hfFile"], spec.get("revision"))
+        else:
+            url = model.get("download") or ""
     if not url:
-        return {"ok": False, "model": model["id"],
-                "error": "give `url` (the model file's own address): this module "
-                         "does not invent download links, and the upstream page "
-                         "is not the file",
-                "upstream": model["upstream"],
-                "file": model["file"]}
-    directory = Path(str(spec.get("modelDir") or (Path(__file__).resolve().parents[4]
-                                                  / "models" / "visual")))
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / model["file"]
+        return {"ok": False, "model": model["id"] if model else None,
+                "error": "give `url`, or `hfRepo` + `file` (find them with "
+                         "`hf_search` and `hf_files`): this module does not "
+                         "invent download links, and an upstream page is not "
+                         "the file",
+                "upstream": model["upstream"] if model else None,
+                "file": model["file"] if model else None}
+    # A registry row names its own file: the door looks for that name, so a
+    # Hub file called `model_quantized.onnx` is saved as the door's file.
+    # Only a repo with no row keeps the Hub's own basename.
+    if model:
+        name = model["file"]
+    else:
+        name = str(spec.get("file") or url.rsplit("/", 1)[-1].split("?")[0]
+                   or "model.onnx")
+        if spec.get("hfRepo") and spec.get("file"):
+            name = str(spec["file"]).rsplit("/", 1)[-1]
+    directory = _model_dir(spec)
+    target = directory / name
     partial = target.with_suffix(target.suffix + ".part")
+    key = model["id"] if model else name
+    pinned = (_pins(spec).get(key) or {}).get("sha256", "")
     try:
         import hashlib
         import urllib.request
         request = urllib.request.Request(url, headers={"User-Agent": "funcut-visual-sense"})
+        token = _hf_token(spec)
+        if token and "huggingface.co" in url:
+            request.add_header("Authorization", f"Bearer {token}")
         digest = hashlib.sha256()
         written = 0
-        with urllib.request.urlopen(request, timeout=120) as reply, open(partial, "wb") as sink:
+        with urllib.request.urlopen(request, timeout=180) as reply, open(partial, "wb") as sink:
             while True:
                 chunk = reply.read(1 << 20)
                 if not chunk:
@@ -2821,22 +3154,28 @@ def download(spec):
                 digest.update(chunk)
                 sink.write(chunk)
                 written += len(chunk)
-        expected = str(spec.get("sha256") or "").lower().strip()
-        if expected and digest.hexdigest() != expected:
+        actual = digest.hexdigest()
+        expected = str(spec.get("sha256") or pinned or "").lower().strip()
+        if expected and actual != expected:
             partial.unlink(missing_ok=True)
-            return {"ok": False, "model": model["id"],
-                    "error": f"digest mismatch: got {digest.hexdigest()}, "
-                             f"expected {expected}; nothing was kept"}
+            return {"ok": False, "model": model["id"] if model else name,
+                    "error": f"digest mismatch: got {actual}, expected {expected}; "
+                             f"nothing was kept"}
         partial.replace(target)
-        return {"ok": True, "tool": "download", "model": model["id"],
-                "path": str(target), "bytes": written,
-                "sha256": digest.hexdigest(),
-                "verified": bool(expected),
-                "licence": model["licence"],
-                "note": "Re-run `models` to see the door ready."}
-    except Exception as exc:
+        _pin(spec, key, {"sha256": actual, "bytes": written, "url": url,
+                         "file": name, "at": _stamp()})
+        return {"ok": True, "tool": "download", "model": model["id"] if model else name,
+                "path": str(target), "bytes": written, "sha256": actual,
+                "verified": bool(expected), "pinned": not bool(expected),
+                "licence": model["licence"] if model else None,
+                "note": ("Digest matched the one given." if expected else
+                         "No digest was given, so the one that arrived is now "
+                         "pinned in index.json and checked on every later "
+                         "download of this file. Re-run `models` to see the "
+                         "door ready.")}
+    except Exception as exc:  # noqa: BLE001 - the network's answer, or none
         partial.unlink(missing_ok=True)
-        return {"ok": False, "model": model["id"],
+        return {"ok": False, "model": model["id"] if model else name,
                 "error": f"{type(exc).__name__}: {exc}"}
 
 
@@ -2856,6 +3195,8 @@ TOOLS = {
     "bench": bench,
     "models": models,
     "download": download,
+    "hf_search": hf_search,
+    "hf_files": hf_files,
     "action_class": action_class,
     "shot_boundaries": shot_boundaries,
     "film_shot_type": film_shot_type,
@@ -3089,9 +3430,9 @@ def selftest(only=None):
     check("the classical shelf names the readings that need no file",
           {row["tool"] for row in CLASSICAL} <= set(TOOLS),
           sorted(row["tool"] for row in CLASSICAL if row["tool"] not in TOOLS))
-    fetched = download({"modelId": "dinov2-small"})
-    check("a download without a url refuses and names the file",
-          (not fetched["ok"]) and fetched["file"] == "dinov2-small.onnx",
+    fetched = download({"modelId": "film-shot-classifier"})
+    check("a download with no address refuses and names the file",
+          (not fetched["ok"]) and fetched["file"] == "film-shot-classifier.onnx",
           fetched.get("error", "")[:60])
 
     if np is not None:
@@ -3194,6 +3535,116 @@ def selftest(only=None):
                           {"score": 0.9}, {"verdict": "clean"})
     check("a blurred candidate sinks behind a clean one", vetted < clean,
           f"{vetted} < {clean}")
+
+    # Every door on the shelf, through the real runner, with a stub session
+    # standing in for the weights: the row's preprocessing, the session call
+    # and the row's decoder all run, so a door that cannot decode its own
+    # output shape fails here rather than on a user's clip.
+    if np is not None:
+        shapes = {
+            "depth": np.linspace(0, 1, 32 * 32).reshape(1, 32, 32),
+            "embedding": np.arange(40, dtype=np.float32).reshape(1, 5, 8),
+            "logits": np.array([[0.1, 1.4, 0.3, 0.2]], dtype=np.float32),
+            "prob": np.array([[[0.1], [0.8], [0.2]]], dtype=np.float32),
+            "masks": np.ones((1, 1, 16, 16), dtype=np.float32),
+            "boxes": np.array([[0.1, 0.1, 0.5, 0.5, 0.9, 0],
+                               [0.2, 0.2, 0.3, 0.3, 0.2, 1]], dtype=np.float32),
+            "keypoints": np.array([[0.2, 0.3, 0.9], [0.4, 0.5, 0.8]], dtype=np.float32),
+            "segments": np.ones((1, 3, 16, 16), dtype=np.float32),
+            "scalar": np.array([[0.7]], dtype=np.float32),
+            "flow": np.ones((1, 2, 8, 8), dtype=np.float32) * 0.5,
+        }
+
+        class _Stub:
+            def __init__(self, array):
+                self.array = array
+
+            def get_inputs(self):
+                return [type("In", (), {"name": "x", "shape": [1, 3, 32, 32]})()]
+
+            def get_outputs(self):
+                return [type("Out", (), {"name": "y", "shape": list(self.array.shape)})()]
+
+            def run(self, _names, _feeds):
+                return [self.array]
+
+        import tempfile
+        handle = tempfile.NamedTemporaryFile(suffix=".onnx", delete=False)
+        handle.write(b"stub")
+        handle.close()
+        original = _onnx_session
+        stub_frames = [(0.0, pattern, w, h)]
+        failures = []
+        for row in VISUAL_MODELS:
+            decoder = row["door"]["decoder"]
+            if row.get("vlm"):
+                # A VLM row is refused by the runner on purpose: it is a
+                # chat model, not a graph, and `describe_scene` is its door.
+                said = _generic_door({"model": handle.name, "frames": None},
+                                     row["id"], frames=stub_frames)
+                if said.get("ok") or "describe_scene" not in said.get("error", ""):
+                    failures.append(f"{row['id']}: the VLM row was not refused")
+                continue
+            _SESSIONS.clear()
+            globals()["_onnx_session"] = lambda _path, _a=shapes[decoder]: _Stub(_a)
+            try:
+                said = _generic_door({"model": handle.name, "size": 32, "time": 4},
+                                     row["id"], frames=stub_frames)
+            finally:
+                globals()["_onnx_session"] = original
+            if not said.get("ok") or not said.get("decoded"):
+                failures.append(f"{row['id']}: {said.get('error', 'no reading')}")
+        os.unlink(handle.name)
+        check("every door on the shelf runs its own row end to end", not failures,
+              failures)
+        check("the shelf names a decoder every row uses",
+              all(row["door"]["decoder"] in DECODERS for row in VISUAL_MODELS),
+              [row["id"] for row in VISUAL_MODELS
+               if row["door"]["decoder"] not in DECODERS])
+
+        # A Hub repo is what the model page needs, and the URL is the Hub's
+        # own resolve path - never a guessed file.
+        hub = _hf_url("onnx-community/dinov2-small", "onnx/model_quantized.onnx")
+        check("a Hub row builds its own resolve url",
+              hub == ("https://huggingface.co/onnx-community/dinov2-small/"
+                      "resolve/main/onnx/model_quantized.onnx"), hub)
+        check("a row with a verified Hub repo can be fetched with one call",
+              all(row.get("hfRepo") and row.get("hfFile")
+                  for row in VISUAL_MODELS if row["id"] in
+                  ("transnetv2", "depth-anything-v2-small", "dinov2-small",
+                   "clip-vit-b32")),
+              [row["id"] for row in VISUAL_MODELS if row.get("hfRepo")
+               and not row.get("hfFile")])
+        # A local file:// address, so the check never reaches the network:
+        # this selftest runs in a CI job with none.
+        said = download({"modelId": "transnetv2", "modelDir": "/tmp/none",
+                         "url": "file:///nonexistent/weights.onnx"})
+        check("a download that cannot reach its file keeps nothing",
+              not said["ok"] and "sha256" not in said, said.get("error", "")[:40])
+
+        # The pin is what makes a digest-less download checkable next time.
+        pin_dir = Path("/tmp/funcut-pin-selftest")
+        pin_dir.mkdir(parents=True, exist_ok=True)
+        _pin({"modelDir": str(pin_dir)}, "probe", {"sha256": "abc", "file": "x.onnx"})
+        check("a pin is recorded and read back",
+              (_pins({"modelDir": str(pin_dir)}).get("probe") or {}).get("sha256")
+              == "abc", _pins({"modelDir": str(pin_dir)}))
+        import shutil
+        shutil.rmtree(pin_dir, ignore_errors=True)
+
+        check("the sheet enriches nothing when no door is installed",
+              _enrich({"modelDir": "/tmp/no-doors-here"}, stub_frames) == {},
+              _enrich({"modelDir": "/tmp/no-doors-here"}, stub_frames))
+        tuned = _visual_score({"peak": 0.2, "peakAt": 0.2},
+                              {"sharpness": 25, "noise": 1, "letterbox": 0,
+                               "verdict": "pass"}, "stock", {"cuts": 0},
+                              {"score": 0.5}, {"verdict": "clean"}, aesthetic=9.5)
+        plain = _visual_score({"peak": 0.2, "peakAt": 0.2},
+                              {"sharpness": 25, "noise": 1, "letterbox": 0,
+                               "verdict": "pass"}, "stock", {"cuts": 0},
+                              {"score": 0.5}, {"verdict": "clean"})
+        check("a measured taste prior lifts a candidate, and never vetoes",
+              tuned > plain and plain > 0, f"{tuned} > {plain}")
 
     failed = [row for row in checks if not row["ok"]]
     return {

@@ -106,3 +106,8 @@ audio/sound-index.json
 # The model layer's cache: `sound_model.py index` writes one record per asset
 # beside the shelf. It is a cached inference, not source.
 audio/sound-model-index.json
+
+# Model weights are fetched by `sense_visual {action: "download"}` into the
+# app's model folder, never committed: the repository carries the registry,
+# the digest pins and the licences, not the gigabytes.
+models/visual/

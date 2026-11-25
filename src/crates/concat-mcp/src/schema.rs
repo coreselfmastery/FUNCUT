@@ -576,9 +576,10 @@ mod tests {
         // picture's door (`sense_visual`) then lands on the same table -
         // sixteen readings' inputs, the frame sources, the subject boxes,
         // the bench's rows, the model doors - and the merged tree
-        // measures 273,025 - the three doors at their terse form, the
+        // measures 273,832 - the three doors at their terse form, the
         // shelf's `modelId` enum (thirty ids, the whole shelf nameable in
-        // one call) and the three fields `download` and `tracks` need. A
+        // one call), the Hub's repo/file/token and the two enrichment
+        // switches. A
         // reading the director cannot call is a reading the edit paid for
         // and never read.
         assert!(total < 274_000, "{total}: {sizes:?}");
@@ -656,8 +657,12 @@ mod tests {
         // paid for and never read. 256,000 -> 262,000 at 109: the merged
         // tree measures 260,160 - the three doors are already at their
         // terse form, and the fields, not the prose, are what they cost.
+        // 262,000 -> 263,000 at 109: the shelf's Hub actions (`hf_search`,
+        // `hf_files`) and the sheet's two enrichment switches are what a
+        // director needs to install a door and then spend it - 262,135
+        // measured, function, not prose.
         assert!(
-            director < 262_000,
+            director < 263_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

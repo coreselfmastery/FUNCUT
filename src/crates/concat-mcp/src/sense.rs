@@ -1900,7 +1900,7 @@ struct SenseFamilyTool {
     base: u64,
 }
 
-/// The seventy-nine family readings behind eight family tools: discourse
+/// The eighty-one family readings behind eight family tools: discourse
 /// (the script as language), voiceq (the take's health), prosody (the
 /// delivery), audiorepair (the clean and the music), sound (what a sound
 /// file is), soundmodel (what it means), captions (the words made to
@@ -2358,7 +2358,18 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
         cmd: "visual",
         base: 300,
         fields: &[
-            "paths", "intent", "samples", "width", "maxClips", "from", "to",
+            "paths",
+            "intent",
+            "samples",
+            "width",
+            "maxClips",
+            "from",
+            "to",
+            "enrich",
+            "enrichDoors",
+            "modelDir",
+            "model",
+            "modelId",
         ],
     },
     SenseFamilyTool {
@@ -2491,7 +2502,21 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
         tool: "download",
         cmd: "visual",
         base: 1200,
-        fields: &["modelId", "modelDir", "url", "sha256"],
+        fields: &[
+            "modelId", "modelDir", "url", "sha256", "hfRepo", "file", "token", "revision",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "hf_search",
+        cmd: "visual",
+        base: 120,
+        fields: &["query", "limit", "token"],
+    },
+    SenseFamilyTool {
+        tool: "hf_files",
+        cmd: "visual",
+        base: 120,
+        fields: &["hfRepo", "token"],
     },
     SenseFamilyTool {
         tool: "shot_boundaries",
@@ -2785,6 +2810,8 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
             "motion_blur",
             "tracks",
             "download",
+            "hf_search",
+            "hf_files",
             "shot_boundaries",
             "film_shot_type",
             "video_embedding",
@@ -2992,6 +3019,34 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         props.insert(
             "sha256".to_owned(),
             string("download: the digest the file must match; a mismatch keeps nothing."),
+        );
+        props.insert(
+            "hfRepo".to_owned(),
+            string("download / hf_files: a Hugging Face repo, `owner/name`; its resolve path is built from it."),
+        );
+        props.insert(
+            "file".to_owned(),
+            string("download: the file inside the repo, e.g. onnx/model_quantized.onnx."),
+        );
+        props.insert(
+            "token".to_owned(),
+            string("A Hugging Face token for a gated repo; HF_TOKEN when absent."),
+        );
+        props.insert(
+            "query".to_owned(),
+            string("hf_search: what to look for, e.g. \"depth anything onnx\"."),
+        );
+        props.insert(
+            "limit".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "maximum": 50, "default": 10, "description": "hf_search: repos returned." }),
+        );
+        props.insert(
+            "enrich".to_owned(),
+            json!({ "type": "boolean", "default": true, "description": "measure_clips: let installed doors add their readings; false stays classical." }),
+        );
+        props.insert(
+            "enrichDoors".to_owned(),
+            json!({ "type": "integer", "minimum": 0, "maximum": 6, "default": 3, "description": "measure_clips: the most doors per clip." }),
         );
         props.insert(
             "iou".to_owned(),
@@ -3391,7 +3446,7 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
     })
 }
 
-/// The door the seventy-nine family members come through when named
+/// The door the eighty-one family members come through when named
 /// directly (the internal dispatch `sense_family_action` lands on): the
 /// name selects the row, the row names the sidecar command and the
 /// fields that travel, and the budget scales with the lines the way
@@ -3919,7 +3974,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 79, "seventy-nine readings behind eight doors");
+        assert_eq!(members, 81, "eighty-one readings behind eight doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(

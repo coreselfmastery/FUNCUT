@@ -615,17 +615,35 @@ bounded by the `width` it is asked for:
   per candidate, with `visualScore` and the per-clip reads.
 - `bench` - does cutting on a motion peak beat cutting on a pause? The
   measurement the wiring answers, not a claim.
-- `models` - the five visual model doors and whether each file is on
-  disk.
+- `models` - every row of the shelf (thirty checkpoints) and whether each
+  file is on disk, with its pinned digest.
+- `composition` / `motion_blur` / `tracks` - the three model-free reads
+  the shelf needed anyway: where the eye lands, whether a frame's edges
+  are steps or ramps (a pan's smear is not an entrance), and one
+  subject's identity across frames.
 - `action_class` / `depth_map` / `subject_mask` / `visual_embedding` /
   `describe_scene` - the ONNX and VLM doors (MoViNet-A0, Depth Anything
   V2 Small, FastSAM/SAM, DINOv2/CLIP, the bounded `local_vlm`
-  description). They run when the model is present and refuse with the
-  reason when it is not; none is required for the classical layer.
+  description), plus one door per remaining row: `shot_boundaries`,
+  `film_shot_type`, `video_embedding`, `scene_graph`, `semantic_segments`,
+  `detect_objects`, `optical_flow`, `aesthetic`, `video_saliency`,
+  `blur_mask`, `pose`, `hands`, `gaze`, `face_emotion`, `lip_sync`,
+  `action_quality`. They run when the model is present and refuse with
+  the reason when it is not; none is required for the classical layer.
+  [VISUAL-MODELS.md](VISUAL-MODELS.md) is the table.
+- `hf_search` / `hf_files` / `download` - installing a door from the Hub:
+  find a repo, list its ONNX files, fetch the one you pick. A row with a
+  verified repo downloads with `modelId` alone. `HF_TOKEN` (or `token`)
+  for a gated repo, `sha256` to verify before anything is kept, and
+  without one the digest that arrived is pinned in the folder's
+  `index.json` and checked on every later download.
 
-The gather spends the picture in four places: `measure_clips` ranks the
+The gather spends the picture in five places: `measure_clips` ranks the
 sheet's candidates and vetoes a soft, noisy, letterboxed, flat, dark,
-blown or self-cutting clip; the choice re-checks the veto; the chosen
+blown, blurred or self-cutting clip, and - when the shelf's doors are
+installed - adds a measured taste prior, shot type, depth and pose at most
+`enrichDoors` (default 3) doors per clip (`enrich: false` keeps it
+classical); the choice re-checks the veto; the chosen
 shot's in-point lands just before its motion peak; and the drift is
 skipped on a shot that already moves (a still clip in a slot that wanted
 motion gets the push instead). The continuity manifest now carries

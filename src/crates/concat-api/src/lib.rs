@@ -4711,6 +4711,7 @@ mod tests {
             ids: vec!["lofi-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: false,
         }));
         assert!(
@@ -4730,6 +4731,7 @@ mod tests {
             ids: vec!["lofi-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: true,
         }));
         assert!(
@@ -4748,6 +4750,7 @@ mod tests {
             ids: vec!["lofi-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: false,
         }));
         assert!(
@@ -4761,6 +4764,7 @@ mod tests {
             ids: vec!["freepd-0123456789ab".to_owned()],
             start: None,
             track: None,
+            file: None,
             monetized: true,
         }));
         assert!(

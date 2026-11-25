@@ -118,6 +118,26 @@ installed it also runs, per clip, at most `enrichDoors` (default 3) of
 and `movenet-a0` (pose). With nothing installed the sheet is the classical one
 and costs a `stat()` per door; `enrich: false` forces that path.
 
+## The sheet, measured on real clips
+
+Two synthetic 6 s clips through `measure_clips` at 480 px, one pass without
+enrichment and one with the depth door installed:
+
+| Clip | Score (classical) | Score (enriched) | What the door added |
+| --- | --- | --- | --- |
+| `testsrc2` - a moving subject | 0.6329 | 0.6329 | `models.depth = {nearShare 0.1139, "nearer at the bottom"}` |
+| `smptebars` - a still pattern | 0.4762 | 0.4762 | the same read, and the same score |
+
+So the ranking is the classical one's: motion beats a still frame by 0.157.
+The doors add their readings under `models` per row, and the only one wired
+into `visualScore` today is the aesthetic taste prior - depth, shot type and
+pose are **recorded, not spent**, which is the diagnostic shape on purpose.
+They are what the caption band, the parallax layer and the continuity gate
+will read next; the score is not the only consumer a signal can have, and
+pretending a depth map makes a stock clip "better" would be a guess wearing a
+number. Enrichment costs 2.3 s for two clips at this size (1.9 s -> 4.2 s),
+which is why it is off the classical path and capped at `enrichDoors`.
+
 ## Honest caveats
 
 - `smolvlm2-500m` is the repo's `local_vlm`; `docs/VLM.md` records it

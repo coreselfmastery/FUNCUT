@@ -92,6 +92,14 @@ playback cache.
   a stub session standing in for the weights, the Hub URL and the pin, the
   enrichment and both vetoes. A door that cannot decode its own output shape
   now fails in CI rather than on a user's clip.
+- **A picture row in the window, with digests that were computed, not
+  guessed.** Settings > Models carries "Picture models" beside the sound
+  row: TransNetV2, Depth Anything V2, DINOv2 and CLIP's vision tower, 172 MB
+  as one set, fetched through the same verified path as every other model
+  (`concat_host::visualmodel` is `soundmodel`'s twin) into the folder the
+  sidecar reads. The four are rows in `concat-vision`'s table and in
+  `models/manifest.toml`, each digest computed from the file this branch
+  downloaded. The other twenty-six doors stay per-model Hub installs.
 - **The sheet spends what is installed, and says what it skipped.**
   `measure_clips` runs at most `enrichDoors` (default 3) of the shelf's cheap
   doors per clip - a measured taste prior (blended at a tenth of the score),

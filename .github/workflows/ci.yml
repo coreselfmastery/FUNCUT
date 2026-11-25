@@ -123,6 +123,12 @@ jobs:
         if: ${{ !cancelled() }}
       - run: python3 src/crates/concat-mcp/sense/captions.py selftest
         if: ${{ !cancelled() }}
+      # The sound reader: six synthetic sounds whose expected read is
+      # arithmetic, plus the peak-position, wrong-sound, level, repetition
+      # and library-index checks. Pure stdlib - decoding a real .ogg needs
+      # the ffmpeg CLI, and the selftest deliberately does not.
+      - run: python3 src/crates/concat-mcp/sense/sound_sense.py selftest
+        if: ${{ !cancelled() }}
 
   # The analysis senses against real fixtures: beats, silence and scene
   # cuts measured on generated media, so the JSON the API parses is

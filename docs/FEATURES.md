@@ -164,7 +164,11 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   [docs/BGM.md](BGM.md).
 - **Sounds — 530 CC0 effects** bundled in the repo (12 categories), each
   with a description, use-for lines and `syncAt` (where its peak lands),
-  ranked 6-field search. See [docs/AUDIO_LIBRARY.md](AUDIO_LIBRARY.md).
+  ranked 6-field search. See [docs/AUDIO_LIBRARY.md](AUDIO_LIBRARY.md). The
+  manifest is not the file: `sense/sound_sense.py` measures all 530 and
+  finds 30% of the `syncAt` values more than 100 ms from the real peak, and
+  scores each sound's six cut-time roles from its waveform. See
+  [docs/SOUND-SENSE.md](SOUND-SENSE.md).
 - **Stickers — 1,285 rendered 3D emoji**: Microsoft's Fluent Emoji, MIT
   licence — free for commercial and personal use, every result carrying
   its `license` field, with favourites. See [docs/MAGICK.md](MAGICK.md).

@@ -1,6 +1,6 @@
 # concat-sense — giving the editor eyes and a feel for the voice
 
-Eight standard-library Python files, shipped inside the `concat-mcp` binary
+Standard-library Python files, shipped inside the `concat-mcp` binary
 via `include_str!`. They need **no pip install, no Python packages, no
 system-wide installation**. Python 3 itself is required (Concat already
 needs it for `analyze_scenes` / `transcribe`); set `FUNCUT_PYTHON` if it is
@@ -58,6 +58,7 @@ parseable.
 | `voiceq` | The take's health (`voice_quality.py`, six tools): vocal events, voice quality class, recording quality verdict, reverb RT60, restarts, filler types. Decodes once to 16 kHz mono PCM; numpy used when installed, never required. |
 | `prosody` | How the voice moves (`prosody_style.py`, six tools): emphasis types, speaking style, rhythm and meter with the beatSync map, tempo changes, the accent proxy (caption pacing only), the vocal-tract read. |
 | `audiorepair` | The clean and the music (`audio_repair.py`, six tools): the measured enhance chain, hum/hiss/rumble removal, two-pass loudness (the three that WRITE a new file - the input is never touched), music-vs-speech spans, offline identification with the libraryQuery, and the structure map with cutSafePoints. |
+| `sound` | What a sound file IS (`sound_sense.py`, four tools): the measured read of one sound (level, crest, attack, body, transients, centroid, bands, flatness, pitch movement, and where its peak actually falls), the six role fits a cut shops for with the evidence behind each, candidate ranking, a placed accent checked for sync, role, level and repetition, and a cached library index that reports a `syncAt` the file contradicts. |
 | `captions` | The words and the take, made to agree (`captions.py`, five tools): TTS quality, the AI-voice disclosure heuristic, the SHA-256 voice seal (seal / verify / status), caption alignment with drift correction, and subtitle hygiene with the changeLog. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest`, `emotion.py selftest` and `voice_signals.py selftest` check the critic and the readers the same way, and the five family modules' own `selftest` proves all thirty-three consumption-layer tools on synthetic takes — CI runs every one. |
 
@@ -144,6 +145,39 @@ measures exposure (black AND blown-out frames), contrast, detail,
 letterbox/pillarbox bars, colour saturation, full-frame duplicate hashing,
 static transitions, the opening frame (the hook axis), the audio envelope
 and EBU R128 loudness — every axis score is a formula over those facts.
+
+## The ear the shelf never had (`sound_sense.py`)
+
+The 530-sound library is searched by what its manifest *says* - name, tags,
+description, `useFor` (`concat-host/src/sounds.rs`, `Listed::score`) - and
+the 1,191-track music library by title, artist and category
+(`concat-host/src/bgm.rs:1317`). Nothing in the editor had ever opened the
+file, so "cinematic reveal" and "quick transition" were the same string
+with a different row, and the Director offset every accent by the
+manifest's `syncAt` - a claim nobody had checked.
+
+`sound_sense.py` is the ear. It decodes at 32 kHz mono (the top octave is
+where a whoosh lives) and measures the waveform, then scores six roles -
+`quick_transition`, `cinematic_reveal`, `action_impact`,
+`gentle_entrance`, `emotional_texture`, `tension_build` - as weighted sums
+of that evidence, with multiplicative gates for the properties the weights
+alone let the others borrow (a transition moves air, an impact and a
+reveal are heavy, a gentle entrance is light and still, a texture is
+held). Every reply carries `confidence` and
+the evidence dict, because a score with no number behind it is taste, and
+taste is what this module refuses to fake.
+
+Commands: `describe_sound`, `rank_sounds`, `check_placement`,
+`index_library`, and `selftest` (six synthetic sounds whose expected read
+is arithmetic, plus the 30 ms tick, the silent file and the stereo file a
+library always contains - no ffmpeg, no fixtures, no network). Decoding a `.ogg`
+needs the ffmpeg CLI the other modules already need; the selftest does
+not. `rank_sounds` takes an `index` and answers from the cached
+measurements - the whole 530 in 0.11 s instead of 148 s - and
+`check_placement` takes the clip's `inPoint`, so a trimmed head moves the
+peak with the clip instead of reading as a late accent. See
+`docs/SOUND-SENSE.md` for the audit, the formulas, the measured
+library evidence and the wiring plan.
 
 ## The emotion read (`emotion.py`)
 

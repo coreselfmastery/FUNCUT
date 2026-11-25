@@ -41,9 +41,9 @@ playback cache.
   level climb - then scores six cut-time roles from those numbers with the
   evidence returned beside each fit, and reports where a manifest's
   `syncAt` disagrees with the file's real peak. Four tools:
-  `describe_sound`, `rank_sounds`, `check_placement`, `index_library`; 24
+  `describe_sound`, `rank_sounds`, `check_placement`, `index_library`; 37
   stdlib selftest checks in CI.
-- **What it found in the bundled 530.** One pass in 111 s, 17 MB peak RSS.
+- **What it found in the bundled 530.** One pass in 141 s, 57 MB peak RSS.
   Against `syncAt`: 30% of the files are off by more than 100 ms and 15%
   by more than 300 ms - a maximum of 3.02 s - so an accent chosen for a cut
   was landing up to three seconds from it, and nothing downstream could

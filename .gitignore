@@ -98,3 +98,7 @@ check/
 
 # the onnxruntime shared libs extracted for local builds
 /.ort-shared/
+
+# The sound reader's cache: `sound_sense.py index_library` writes it beside
+# the shelf it measured, and a measurement is not source.
+audio/sound-index.json

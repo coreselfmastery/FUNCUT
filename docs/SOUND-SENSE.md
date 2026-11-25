@@ -63,8 +63,8 @@ Four tools:
 | Tool | Answers |
 | --- | --- |
 | `describe_sound` | What IS this file: level, crest, attack, body, decay, transients, centroid, rolloff, band balance, flatness, tilt, pitch movement, energy trend, the **measured** peak position - then the six role fits and the evidence behind each. |
-| `rank_sounds` | Of these candidates, which is a `quick_transition` / `cinematic_reveal` / `action_impact` / `gentle_entrance` / `emotional_texture` / `tension_build`, best first, with `why`. |
-| `check_placement` | Is this placed accent on the moment, the right sound, at a level the voice can carry, and not the fourth of its kind - each issue with the edit that fixes it. |
+| `rank_sounds` | Of these candidates, which is a `quick_transition` / `cinematic_reveal` / `action_impact` / `gentle_entrance` / `emotional_texture` / `tension_build`, best first, with `why` - the terms its own score was summed from, never a number the formula ignores. Pass `index` and it answers from the cached measurements (the whole shelf in 0.11 s instead of 148 s), re-measuring only files whose size or mtime moved; `source` says which of the two answered. |
+| `check_placement` | Is this placed accent on the moment, the right sound, at a level the voice can carry, and not the fourth of its kind - each issue with the edit that fixes it. Takes the clip's `inPoint` (a trimmed head moves the peak), reports `syncChecked`, and names `peak_cut` when the transient was trimmed out of the span rather than pretending a move can fix it. |
 | `index_library` | Measure a whole shelf once, cached by size+mtime, and report where the manifest's `syncAt` disagrees with the file. |
 
 ### The measurements, and what each one decides
@@ -102,7 +102,12 @@ module), never a filename lookup:
   chime is an event, a whoosh is movement).
 - `emotional_texture` - tonal, held, gentle.
 - `tension_build` - **climbing** in level (a real gain from head to
-tail, walked steadily) and held.
+  tail, walked steadily) and held.
+
+A file whose peak is below -60 dBFS is not scored at all: its `role` is
+`silence`, every fit is 0, and the reply says so. Without that gate half a
+second of digital silence scored **0.70 as a gentle entrance** - perfectly
+tonal, soft and still, which is exactly what silence measures like.
 
 Five multiplicative gates encode what the weights alone let the others
 borrow: a transition must **move air**, an impact and a reveal must be
@@ -137,11 +142,15 @@ was calibrated on the shelf (`_roles` in the module):
 over the 530 bundled sounds (ffmpeg CLI required for `.ogg`; the selftest
 needs none):
 
-One pass over the whole shelf, on the 4-core laptop this was written on:
-530 files in **111 s** (0.21 s each), **17 MB** peak RSS, no failure. The
-cost is one `ffmpeg` spawn per file and up to 25 FFTs of 2048 points; nothing
-here is heavy, which is the point - it can run as a background index while
-the timeline stays live.
+One pass over the whole shelf: 530 files in **141 s** (0.27 s each),
+**57 MB** peak RSS, no failure - measured as the child's `ru_maxrss`, with
+Python 3.13 and ffmpeg 7.1.5 on a shared 4-core box, so treat the time as
+this machine's number rather than a specification: decode is ffmpeg's cost,
+not this module's. The rest of the cost is one `ffmpeg` spawn per file and up
+to 25 FFTs of 2048 points; nothing here is heavy, which is the point - it can
+run as a background index while the timeline stays live. With that index
+written, ranking all 530 against a role takes **0.11 s** instead of 148 s,
+because nothing is decoded twice.
 
 **What the shelf actually contains, by the curator's category against the
 measured role** (top rows):
@@ -185,15 +194,29 @@ spectral flux separates them at all. That is also the role a CLAP
 re-rank would fix first, and the reason the interface keeps a `fit` per
 candidate rather than a label.
 
+**Where the scale saturates.** Eleven of the 530 fit `cinematic_reveal` at
+exactly 1.0: `heavy`, `sustained` and `sweepOrTonal` all top out on the
+shelf's drones, so the score says "any of these does the job" and cannot
+say which. That is a real limit of a weighted sum over saturating ranges,
+not a bug to hide: the reply carries `tiesAtTop`, and the choice among
+them is made on the slot's duration, the level the voice leaves and the
+file's own peak. Spread the ranges and the ties would thin; recalibrate
+and every number on this page moves, so it is a change to make with a
+measurement in hand, not by taste.
+
 **The top of the ranking, unedited** (`rank_sounds` with no text query at
 all, only the measured fit):
 
 | Role | First four, with the curator's category |
 | --- | --- |
 | `quick_transition` | `reverse-whoosh-medium-strong` (Whoosh), `money-notes` (Foley), `shimmer-medium-bright` (Motion), `ui-maximize` (UI) |
-| `cinematic_reveal` | `ambience-dark-1` (Ambience), `bass-sub-drop-long` (Impact), `drone-dark-tension`, `drone-epic-swell` (Ambience) |
-| `action_impact` | `impact-metal-sci-fi`, `impact-plate-heavy` (Impact), `whoosh-bamboo-3` (a 50 ms slap), `impact-heavy-hard` |
+| `cinematic_reveal` | `riser-braam-rise` (Riser), `drone-dark-tension`, `ambience-dark-1`, `drone-epic-swell` (Ambience) |
+| `action_impact` | `impact-metal-sci-fi`, `impact-plate-heavy` (Impact), `whoosh-bamboo-3` (Whoosh), `impact-heavy-hard` (Impact) |
 | `tension_build` | `riser-orchestral-style`, `riser-pre-drop-tension`, `riser-reverse-swell`, `riser-noise-long` (all Riser) |
+
+Those four reveal rows are tied at 1.0 and printed in the order the tool
+returns them (alphabetical among equals), not in order of preference - see
+the saturation note above. The rest of each column is ordered by fit.
 
 **`syncAt` against the file.** 420 of the 530 carry a `syncAt`. Measured
 against where the peak actually falls:
@@ -291,13 +314,20 @@ catch.
   "measurably not this job", not a taste line; the reply carries the
   actual fits so a caller can disagree with the threshold and see the
   gap.
+- A fit saturates at 1.0, and the shelf holds several sounds that do some
+  jobs exactly. `tiesAtTop` counts them and the order among them is
+  alphabetical, not a preference: the slot's duration, its level and the
+  file's own peak decide, not this module.
+- `why` lists only the terms the asking role's formula sums, so it can
+  never name a measurement that carried no weight - but it is still a
+  sum of normalised evidence, not a proof that the sound is good.
 - The role model is English-language craft vocabulary mapped onto
   measured sound. It knows nothing about cultural context, lyrics, or
   whether a track is any good.
 
 ## 8. Tests
 
-`python3 src/crates/concat-mcp/sense/sound_sense.py selftest` - 24
+`python3 src/crates/concat-mcp/sense/sound_sense.py selftest` - 37
 checks, no ffmpeg, no network, no fixtures on disk beyond a scratch dir:
 
 - six synthetic sounds whose answer is arithmetic (air → transition,
@@ -314,8 +344,21 @@ checks, no ffmpeg, no network, no fixtures on disk beyond a scratch dir:
 - a fourth transition in ten seconds is called overused;
 - the index measures every file, reports a manifest `syncAt` that is
   200 ms from the real peak, and re-measures nothing the second time;
+- a 30 ms tick reports its own 30 ms, not the 64 ms of padding one FFT
+  window adds, and says it was padded;
+- a silent file is `silence` with every fit 0, is never ranked as a job a
+  cut can use, and says so in its note;
+- a stereo file is downmixed rather than counted twice;
+- `maxDuration` keeps only what fits the slot and says why each of the
+  others was skipped;
+- a trimmed head moves the peak with the clip instead of reading as late,
+  and a peak trimmed out of the span is named `peak_cut`;
+- a ranking served from the index agrees with a fresh one, and a file that
+  changed under the index is measured again;
+- a limited index run refuses to overwrite the shelf's index with a sample;
 - a missing file is an error with a reason, never a zero reading;
-- a fix never invents a clip id: without one it names the fields it needs.
+- a fix never invents a clip id: without one it names the fields it needs,
+  and `why` never names a term the score did not sum.
 
 The test is in CI beside the other ten sidecar selftests.
 

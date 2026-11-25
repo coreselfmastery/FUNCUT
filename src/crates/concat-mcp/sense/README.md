@@ -169,9 +169,14 @@ taste is what this module refuses to fake.
 
 Commands: `describe_sound`, `rank_sounds`, `check_placement`,
 `index_library`, and `selftest` (six synthetic sounds whose expected read
-is arithmetic - no ffmpeg, no fixtures, no network). Decoding a `.ogg`
+is arithmetic, plus the 30 ms tick, the silent file and the stereo file a
+library always contains - no ffmpeg, no fixtures, no network). Decoding a `.ogg`
 needs the ffmpeg CLI the other modules already need; the selftest does
-not. See `docs/SOUND-SENSE.md` for the audit, the formulas, the measured
+not. `rank_sounds` takes an `index` and answers from the cached
+measurements - the whole 530 in 0.11 s instead of 148 s - and
+`check_placement` takes the clip's `inPoint`, so a trimmed head moves the
+peak with the clip instead of reading as a late accent. See
+`docs/SOUND-SENSE.md` for the audit, the formulas, the measured
 library evidence and the wiring plan.
 
 ## The emotion read (`emotion.py`)

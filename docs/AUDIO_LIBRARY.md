@@ -105,7 +105,7 @@ Until `audio/manifest.json` exists (the request answers 404), the shelf says
 | `tags` | no | Words the search narrows by, beyond the name. |
 | `description` | no | What the sound is, in a sentence. The search reads it after the name and the tags, and `sounds.search` hands it back so an agent can pick without hearing. |
 | `useFor` | no | What the sound is for, as short lines. Searched like `description`, and handed back by `sounds.search`. |
-| `syncAt` | no | Seconds into the file where the sound's peak lands, when the source says: where a move should meet it. Handed back by `sounds.search`, so a caller can place the file by the moment it is for rather than by its start. |
+| `syncAt` | no | Seconds into the file where the sound's peak lands, when the source says: where a move should meet it. Handed back by `sounds.search`, so a caller can place the file by the moment it is for rather than by its start. It is a **claim**, not a measurement: against the real peak, 30% of the bundled 530 are off by more than 100 ms and 15% by more than 300 ms (worst 3.02 s). `sense/sound_sense.py` measures the file and reports the disagreement - see [SOUND-SENSE.md](SOUND-SENSE.md). |
 | `sha256` | yes | The SHA-256 of the file's bytes, lowercase hex, 64 characters. An entry without a valid digest is left off the shelf, and a download that doesn't match it is deleted. |
 
 Compute a digest with `sha256sum <file>`.
@@ -135,3 +135,10 @@ Compute a digest with `sha256sum <file>`.
 - Placing a sound copies it into the project's own `audio/` folder and
   imports it into the bin, the same as the user's own sounds. Projects
   never point into the cache.
+- The manifest describes the shelf; it does not describe the sound. Where a
+  cut depends on where the peak actually falls, what the file is made of
+  (bright air or a heavy sub), or whether it is a tone or noise,
+  `sound_sense.py` opens the file and measures it, and its `index_library`
+  reports every entry whose `syncAt` the file contradicts. Nothing calls it
+  from the Director yet - [SOUND-SENSE.md](SOUND-SENSE.md) §6 names the
+  call sites.

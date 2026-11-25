@@ -84,7 +84,7 @@ SCHEMA = "funcut.sound-sense/1"
 # Bumped whenever the read or the role formulas change: an index written by
 # an older engine is not reused, because a cached role is a claim the old
 # numbers made and the new ones never checked.
-INDEX_VERSION = 2
+INDEX_VERSION = 6
 
 # 32 kHz, not voice_quality's 16 kHz: the top octave is where a whoosh
 # lives. 16 kHz would put the air band's ceiling at 8 kHz and call every
@@ -94,6 +94,7 @@ HOP = 512  # 16 ms envelope frames
 WIN = 2048  # 64 ms FFT window at 32 kHz: 15.6 Hz bins
 MAX_WINDOWS = 24  # spectral windows per file: enough for a stable read, bounded for a library sweep
 TRUNCATE_SEC = 45.0  # a bed longer than this is measured at its first 45 s and says so
+SILENT_DBFS = -60.0  # below this a file is silence for every purpose a cut has
 
 # The six roles an accent is shopped for. These are the words the Director's
 # own sound stage reaches for (`sfx_queries_for_emotion` and
@@ -108,11 +109,25 @@ ROLES = (
     "tension_build",
 )
 
+# The evidence terms each role's score is actually summed from. `why` is
+# built from these and only these: the first draft sorted the whole evidence
+# dict, which offered "dominantPartialRatio 2.00" as the reason a drone was
+# the best reveal - a number the score never reads. An explanation that
+# names a measurement the formula ignores is worse than no explanation.
+ROLE_TERMS = {
+    "quick_transition": ("bright", "flux", "transitionLength", "airy"),
+    "cinematic_reveal": ("heavy", "sustained", "sweepOrTonal"),
+    "action_impact": ("heavy", "sharp", "short"),
+    "gentle_entrance": ("tonal", "short", "soft", "airy"),
+    "emotional_texture": ("tonal", "sustained", "soft", "light"),
+    "tension_build": ("climbs", "sustained", "holds"),
+}
+
 # Words a caller may use instead of a role name: the library's categories,
 # the Director's registers, and the six descriptions the plan is written in.
 ROLE_WORDS = {
     "quick_transition": ("transition", "whoosh", "swish", "whip", "swipe", "swoosh",
-                         "fast", "swish", "cut", "air"),
+                         "fast", "cut", "air"),
     "cinematic_reveal": ("reveal", "cinematic", "boom", "braam", "deep", "sub",
                          "trailer", "dramatic", "sweep", "wide"),
     "action_impact": ("impact", "hit", "slam", "punch", "action", "heavy",
@@ -185,22 +200,34 @@ def _resample(frames, rate, target=RATE):
 
 
 def _decode(spec, path):
-    """Decode `path` to (samples, rate) mono at 32 kHz. A WAV decodes with
-    the standard library alone, which is the selftest's contract; every
-    other container is ffmpeg's business, through the shared bootstrap."""
+    """Decode `path` to (samples, rate, duration): mono at 32 kHz, cut to
+    TRUNCATE_SEC, with the file's own length reported alongside. A WAV
+    decodes with the standard library alone, which is the selftest's
+    contract; every other container is ffmpeg's business, through the
+    shared bootstrap.
+
+    The cut happens before the resample, not after: a three-minute bed
+    resampled in full is six million interpolations for 45 s of answers,
+    and the array it leaves in the cache is what turns a folder sweep into
+    a memory problem."""
     key = str(path)
     if key in _PCM:
         return _PCM[key]
     if not Path(str(path)).is_file():
-        return None, None
+        return None, None, None
     samples = None
     rate = RATE
+    duration = 0.0
     try:
         with wave.open(str(path), "rb") as handle:
             channels = handle.getnchannels()
             width = handle.getsampwidth()
             rate = handle.getframerate()
-            raw = handle.readframes(handle.getnframes())
+            if rate <= 0:
+                raise ValueError("a sample rate of zero is not audio")
+            frames_total = handle.getnframes()
+            duration = frames_total / rate
+            raw = handle.readframes(min(frames_total, int(TRUNCATE_SEC * rate)))
         if width == 2:
             frames = array.array("h", raw[: len(raw) // 2 * 2])
         elif width == 1:
@@ -212,7 +239,7 @@ def _decode(spec, path):
             raise ValueError(f"{width}-byte PCM is not a shape this reader takes")
         samples = _resample(_to_mono(frames, channels), rate)
         rate = RATE
-    except (wave.Error, ValueError, EOFError):
+    except (wave.Error, ValueError, EOFError, ZeroDivisionError):
         samples = None
     if samples is None:
         ff, _ = _vs._ffmpeg(spec)
@@ -220,15 +247,19 @@ def _decode(spec, path):
                "-ar", str(RATE), "-c:a", "pcm_s16le", "-f", "wav", "-"]
         rc, out, _err = _vs._run(cmd, 240)
         if rc != 0 or not out:
-            return None, None
+            return None, None, None
         try:
             with wave.open(io.BytesIO(out)) as handle:
                 rate = handle.getframerate()
                 raw = handle.readframes(handle.getnframes())
             samples = array.array("h", raw[: len(raw) // 2 * 2])
         except Exception:  # noqa: BLE001
-            return None, None
-    result = (samples, rate)
+            return None, None, None
+        duration = len(samples) / rate if rate else 0.0
+        keep = int(TRUNCATE_SEC * rate)
+        if len(samples) > keep:
+            samples = samples[:keep]
+    result = (samples, rate, duration)
     _PCM[key] = result
     return result
 
@@ -569,14 +600,18 @@ def _spectral_read(samples, rate, time_read):
 
 
 def _read(spec, path):
-    """The whole measured picture of one sound, or (None, reason)."""
-    samples, rate = _decode(spec, path)
+    """The whole measured picture of one sound, or (None, reason).
+
+    `duration` is the file's own length - never the padded length and never
+    the truncated one - because a caller sizes a bed against a beat with
+    it, and a 30 ms tick that reports 64 ms (one FFT window of padding) is
+    a number nobody can use.
+    """
+    samples, rate, duration = _decode(spec, path)
     if samples is None or not len(samples):
         return None, f"could not decode {path} (is it a file ffmpeg reads?)"
-    truncated = False
-    if len(samples) / rate > TRUNCATE_SEC:
-        samples = samples[:int(TRUNCATE_SEC * rate)]
-        truncated = True
+    truncated = duration > TRUNCATE_SEC + 0.001
+    measured = len(samples) / rate
     if len(samples) < WIN:
         # A 30 ms UI tick is shorter than one FFT window: pad with silence so
         # the spectrum is of the whole sound rather than of nothing, and say
@@ -592,12 +627,13 @@ def _read(spec, path):
     if spectral is None:
         return None, f"{path} was too short to measure a spectrum"
     read = {
-        "duration": timing["duration"],
+        "duration": _r(duration, 4),
+        "measuredSec": _r(measured, 4),
         "peakDbfs": timing["peak_dbfs"],
         "rmsDbfs": timing["rms_dbfs"],
         "crestDb": timing["crest_db"],
         "peakAt": timing["peak_at"],
-        "peakFraction": timing["peak_frac"],
+        "peakFraction": _r(_clamp(timing["peak_at"] / measured) if measured else 0.0, 4),
         "attackMs": timing["attack_ms"],
         "bodySec": timing["body_s"],
         "decaySec": timing["decay_s"],
@@ -620,6 +656,7 @@ def _read(spec, path):
         "windows": spectral["windows"],
         "truncated": truncated,
         "padded": padded,
+        "silent": timing["peak_dbfs"] <= SILENT_DBFS,
     }
     read["roles"], read["role"], read["confidence"], read["evidence"] = _roles(read)
     return read, None
@@ -687,6 +724,9 @@ def _roles(read):
     build_gate = 0.25 + 0.75 * rise
     evidence = {
         "heavy": _r(heavy),
+        "light": _r(1.0 - heavy),
+        "tonal": _r(tonal),
+        "holds": _r(1.0 - short),
         "bright": _r(brightness),
         "airy": _r(airy),
         "noisy": _r(noisy),
@@ -704,6 +744,9 @@ def _roles(read):
         # it says "something moved up", not "the pitch rose".
         "dominantPartialRatio": _r(read["pitchRatio"]),
         "sweeps": _r(sweep),
+        # The reveal's formula takes whichever is larger, so the term it
+        # actually reads is the larger of the two - named once, here.
+        "sweepOrTonal": _r(max(sweep, tonal)),
         "flux": _r(flux),
         "airGate": _r(air_gate),
         "impactGate": _r(impact_gate),
@@ -725,6 +768,14 @@ def _roles(read):
         "tension_build": build_gate * (0.45 * rise + 0.30 * sustain
                                        + 0.25 * (1.0 - short)),
     }
+    # A file below the silence floor has no job. Without this gate a half
+    # second of digital silence scored 0.70 as a gentle entrance - every
+    # term technically right, because a silent file is perfectly tonal, soft
+    # and still. The one measurement that overrules the rest is that there
+    # is nothing in it to hear.
+    if read["peakDbfs"] <= SILENT_DBFS:
+        return ({name: 0.0 for name in scores}, "silence", 0.95, evidence)
+
     scores = {name: _r(_clamp(value)) for name, value in scores.items()}
     ordered = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
     top, best = ordered[0]
@@ -784,7 +835,10 @@ def describe_sound(spec):
                  "between two jobs rather than in one"),
     }
     if read["truncated"]:
-        out["note"] += f" (only the first {int(TRUNCATE_SEC)} s were measured)"
+        out["note"] += (f" (only the first {int(TRUNCATE_SEC)} s of {read['duration']:.1f} s "
+                        "were measured)")
+    if read["silent"]:
+        out["note"] += " (the file measures as silence: there is nothing here to place)"
     return out
 
 
@@ -810,13 +864,68 @@ def _library_entries(root):
     return entries
 
 
+def _index_entries(spec):
+    """Cached measurements from a sound index, keyed by absolute path and by
+    file name. A shelf ranked twice should not be measured twice: the index
+    is what makes the second call cheap enough for a Director to make."""
+    where = spec.get("index")
+    if not where:
+        return {}
+    try:
+        data = json.loads(Path(str(where)).read_text())
+    except (OSError, ValueError):
+        return {}
+    if data.get("version") != INDEX_VERSION:
+        return {}
+    known = {}
+    for entry in data.get("sounds", []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("path"):
+            known.setdefault(str(entry["path"]), entry)
+        if entry.get("file"):
+            known.setdefault(str(entry["file"]), entry)
+    return known
+
+
+def _from_index(known, path):
+    """A read rebuilt from the index, or None when it cannot be trusted: no
+    entry, a file that has changed since, or an entry from a version that
+    did not record what this call needs. A cache that answers when it
+    cannot see the file would be the same lie as a `syncAt` nobody
+    measured."""
+    path = Path(str(path))
+    entry = known.get(str(path.resolve())) or known.get(path.name)
+    if not entry or not isinstance(entry.get("evidence"), dict):
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    if entry.get("stamp") != {"size": stat.st_size, "mtime": int(stat.st_mtime)}:
+        return None
+    roles = entry.get("roles")
+    if not isinstance(roles, dict) or "duration" not in entry:
+        return None
+    read = dict(entry.get("measured") or {})
+    read.update({
+        "duration": entry.get("duration"),
+        "peakAt": entry.get("measuredPeakAt"),
+        "roles": roles,
+        "role": entry.get("role"),
+        "confidence": entry.get("confidence"),
+        "evidence": entry["evidence"],
+    })
+    return read
+
+
 def rank_sounds(spec):
     role, error = _role_name(spec.get("role"))
     if error:
         return {"ok": False, "error": error}
     limit = max(1, int(_num(spec, "limit", 5)))
-    shortest = _num(spec, "maxDuration", 0.0)
-    longest = _num(spec, "minDuration", 0.0)
+    longest = _num(spec, "maxDuration", 0.0)
+    shortest = _num(spec, "minDuration", 0.0)
 
     paths = []
     for item in spec.get("paths") or []:
@@ -829,25 +938,35 @@ def rank_sounds(spec):
     if not paths:
         return {"ok": False, "error": "name the candidates: `paths` (files or {path,...}) or `dir`"}
 
+    known = _index_entries(spec)
     scored, skipped = [], []
     for path, listed in paths:
-        try:
-            read, why = _read(spec, path)
-        except Exception as exc:  # noqa: BLE001
-            read, why = None, f"{type(exc).__name__}: {exc}"
-        if why:
-            skipped.append({"path": str(path), "reason": why})
+        read = _from_index(known, path)
+        source = "index"
+        if read is None:
+            source = "measured"
+            # One candidate at a time: a folder sweep of 1,191 tracks would
+            # otherwise hold every decoded waveform at once.
+            _PCM.clear()
+            try:
+                read, why = _read(spec, path)
+            except Exception as exc:  # noqa: BLE001
+                read, why = None, f"{type(exc).__name__}: {exc}"
+            if why:
+                skipped.append({"path": str(path), "reason": why})
+                continue
+        if longest and read["duration"] > longest:
+            skipped.append({"path": str(path), "reason": f"{read['duration']:.2f} s is longer than maxDuration {longest}"})
             continue
-        if shortest and read["duration"] > shortest:
-            skipped.append({"path": str(path), "reason": f"{read['duration']:.2f} s is longer than maxDuration {shortest}"})
-            continue
-        if longest and read["duration"] < longest:
-            skipped.append({"path": str(path), "reason": f"{read['duration']:.2f} s is shorter than minDuration {longest}"})
+        if shortest and read["duration"] < shortest:
+            skipped.append({"path": str(path), "reason": f"{read['duration']:.2f} s is shorter than minDuration {shortest}"})
             continue
         fit = read["roles"][role]
-        # The evidence that earned the score, strongest first: what the
-        # Director reads instead of trusting a number.
-        drivers = sorted(read["evidence"].items(), key=lambda kv: -kv[1])[:4]
+        # The evidence that earned the score, strongest first - restricted to
+        # the terms the role's own formula sums, so `why` cannot name a
+        # number that carried no weight.
+        drivers = sorted(((term, read["evidence"].get(term, 0.0))
+                          for term in ROLE_TERMS[role]), key=lambda kv: -kv[1])
         scored.append({
             "path": str(path),
             "id": listed.get("id"),
@@ -855,15 +974,25 @@ def rank_sounds(spec):
             "fit": fit,
             "role": read["role"],
             "confidence": read["confidence"],
+            "source": source,
             "duration": _r(read["duration"], 3),
             "measuredPeakAt": _r(read["peakAt"], 4),
             "manifestSyncAt": listed.get("syncAt"),
             "why": [f"{name} {value:.2f}" for name, value in drivers],
-            "measured": {k: read[k] for k in (
-                "centroidHz", "flatness", "crestDb", "attackMs", "bodySec",
-                "transients", "bands", "pitchDirection", "energySlopeDbPerSec")},
+            # `.get` on purpose: a cached read is a subset by design, and a
+            # KeyError on an optional field would take the whole ranking down.
+            "measured": {k: read.get(k) for k in (
+                "centroidHz", "flatness", "flux", "crestDb", "attackMs", "bodySec",
+                "transients", "bands", "pitchDirection", "gainDb", "steadyRise",
+                "energySlopeDbPerSec")},
         })
     scored.sort(key=lambda hit: (-hit["fit"], hit["name"]))
+    # A saturated fit means the shelf holds more than one sound that does the
+    # job exactly; which of them to use is not this module's call, so it says
+    # how many there are and leaves the slot's duration, level and syncAt to
+    # decide. Reporting one as "the" answer would be a judgement the
+    # measurements do not contain.
+    ties = sum(1 for hit in scored if hit["fit"] == scored[0]["fit"]) if scored else 0
     return {
         "ok": True,
         "schema": SCHEMA,
@@ -871,9 +1000,14 @@ def rank_sounds(spec):
         "role": role,
         "candidates": scored[:limit],
         "considered": len(scored),
+        "tiesAtTop": ties,
         "skipped": skipped[:12],
         "note": ("ranked by measured fit for the asking role, not by what the manifest "
-                 "says it is for; `why` names the measurements that carried the score"),
+                 "says it is for; `why` names the measurements that carried the score, "
+                 "and `source` says whether the numbers were measured now or read from "
+                 "an index whose stamp still matches the file. `tiesAtTop` counts the "
+                 "candidates sharing the best fit: the order among them is not a "
+                 "judgement this module makes"),
     }
 
 
@@ -913,27 +1047,61 @@ def check_placement(spec):
         return {"ok": False, "error": role_error}
 
     clip_start = _num(spec, "clipStart", 0.0)
-    intended = _num(spec, "intendedAt", clip_start + read["peakAt"])
+    sync_checked = spec.get("intendedAt") is not None or spec.get("moment") is not None
+    intended = _num(spec, "intendedAt", _num(spec, "moment", clip_start + read["peakAt"]))
     tolerance = _num(spec, "toleranceMs", 40.0) / 1000.0
     gain = _num(spec, "gainDb", 0.0)
+    # A placed clip can be trimmed: its peak sits `inPoint` later in the file
+    # than in the source, and a caller that trimmed the head and then read
+    # the file's own peakAt would be told the sound is late when it is not.
+    in_point = max(0.0, _num(spec, "inPoint", 0.0))
+    peak_offset = read["peakAt"] - in_point
     intended_offset = intended - clip_start
-    move_by = intended_offset - read["peakAt"]
+    move_by = intended_offset - peak_offset
 
     issues = []
-    if abs(move_by) > tolerance:
+    if peak_offset < -0.02:
+        issues.append({
+            "code": "peak_cut",
+            "severity": "fix",
+            "evidence": (f"the file's peak sits at {read['peakAt']:.3f} s and the clip starts "
+                         f"{in_point:.3f} s in: the transient this sound was chosen for is "
+                         "trimmed out of the span, so no move can put it back on the moment"),
+            "fix": {
+                "tool": "rank_sounds",
+                "service": "sound_sense",
+                "arguments": {"role": role, "maxDuration": _r(max(1.0, read["duration"]), 2)},
+                "needs": ["paths (sounds_search candidates) or dir"],
+            },
+        })
+    elif abs(move_by) > tolerance:
+        # The move carries the clip's identity INSIDE `moves`, because that
+        # is the shape `edit_apply` takes: a top-level clipId on that call is
+        # an argument the schema does not have.
+        target = clip_start + move_by
+        clamped = target < 0.0
+        move = {"start": _r(max(0.0, target), 3)}
+        unnamed = []
+        for key in ("clipId", "trackId"):
+            value = spec.get(key)
+            if isinstance(value, str) and value.strip():
+                move[key] = value
+            else:
+                unnamed.append(key)
+        fix = _fix(spec, "edit_apply", {"command": {"op": "moveClips", "moves": [move]}},
+                   needs=("project",), alias={"project": "path"})
+        if unnamed:
+            fix["needs"] = fix.get("needs", []) + unnamed
         issues.append({
             "code": "sync_off",
             "severity": "fix",
-            "evidence": (f"the intended moment sits {intended_offset:.3f} s into the clip and "
-                         f"the file's peak measures at {read['peakAt']:.3f} s: "
-                         f"{abs(move_by) * 1000:.0f} ms {'late' if move_by < 0 else 'early'}"),
-            "fix": _fix(spec, "edit_apply", {
-                "command": {"op": "moveClips", "moves": [dict(
-                    {"start": _r(max(0.0, clip_start + move_by), 3)},
-                    **{k: spec[k] for k in ("clipId", "trackId")
-                       if isinstance(spec.get(k), str) and spec[k].strip()},
-                )]},
-            }, needs=("project", "clipId", "trackId"), alias={"project": "path"}),
+            "evidence": (f"the peak measures at {peak_offset:.3f} s into the clip and the "
+                         f"moment it is for sits at {intended_offset:.3f} s: the sound lands "
+                         f"{abs(move_by) * 1000:.0f} ms {'after' if move_by < 0 else 'before'} "
+                         f"the moment it was chosen for"
+                         + (" - and the move that would fix it starts before 0 s, so it is "
+                            "clamped to the timeline's own start" if clamped else "")),
+            "fix": fix,
         })
 
     fit = read["roles"][role]
@@ -944,12 +1112,15 @@ def check_placement(spec):
             "evidence": (f"placed as {role}, but it measures as {read['role']} "
                          f"(fit {fit:.2f} for {role}, confidence {read['confidence']:.2f})"),
             "fix": {
-                "tool": "sound_sense rank_sounds",
+                "tool": "rank_sounds",
+                "service": "sound_sense",
                 "arguments": {"role": role,
                               "maxDuration": _r(max(1.0, read["duration"] * 2), 2)},
                 "needs": ["paths (sounds_search candidates) or dir"],
                 "why": [f"{name} {value:.2f}" for name, value in
-                        sorted(read["evidence"].items(), key=lambda kv: -kv[1])[:3]],
+                        sorted(((term, read["evidence"].get(term, 0.0))
+                                for term in ROLE_TERMS.get(read["role"], ())),
+                               key=lambda kv: -kv[1])],
             },
         })
 
@@ -996,8 +1167,8 @@ def check_placement(spec):
         issues.append({
             "code": "overused",
             "severity": "fix",
-            "evidence": (f"{len(same) + 1} {role} accents inside {window:g} s: "
-                         "the fourth hit in a short window reads as noise, not emphasis"),
+            "evidence": (f"{len(same) + 1} {role} accents inside {window:g} s: past "
+                         f"{allowed} in that window the hits read as noise, not emphasis"),
             "fix": drop,
         })
 
@@ -1008,9 +1179,12 @@ def check_placement(spec):
         "path": str(path),
         "role": role,
         "verdict": "as directed" if not issues else f"needs correction: {len(issues)} issue(s)",
+        "syncChecked": sync_checked,
         "issues": issues,
         "measured": {
             "peakAt": _r(read["peakAt"], 4),
+            "inPoint": _r(in_point, 4),
+            "peakOffset": _r(peak_offset, 4),
             "intendedOffset": _r(intended_offset, 4),
             "moveBy": _r(move_by, 4),
             "roleFit": fit,
@@ -1043,8 +1217,13 @@ def index_library(spec):
     limit = int(_num(spec, "limit", 0.0)) or None
     started = time.time()
     sounds, failed, reused, measured = [], [], 0, 0
+    sampled = False
     for path, listed in _library_entries(root):
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            failed.append({"file": path.name, "reason": f"{type(exc).__name__}: {exc}"})
+            continue
         stamp = {"size": stat.st_size, "mtime": int(stat.st_mtime)}
         known = previous.get(path.name)
         if known and known.get("stamp") == stamp:
@@ -1052,6 +1231,7 @@ def index_library(spec):
             reused += 1
             continue
         if limit is not None and measured >= limit:
+            sampled = True
             break
         _PCM.clear()
         try:
@@ -1067,18 +1247,20 @@ def index_library(spec):
         sounds.append({
             "id": listed.get("id") or path.stem,
             "file": path.name,
+            "path": str(path.resolve()),
             "stamp": stamp,
             "duration": _r(read["duration"], 3),
             "role": read["role"],
             "confidence": read["confidence"],
             "roles": read["roles"],
+            "evidence": read["evidence"],
             "measuredPeakAt": _r(read["peakAt"], 4),
             "manifestSyncAt": listed.get("syncAt"),
             "syncDriftSec": drift,
             "measured": {k: read[k] for k in (
                 "peakDbfs", "crestDb", "attackMs", "bodySec", "transients",
-                "centroidHz", "flatness", "bands", "pitchDirection",
-                "energySlopeDbPerSec", "centroidDriftHz", "flux")},
+                "centroidHz", "flatness", "bands", "pitchDirection", "gainDb",
+                "steadyRise", "energySlopeDbPerSec", "centroidDriftHz", "flux")},
         })
         measured += 1
 
@@ -1096,11 +1278,16 @@ def index_library(spec):
         "generatedAt": int(time.time()),
         "sounds": sounds,
     }
-    try:
-        out_path.write_text(json.dumps(index, indent=1))
-        written = str(out_path)
-    except OSError as exc:
-        written = f"not written: {exc}"
+    if sampled:
+        # A limited run measured a sample of the shelf; saving it over the
+        # full index would quietly shrink what the next ranking knows.
+        written = "not written: a limited run is a sample, not the index"
+    else:
+        try:
+            out_path.write_text(json.dumps(index, indent=1))
+            written = str(out_path)
+        except OSError as exc:
+            written = f"not written: {exc}"
     return {
         "ok": not failed,
         "schema": SCHEMA,
@@ -1130,9 +1317,11 @@ def index_library(spec):
 # fixtures, no ffmpeg, no network.
 
 
-def _write_wav(path, samples, rate=RATE):
+def _write_wav(path, samples, rate=RATE, channels=1):
+    if channels > 1:
+        samples = [sample for sample in samples for _ in range(channels)]
     with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
+        handle.setnchannels(channels)
         handle.setsampwidth(2)
         handle.setframerate(rate)
         handle.writeframes(array.array("h", samples).tobytes())
@@ -1281,6 +1470,19 @@ def selftest():
               and {"boom", "reveal"}.issubset(set(order[2:])),
               f"order was {order}")
 
+        revealed = rank_sounds({"role": "cinematic reveal", "paths": every, "limit": 6})
+        named = {line.split()[0] for hit in revealed.get("candidates", []) for line in hit["why"]}
+        check("`why` names only the terms the score was summed from",
+              bool(named) and named <= set(ROLE_TERMS["cinematic_reveal"]),
+              f"named {sorted(named)}")
+
+        ties = revealed.get("tiesAtTop")
+        best = max((hit["fit"] for hit in revealed.get("candidates", [])), default=None)
+        check("a saturated top fit is reported as a tie, not as a winner",
+              ties is not None and best is not None
+              and ties == sum(1 for hit in revealed["candidates"] if hit["fit"] == best),
+              f"tiesAtTop {ties} against {len(revealed.get('candidates', []))} candidates")
+
         ranked = rank_sounds({"role": "action impact", "paths": every, "limit": 6})
         order = [Path(hit["path"]).stem for hit in ranked.get("candidates", [])]
         check("an impact shops the heavy hit first",
@@ -1306,10 +1508,47 @@ def selftest():
         move = ((move_fix.get("arguments") or {}).get("command") or {}).get("moves") or [{}]
         check("with the clip named, the sync fix is one runnable edit",
               move_fix.get("needs") is None
+              and set(move_fix.get("arguments") or {}) == {"path", "command"}
               and (move_fix.get("arguments") or {}).get("path") == "/tmp/p.concut"
               and move[0].get("clipId") == "c7" and move[0].get("trackId") == "a1"
               and abs(move[0].get("start", 0) - 4.8) <= 0.03,
               f"fix was {move_fix}")
+
+        bare = check_placement({
+            "path": str(files["click"]), "role": "quick_transition",
+            "clipStart": 5.0, "intendedAt": 5.1,
+        })
+        bare_fix = next((issue["fix"] for issue in bare.get("issues", [])
+                         if issue["code"] == "sync_off"), {})
+        bare_move = ((bare_fix.get("arguments") or {}).get("command") or {}).get("moves") or [{}]
+        check("a fix never invents a clip id: without one it names what it needs",
+              set(bare_fix.get("needs") or []) == {"project", "clipId", "trackId"}
+              and "clipId" not in bare_move[0] and "trackId" not in bare_move[0],
+              f"fix was {bare_fix}")
+
+        trimmed = check_placement({
+            "path": str(files["click"]), "role": "quick_transition",
+            "clipStart": 5.0, "inPoint": 0.25, "intendedAt": 5.05,
+        })
+        codes = [issue["code"] for issue in trimmed.get("issues", [])]
+        check("a trimmed head moves the peak with the clip, it does not make it late",
+              "sync_off" not in codes,
+              f"codes {codes}, measured {trimmed.get('measured')}")
+
+        cut = check_placement({
+            "path": str(files["click"]), "role": "quick_transition",
+            "clipStart": 5.0, "inPoint": 0.50, "intendedAt": 5.20,
+        })
+        codes = [issue["code"] for issue in cut.get("issues", [])]
+        check("a peak trimmed out of the clip is named, not moved",
+              "peak_cut" in codes and "sync_off" not in codes, f"codes {codes}")
+
+        sample = index_library({"dir": str(root), "out": str(root / "sample.json"),
+                                "limit": 2})
+        check("a limited index run does not overwrite the shelf's index",
+              sample.get("ok") and "not written" in str(sample.get("index"))
+              and not (root / "sample.json").exists(),
+              f"index {sample.get('index')}")
 
         wrong = check_placement({
             "path": str(files["boom"]), "role": "quick_transition",
@@ -1357,6 +1596,70 @@ def selftest():
         check("a second index run re-measures nothing",
               second.get("reused") == 6 and second.get("measured") == 0,
               f"reused {second.get('reused')}, measured {second.get('measured')}")
+
+        shelf = str(root / "index.json")
+        cached = rank_sounds({"role": "quick transition", "paths": every,
+                              "limit": 6, "index": shelf})
+        fresh = rank_sounds({"role": "quick transition", "paths": every, "limit": 6})
+        sources = {hit.get("source") for hit in cached.get("candidates", [])}
+        same = ([hit["path"] for hit in cached.get("candidates", [])]
+                == [hit["path"] for hit in fresh.get("candidates", [])])
+        check("a ranking served from the index agrees with a fresh one",
+              cached.get("ok") and sources == {"index"} and same,
+              f"sources {sources}, same order {same}")
+
+        _write_wav(files["whoosh"], _whoosh(duration=0.30))
+        again = rank_sounds({"role": "quick transition", "paths": [str(files["whoosh"])],
+                             "index": shelf})
+        source = (again.get("candidates") or [{}])[0].get("source")
+        check("a file that changed under the index is measured again",
+              source == "measured", f"source was {source}")
+
+        # The edge cases a library always contains, in their own folder so
+        # they do not disturb the six-way ranking above.
+        edge = root / "edge"
+        edge.mkdir()
+        _write_wav(edge / "tick.wav", _click(duration=0.03, at=0.01))
+        _write_wav(edge / "silent.wav", [0] * int(0.5 * RATE))
+        _write_wav(edge / "stereo.wav", _click(duration=0.30, at=0.15), channels=2)
+
+        tick = describe_sound({"path": str(edge / "tick.wav")}).get("measured") or {}
+        check("a 30 ms tick reports its own length, not one window of padding",
+              abs((tick.get("duration") or 0) - 0.03) <= 0.002 and tick.get("padded") is True,
+              f"duration {tick.get('duration')} s, padded {tick.get('padded')}")
+
+        quiet = describe_sound({"path": str(edge / "silent.wav")})
+        measured = quiet.get("measured") or {}
+        check("a silent file says so instead of guessing a role",
+              quiet.get("ok") and measured.get("silent") is True
+              and measured.get("role") == "silence"
+              and not any(measured.get("roles", {}).values())
+              and "silence" in str(quiet.get("note")),
+              f"role {measured.get('role')}, fits {measured.get('roles')}")
+
+        silent_rank = rank_sounds({"role": "gentle_entrance",
+                                   "paths": [str(edge / "silent.wav")]})
+        check("silence is never ranked as a job a cut can use",
+              silent_rank.get("ok")
+              and (silent_rank.get("candidates") or [{}])[0].get("fit") == 0.0,
+              f"candidates {silent_rank.get('candidates')}")
+
+        stereo = describe_sound({"path": str(edge / "stereo.wav")}).get("measured") or {}
+        check("a stereo file is downmixed, not counted twice",
+              abs((stereo.get("duration") or 0) - 0.30) <= 0.005
+              and abs((stereo.get("peakAt") or 0) - 0.15) <= 0.03,
+              f"duration {stereo.get('duration')} s, peak {stereo.get('peakAt')} s")
+
+        short = rank_sounds({"role": "quick_transition", "paths": every, "maxDuration": 0.8})
+        kept = [Path(hit["path"]).stem for hit in short.get("candidates", [])]
+        fits = [hit for hit in short.get("candidates", [])
+                if (hit.get("duration") or 0) <= 0.8]
+        check("maxDuration keeps only what fits the slot",
+              short.get("ok") and set(kept) == {"whoosh", "boom"}
+              and len(fits) == len(kept)
+              and all("longer than maxDuration" in entry["reason"]
+                      for entry in short.get("skipped", [])),
+              f"kept {kept}, skipped {[e['path'] for e in short.get('skipped', [])]}")
 
         bad = describe_sound({"path": str(root / "nope.wav")})
         check("a missing file is an error with a reason, not a zero reading",

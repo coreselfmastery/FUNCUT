@@ -4,7 +4,7 @@
 > [docs/FEATURES.md](docs/FEATURES.md). This page carries Geneva's own
 > dated detail.
 
-**Last reconciled:** 24 November 2026  
+**Last reconciled:** 25 November 2026  
 **Repository:** `coreselfmastery/FUNCUT`  
 **Canonical implementation:** `src/crates/concat-motion`  
 **Sidecar contract:** Geneva 1.6.0, pinned by the installer and CI dependency lock  

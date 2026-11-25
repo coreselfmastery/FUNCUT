@@ -125,6 +125,15 @@ pub fn remove(data: &Path) -> Result<(), String> {
     set_remove(data, &SOUND_MODELS)
 }
 
+/// The row id of the reader's own set: CLAP and YAMNet, one download.
+pub const SOUND_MODELS_ID: &str = "sound-models";
+
+/// Every row the settings sheet shows and `models.download` accepts, in
+/// the order the sheet lists them: the reader's set, then the three
+/// generators. The ids are also the words `sound_model.py generate` takes
+/// as `kind`, so a row and a generation name the same set.
+pub const SETS: [&str; 4] = [SOUND_MODELS_ID, "sfx-small", "sfx-large", "bgm"];
+
 /// The three generator sets, by the row id the settings sheet uses.
 pub fn generator_set(id: &str) -> Option<&'static [ModelId]> {
     match id {
@@ -133,6 +142,35 @@ pub fn generator_set(id: &str) -> Option<&'static [ModelId]> {
         "bgm" => Some(&BGM),
         _ => None,
     }
+}
+
+/// The files one row downloads: the reader's five, or one generator's.
+/// The one table the settings sheet and the API both read.
+pub fn set_by_id(id: &str) -> Option<&'static [ModelId]> {
+    if id == SOUND_MODELS_ID {
+        return Some(&SOUND_MODELS);
+    }
+    generator_set(id)
+}
+
+/// What a row is for, in the words the sheet and `models.list` show.
+pub fn set_label(id: &str) -> &'static str {
+    match id {
+        SOUND_MODELS_ID => "Sound models (CLAP reader, YAMNet labels)",
+        "sfx-small" => "SFX - TinyAudio-MF, 87 M, one flow step",
+        "sfx-large" => "SFX - Stable Audio Open Small, 341 M, eight steps",
+        "bgm" => "Music - TinyMusician, MusicGen-small, 32 kHz mono",
+        _ => "",
+    }
+}
+
+/// The licence a row's files come under: one name when they agree, a
+/// list when they do not.
+pub fn set_licence(set: &[ModelId]) -> String {
+    let mut names: Vec<&str> = set.iter().map(|id| id.spec().licence).collect();
+    names.sort_unstable();
+    names.dedup();
+    names.join(", ")
 }
 
 /// The bytes a generator set takes.
@@ -264,6 +302,20 @@ mod tests {
             assert_eq!(generator_set(id), Some(set));
         }
         assert_eq!(generator_set("sound"), None);
+    }
+
+    #[test]
+    fn every_row_the_sheet_shows_is_one_the_api_can_fetch() {
+        for id in SETS {
+            let set = set_by_id(id).unwrap_or_else(|| panic!("{id} is not a set"));
+            assert!(!set.is_empty(), "{id} is empty");
+            assert!(!set_label(id).is_empty(), "{id} has no label");
+            assert!(!set_licence(set).is_empty(), "{id} has no licence");
+        }
+        assert_eq!(set_by_id("sound"), None);
+        assert_eq!(set_by_id("sfx"), None);
+        assert_eq!(set_licence(&BGM), "CC-BY-NC-4.0 (MusicGen-small weights)");
+        assert_eq!(set_licence(&SFX_SMALL), "MIT");
     }
 
     #[test]

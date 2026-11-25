@@ -20,7 +20,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::message::{ApiError, ErrorCode, Event, JobStatus, ModelsState, Started};
+use crate::message::{ApiError, ErrorCode, Event, JobStatus, ModelsState, SoundModelStatus, Started};
 use crate::{Api, AppDirs, EventSink};
 
 /// A transcript with its times rounded to the millisecond, the shape the
@@ -532,6 +532,7 @@ impl Api {
         Ok(ModelsState {
             tts: tts.models,
             transcriber: transcriber.models,
+            sound: sound_sets(&self.dirs.data),
         })
     }
 
@@ -551,10 +552,11 @@ impl Api {
                 .models
                 .iter()
                 .any(|model| model.id == id),
+            "sound" => concat_host::soundmodel::set_by_id(id).is_some(),
             other => {
                 return Err(ApiError::new(
                     ErrorCode::Invalid,
-                    format!("unknown model kind {other:?} - tts or whisper"),
+                    format!("unknown model kind {other:?} - tts, whisper or sound"),
                 ));
             }
         };
@@ -612,6 +614,24 @@ impl Api {
         self.jobs.threads.push((started.job.clone(), thread));
         Ok(started)
     }
+}
+
+/// The four sound rows `models.list` reports, from what is on disk.
+fn sound_sets(data: &std::path::Path) -> Vec<SoundModelStatus> {
+    concat_host::soundmodel::SETS
+        .iter()
+        .filter_map(|id| {
+            let set = concat_host::soundmodel::set_by_id(id)?;
+            Some(SoundModelStatus {
+                id: (*id).to_owned(),
+                label: concat_host::soundmodel::set_label(id).to_owned(),
+                licence: concat_host::soundmodel::set_licence(set),
+                bytes: concat_host::soundmodel::set_bytes(set),
+                missing_bytes: concat_host::soundmodel::set_missing_bytes(data, set),
+                downloaded: concat_host::soundmodel::set_ready(data, set),
+            })
+        })
+        .collect()
 }
 
 /// What one speech job is.
@@ -729,10 +749,23 @@ impl SpeechJob {
                     })
             }
             Work::Download { kind, id } => {
-                let downloaded = if kind == "tts" {
-                    self.speech.download_model(&self.dirs, id, |_| {})
-                } else {
-                    self.transcriber.download_model(&self.dirs, id, |_| {})
+                let downloaded = match kind.as_str() {
+                    "tts" => self.speech.download_model(&self.dirs, id, |_| {}),
+                    "whisper" => self.transcriber.download_model(&self.dirs, id, |_| {}),
+                    // The sound sets are files of the app's model folder,
+                    // fetched by the host's own table: the same path the
+                    // settings sheet's row takes, so a headless caller and
+                    // a window download the same bytes the same way.
+                    _ => concat_host::soundmodel::set_by_id(id)
+                        .ok_or_else(|| format!("unknown sound set {id:?}"))
+                        .and_then(|set| {
+                            concat_host::soundmodel::set_download(
+                                &self.dirs.data,
+                                set,
+                                &self.cancel,
+                                &mut |_, _| {},
+                            )
+                        }),
                 };
                 downloaded.map(|()| {
                     serde_json::json!({

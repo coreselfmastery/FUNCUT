@@ -1071,6 +1071,28 @@ pub struct ModelsState {
     pub tts: Vec<concat_speech::tts::ModelStatus>,
     /// The transcriber models.
     pub transcriber: Vec<concat_speech::transcribe::ModelStatus>,
+    /// The sound sets: CLAP and YAMNet, and the three generators. The ids
+    /// are the ones `models.download` takes with `kind: "sound"`.
+    pub sound: Vec<SoundModelStatus>,
+}
+
+/// One downloadable sound set, as `models.list` shows it: a row of the
+/// settings sheet, and a `models.download` id.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundModelStatus {
+    /// The row id: `sound-models`, `sfx-small`, `sfx-large` or `bgm`.
+    pub id: String,
+    /// What the set is for.
+    pub label: String,
+    /// The licence every file in it comes under.
+    pub licence: String,
+    /// The bytes a full set takes.
+    pub bytes: u64,
+    /// The bytes still to fetch.
+    pub missing_bytes: u64,
+    /// Whether every file is on disk and whole.
+    pub downloaded: bool,
 }
 
 /// What a successful `window.seek` answers: where the playhead now is,

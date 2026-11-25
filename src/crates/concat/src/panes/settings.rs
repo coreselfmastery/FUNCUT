@@ -230,8 +230,10 @@ pub fn installed(models: &[ModelState]) -> Vec<&ModelState> {
 }
 
 /// The sound models' row: CLAP and YAMNet are one download, because half
-/// a set reads nothing and nobody wants to choose a tokenizer.
-pub const SOUND_MODELS_ID: &str = "sound-models";
+/// a set reads nothing and nobody wants to choose a tokenizer. The id is
+/// the host's, so the sheet, `models.download` and the generator's own
+/// `kind` cannot drift apart.
+pub const SOUND_MODELS_ID: &str = concat_host::soundmodel::SOUND_MODELS_ID;
 
 /// The three generators, each its own row: a small SFX model, a heavier
 /// one, and a music model. Their ids are the words `sound_model.py
@@ -241,12 +243,10 @@ pub const SFX_LARGE_ID: &str = "sfx-large";
 pub const BGM_ID: &str = "bgm";
 
 /// The files a sound row's download fetches: the reader's five, or one of
-/// the three generators.
+/// the three generators - one table, shared with the API's
+/// `models.download` so a headless run and this sheet fetch the same set.
 fn sound_set(id: &str) -> Option<&'static [concat_vision::models::ModelId]> {
-    if id == SOUND_MODELS_ID {
-        return Some(&concat_host::soundmodel::SOUND_MODELS[..]);
-    }
-    concat_host::soundmodel::generator_set(id)
+    concat_host::soundmodel::set_by_id(id)
 }
 
 /// The settings sheet's state.
@@ -1037,7 +1037,7 @@ impl SettingsPane {
             row(
                 BGM_ID,
                 "Music · TinyMusician",
-                "Writes a music bed from words. 32 kHz mono, and the slowest of the three on a CPU. Check its licence before monetizing.",
+                "Writes a music bed from words. 32 kHz mono, and the slowest of the three on a CPU. MusicGen-small weights, CC-BY-NC 4.0: never in monetized work.",
             ),
         ];
 

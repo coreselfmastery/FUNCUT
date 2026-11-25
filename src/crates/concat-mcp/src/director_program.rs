@@ -10397,6 +10397,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // Whether the generator was asked for a bed: one ask a run,
                 // then the shelf if it answered nothing.
                 let mut ai_bed = false;
+                // Whether the licence-clean pad was asked for, after the
+                // music model refused a monetized project: one ask, then
+                // the shelf. TinyMusician's weights are CC-BY-NC, so the
+                // plan's own monetized brief rules that bed out; the pad
+                // is Stable Audio's, which the community licence allows.
+                let mut pad_bed = false;
                 // How many replies the run had drawn before this stage's
                 // first call: everything before that index belongs to the
                 // earlier stages, and the stage reads only what it drew
@@ -10660,6 +10666,45 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "path": music_project,
                                     "file": path,
                                     "start": 0.0,
+                                }),
+                            ));
+                        }
+                        // The music model refused on licence: this project
+                        // is monetized and TinyMusician's weights are
+                        // CC-BY-NC. A bed is still wanted, and Stable
+                        // Audio's community licence allows one, so the
+                        // same words are asked of it as a texture - no
+                        // drums, so it sits under a voice instead of
+                        // fighting it.
+                        let runtime = latest_view(log)
+                            .and_then(|view| {
+                                view["timeline"]["clips"].as_array().map(|clips| {
+                                    clips
+                                        .iter()
+                                        .map(|clip| {
+                                            clip["start"].as_f64().unwrap_or(0.0)
+                                                + clip["duration"].as_f64().unwrap_or(0.0)
+                                        })
+                                        .fold(0.0_f64, f64::max)
+                                })
+                            })
+                            .unwrap_or(0.0);
+                        if last.get("reason") == Some(&json!("licence"))
+                            && !pad_bed
+                            && runtime > 0.5
+                        {
+                            pad_bed = true;
+                            return Some(call(
+                                "sense_sound_model",
+                                json!({
+                                    "action": "generate",
+                                    "kind": "sfx-large",
+                                    "prompt": format!(
+                                        "warm ambient pad, {}, no drums, no melody",
+                                        bed_prompt(log, &music_source)
+                                    ),
+                                    "seconds": round3(runtime.min(11.5)),
+                                    "project": music_project,
                                 }),
                             ));
                         }

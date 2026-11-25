@@ -540,7 +540,8 @@ IS-Net object (Apache-2.0, 179 MB) · SlimSAM brushes (Apache-2.0, 40 MB) ·
 Real-ESRGAN enhance (BSD-3, 4.9 MB) · the sound reader, CLAP and YAMNet
 (Apache-2.0, 37 MB) · and three text-to-audio generators, TinyAudio-MF
 (MIT, 0.48 GB), Stable Audio Open Small (Stability AI Community, 1.2 GB)
-and TinyMusician (no licence upstream, 1.0 GB), which write the accents
+and TinyMusician (CC-BY-NC 4.0, inherited from MusicGen-small, 1.0 GB),
+which write the accents
 and the music bed AUTO EDIT places — see
 [docs/SOUND-GENERATION.md](SOUND-GENERATION.md). The optional VLM critic
 (SmolVLM2 0.5B ≈ 546 MB, or MiniCPM-V-2 ≈ 2.2 GB) and the MobileCLIP2

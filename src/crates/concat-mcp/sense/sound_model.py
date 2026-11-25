@@ -168,12 +168,44 @@ def _ffmpeg():
     return os.environ.get("FUNCUT_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg"
 
 
+def _model_candidates(spec):
+    """Where a downloaded model may already be, in the order to try.
+
+    The app keeps its models in `<data>/app.concat.editor/cutout-models`,
+    or in `portable/cutout-models` beside the executable for a portable
+    build (see `concat-host/src/dirs.rs`). Reading the same folder the
+    settings sheet downloads into is what makes "download it in the UI and
+    the reader uses it" true without either side knowing about the other.
+    An explicit `models` in the spec still wins, which is what the tests
+    and the bench use.
+    """
+    named = spec.get("models") or os.environ.get("FUNCUT_MODELS")
+    if named:
+        return [Path(named)]
+    data = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    candidates = []
+    if os.environ.get("FUNCUT_APP_DIR"):
+        candidates.append(Path(os.environ["FUNCUT_APP_DIR"]) / "portable" / "cutout-models")
+    candidates.append(data / "app.concat.editor" / "cutout-models")
+    # Older layouts, so a model downloaded by an earlier build is still found.
+    for folder in ("funcut", "FUNCUT", "concat", "Concat"):
+        candidates.append(data / folder / "cutout-models")
+        candidates.append(data / folder / "models")
+    return candidates
+
+
 def _models_dir(spec):
-    return Path(
-        spec.get("models")
-        or os.environ.get("FUNCUT_MODELS")
-        or (Path.home() / ".local" / "share" / "funcut" / "models")
-    )
+    """The first candidate that holds the audio models, else the first.
+
+    A folder with only the vision models is not the sound models' home: the
+    reader would report them absent while the disk held a whole download,
+    which is exactly the confusion this order exists to avoid.
+    """
+    candidates = _model_candidates(spec)
+    for candidate in candidates:
+        if (candidate / "clap_text.onnx").is_file() or (candidate / "yamnet.onnx").is_file():
+            return candidate
+    return candidates[0]
 
 
 def _model_file(spec, name):
@@ -437,6 +469,14 @@ def _patch_loudness(samples, patches):
     return weights
 
 
+def _models_for(spec):
+    """The loaded models, built once per process (a session costs ~0.3 s)."""
+    key = str(_models_dir(spec))
+    if key not in _MODEL_CACHE:
+        _MODEL_CACHE[key] = Models(spec)
+    return _MODEL_CACHE[key]
+
+
 def _unit(vector):
     norm = float(np.linalg.norm(vector))
     return vector / norm if norm > 0 else vector
@@ -550,7 +590,7 @@ def describe_sound(spec):
     path = Path(str(spec.get("file") or ""))
     if not path.is_file():
         return {"tool": "describe", "ok": False, "error": f"no such file: {path}"}
-    models = Models(spec)
+    models = _models_for(spec)
     record, why = describe_file(spec, path, models)
     if record is None:
         return {"tool": "describe", "ok": False, "error": why}
@@ -571,12 +611,37 @@ def _stamp(path, models_dir):
     return {"version": MODEL_INDEX_VERSION, "models": models}
 
 
+def _index_one(job):
+    """One asset, in whichever process took the job."""
+    spec, path = job
+    models = _models_for(spec)
+    record, why = describe_file(spec, Path(path), models)
+    return path, record, why
+
+
+def _workers(spec):
+    """How many processes to measure with.
+
+    Two by default: the models are ~180 MB of weights per process, so a
+    worker pool is a memory decision before it is a speed one, and a
+    laptop that swaps mid-index is slower than one that does not. The
+    ceiling is the machine's own core count, and `workers: 1` turns the
+    pool off entirely.
+    """
+    named = spec.get("workers") or os.environ.get("FUNCUT_SOUND_WORKERS") or 2
+    try:
+        count = int(named)
+    except (TypeError, ValueError):
+        count = 2
+    return max(1, min(count, 8, os.cpu_count() or 2))
+
+
 def index_library(spec):
     root = Path(str(spec.get("dir") or ""))
     if not root.is_dir():
         return {"tool": "index", "ok": False, "error": f"no such directory: {root}"}
     out = Path(str(spec.get("out") or (root / "sound-model-index.json")))
-    models = Models(spec)
+    models = _models_for(spec)
     stamp = _stamp(root, _models_dir(spec))
 
     cached = {}
@@ -589,7 +654,7 @@ def index_library(spec):
             cached = {}
 
     started = time.time()
-    sounds, failed, skipped = [], [], []
+    sounds, failed, skipped, pending, listed_of = [], [], [], [], {}
     for path, listed in _entries(root):
         try:
             stat = path.stat()
@@ -599,26 +664,55 @@ def index_library(spec):
         if known and known.get("bytes") == stat.st_size and known.get("mtime") == int(stat.st_mtime):
             sounds.append(known)
             continue
-        record, why = describe_file(spec, path, models)
+        listed_of[str(path)] = (int(stat.st_size), int(stat.st_mtime), listed)
+        pending.append(str(path))
+
+    workers = _workers(spec)
+    results = []
+    if workers > 1 and len(pending) > 8:
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+
+            # Fork-free start method: the pool is built after the parent has
+            # already loaded its own sessions, and a forked child inheriting
+            # ONNX Runtime's threads is the classic way to hang a pool.
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(_index_one,
+                                        [(spec, path) for path in pending], chunksize=4))
+        except Exception as exc:  # no shared memory, no /dev/shm, no luck
+            results = []
+            workers = 1
+            spec = {**spec, "poolError": f"{type(exc).__name__}: {exc}"}
+    if not results:
+        results = [_index_one((spec, path)) for path in pending]
+
+    for path, record, why in results:
+        name = Path(path).name
         if record is None:
-            failed.append({"file": path.name, "why": why})
+            failed.append({"file": name, "why": why})
             continue
-        if record.get("soundSense", {}).get("silent"):
-            skipped.append({"file": path.name, "why": "silent: no usable signal"})
-        record["mtime"] = int(stat.st_mtime)
+        size, mtime, listed = listed_of.get(path, (None, None, {}))
+        record["mtime"] = mtime
         if listed.get("category"):
             record["category"] = listed["category"]
         if listed.get("useFor"):
             record["useFor"] = listed["useFor"]
+        if record.get("soundSense", {}).get("silent"):
+            skipped.append({"file": name, "why": "silent: no usable signal"})
         sounds.append(record)
 
+    sounds.sort(key=lambda entry: entry.get("file", ""))
     payload = {
         "tool": "index",
         "ok": True,
         "dir": str(root),
         "stamp": stamp,
         "model": {"state": models.state, "reason": models.reason},
+        "workers": workers,
+        "poolError": spec.get("poolError"),
         "count": len(sounds),
+        "measured": len(pending),
+        "reused": len(sounds) - len(pending) + len(failed),
         "failed": failed,
         "skipped": skipped,
         "seconds": _r(time.time() - started, 2),
@@ -631,14 +725,34 @@ def index_library(spec):
     return payload
 
 
+_INDEX_CACHE: dict = {}
+_MODEL_CACHE: dict = {}
+
+
 def _index_records(spec):
+    """The parsed index, read once per process per file version.
+
+    `plan` ranks once per accent, and re-reading a 3 MB index twenty times
+    to answer twenty dot products is the kind of cost that makes a feature
+    feel slow without being slow.
+    """
     path = Path(str(spec.get("index") or ""))
     if not path.is_file():
         return None, f"no index at {path}: run the index tool first"
     try:
-        return json.loads(path.read_text(encoding="utf-8")), None
+        stamp = path.stat().st_mtime
+    except OSError as exc:
+        return None, f"could not read {path}: {exc}"
+    key = (str(path), stamp)
+    if key in _INDEX_CACHE:
+        return _INDEX_CACHE[key], None
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         return None, f"could not read {path}: {exc}"
+    _INDEX_CACHE.clear()
+    _INDEX_CACHE[key] = parsed
+    return parsed, None
 
 
 def rank_sounds(spec):
@@ -652,7 +766,7 @@ def rank_sounds(spec):
     limit = int(spec.get("limit") or 8)
     max_duration = spec.get("maxDuration")
 
-    models = Models(spec)
+    models = _models_for(spec)
     text = models.text_embedding(query) if (query and models.state == "ready") else None
 
     scored = []
@@ -668,6 +782,8 @@ def rank_sounds(spec):
         measured = (sound.get("roles") or {}).get(role) if role else None
         scored.append({"file": sound["file"], "clap": clap, "measure": measured,
                        "duration": sound.get("identity", {}).get("duration"),
+                       "peakDbfs": (sound.get("quality") or {}).get("peakDbfs"),
+                       "flags": (sound.get("quality") or {}).get("flags") or [],
                        "role": sound.get("role"), "labels": [
                            l["label"] for l in (sound.get("yamnet") or {}).get("labels", [])[:3]],
                        "syncOffset": sound.get("syncOffset")})
@@ -735,6 +851,423 @@ def _why(candidate, role, weight):
 
 
 # ---------------------------------------------------------------------------
+# 6. plan: every signal, one sound design
+# ---------------------------------------------------------------------------
+#
+# The Director's other stages each answer one question - the arc names the
+# mood, prosody names the stressed word, the vision read names the cut, the
+# music read names the downbeat. Sound design is where they have to agree,
+# and a whoosh that lands 80 ms after the stressed syllable is wrong even
+# though every one of those reads was right on its own.
+#
+# So this tool takes them all at once and answers with a plan: what sound,
+# where its peak lands, how loud, what it must not cover, and which signal
+# put it there. Nothing here invents a number - every field cites the input
+# it came from, because a plan a Director cannot audit is a guess with
+# better formatting.
+
+ROLE_FOR_CONTEXT = {
+    # context: the role the moment is asking for
+    "hook": "action_impact",
+    "reveal": "cinematic_reveal",
+    "cut": "quick_transition",
+    "emphasis": "action_impact",
+    "act_start": "tension_build",
+    "graphic": "gentle_entrance",
+    "calm": "emotional_texture",
+}
+
+EMOTION_ROLE = {
+    "anger": "action_impact",
+    "fear": "tension_build",
+    "surprise": "cinematic_reveal",
+    "joy": "gentle_entrance",
+    "sadness": "emotional_texture",
+    "disgust": "action_impact",
+    "neutral": "quick_transition",
+}
+
+TEXTURE_WORDS = {
+    "action_impact": "a sharp heavy impact",
+    "cinematic_reveal": "a deep heavy cinematic boom",
+    "quick_transition": "a short bright whoosh of air",
+    "gentle_entrance": "a soft light interface entrance",
+    "tension_build": "a rising tension build",
+    "emotional_texture": "a warm sustained emotional texture",
+}
+
+
+def _accent_sources(spec):
+    """Every moment that could carry an accent, with the signal that says so.
+
+    The order is the order a mixer would consider them: the hook first,
+    because the first three seconds are the only part a viewer is
+    guaranteed to see; then reveals, because they are the payoff; then the
+    stressed words; then cuts and motion hits, which are accents of
+    opportunity.
+    """
+    visual = spec.get("visual") or {}
+    arc = spec.get("arc") or {}
+    out = []
+
+    def add(at, context, source, weight, **extra):
+        if at is None:
+            return
+        out.append({"at": float(at), "context": context, "source": source,
+                    "weight": float(weight), **extra})
+
+    for event in visual.get("events") or []:
+        kind = str(event.get("kind") or "").lower()
+        if kind in ("reveal", "payoff", "result", "title"):
+            add(event.get("at"), "reveal", "visual.events.reveal", 1.0,
+                kind=kind)
+    for act in arc.get("acts") or []:
+        name = str(act.get("name") or "").lower()
+        if name in ("hook", "opening", "title"):
+            add(act.get("start", 0.0), "hook", "arc.acts.hook", 0.9)
+        elif name in ("turn", "reveal", "payoff", "climax"):
+            add(act.get("start"), "reveal", f"arc.acts.{name}", 0.9)
+        elif act.get("start") is not None:
+            add(act.get("start"), "act_start", f"arc.acts.{name}", 0.45)
+    for beat in spec.get("beats") or []:
+        for hit in beat.get("emphasis") or []:
+            at = hit.get("at") if isinstance(hit, dict) else None
+            word = hit.get("word") if isinstance(hit, dict) else str(hit)
+            add(at, "emphasis", "beats.emphasis", 0.8, word=word,
+                emotion=beat.get("emotion"), beat=beat)
+    for at in visual.get("cuts") or []:
+        add(at, "cut", "visual.cuts", 0.55)
+    for at in visual.get("motionHits") or []:
+        add(at, "cut", "visual.motionHits", 0.5)
+    out.sort(key=lambda moment: (moment["at"], -moment["weight"]))
+    # Two reads naming the same instant are ONE accent: a reveal the vision
+    # read and the stressed word both landed on is not a place for two
+    # sounds, and reporting the second as a density violation hides the
+    # fact that the two signals agreed.
+    merged = []
+    for moment in out:
+        if merged and moment["at"] - merged[-1]["at"] < 0.02:
+            kept = merged[-1]
+            kept["sources"] = kept.get("sources", [kept["source"]]) + [moment["source"]]
+            kept["weight"] = max(kept["weight"], moment["weight"])
+            # The beat carries the prosody - the pause, the pitch, the
+            # stressed word - and a vision event at the same instant has
+            # none of it. Dropping the beat with the merge threw away the
+            # pause that decides whether the moment wants silence.
+            if not kept.get("beat") and moment.get("beat"):
+                kept["beat"] = moment["beat"]
+            # A reveal outranks a cut at the same instant: the payoff is the
+            # reason the frame exists.
+            if moment["context"] == "reveal" and kept["context"] != "reveal":
+                kept["context"] = "reveal"
+                kept["beat"] = moment.get("beat", kept.get("beat"))
+            continue
+        merged.append(moment)
+    return merged
+
+
+def _role_for(moment, spec):
+    """The job this moment needs, from its context and the story's mood."""
+    arc = spec.get("arc") or {}
+    beat = moment.get("beat") or {}
+    emotion = str(beat.get("emotion") or arc.get("emotion") or "neutral").lower()
+    intensity = float(beat.get("intensity") or arc.get("intensity") or 0.5)
+    role = ROLE_FOR_CONTEXT.get(moment["context"], "quick_transition")
+    # A question whose answer arrives is a reveal, not a cut: the pitch
+    # rose and the pause held, which is the shape of a setup.
+    if (beat.get("sentenceType") or "").lower() in ("question", "interrogative") \
+            and float(beat.get("pauseBefore") or 0.0) >= 0.35:
+        role = "cinematic_reveal"
+    # A quiet line does not take an impact, however it is punctuated.
+    if intensity < 0.35 and role == "action_impact":
+        role = "gentle_entrance"
+    # Rising pitch inside a tension act is a build, not a hit.
+    if (beat.get("pitchDirection") or "").lower() in ("rising", "up") \
+            and role in ("action_impact", "quick_transition") and intensity >= 0.6:
+        role = "tension_build"
+    if emotion in EMOTION_ROLE and moment["context"] in ("emphasis", "act_start"):
+        role = EMOTION_ROLE[emotion] if intensity >= 0.5 else role
+    return role, emotion, intensity
+
+
+def _query_for(role, emotion, moment):
+    """The sentence the shelf is searched with: role texture + mood."""
+    base = TEXTURE_WORDS.get(role, "a sound effect")
+    word = moment.get("word")
+    if word:
+        return f"{base} for the word {word!r}, {emotion} moment"
+    return f"{base}, {emotion} moment"
+
+
+def _pick(candidates, role, weight, moment, used, gap):
+    """The best candidate that fits the moment, with the reason it won."""
+    best = None
+    spent = long_for_gap = 0
+    for candidate in candidates:
+        if candidate.get("file") in used:
+            spent += 1
+            continue
+        duration = candidate.get("duration")
+        if duration and gap is not None and duration > gap * 1.6 + 0.1:
+            # A 4 s boom cannot sit in a 1 s gap: it would cover the next
+            # word, which is the failure the whole layer exists to catch.
+            long_for_gap += 1
+            continue
+        score = candidate.get("fused") or 0.0
+        if best is None or score > best[1]:
+            best = (candidate, score)
+    if best is None:
+        if not candidates:
+            return None, "the shelf answered nothing for this query"
+        return None, (f"no candidate fits: {spent} of {len(candidates)} already used"
+                      + (f", {long_for_gap} longer than the {_r(gap, 2)}s gap"
+                         if long_for_gap else ""))
+    return best[0], None
+
+
+def plan_sound(spec):
+    """Every signal at once, into a plan the Director can execute."""
+    index, why = _index_records(spec)
+    if index is None:
+        return {"tool": "plan", "ok": False, "error": why}
+    models = _models_for(spec)
+    beats = spec.get("beats") or []
+    style = spec.get("style") or {}
+    duration = float(spec.get("durationSec") or 0.0)
+    max_per_10s = float(style.get("maxAccentsPer10s") or 4.0)
+    min_gap = float(style.get("minAccentGapSec") or 0.45)
+    voice_lufs = spec.get("voiceLufs")
+
+    moments = _accent_sources(spec)
+    used, accents, warnings, silence = [], [], [], []
+    last_at = None
+
+    for index_of, moment in enumerate(moments):
+        role, emotion, intensity = _role_for(moment, spec)
+        beat = moment.get("beat") or {}
+        # The gap a sound has to fit inside: to the next moment that will
+        # actually be placed (a weaker one inside the floor gives way to
+        # this one, so it is not a wall), and never past the end of the
+        # line being spoken.
+        gap = None
+        for later in moments[index_of + 1:]:
+            if later["at"] <= moment["at"]:
+                continue
+            if later["at"] - moment["at"] < min_gap and later["weight"] < moment["weight"]:
+                continue
+            gap = later["at"] - moment["at"]
+            break
+        if beat.get("end") is not None:
+            until = float(beat["end"]) - moment["at"]
+            if until > 0 and (gap is None or until < gap):
+                gap = until
+        # A held pause is a fact about the take, not a consequence of
+        # placing an accent: it is reported whether or not this moment ends
+        # up carrying a sound, because the room to hold is the direction.
+        pause = float(beat.get("pauseBefore") or 0.0)
+        if pause >= 0.5 and role == "cinematic_reveal":
+            silence.append({
+                "at": _r(moment["at"] - pause, 3), "until": _r(moment["at"], 3),
+                "why": f"a {_r(pause, 2)}s pause before the reveal: hold the "
+                       "room, then land the sound on the reveal itself",
+                "signal": "beats.pauseBefore",
+            })
+        # Density: an accent every 300 ms is noise, not design. A stronger
+        # moment still wins the instant - the reveal outranks the cut that
+        # happens to sit 400 ms before it, and a cut is not worth losing
+        # the payoff over.
+        if last_at is not None and moment["at"] - last_at < min_gap:
+            close = [a for a in accents if moment["at"] - a["at"] < min_gap]
+            weakest = min(close, key=lambda accent: accent["weight"]) if close else None
+            if weakest is not None and moment["weight"] > weakest["weight"] + 0.05:
+                accents.remove(weakest)
+                if weakest["file"] in used:
+                    used.remove(weakest["file"])
+                warnings.append({
+                    "at": weakest["at"], "kind": "evicted",
+                    "why": f"dropped for the {moment['context']} at "
+                           f"{_r(moment['at'], 3)}s, {_r(moment['at'] - weakest['at'], 3)}s "
+                           f"away: weight {_r(weakest['weight'], 2)} against "
+                           f"{_r(moment['weight'], 2)}",
+                    "signal": weakest["why"]["signal"],
+                })
+            else:
+                warnings.append({
+                    "at": _r(moment["at"], 3), "kind": "density",
+                    "why": f"{_r(moment['at'] - last_at, 3)}s after the previous accent, "
+                           f"below the {min_gap}s floor: dropped",
+                    "signal": moment["source"],
+                })
+                continue
+        window = [a for a in accents if moment["at"] - 10.0 <= a["at"] <= moment["at"]]
+        if len(window) >= max_per_10s:
+            weakest = min(window, key=lambda accent: accent["weight"])
+            if moment["weight"] > weakest["weight"] + 0.05:
+                # The story's payoff outranks an accent of opportunity: the
+                # weaker one gives way, and the plan says which and why.
+                accents.remove(weakest)
+                if weakest["file"] in used:
+                    used.remove(weakest["file"])
+                warnings.append({
+                    "at": weakest["at"], "kind": "evicted",
+                    "why": f"dropped for the {moment['context']} at {_r(moment['at'], 3)}s: "
+                           f"{len(window)} accents in 10s, and this was the weakest "
+                           f"(weight {_r(weakest['weight'], 2)} against "
+                           f"{_r(moment['weight'], 2)})",
+                    "signal": weakest["why"]["signal"],
+                })
+            else:
+                warnings.append({
+                    "at": _r(moment["at"], 3), "kind": "density",
+                    "why": f"{len(window)} accents in the last 10s, at the "
+                           f"{max_per_10s:g}/10s ceiling: dropped",
+                    "signal": moment["source"],
+                })
+                continue
+        query = _query_for(role, emotion, moment)
+        ranked = rank_sounds({**spec, "query": query, "role": role,
+                              "limit": 12, "models": spec.get("models")})
+        candidates = ranked.get("candidates") or [] if ranked.get("ok") else []
+        chosen, failure = _pick(candidates, role, ranked.get("weight"), moment, used, gap)
+        if chosen is None:
+            warnings.append({
+                "at": _r(moment["at"], 3), "kind": "no-sound",
+                "why": failure or "no candidate", "signal": moment["source"],
+                "query": query,
+            })
+            continue
+        used.append(chosen["file"])
+        offset = chosen.get("syncOffset") or 0.0
+        # The level: the shelf sits near full scale, so an accent is placed
+        # by its own measured peak against a target that leaves the voice
+        # on top. A loud take gets a quieter accent, which is what a mixer
+        # does with a fader rather than a different sound.
+        peak = (chosen.get("peakDbfs") if chosen.get("peakDbfs") is not None else -12.0)
+        target = -12.0
+        if voice_lufs is not None:
+            target = max(-18.0, min(-9.0, float(voice_lufs) + 4.0))
+        wanted = target - float(peak)
+        # A fader has limits: more than +6 dB of boost on a shelf sound
+        # brings its noise floor up with it, and past -24 dB the accent is
+        # inaudible, which is the same as not placing it.
+        gain = round(max(-24.0, min(6.0, wanted)), 1)
+        clamped = abs(gain - wanted) > 0.05
+        accents.append({
+            "at": _r(moment["at"], 3),
+            "role": role,
+            "context": moment["context"],
+            "weight": moment["weight"],
+            "file": chosen["file"],
+            "query": query,
+            "startAt": _r(max(0.0, moment["at"] - offset), 3),
+            "peakLandsAt": _r(moment["at"], 3),
+            "syncOffset": _r(offset, 3),
+            "gainDb": gain,
+            "gainClamped": clamped,
+            "peakDbfs": peak,
+            "duration": chosen.get("duration"),
+            "fitsGap": gap,
+            "why": {
+                "role": f"{moment['context']} + {emotion} (intensity {_r(intensity, 2)})",
+                "signal": ", ".join(moment.get("sources", [moment["source"]])),
+                "word": moment.get("word"),
+                "score": chosen.get("fused"),
+                "clap": chosen.get("clap"),
+                "measure": chosen.get("measure"),
+                "labels": chosen.get("labels"),
+            },
+        })
+        last_at = moment["at"]
+
+    music = _plan_music(spec, models, accents, warnings, voice_lufs)
+    reply = {
+        "tool": "plan",
+        "ok": True,
+        "model": {"state": models.state, "reason": models.reason},
+        "considered": len(moments),
+        "accents": accents,
+        "silence": silence,
+        "music": music,
+        "warnings": warnings,
+        "unusedSignals": _unused(spec),
+    }
+    return reply
+
+
+def _plan_music(spec, models, accents, warnings, voice_lufs):
+    """Where the music goes, where it changes, and what it must not cover."""
+    bgm = spec.get("bgm") or {}
+    candidates = bgm.get("candidates") or []
+    arc = spec.get("arc") or {}
+    duration = float(spec.get("durationSec") or 0.0)
+    if not candidates:
+        return {"state": "none", "why": "no music candidates offered: the cut is "
+                "designed dry, which is a decision and is reported as one"}
+    # The mood the story is asking the music to carry.
+    mood = str(arc.get("emotion") or "neutral").lower()
+    scored = []
+    for candidate in candidates:
+        score = 0.0
+        why = []
+        moods = candidate.get("moods") or []
+        if moods:
+            hit = next((m for m in moods if mood.split()[0] in m["mood"]), None)
+            if hit:
+                score += hit["similarity"]
+                why.append(f"mood match {hit['similarity']}")
+        if candidate.get("bpm"):
+            score += 0.05
+            why.append(f"{candidate['bpm']} bpm")
+        scored.append((score, candidate, why))
+    scored.sort(key=lambda row: -row[0])
+    _, track, why = scored[0]
+    # The change lands on the music's own structure, not on a round number:
+    # a cut-safe point near the story's turn is where the ear expects it.
+    turn = None
+    for act in arc.get("acts") or []:
+        if str(act.get("name") or "").lower() in ("turn", "reveal", "climax"):
+            turn = float(act.get("start") or 0.0)
+            break
+    change = None
+    safe = track.get("cutSafePoints") or []
+    if turn is not None and safe:
+        change = min(safe, key=lambda point: abs(float(point) - turn))
+    ducking = []
+    for beat in spec.get("beats") or []:
+        start, end = beat.get("at"), beat.get("end")
+        if start is None or end is None:
+            continue
+        ducking.append({"from": _r(start, 2), "to": _r(end, 2), "duckDb": -12.0,
+                        "rampMs": 250,
+                        "why": "narration: the bed sits under the voice"})
+    ending = None
+    if duration and track.get("duration"):
+        track_end = float(track["duration"])
+        if track_end - duration < 0.5:
+            ending = {"at": _r(max(0.0, duration - 1.5), 2), "fadeSec": 1.5,
+                      "why": "the track would be cut off before it resolves: "
+                             "fade rather than stop"}
+    return {
+        "state": "planned",
+        "file": track.get("file"),
+        "why": why,
+        "changeAt": _r(change, 3) if change is not None else None,
+        "changeWhy": "nearest cut-safe point to the story's turn" if change else None,
+        "ducking": ducking,
+        "ending": ending,
+        "gainDb": -14.0 if voice_lufs is None else round(float(voice_lufs) - 6.0, 1),
+    }
+
+
+def _unused(spec):
+    """The signals the plan did not read - said out loud, not silently dropped."""
+    known = {"beats", "visual", "arc", "bgm", "style", "durationSec", "voiceLufs",
+             "index", "models", "tool", "query", "role", "limit", "file", "dir",
+             "out", "maxDuration"}
+    return sorted(key for key in spec if key not in known)
+
+
+# ---------------------------------------------------------------------------
 # 6. selftest: the numbers, not the vibes
 # ---------------------------------------------------------------------------
 
@@ -742,6 +1275,78 @@ def _why(candidate, role, weight):
 def _tone(freq=1000.0, seconds=1.0, rate=CLAP_RATE):
     return np.array([0.5 * math.sin(2 * math.pi * freq * i / rate)
                      for i in range(int(seconds * rate))], dtype=np.float64)
+
+
+def _plan_selftest(spec):
+    """The planner's rules, on records that need no decoding."""
+    import tempfile
+
+    checks = []
+
+    def check(name, ok, detail=""):
+        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+
+    def record(name, duration, fits, peak=-6.0):
+        return {"file": name, "identity": {"duration": duration},
+                "quality": {"peakDbfs": peak, "flags": []},
+                "roles": fits, "syncOffset": 0.05,
+                "soundSense": {"silent": False}}
+
+    index = {"stamp": {"models": "synthetic", "version": MODEL_INDEX_VERSION},
+             "sounds": [
+                 record("boom.ogg", 2.2, {"cinematic_reveal": 0.9, "action_impact": 0.7}),
+                 record("hit.ogg", 0.6, {"action_impact": 0.9, "quick_transition": 0.4}),
+                 record("whoosh.ogg", 0.5, {"quick_transition": 0.9}),
+                 record("riser.ogg", 3.0, {"tension_build": 0.85}),
+                 record("soft.ogg", 0.9, {"gentle_entrance": 0.8}),
+                 record("pad.ogg", 4.0, {"emotional_texture": 0.8}),
+             ]}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "index.json"
+        path.write_text(json.dumps(index), encoding="utf-8")
+        plan = plan_sound({
+            "tool": "plan", "index": str(path), "models": str(Path(tmp) / "none"),
+            "durationSec": 30, "voiceLufs": -18.0,
+            "arc": {"emotion": "fear", "acts": [{"name": "hook", "start": 0.5},
+                                                {"name": "turn", "start": 12.0}]},
+            "beats": [
+                {"at": 1.0, "end": 3.0, "emotion": "fear", "intensity": 0.8,
+                 "emphasis": [{"word": "never", "at": 1.4}]},
+                {"at": 12.0, "end": 16.0, "emotion": "surprise", "intensity": 0.9,
+                 "pauseBefore": 0.8, "sentenceType": "question",
+                 "emphasis": [{"word": "everything", "at": 12.4}]},
+            ],
+            "visual": {"cuts": [12.0, 12.3, 12.6], "events": [{"at": 12.4, "kind": "reveal"}]},
+            "style": {"maxAccentsPer10s": 3, "minAccentGapSec": 0.45},
+        })
+
+    check("plan answers without models", plan.get("ok") is True, str(plan.get("error", ""))[:80])
+    accents = plan.get("accents") or []
+    check("plan places accents", len(accents) >= 2, f"{len(accents)} accents")
+    check("every accent cites the signal that put it there",
+          all(a["why"].get("signal") for a in accents),
+          str([a["why"].get("signal") for a in accents]))
+    check("every accent names a real file", all(a.get("file") for a in accents))
+    check("the reveal gets a sound",
+          any(a["at"] == 12.4 or a["role"] == "cinematic_reveal" for a in accents),
+          str([(a["at"], a["role"]) for a in accents]))
+    # The window ends where the accent lands and begins one pause earlier,
+    # so it is the pause the beat carried (0.8 s before the reveal at 12.4),
+    # not a number the planner invented.
+    check("a held pause is reported as silence",
+          any(abs(float(window["until"]) - 12.4) < 0.01
+              and abs((float(window["until"]) - float(window["at"])) - 0.8) < 0.01
+              for window in plan.get("silence") or []),
+          str(plan.get("silence")))
+    check("a cluster of cuts is thinned, not stacked",
+          any(w["kind"] in ("density", "evicted") for w in plan.get("warnings") or []),
+          str([(w["at"], w["kind"]) for w in plan.get("warnings") or []]))
+    check("a gain is measured, not assumed",
+          all(a.get("peakDbfs") is not None for a in accents),
+          str([a.get("gainDb") for a in accents]))
+    check("the same file is not used twice", len({a["file"] for a in accents}) == len(accents),
+          str([a["file"] for a in accents]))
+    return checks
 
 
 def selftest(spec=None):
@@ -795,6 +1400,8 @@ def selftest(spec=None):
                   and abs(float(np.linalg.norm(embedding)) - 1.0) < 1e-3,
                   "" if embedding is None else f"{embedding.size}")
 
+    checks.extend(_plan_selftest(spec))
+
     failed = [c for c in checks if not c["ok"]]
     return {"tool": "selftest", "ok": not failed, "checks": checks,
             "passed": len(checks) - len(failed), "total": len(checks),
@@ -805,8 +1412,24 @@ TOOLS = {
     "describe": describe_sound,
     "index": index_library,
     "rank": rank_sounds,
+    "plan": plan_sound,
     "selftest": selftest,
 }
+
+
+def command(spec):
+    """The family door sense.py calls: one spec in, one object out."""
+    tool = str(spec.get("tool") or "")
+    action = str(spec.get("action", "extract"))
+    try:
+        if action == "selftest":
+            return selftest(spec if tool in TOOLS else None)
+        handler = TOOLS.get(tool)
+        if handler is None:
+            return {"ok": False, "error": f"unknown tool {tool!r}: one of {sorted(TOOLS)}"}
+        return handler(spec)
+    except Exception as exc:  # noqa: BLE001 - a sidecar reports, it does not traceback
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def main(argv):

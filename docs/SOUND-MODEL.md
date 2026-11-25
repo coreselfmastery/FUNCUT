@@ -280,3 +280,64 @@ can be checked against the numbers in §3 and not just against its own output.
   gap is not model quality; it is that nothing calls this yet.
 - Believing the index is fresh because the file exists. It is fresh when the
   stamp matches.
+
+## 11. The planner: every signal, one sound design
+
+The model layer answered "what is this file". The planner answers the question the Director actually has: *what sound goes where, how loud, and why.*
+
+`sound_model.py plan` takes one spec and returns one plan:
+
+```json
+{"tool": "plan", "index": "...", "durationSec": 45, "voiceLufs": -17.5,
+ "arc":    {"emotion": "fear", "acts": [{"name": "turn", "start": 24.0}]},
+ "beats":  [{"at": 13.0, "end": 22.5, "emotion": "surprise", "intensity": 0.8,
+             "sentenceType": "question", "pitchDirection": "rising",
+             "pauseBefore": 0.6, "emphasis": [{"word": "noise", "at": 18.4}]}],
+ "visual": {"cuts": [5.6, 12.0], "events": [{"at": 26.4, "kind": "reveal"}],
+            "motionHits": [18.4]},
+ "bgm":    {"candidates": [{"file": "...", "bpm": 88, "cutSafePoints": [23.6]}]},
+ "style":  {"maxAccentsPer10s": 3, "minAccentGapSec": 0.45}}
+```
+
+Every field of the reply cites the input that produced it:
+
+| Reply field | Comes from |
+| --- | --- |
+| `accents[].why.signal` | the signal that named the moment (`beats.emphasis`, `visual.cuts`, `arc.acts.turn`, ...) |
+| `accents[].role` | the context, the emotion, the intensity, the pitch direction, the pause |
+| `accents[].startAt` / `peakLandsAt` | the asset's measured `syncOffset`, so the transient lands on the word |
+| `accents[].gainDb` | the asset's measured peak against the voice's own loudness, clamped to -24..+6 dB |
+| `silence[]` | a pause long enough to hold before a reveal |
+| `warnings[]` | a moment refused, and which constraint refused it |
+| `music.changeAt` | the nearest cut-safe point to the story's turn |
+| `music.ducking[]` | the narration spans the bed must sit under |
+
+### The rules, and the run that corrected them
+
+The first real run (45 s story, 530-sound shelf) placed ten accents in 1.4 s and exposed four defects, each now a selftest assertion:
+
+1. **Every accent got the same gain** — the ranked candidates did not carry `peakDbfs`, so the level fell back to a constant. The candidates carry the measurement now, and the gain is `target - measured peak`.
+2. **Two signals naming one instant were counted as two accents** — a reveal the vision read and the stressed word both landed on produced a "density" warning instead of one accent citing both. They merge now, and the beat (which carries the pause) survives the merge.
+3. **The payoff was dropped to protect a cut** — three accents inside ten seconds meant the story's reveal at 26.4 s lost to a cut at 22.5 s. A stronger moment now evicts the weaker one, and the plan records which one gave way and why.
+4. **A reveal got no sound because of a cut 200 ms later** — the duration filter measured the gap to a moment that was about to be suppressed. The gap is now measured to the next moment that will survive, and never past the end of the line being spoken.
+
+Measured on the shelf: `selftest` 21/21 with models, plan of a 45 s story in **1.4 s** (530 candidates, 15 moments, one query embedding each).
+
+## 12. Parallel indexing
+
+`index` measures every asset once, so it is the only slow step. It now runs a process pool:
+
+| Workers | 530 sounds | Notes |
+| --- | --- | --- |
+| 1 | 140 s | serial, one decode at a time |
+| 2 (default) | **91 s** | 1.54x, ~360 MB peak for the two model sets |
+
+`workers: 1` disables the pool, `FUNCUT_SOUND_WORKERS` sets it, and the ceiling is the machine's core count. Two is the default because the models are ~180 MB of weights *per process*: a laptop that swaps mid-index is slower than one that does not. If the pool cannot start (no shared memory, a restricted sandbox), the reply says so in `poolError` and the index runs serially rather than failing.
+
+## 13. Where the models come from, and where they land
+
+The five files are in the app's own registry (`concat-vision/src/models.rs`, `ModelId::ClapAudio` and friends) with their exact sizes and SHA-256, so a download is verified the way the vision models are. `ModelId::kind()` splits the table into `vision` and `sound`, which is what a grouped settings list needs.
+
+`_models_dir()` reads, in order: the spec's `models`, `FUNCUT_MODELS`, `<app dir>/portable/cutout-models`, `<data>/app.concat.editor/cutout-models` (where the settings sheet downloads), then the older `funcut/` and `concat/` layouts. A folder that holds only the vision models is not chosen for the sound models — the reader looks for `clap_text.onnx` or `yamnet.onnx` before it settles.
+
+**Still open:** the settings sheet's model list is built from the speech models, not from `concat_vision::models::MODELS`, so the sound rows need a new section in `src/crates/concat/src/panes/settings.rs` plus a download worker for them. The registry entries, hashes and the sidecar's search order are in place; the sheet is the remaining piece.

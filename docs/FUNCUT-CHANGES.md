@@ -3561,3 +3561,14 @@ is a `scene3d` node resolves to native even when the Geneva sidecar is
 installed. A comp that also carries markup keeps Geneva, and the bake
 warns that Geneva cannot draw the scene rather than dropping it
 silently.
+
+## The sound planner, the pool and the model table
+
+`sense_sound_model {action: "plan"}` is the Director's door: one call carrying the arc, the beats, the prosody emphasis, the pauses, the cuts, the motion hits and the BGM candidates, answered with a per-moment sound design that cites the signal behind every choice, the level measured against the voice, the silence windows, the evictions and the refusals.
+
+- `sense_sound` and `sense_sound_model` are registered families (`sense.rs`), in the catalogue (`tools.rs`) and in the protocol's tool list, so the Director can reach the measurement layer and the model layer by name.
+- The index runs a process pool (2 workers by default: 530 sounds in 91 s against 140 s serial) and degrades to serial with `poolError` when a pool cannot start.
+- The five sound models are in the download registry with their sizes and SHA-256, split from the vision models by `ModelId::kind()`, and the sidecar reads the folder the sheet downloads into.
+- The planner's four defects found by its first real run are now selftest assertions (21/21 with models, 10/10 without).
+
+Not yet done: the settings sheet's sound-model section (the row data exists; the list is still built from the speech models), and the Director stage that calls `plan` and places its accents instead of shopping by keyword.

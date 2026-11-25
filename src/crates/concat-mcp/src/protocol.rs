@@ -185,6 +185,8 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "sense_prosody_style",
     "sense_audio_repair",
     "sense_captions",
+    "sense_sound",
+    "sense_sound_model",
     // The analysis senses.
     "analyze_silence",
     "analyze_beats",

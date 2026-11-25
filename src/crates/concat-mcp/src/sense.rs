@@ -37,6 +37,13 @@ const VOICE_QUALITY_PY: &str = include_str!("../sense/voice_quality.py");
 const PROSODY_STYLE_PY: &str = include_str!("../sense/prosody_style.py");
 const AUDIO_REPAIR_PY: &str = include_str!("../sense/audio_repair.py");
 const CAPTIONS_PY: &str = include_str!("../sense/captions.py");
+/// The sound reader: what a sound file IS, measured (`sound_sense.py`) and
+/// what it MEANS, from YAMNet and CLAP (`sound_model.py`). Two scripts
+/// because the first is standard-library arithmetic and the second needs
+/// numpy and ONNX Runtime - a stock install runs the first and is told
+/// exactly what the second would add.
+const SOUND_SENSE_PY: &str = include_str!("../sense/sound_sense.py");
+const SOUND_MODEL_PY: &str = include_str!("../sense/sound_model.py");
 const FARM_SYNC_PY: &str = include_str!("../sense/farm-sync.py");
 /// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
 /// rerank `openvid_search` runs behind BM25. It lands in the same runtime
@@ -100,6 +107,8 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("prosody_style.py"), PROSODY_STYLE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("audio_repair.py"), AUDIO_REPAIR_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("captions.py"), CAPTIONS_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("sound_sense.py"), SOUND_SENSE_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("sound_model.py"), SOUND_MODEL_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("farm-sync.py"), FARM_SYNC_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
@@ -2126,6 +2135,67 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
             "maxCharsPerLine",
         ],
     },
+    // sound_sense.py - what a sound file IS, measured
+    SenseFamilyTool {
+        tool: "describe_sound",
+        cmd: "sound",
+        base: 90,
+        fields: &["file", "path", "models"],
+    },
+    SenseFamilyTool {
+        tool: "rank_sounds",
+        cmd: "sound",
+        base: 120,
+        fields: &["query", "role", "index", "limit", "maxDuration", "models"],
+    },
+    SenseFamilyTool {
+        tool: "check_placement",
+        cmd: "sound",
+        base: 120,
+        fields: &[
+            "file", "audio", "path", "paths", "index", "role", "intendedAt", "moment",
+            "recent", "voiceLufs", "voicePeakDbfs", "models",
+        ],
+    },
+    SenseFamilyTool {
+        // The shelf index measures every asset once: 530 sounds take about
+        // two and a half minutes on a laptop, and the budget is the floor
+        // that lets the first run finish instead of timing out mid-shelf.
+        tool: "index_library",
+        cmd: "sound",
+        base: 420,
+        fields: &["dir", "models"],
+    },
+    // sound_model.py - what a sound MEANS, from YAMNet and CLAP
+    SenseFamilyTool {
+        tool: "describe",
+        cmd: "soundmodel",
+        base: 90,
+        fields: &["file", "path", "models"],
+    },
+    SenseFamilyTool {
+        tool: "index",
+        cmd: "soundmodel",
+        base: 440,
+        fields: &["dir", "models", "workers"],
+    },
+    SenseFamilyTool {
+        tool: "rank",
+        cmd: "soundmodel",
+        base: 120,
+        fields: &["query", "role", "index", "limit", "maxDuration", "models"],
+    },
+    SenseFamilyTool {
+        // The whole sound design in one call: every signal the Director
+        // has, in, and a per-moment plan out.
+        tool: "plan",
+        cmd: "soundmodel",
+        base: 180,
+        fields: &[
+            "index", "beats", "visual", "arc", "bgm", "style", "durationSec",
+            "voiceLufs", "models",
+        ],
+    },
     SenseFamilyTool {
         tool: "clean_subtitles",
         cmd: "captions",
@@ -2197,6 +2267,19 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
             "identify_music",
             "analyze_music_structure",
         ],
+    ),
+    (
+        "sound",
+        &[
+            "describe_sound",
+            "rank_sounds",
+            "check_placement",
+            "index_library",
+        ],
+    ),
+    (
+        "soundmodel",
+        &["describe", "index", "rank", "plan"],
     ),
     (
         "captions",
@@ -2399,6 +2482,8 @@ fn family_key(tool: &str) -> &str {
         "sense_voice_quality" => "voiceq",
         "sense_prosody_style" => "prosody",
         "sense_audio_repair" => "audiorepair",
+        "sense_sound" => "sound",
+        "sense_sound_model" => "soundmodel",
         _ => "captions",
     }
 }

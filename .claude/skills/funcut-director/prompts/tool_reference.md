@@ -238,7 +238,10 @@ brief?, autoSetup?, profile?}` · `emotion {action:
 extract|brand|gate|verify|template, project?}` · `voice_signals {action:
 extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
 `sense_discourse` · `sense_voice_quality` · `sense_prosody_style` ·
-`sense_audio_repair` · `sense_captions` · `measure_loudness {path,
+`sense_audio_repair` · `sense_captions` · `sense_visual {action:
+measure_motion|camera_motion|shot_scale|visual_sync|scene_cuts|visual_quality|
+palette|saliency|measure_clips|bench|models|action_class|depth_map|subject_mask|
+visual_embedding|describe_scene, …}` · `measure_loudness {path,
 targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
 `footage_plan_suggest {transcript: {segments: [{start,end,text}]}, beats?}`
 (the dialogue gaps and monotony runs that want B-roll, named before the plan is written)
@@ -248,11 +251,15 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   family, and why), `decisionPolicy` (which signals drive each decision) and
   `directorHints` (the cut style, the caption gate, the BGM call). The plan's
   `signalLog` cites its signals; `plan_validate` holds the citations.
-- The five `sense_*` family tools are the consumption layer: `action` names
+- The six `sense_*` family tools are the consumption layer: `action` names
   the reading (`sense_discourse {action: "score_script_quality", script}` —
   the ten discourse readings, the six voice-quality readings, the six
-  prosody readings, the six audio-repair actions and the five caption
-  readings; `selftest: true` proves one). Each reading names its own traps
+  prosody readings, the eight audio-repair actions, the five caption
+  readings and the picture's sixteen — motion, camera travel and its
+  direction, shot scale, audio-visual sync, scene cuts, the technical
+  read, palette, saliency, the batch `measure_clips` read, the `bench`,
+  the `models` listing and the five model doors; `selftest: true` proves
+  one). Each reading names its own traps
   in its reply; the family schema documents the shared inputs. Three
   audio-repair actions are wired into the pipeline itself:
   `enhance_speech` (Phase 2 — a rough take is repaired before it is

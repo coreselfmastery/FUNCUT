@@ -37,6 +37,11 @@ const VOICE_QUALITY_PY: &str = include_str!("../sense/voice_quality.py");
 const PROSODY_STYLE_PY: &str = include_str!("../sense/prosody_style.py");
 const AUDIO_REPAIR_PY: &str = include_str!("../sense/audio_repair.py");
 const CAPTIONS_PY: &str = include_str!("../sense/captions.py");
+/// The picture's own reader: optical flow, camera motion, shot scale,
+/// visual quality, palette, saliency, the stock batch read, the bench,
+/// and the ONNX doors (action, depth, masks, embeddings). Classical tools
+/// need no model; the doors refuse honestly when one is absent.
+const VISUAL_SENSE_PY: &str = include_str!("../sense/visual_sense.py");
 const FARM_SYNC_PY: &str = include_str!("../sense/farm-sync.py");
 /// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
 /// rerank `openvid_search` runs behind BM25. It lands in the same runtime
@@ -100,6 +105,7 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("prosody_style.py"), PROSODY_STYLE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("audio_repair.py"), AUDIO_REPAIR_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("captions.py"), CAPTIONS_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("visual_sense.py"), VISUAL_SENSE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("farm-sync.py"), FARM_SYNC_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
@@ -2141,9 +2147,220 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
             "format",
         ],
     },
+    // visual_sense.py - what the shot does, measured. The classical
+    // readings take the same frame inputs; the doors add a model name.
+    SenseFamilyTool {
+        tool: "measure_motion",
+        cmd: "visual",
+        base: 150,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "flowWidth",
+            "search",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "camera_motion",
+        cmd: "visual",
+        base: 150,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "flowWidth",
+            "search",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "shot_scale",
+        cmd: "visual",
+        base: 120,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "subject", "boxes",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "visual_sync",
+        cmd: "visual",
+        base: 150,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "audioOnsets",
+            "motionOnsets",
+            "toleranceMs",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "scene_cuts",
+        cmd: "visual",
+        base: 150,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "scenes",
+            "sceneCuts",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "visual_quality",
+        cmd: "visual",
+        base: 120,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "palette",
+        cmd: "visual",
+        base: 90,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "saliency",
+        cmd: "visual",
+        base: 90,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "measure_clips",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "paths", "intent", "samples", "width", "maxClips", "from", "to",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "bench",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "paths",
+            "clips",
+            "cuts",
+            "pauseCuts",
+            "window",
+            "intent",
+            "samples",
+            "width",
+            "maxClips",
+            "from",
+            "to",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "models",
+        cmd: "visual",
+        base: 60,
+        fields: &["modelDir"],
+    },
+    SenseFamilyTool {
+        tool: "action_class",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "labels", "topK", "size", "time",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "depth_map",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path", "frames", "dir", "from", "to", "times", "samples", "width", "model", "modelId",
+            "modelDir", "size",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "subject_mask",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "model",
+            "modelId",
+            "modelDir",
+            "size",
+            "threshold",
+            "box",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "visual_embedding",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "model",
+            "modelId",
+            "modelDir",
+            "size",
+            "dimensions",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "describe_scene",
+        cmd: "visual",
+        base: 300,
+        fields: &[
+            "path",
+            "frames",
+            "dir",
+            "from",
+            "to",
+            "times",
+            "samples",
+            "width",
+            "prompt",
+            "maxTokens",
+        ],
+    },
 ];
 
-/// The five family doors and the members each one serves: the catalogue
+/// The family doors and the members each one serves: the catalogue
 /// names the family, the `action` argument names the member, and this
 /// table is the boundary between them - a member named through the wrong
 /// family is refused here, with the family that carries it named.
@@ -2208,6 +2425,27 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
             "clean_subtitles",
         ],
     ),
+    (
+        "visual",
+        &[
+            "measure_motion",
+            "camera_motion",
+            "shot_scale",
+            "visual_sync",
+            "scene_cuts",
+            "visual_quality",
+            "palette",
+            "saliency",
+            "measure_clips",
+            "bench",
+            "models",
+            "action_class",
+            "depth_map",
+            "subject_mask",
+            "visual_embedding",
+            "describe_scene",
+        ],
+    ),
 ];
 
 /// One family tool's input schema: the `action` enum is the family's
@@ -2250,7 +2488,8 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
     // even though the rest of the discourse family works from text, and
     // the family schema refusing the field would refuse the member's own
     // contract.
-    let takes_audio = name != "sense_discourse" || members.contains(&"detect_sarcasm");
+    let takes_audio = name != "sense_visual"
+        && (name != "sense_discourse" || members.contains(&"detect_sarcasm"));
     if takes_audio {
         props.insert(
             "audio".to_owned(),
@@ -2265,6 +2504,155 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         props.insert("script".to_owned(), script());
     }
     let member = |name: &str| members.contains(&name);
+    if name == "sense_visual" {
+        let frame_inputs = |props: &mut Map<String, Value>| {
+            props.insert(
+                "path".to_owned(),
+                string("The media file to sample, or a folder of PNG frames."),
+            );
+            props.insert(
+                "frames".to_owned(),
+                json!({ "type": "array", "description": "Decoded frames: [{pngB64, at}] or bare base64 PNG strings.", "items": { "type": ["object", "string"] } }),
+            );
+            props.insert(
+                "dir".to_owned(),
+                string("A folder of PNG frames, in file-name order."),
+            );
+            props.insert(
+                "from".to_owned(),
+                json!({ "type": "number", "minimum": 0, "description": "First second to sample." }),
+            );
+            props.insert(
+                "to".to_owned(),
+                json!({ "type": "number", "minimum": 0, "description": "Last second to sample; the clip's end by default." }),
+            );
+            props.insert(
+                "times".to_owned(),
+                json!({ "type": "array", "items": { "type": "number" }, "maxItems": 24, "description": "Exact seconds to sample." }),
+            );
+            props.insert(
+                "samples".to_owned(),
+                json!({ "type": "integer", "minimum": 2, "maximum": 24, "default": 8, "description": "Frames to sample across the span." }),
+            );
+            props.insert(
+                "width".to_owned(),
+                json!({ "type": "integer", "minimum": 16, "maximum": 240, "default": 64, "description": "The work width every read runs at; cost is bounded by it." }),
+            );
+        };
+        frame_inputs(&mut props);
+        props.insert(
+            "flowWidth".to_owned(),
+            json!({ "type": "integer", "minimum": 16, "maximum": 240, "default": 64, "description": "measure_motion / camera_motion: flow width." }),
+        );
+        props.insert(
+            "search".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "maximum": 6, "default": 3, "description": "measure_motion: block-match radius." }),
+        );
+        props.insert(
+            "subject".to_owned(),
+            json!({ "type": "object", "description": "shot_scale: track_subject's box as {x, y, w, h} fractions.", "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false }),
+        );
+        props.insert(
+            "boxes".to_owned(),
+            json!({ "type": "array", "items": { "type": "object" }, "maxItems": 24, "description": "shot_scale: one subject box per frame." }),
+        );
+        props.insert(
+            "audioOnsets".to_owned(),
+            json!({ "type": "array", "items": { "type": "number" }, "maxItems": 256, "description": "visual_sync: audio onset seconds." }),
+        );
+        props.insert(
+            "motionOnsets".to_owned(),
+            json!({ "type": "array", "items": { "type": "number" }, "maxItems": 256, "description": "visual_sync: motion onset seconds; measured when absent." }),
+        );
+        props.insert(
+            "toleranceMs".to_owned(),
+            json!({ "type": "number", "minimum": 0, "maximum": 1000, "default": 80, "description": "visual_sync: match tolerance." }),
+        );
+        props.insert(
+            "scenes".to_owned(),
+            json!({ "type": ["array", "object"], "description": "scene_cuts: analyze_scenes' output, carried as authoritative." }),
+        );
+        props.insert(
+            "sceneCuts".to_owned(),
+            json!({ "type": ["array", "object"], "description": "scene_cuts: the same cuts as bare times." }),
+        );
+        props.insert(
+            "paths".to_owned(),
+            json!({ "type": "array", "items": { "type": "string" }, "maxItems": 16, "description": "measure_clips / bench: the candidate files." }),
+        );
+        props.insert(
+            "intent".to_owned(),
+            json!({ "type": "string", "enum": ["stock", "cut"], "default": "stock", "description": "measure_clips: ranking stock, or choosing a cut-in." }),
+        );
+        props.insert(
+            "maxClips".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "maximum": 16, "default": 8, "description": "measure_clips: candidates per call." }),
+        );
+        props.insert(
+            "cuts".to_owned(),
+            json!({ "type": "array", "items": { "type": "object" }, "maxItems": 256, "description": "bench: cuts to judge, [{path, at}]." }),
+        );
+        props.insert(
+            "pauseCuts".to_owned(),
+            json!({ "type": "array", "items": { "type": "object" }, "maxItems": 256, "description": "bench: the pause-only cuts to compare." }),
+        );
+        props.insert(
+            "window".to_owned(),
+            json!({ "type": "number", "minimum": 0, "maximum": 3, "default": 0.5, "description": "bench: seconds near a peak that count as on it." }),
+        );
+        props.insert(
+            "clips".to_owned(),
+            json!({ "type": "array", "items": { "type": "object" }, "maxItems": 16, "description": "bench: pre-measured measure_clips rows." }),
+        );
+        props.insert(
+            "model".to_owned(),
+            string("An ONNX model file to run instead of the table's."),
+        );
+        props.insert(
+            "modelId".to_owned(),
+            json!({ "type": "string", "enum": ["movenet-a0", "depth-anything-v2-small", "fastsam-s", "dinov2-small", "clip-vit-b32"], "description": "Which model door to look for." }),
+        );
+        props.insert(
+            "modelDir".to_owned(),
+            string("Where the models live; FUNCUT_VISUAL_MODELS or models/visual."),
+        );
+        props.insert(
+            "labels".to_owned(),
+            json!({ "type": ["string", "array"], "description": "action_class: a class-name file, or the names." }),
+        );
+        props.insert(
+            "topK".to_owned(),
+            json!({ "type": "integer", "minimum": 1, "maximum": 10, "default": 5, "description": "action_class: classes returned." }),
+        );
+        props.insert(
+            "size".to_owned(),
+            json!({ "type": "integer", "minimum": 64, "maximum": 640, "description": "The ONNX doors: square input edge; the model's when absent." }),
+        );
+        props.insert(
+            "time".to_owned(),
+            json!({ "type": "integer", "minimum": 2, "maximum": 64, "description": "action_class: frames in the temporal window." }),
+        );
+        props.insert(
+            "threshold".to_owned(),
+            json!({ "type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "subject_mask: the mask probability cut." }),
+        );
+        props.insert(
+            "box".to_owned(),
+            json!({ "type": "object", "description": "subject_mask: a prompt box as fractions." }),
+        );
+        props.insert(
+            "dimensions".to_owned(),
+            json!({ "type": "integer", "minimum": 16, "maximum": 1024, "default": 512, "description": "visual_embedding: values returned." }),
+        );
+        props.insert(
+            "prompt".to_owned(),
+            string("describe_scene: a bounded prompt instead of the visible-facts default."),
+        );
+        props.insert(
+            "maxTokens".to_owned(),
+            json!({ "type": "integer", "minimum": 80, "maximum": 500, "default": 300, "description": "describe_scene: reply length ceiling." }),
+        );
+    }
     if member("segment_topics") {
         props.insert(
             "maxSegments".to_owned(),
@@ -2399,15 +2787,16 @@ fn family_key(tool: &str) -> &str {
         "sense_voice_quality" => "voiceq",
         "sense_prosody_style" => "prosody",
         "sense_audio_repair" => "audiorepair",
+        "sense_visual" => "visual",
         _ => "captions",
     }
 }
 
-/// The door the thirty-five consumption-layer readings come through
-/// from their five family tools: `action` names the member, the member's
-/// row names the sidecar command and the fields that travel, and the
-/// budget scales with the lines the way `voice_signals`'s does - a
-/// transcript-heavy call is real work, a script-only call is not.
+/// The door the consumption-layer readings come through from their
+/// family tools: `action` names the member, the member's row names the
+/// sidecar command and the fields that travel, and the budget scales
+/// with the lines the way `voice_signals`'s does - a transcript-heavy
+/// call is real work, a script-only call is not.
 pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, ApiError> {
     let members = SENSE_FAMILIES
         .iter()
@@ -2931,7 +3320,7 @@ mod tests {
         assert_eq!(base64(png), "iVBORw0KGgoAAf8=");
     }
 
-    /// The five family doors: `action` names a member, a member named
+    /// The family doors: `action` names a member, a member named
     /// through the wrong family is refused with both families' real
     /// members, and the schemas carry every member in their enum. None
     /// of this runs Python - the refusals answer before the sidecar is
@@ -2946,6 +3335,7 @@ mod tests {
             ("sense_prosody_style", "prosody"),
             ("sense_audio_repair", "audiorepair"),
             ("sense_captions", "captions"),
+            ("sense_visual", "visual"),
         ];
         let mut members = 0;
         for (tool, family) in doors {
@@ -2976,7 +3366,10 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 35, "thirty-five readings behind five doors");
+        assert_eq!(
+            members, 51,
+            "the consumption-layer readings behind the family doors"
+        );
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(

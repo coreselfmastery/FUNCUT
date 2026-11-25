@@ -53,7 +53,7 @@ or run Forge from inside this repository — the repo's own `.forge/mcp.toml`
 already declares the server (and a 1200 s call timeout, because the deep
 tools - transcription, the sense families, motion reels - are budgeted up
 to 1200 s server-side), with the per-tool allowlist already active in the
-server's `env`: the director's 106-tool surface, every tool but the eight
+server's `env`: the director's 107-tool surface, every tool but the eight
 an agent must never call by surprise - `project_close` and `export_cancel`
 among them, plus the diagnostics and farm doors the director has no use
 for:
@@ -69,7 +69,7 @@ type = "stdio"
 command = "concat"
 args = ["--mcp", "auto"]   # window when open, headless otherwise
 [servers.transport.env]
-CONCAT_MCP_ALLOW = "analysis_wait,…,watch_render"   # 106 of the 114 tools
+CONCAT_MCP_ALLOW = "analysis_wait,…,watch_render"   # 107 of the 115 tools
 ```
 
 Check it: `forge mcp` should list `funcut` as connected, with the tool count.
@@ -216,7 +216,7 @@ once.
 | The harness wired to this editor | **Connect** on the Forge page |
 | The `funcut-director` skill installed | **Install** on the Forge page |
 | A model key saved | one of the eight LLM provider keys on the Forge page |
-| The editor's MCP surface serves the run's tools | `CONCAT_MCP_ALLOW` (the default 106-tool director surface already does) |
+| The editor's MCP surface serves the run's tools | `CONCAT_MCP_ALLOW` (the default 107-tool director surface already does) |
 
 If one is missing the button **says which**, and the run falls back to the
 deterministic spine - the same seventeen-stage program a handed-over run's

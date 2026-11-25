@@ -35,6 +35,7 @@ pub mod sense;
 pub mod sheet;
 pub mod summary;
 pub mod tools;
+pub mod visual_read;
 pub mod voice_read;
 
 pub use backend::{Backend, Headless, Mode, Window};

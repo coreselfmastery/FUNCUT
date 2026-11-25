@@ -432,13 +432,14 @@ return MCP `type: image` content blocks, so the model can actually look:
   creativeReady. `action "selftest"` proves the whole chain on a
   synthetic take.
 
-**The consumption layer** — thirty-three readings behind five family
+**The consumption layer** — the fifty-one readings behind six family
 tools, what the director DOES with the readings. One tool per family:
 `action` names the reading, the family's other arguments are the inputs
 it reads (`transcript` / `lines` / `script`, the acoustic ones also
-`audio`), `selftest: true` runs the reading's own proof, and every
-family shares the voiceover tools' honest degradation contract. The
-thirty-three readings behind the five doors:
+`audio`, the picture's a media path or decoded frames), `selftest: true`
+runs the reading's own proof, and every family shares the voiceover
+tools' honest degradation contract. The thirty-five readings behind the
+five voice doors, then the picture's sixteen behind the sixth:
 
 *The script as language* — `sense_discourse` (`discourse`):
 
@@ -549,6 +550,55 @@ enhance / remove / normalize WRITE a new file; the input is never touched):
   under CPL and CPS budgets, overlap and gap repairs, with the changeLog;
   SRT in, cues or SRT out.
 
+*The picture* — `sense_visual` (`visual`): what a shot actually does,
+measured from frames the editor can already produce. Pure standard
+library for the classical reads (the ONNX doors refuse with the reason
+when their model or `onnxruntime` is absent), and every read's cost is
+bounded by the `width` it is asked for:
+
+- `measure_motion` - per-frame optical flow, the peak and its time, and
+  the onsets: the visual equivalent of the audio flux onset. A cut can
+  land on movement instead of on a pause.
+- `camera_motion` - pan / tilt / zoom / static from the flow's
+  homography, with `travel` naming the way along the axis (left, right,
+  up, down, in, out): a shot already travelling is not given a redundant
+  Ken Burns push, and a pan left after a pan right is a reversal the
+  continuity gate can see.
+- `shot_scale` - wide / medium / close-up from the subject's measured
+  area: the editing primitive that did not exist.
+- `visual_sync` - audio onsets correlated with motion onsets: does this
+  sound land on that movement?
+- `scene_cuts` - shot boundaries from frame change, merged with
+  `analyze_scenes`' own cuts when they are handed in.
+- `visual_quality` - sharpness, noise, brightness, contrast, letterbox
+  and blown highlights: the technical veto.
+- `palette` - dominant colours, temperature and saturation: a real seam
+  and a style match.
+- `saliency` - a classical center-surround attention map and its peak.
+- `measure_clips` - the compact batch read the gather spends: one row
+  per candidate, with `visualScore` and the per-clip reads.
+- `bench` - does cutting on a motion peak beat cutting on a pause? The
+  measurement the wiring answers, not a claim.
+- `models` - the five visual model doors and whether each file is on
+  disk.
+- `action_class` / `depth_map` / `subject_mask` / `visual_embedding` /
+  `describe_scene` - the ONNX and VLM doors (MoViNet-A0, Depth Anything
+  V2 Small, FastSAM/SAM, DINOv2/CLIP, the bounded `local_vlm`
+  description). They run when the model is present and refuse with the
+  reason when it is not; none is required for the classical layer.
+
+The gather spends the picture in four places: `measure_clips` ranks the
+sheet's candidates and vetoes a soft, noisy, letterboxed, flat, dark,
+blown or self-cutting clip; the choice re-checks the veto; the chosen
+shot's in-point lands just before its motion peak; and the drift is
+skipped on a shot that already moves (a still clip in a slot that wanted
+motion gets the push instead). The continuity manifest now carries
+`motion`, `motionMin`, `dominantDirection` and `shotScale`, so the gate's
+own rules stand on measured picture rather than one frame. Captions move
+their band away from the saliency peak under each line. The bench is the
+evidence: `bench {cuts, pauseCuts}` reports whether the cuts that landed
+on motion peaks score higher than the ones that landed on pauses.
+
 The intended loop: `creative_brief` -> `emotion` (extract, on the
 voiceover) -> `voice_signals` (the acoustic score, with the emotion read
 for the arc) -> the consumption layer where the edit needs it
@@ -558,7 +608,9 @@ for the arc) -> the consumption layer where the edit needs it
 `analyze_music_structure` + `measure_rhythm_meter`'s beatSync when cutting
 to music, `align_captions` + `clean_subtitles` before burning captions)
 -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
--> `emotion` (gate, before anything is placed) -> build -> `watch_render` ->
+-> `sense_visual {action: "measure_clips"}` (the picture's veto and
+rank) -> `emotion` (gate, before anything is placed) -> build ->
+`sense_visual {action: "bench"}` on the cuts it made -> `watch_render` ->
 `craft_critique` -> revise -> `watch_render` again -> export ->
 `normalize_loudness` on the shipped file -> `watch_render {path}` +
 `measure_loudness` + `emotion` (verify) on the file that shipped. See
@@ -704,7 +756,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 106 of the 114 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the eight left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the composition reads `motion_preview`/`scene_analysis`/`scene_timeline`, `geneva_explain`); `track_subject` is served - a subject path a vertical reframe can follow is a creative tool; `motion_probe` is served because it is what proves an export is a readable file. `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 107 of the 115 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the six sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the eight left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the composition reads `motion_preview`/`scene_analysis`/`scene_timeline`, `geneva_explain`); `track_subject` is served - a subject path a vertical reframe can follow is a creative tool; `motion_probe` is served because it is what proves an export is a readable file. `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

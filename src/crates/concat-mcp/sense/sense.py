@@ -70,6 +70,10 @@ try:
     import captions as captions_read
 except Exception:  # pragma: no cover
     captions_read = None
+try:
+    import visual_sense as visual_read
+except Exception:  # pragma: no cover
+    visual_read = None
 
 
 # ---------------------------------------------------------------------------
@@ -2292,6 +2296,7 @@ _FAMILY = {
     "prosody": prosody_read,
     "audiorepair": audiorepair_read,
     "captions": captions_read,
+    "visual": visual_read,
 }
 
 
@@ -2305,7 +2310,7 @@ def family_command(cmd, spec):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "discourse", "voiceq", "prosody", "audiorepair", "captions", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "discourse", "voiceq", "prosody", "audiorepair", "captions", "visual", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -2345,7 +2350,7 @@ def main():
             out = emotion_command(spec)
         elif args.cmd == "voice":
             out = voice_command(spec)
-        elif args.cmd in ("discourse", "voiceq", "prosody", "audiorepair", "captions"):
+        elif args.cmd in ("discourse", "voiceq", "prosody", "audiorepair", "captions", "visual"):
             # The family doors shell out to ffmpeg themselves (the repair
             # writers filter through it), and they resolve the binary from
             # FUNCUT_FFMPEG or PATH alone - neither of which carries the

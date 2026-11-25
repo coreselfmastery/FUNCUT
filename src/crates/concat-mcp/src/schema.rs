@@ -567,7 +567,17 @@ mod tests {
         // stock_fetch, stock_import) rode the catalogue with their own
         // schemas - the rights-cleared shelves a monetized edit may shop -
         // function again; the number is CI's to measure on the merged tree.
-        assert!(total < 260_000, "{total}: {sizes:?}");
+        // 260,000 -> 264,000 at 115: the picture's door (`sense_visual`)
+        // carries sixteen readings' inputs in one schema - the frame
+        // sources, the subject boxes, the bench's rows, the model doors -
+        // and the director's surface takes the same schema; function
+        // again, measured by CI. 264,000 -> 266,000, still at 115: the
+        // merged tree measures 265,334 with the door's descriptions
+        // already cut to their terse form - the fields themselves are the
+        // growth (frame sources, model doors, the bench's rows), and a
+        // reading the director cannot call is a reading the edit paid for
+        // and never read.
+        assert!(total < 266_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -633,8 +643,17 @@ mod tests {
         // `auto_edit` is the whole fixed spine as one call - the project,
         // the optional script, the stock shelf and the copy switch -
         // 247,603 measured after trimming its prose; function, not prose.
+        // 249,000 -> 256,000, at 107 on the surface: the picture's door
+        // (`sense_visual`) - sixteen readings, the frame inputs every
+        // family's reads take, the five model doors' own names and the
+        // bench's pre-measured rows, in one schema - rides beside the five
+        // voice families. Function again: the director spends motion,
+        // camera, scale and quality on its cuts, its stock veto and its
+        // captions, and a reading it cannot call is a reading the edit
+        // paid for and never read. The number is CI's to measure on the
+        // merged tree; the headroom is the schema's own.
         assert!(
-            director < 249_000,
+            director < 256_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

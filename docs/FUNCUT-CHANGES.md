@@ -32,6 +32,54 @@ its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
 
+## The picture reader (`visual_sense.py`)
+
+- **The edit can see what a shot does, not just what it looks like in
+  one frame.** `concat-mcp/sense/visual_sense.py` samples the frames a
+  clip actually plays and measures per-frame optical flow (mean, peak,
+  peak time, onsets), the camera's own travel (pan / tilt / zoom /
+  static from the flow's homography, and which way it goes:
+  `left`/`right`/`up`/`down`/`zoom_in`/`zoom_out`), the shot scale from
+  the subject's area, audio-visual sync, scene cuts, the technical read
+  (sharpness, noise, brightness, contrast, letterbox, blown highlights),
+  the palette, and a classical saliency map. Sixteen readings behind the
+  sixth family door, `sense_visual`; 21 stdlib selftest checks in CI. The five ONNX
+  doors (MoViNet-A0, Depth Anything V2 Small, FastSAM/SAM, DINOv2/CLIP)
+  and the bounded `local_vlm` description are real doors: they run when
+  the model and `onnxruntime` are present and refuse with the reason when
+  they are not. None is required for the classical layer.
+- **What the gather spends, not what it measures.** `measure_clips` is
+  called once per slot after the contact sheet: it ranks the candidates
+  on their combined `visualScore` and vetoes a soft, noisy, letterboxed,
+  flat, dark, blown or self-cutting clip behind one that passed. The
+  choice re-checks the veto. The chosen shot's in-point lands a quarter
+  second before its motion peak (through the new `setClipSource`
+  command, which moves the source frame without moving the timeline).
+  The continuity gate reads the travel word too: a pan left that meets a
+  pan right on the seam is the one cut the picture itself calls wrong.
+  The Ken Burns drift is skipped on a shot the read found already moving
+  - the redundant push the camera read exists to prevent - and a still
+  clip in a slot the continuity gate flagged as too still gets the push
+  instead. The continuity manifest carries `motion`, `motionMin`,
+  `dominantDirection` and `shotScale`, so the gate's motion, scale and
+  stillness rules stand on measured picture rather than a gate that had
+  to stand them down for missing fields. Captions move their band away
+  from the saliency peak under each line. `measure_clips` rows are
+  parsed by `visual_read.rs`, and `every_visual_reading_has_a_consumer`
+  holds every field to a named consumer or a stated reason.
+- **The bench is the evidence.** `bench {cuts, pauseCuts}` reports
+  whether the cuts that landed on motion peaks score higher than the
+  ones that landed on pauses. It is a measurement, not a claim, and it
+  is what a future change should read before it moves a cut again.
+- **Not wired yet, said plainly.** `analyze_scenes` and `track_subject`
+  still feed stock inspection only; the scene read is merged into
+  `scene_cuts` when a caller hands it in, but the cut stage is still
+  driven by the voice's pauses and phrases. `palette` is recorded, not
+  spent: the sheet's colour temperature is the continuity seam today.
+  The ONNX doors are wired to nothing but the `models` listing and their
+  own selftest. Each is the next bench, in that order: motion peak, then
+  action class, then depth, then masks, then visual similarity.
+
 ## The sound reader (`sound_sense.py`)
 
 - **The shelf now has an ear.** `concat-mcp/sense/sound_sense.py` decodes a

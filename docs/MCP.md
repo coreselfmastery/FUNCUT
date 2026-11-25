@@ -630,7 +630,17 @@ sound accents, save the timeline, look at the result and score it.
 
 The reply carries `project` (the folder to open next), `copy`, `outcome`
 (`completed`, `completed-with-warnings`, `failed` or `cancelled`) and the
-runner's full `state` with its stage-by-stage receipt. It also writes
+runner's full `state` with its stage-by-stage receipt. Every stage record
+carries `elapsedMs` - the wall-clock time that stage spent - and the
+resumed stages carry `0`, so a slow run names its slow stage instead of
+leaving it to guesswork. The plan also carries a `youtube` package: the
+mode and creative profile, five title directions, three thumbnail
+`frameAt` concepts, up to three transcript-backed Short windows with
+their scores, a section-by-section retention map, a `profilePlan` that
+says what the creative profile changed in pacing, motion, captions and
+the B-roll query, and a plan-level `quality` report. See
+[docs/YOUTUBE.md](YOUTUBE.md); no thumbnail image is rendered, and the
+`frameAt` times are `preview_frame` targets. It also writes
 `auto-edit-report.json` and, when the run reached the end,
 `auto-edit-receipt.json` beside the edit. A failed or cancelled run is
 returned as an error outcome with the same state, so an agent can read

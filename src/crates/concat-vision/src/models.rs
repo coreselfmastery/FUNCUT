@@ -61,6 +61,8 @@ pub enum ModelId {
     /// CLIP ViT-B/32's vision tower: a frame into the space CLIP's text
     /// side already ranks stock in.
     ClipVision,
+    /// MoveNet singlepose: the body in the frame, as a box and a head.
+    MovenetPose,
 }
 
 /// One model as the table describes it.
@@ -84,7 +86,7 @@ pub struct ModelSpec {
 }
 
 /// Every downloadable model.
-pub const MODELS: [ModelSpec; 14] = [
+pub const MODELS: [ModelSpec; 15] = [
     ModelSpec {
         id: ModelId::Person,
         file: "rvm-mobilenetv3.onnx",
@@ -205,6 +207,14 @@ pub const MODELS: [ModelSpec; 14] = [
         sha256: "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299",
         licence: "MIT",
     },
+    ModelSpec {
+        id: ModelId::MovenetPose,
+        file: "movenet-pose.onnx",
+        upstream: "https://huggingface.co/Xenova/movenet-singlepose-lightning/resolve/main/onnx/model_int8.onnx",
+        bytes: 2_788_976,
+        sha256: "8bef13b3da241fe1302d247fd9363bbbf09ea4f02344372a09f73921b2f9ec01",
+        licence: "Apache-2.0",
+    },
 ];
 
 impl ModelId {
@@ -234,7 +244,8 @@ impl ModelId {
             ModelId::TransNetV2
             | ModelId::DepthAnything
             | ModelId::Dinov2
-            | ModelId::ClipVision => "picture",
+            | ModelId::ClipVision
+            | ModelId::MovenetPose => "picture",
         }
     }
 
@@ -255,6 +266,7 @@ impl ModelId {
             ModelId::DepthAnything => "depth-anything-v2-small",
             ModelId::Dinov2 => "dinov2-small",
             ModelId::ClipVision => "clip-vit-b32",
+            ModelId::MovenetPose => "movenet-pose",
         }
     }
 }

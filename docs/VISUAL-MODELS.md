@@ -139,7 +139,7 @@ in `visual_sense.py`, up to `enrichDoors` per clip):
 | `dover-mobile`, `laion-aesthetic` | a 0–10 taste prior | the sheet's score, a tenth of it - it orders candidates, it never vetoes |
 | `film-shot-classifier` | the shot's type, with a probability | `shot_scale()`, when the classical measure could not place the shot and the classifier was at least 0.5 sure: the drift and the cut rhythm read the same gate word |
 | `depth-anything-v2-small` | `nearShare`, `verdict` | two decisions: `tight()` holds the drift when half the frame sits at the lens, and the verdict places the caption band when saliency found no blob |
-| `movenet-pose` | a body's box | the caption band: a head in the upper third puts the words low |
+| `movenet-pose` | a body's box | the caption band: a head in the upper third puts the words low. The door is 2.8 MB (Apache-2.0, `Xenova/movenet-singlepose-lightning`), takes int32 `[1,192,192,3]` and answers `[y, x, confidence]`, and is the fifth row in the window - the signature was run end to end before it was registered |
 | `movenet-a0` | the action class | recorded in the sheet and named in the critic's brief - a cut boundary needs two windows of it, which is the next step, not this one |
 
 The guard in `director_program.rs` (`every_reading_inside_a_family_has_a_consumer`)

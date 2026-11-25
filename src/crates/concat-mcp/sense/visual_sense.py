@@ -2075,12 +2075,16 @@ VISUAL_MODELS = [
         "id": "movenet-pose",
         "tier": 5,
         "file": "movenet-pose.onnx",
-        "bytes": 5_000_000,
+        "bytes": 2_788_976,
         "licence": "Apache-2.0",
         "tool": "pose",
         "signal": "17 body keypoints per person",
-        "upstream": "https://www.kaggle.com/models/google/movenet",
-        "door": {"decoder": "keypoints", "size": 192},
+        "upstream": "https://huggingface.co/Xenova/movenet-singlepose-lightning",
+        "hfRepo": "Xenova/movenet-singlepose-lightning",
+        "hfFile": "onnx/model_int8.onnx",
+        # MoveNet's exported signature takes the pixels as int32 0..255.
+        "door": {"decoder": "keypoints", "size": 192, "mean": 0.0, "std": 1.0,
+                 "dtype": "int32", "layout": "nhwc", "order": "yx"},
     },
     {
         "id": "mediapipe-hands",
@@ -2374,7 +2378,7 @@ def _decode_boxes(raw, labels=None, top=8, floor=0.25):
     return {"count": len(rows), "objects": rows[:top]}
 
 
-def _decode_keypoints(raw, min_confidence=0.2):
+def _decode_keypoints(raw, min_confidence=0.2, order=None):
     a = _np().asarray(raw, dtype=_np().float32)
     while a.ndim > 2 and a.shape[0] == 1:
         a = a[0]
@@ -2382,6 +2386,9 @@ def _decode_keypoints(raw, min_confidence=0.2):
         a = a.reshape(-1, 3) if a.size % 3 == 0 else a.reshape(-1, 2)
     if a.shape[-1] not in (2, 3):
         a = a.reshape(-1, a.shape[-1])
+    if order == "yx" and a.shape[-1] in (2, 3):
+        swap = [1, 0, 2] if a.shape[-1] == 3 else [1, 0]
+        a = a[:, swap]
     scale = 1.0 if float(a[:, :2].max()) <= 1.5 else max(float(a[:, 0].max()),
                                                          float(a[:, 1].max()), 1.0)
     conf = a[:, 2] if a.shape[-1] == 3 else _np().ones(a.shape[0])
@@ -2522,6 +2529,11 @@ def _generic_door(spec, model_id, frames=None):
         tensor = _tensor(frames, size, time,
                          door.get("mean", 0.0), door.get("std", 255.0),
                          door.get("height"))
+        # Some graphs take the pixels themselves: MoveNet's exported
+        # signature is int32 0..255, and a float tensor is refused by the
+        # runtime rather than coerced, so the row names its dtype.
+        if door.get("dtype") == "int32":
+            tensor = tensor.astype(_np().int32)
         if door.get("layout") == "nhwc":
             tensor = tensor.transpose(0, 2, 3, 1) if not temporal else \
                 tensor.transpose(0, 1, 3, 4, 2)
@@ -2533,6 +2545,11 @@ def _generic_door(spec, model_id, frames=None):
         kwargs = {}
         if door.get("decoder") in ("logits", "boxes", "segments"):
             kwargs["labels"] = _labels(spec) or door.get("labels") or None
+        if door.get("decoder") == "keypoints" and door.get("order"):
+            # MoveNet answers each point as [y, x, confidence]; a door that
+            # says so has its columns swapped before the box is read, or
+            # the head would be placed on the wrong axis.
+            kwargs["order"] = door["order"]
         decoded = decoder(raw[0], **kwargs) if raw else {}
         return {
             "ok": True,

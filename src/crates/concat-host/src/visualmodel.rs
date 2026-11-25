@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The picture reader's four models: a shot boundary, a depth map, a visual
-//! embedding and CLIP's vision tower. Fetched into the same `cutout-models`
+//! The picture reader's five models: a shot boundary, a depth map, a visual
+//! embedding, CLIP's vision tower and the body in the frame. Fetched into the same `cutout-models`
 //! folder the cutout and sound models use, each file verified against its
 //! digest, because that is the folder `visual_sense.py` reads - so a set
 //! downloaded here is the set the reader measures with, without either side
@@ -23,7 +23,8 @@ use concat_vision::models::{MODELS, ModelId, models_dir};
 /// The files the picture reader spends on a first edit, smallest first, so
 /// an interrupted download still leaves the depth and similarity reads
 /// behind.
-pub const VISUAL_MODELS: [ModelId; 4] = [
+pub const VISUAL_MODELS: [ModelId; 5] = [
+    ModelId::MovenetPose,
     ModelId::Dinov2,
     ModelId::DepthAnything,
     ModelId::TransNetV2,
@@ -178,7 +179,7 @@ mod tests {
         std::fs::write(&path, vec![0u8; id.spec().bytes as usize]).unwrap();
         assert!(installed(&dir, id));
         assert!(!ready(&dir));
-        assert_eq!(missing(&dir).len(), 3);
+        assert_eq!(missing(&dir).len(), 4);
         remove(&dir).unwrap();
         assert!(!installed(&dir, id));
         let _ = std::fs::remove_dir_all(&dir);

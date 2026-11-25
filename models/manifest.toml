@@ -349,3 +349,12 @@ bytes = 89117001
 sha256 = "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299"
 licence = "MIT"
 upstream = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx"
+
+[[model]]
+id = "movenet-pose"
+family = "cutout"
+file = "movenet-pose.onnx"
+bytes = 2788976
+sha256 = "8bef13b3da241fe1302d247fd9363bbbf09ea4f02344372a09f73921b2f9ec01"
+licence = "Apache-2.0"
+upstream = "https://huggingface.co/Xenova/movenet-singlepose-lightning/resolve/main/onnx/model_int8.onnx"

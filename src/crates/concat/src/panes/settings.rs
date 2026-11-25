@@ -1006,7 +1006,7 @@ impl SettingsPane {
             unpacking,
             failure: failed.get(SOUND_MODELS_ID).cloned(),
         }];
-        // The picture models: the four the picture reader spends on a
+        // The picture models: the five the picture reader spends on a
         // first edit. Same row, same folder, same reason.
         let total = concat_host::visualmodel::bytes();
         let missing = concat_host::visualmodel::missing_bytes(&dirs.data);
@@ -1017,7 +1017,7 @@ impl SettingsPane {
         self.visuals = vec![ModelState {
             id: PICTURE_MODELS_ID.to_owned(),
             name: "Picture models".to_owned(),
-            note: "TransNetV2 finds a shot's boundaries, Depth Anything V2 its depth, DINOv2 and CLIP what it looks like. Without them the picture reader measures motion, camera and colour only.".to_owned(),
+            note: "TransNetV2 finds a shot's boundaries, Depth Anything V2 its depth, DINOv2 and CLIP what it looks like, MoveNet where the body is. Without them the picture reader measures motion, camera and colour only.".to_owned(),
             megabytes: (if missing > 0 { missing } else { total }) as f32 / 1_000_000.0,
             accuracy: 5,
             installed: concat_host::visualmodel::ready(&dirs.data),

@@ -76,6 +76,69 @@ fn idempotency_key(epoch: u64, stage: Stage, call: &ToolCall) -> String {
     format!("{}-{:016x}", stage.label(), hasher.finish())
 }
 
+/// Add one explicit tool degradation to the run's warning list.
+fn push_reply_warning(
+    warnings: &mut Vec<String>,
+    source: &str,
+    message: &str,
+) -> bool {
+    let message = message.trim();
+    if message.is_empty() {
+        return false;
+    }
+    let line = format!("{source}: {message}");
+    if !warnings.contains(&line) {
+        warnings.push(line);
+    }
+    true
+}
+
+/// Preserve explicit soft failures and measured degradations in the run's
+/// warning list even when the program deliberately handles the reply and
+/// continues. A successful transport is not proof that the tool produced
+/// a complete measurement.
+fn record_reply_warnings(
+    stage: Stage,
+    call: &ToolCall,
+    reply: &Value,
+    warnings: &mut Vec<String>,
+) {
+    let action = call.arguments.get("action").and_then(Value::as_str);
+    let source = match action {
+        Some(action) => format!("{} / {} ({action})", stage.label(), call.tool),
+        None => format!("{} / {}", stage.label(), call.tool),
+    };
+    let mut has_detail = false;
+
+    for field in ["degradations", "warnings"] {
+        match reply.get(field) {
+            Some(Value::Array(rows)) => {
+                for row in rows {
+                    if let Some(message) = row.as_str() {
+                        has_detail |= push_reply_warning(warnings, &source, message);
+                    }
+                }
+            }
+            Some(Value::String(message)) => {
+                has_detail |= push_reply_warning(warnings, &source, message);
+            }
+            _ => {}
+        }
+    }
+
+    if reply.get("ok").and_then(Value::as_bool) == Some(false) {
+        let reason = ["error", "warning", "note"]
+            .iter()
+            .find_map(|field| reply.get(*field).and_then(Value::as_str))
+            .unwrap_or("returned ok:false");
+        has_detail |= push_reply_warning(warnings, &source, reason);
+    }
+
+    if reply.get("status").and_then(Value::as_str) == Some("degraded") && !has_detail {
+        push_reply_warning(warnings, &source, "returned degraded status without a detail");
+    }
+}
+
 /// The one-call form of the IDEM stamping the fan and the reactive queue
 /// share with the static path: an `edit_apply` without its own key gets
 /// the key the epoch, the stage and the call derive.
@@ -819,6 +882,7 @@ impl Runner {
                 if call.tool == "export_start" {
                     exported = true;
                 }
+                record_reply_warnings(stage, call, reply, &mut warnings);
                 observed.push((call.clone(), reply.clone()));
                 if !records[index].calls.contains(&call.tool) {
                     records[index].calls.push(call.tool.clone());
@@ -1541,6 +1605,60 @@ mod tests {
         let outcome = runner.run(&mut program, &mut caller);
         assert_eq!(outcome, RunOutcome::Completed);
         assert_eq!(caller.calls.len(), 1, "the derived stage made no calls");
+    }
+
+    #[test]
+    fn a_degraded_measurement_is_preserved_as_a_run_and_receipt_warning() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({
+            "ok": true,
+            "status": "degraded",
+            "degradations": ["voice-signals binary absent: prosody/forensics/speakers/NER missing"],
+        }))]);
+        let mut program = program(vec![
+            StageStep::run(Stage::VoiceSignals, vec![call("voice_signals")]).into(),
+        ]);
+
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::CompletedWithWarnings);
+        let AutoEditState::CompletedWithWarnings { warnings, receipt, .. } = runner.state() else {
+            panic!("a degraded measurement must finish with its warning visible");
+        };
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("voice-signals / voice_signals"));
+        assert!(warnings[0].contains("prosody/forensics/speakers/NER missing"));
+        let receipt = receipt.expect("the acceptance receipt is present");
+        assert_eq!(receipt.warnings, warnings);
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::Completed);
+    }
+
+    #[test]
+    fn a_handled_soft_tool_failure_is_preserved_as_a_run_warning() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({
+            "ok": false,
+            "error": "could not inspect the placed SFX file",
+        }))]);
+        let mut program = program(vec![
+            StageStep::run(
+                Stage::Sfx,
+                vec![call_with(
+                    "sense_sound",
+                    json!({ "action": "check_placement", "path": "/sounds/hit.wav" }),
+                )],
+            )
+            .into(),
+        ]);
+
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::CompletedWithWarnings);
+        let AutoEditState::CompletedWithWarnings { warnings, receipt, .. } = runner.state() else {
+            panic!("a handled soft failure must remain visible in the run");
+        };
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("sfx / sense_sound (check_placement)"));
+        assert!(warnings[0].contains("could not inspect the placed SFX file"));
+        assert_eq!(receipt.expect("the acceptance receipt is present").warnings, warnings);
     }
 
     #[test]

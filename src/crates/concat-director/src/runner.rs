@@ -327,7 +327,7 @@ impl Runner {
 
     /// A panic in mid-edit leaves the history for a person to read.
     pub fn run(&self, program: &mut EditProgram, caller: &mut dyn ToolCaller) -> RunOutcome {
-        self.walk(program, caller, None)
+        self.walk(program, caller, None, None)
     }
 
     /// The same walk, with lanes for the fan steps: each group of a fan
@@ -340,16 +340,30 @@ impl Runner {
         caller: &mut dyn ToolCaller,
         lanes: &dyn LaneFactory,
     ) -> RunOutcome {
-        self.walk(program, caller, Some(lanes))
+        self.walk(program, caller, Some(lanes), None)
     }
 
-    /// One whole walk over the program: the run both public doors above
+    /// Runs with the MCP client's cancellation flag bridged into the
+    /// runner after its per-run reset. The adapter also cancels the lanes'
+    /// backends, so in-flight calls return and this runner can roll back.
+    pub fn run_with_lanes_and_cancellation(
+        &self,
+        program: &mut EditProgram,
+        caller: &mut dyn ToolCaller,
+        lanes: &dyn LaneFactory,
+        client_cancelled: &AtomicBool,
+    ) -> RunOutcome {
+        self.walk(program, caller, Some(lanes), Some(client_cancelled))
+    }
+
+    /// One whole walk over the program: the run's public doors above
     /// stand on.
     fn walk(
         &self,
         program: &mut EditProgram,
         caller: &mut dyn ToolCaller,
         lanes: Option<&dyn LaneFactory>,
+        client_cancelled: Option<&AtomicBool>,
     ) -> RunOutcome {
         if self.shared.running.swap(true, Ordering::SeqCst) {
             return RunOutcome::Failed(AutoEditError::new(
@@ -368,6 +382,11 @@ impl Runner {
         // before (the retry that reuses this runner) does not stop the
         // run that was just asked for.
         self.shared.cancel.store(false, Ordering::SeqCst);
+        // The client may have cancelled before the run entered this
+        // method. The per-run reset must not erase that earlier ask.
+        if client_cancelled.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            self.cancel();
+        }
 
         let run_started = Instant::now();
         let started = timestamp();
@@ -1451,6 +1470,33 @@ mod tests {
 
     fn program(steps: Vec<StageStep>) -> EditProgram {
         EditProgram::new(PathBuf::from("/edits/Reel/export.mp4"), steps)
+    }
+
+    #[test]
+    fn a_client_cancelled_before_the_walk_is_not_erased_by_the_run_reset() {
+        struct UnusedLanes;
+        impl LaneFactory for UnusedLanes {
+            fn lane(&self) -> Result<Box<dyn ToolCaller>, String> {
+                Err("no fan was expected".to_owned())
+            }
+        }
+
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let cancelled = AtomicBool::new(true);
+        let mut caller = Scripted::new(vec![]);
+        let mut program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("must_not_run")]).into(),
+        ]);
+
+        let outcome = runner.run_with_lanes_and_cancellation(
+            &mut program,
+            &mut caller,
+            &UnusedLanes,
+            &cancelled,
+        );
+        assert_eq!(outcome, RunOutcome::Cancelled);
+        assert!(caller.calls.is_empty(), "a cancelled run made a tool call");
+        assert!(matches!(runner.state(), AutoEditState::Cancelled { .. }));
     }
 
     #[test]

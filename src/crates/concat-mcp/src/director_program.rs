@@ -10413,7 +10413,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // text no longer holds the group's words - changes
                         // nothing, and the words' own text stands.
                         for (_, _, group) in kept.iter_mut() {
-                            let Some(cleaned) = cleaned_cues_of(log, &group.take)
+                            let cues = cleaned_cues_of(log, &group.take);
+                            let Some(cleaned) = cues
                                 .iter()
                                 .find(|(start, end, _)| {
                                     *start <= group.start + 0.05 && *end >= group.end - 0.05

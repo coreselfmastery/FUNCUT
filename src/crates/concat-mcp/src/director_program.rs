@@ -9577,7 +9577,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .map(|index| {
                                         scores.and_then(|scores| {
                                             scores
-                                                .get(index.to_string())
+                                                .get(&index.to_string())
                                                 .and_then(Value::as_f64)
                                                 .filter(|score| score.is_finite())
                                         })
@@ -9587,7 +9587,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .map(|index| {
                                         vectors.and_then(|vectors| {
                                             vectors
-                                                .get(index.to_string())
+                                                .get(&index.to_string())
                                                 .and_then(Value::as_array)
                                                 .map(|vector| {
                                                     vector

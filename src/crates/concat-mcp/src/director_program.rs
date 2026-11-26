@@ -82,6 +82,21 @@ pub struct AutoEditProgramSource {
     /// `None` when no script was given: the transcript then stands as it
     /// was transcribed, exactly as it always did.
     pub script: Option<String>,
+    /// The orientation the edit is built for, when the caller picked one
+    /// the project's own frame is not: "horizontal" (1920x1080),
+    /// "vertical" (1080x1920) or "square" (1080x1080). Everything
+    /// downstream - the stock the plan shops, the caption band, the
+    /// motion canvas, the plan's own aspect - reads the project's frame,
+    /// so one early frame-set adapts the whole pipeline. `None` - no
+    /// pick, a word the run does not know, or a frame the project
+    /// already has - keeps the frame the project came with, exactly as
+    /// before.
+    pub orientation: Option<String>,
+    /// The exact rate the frame-set keeps, as the fraction the project
+    /// itself runs at. `project_set_video` writes the whole video
+    /// object, so an orientation lands with the project's own rate
+    /// rather than a guess. `None` when no frame-set is planned.
+    pub frame_rate: Option<(i64, i64)>,
 }
 
 /// The last timeline view the run read: the newest reply shaped like one,
@@ -8492,6 +8507,7 @@ pub fn auto_edit_source_from_view(
     view: &Value,
     script: Option<String>,
     stock_provider: String,
+    orientation: Option<String>,
 ) -> Result<AutoEditProgramSource, String> {
     let media = media_paths(view);
     let clips = view["timeline"]["clips"]
@@ -8554,6 +8570,16 @@ pub fn auto_edit_source_from_view(
                 .to_owned(),
         );
     }
+    // The orientation the run was handed, when it names a frame the
+    // project's own is not: a pick that already matches the read frame
+    // sets nothing (the edit is then the one it always was), a word the
+    // run does not know is no pick at all - never a failure - and a real
+    // turn carries the project's own rate, so the frame-set cannot change
+    // it.
+    let orientation = orientation_word(orientation.as_deref())
+        .filter(|&word| orientation_aspect(word) != aspect_of(view))
+        .map(str::to_owned);
+    let frame_rate = orientation.as_ref().map(|_| rate_of(view));
     Ok(AutoEditProgramSource {
         project: project.to_owned(),
         takes,
@@ -8566,7 +8592,76 @@ pub fn auto_edit_source_from_view(
         sheet: "auto-edit-sheet.png".to_owned(),
         stock_provider,
         script: script.filter(|script| !script.trim().is_empty()),
+        orientation,
+        frame_rate,
     })
+}
+
+/// The orientation words a pick may carry: one of the three frames an
+/// edit is built for, or nothing. Any other word - and no word at all -
+/// is `None`, so a pick the run cannot read keeps the project's own
+/// frame rather than failing the run over it.
+fn orientation_word(orientation: Option<&str>) -> Option<&'static str> {
+    match orientation.map(str::trim) {
+        Some("horizontal") => Some("horizontal"),
+        Some("vertical") => Some("vertical"),
+        Some("square") => Some("square"),
+        _ => None,
+    }
+}
+
+/// The frame an orientation word maps to: horizontal 1920x1080, vertical
+/// 1080x1920, square 1080x1080. The rate is never the word's to name -
+/// the frame-set keeps the project's own.
+fn orientation_frame(word: &str) -> Option<(u32, u32)> {
+    match word {
+        "horizontal" => Some((1920, 1080)),
+        "vertical" => Some((1080, 1920)),
+        "square" => Some((1080, 1080)),
+        _ => None,
+    }
+}
+
+/// The aspect an orientation word picks, in `aspect_of`'s own vocabulary,
+/// so a pick and the frame the project already has speak one language.
+fn orientation_aspect(word: &str) -> &'static str {
+    match word {
+        "vertical" => "9:16",
+        "square" => "1:1",
+        _ => "16:9",
+    }
+}
+
+/// The project's own rate, as the exact fraction a frame-set keeps. The
+/// summary view a run reads carries only `fps`, rounded to a thousandth,
+/// so the fraction is rebuilt the way the launch screen builds the one a
+/// typed rate becomes - the NTSC rates as their /1001 fractions, anything
+/// else to a thousandth in lowest terms - which lands on the exact
+/// fraction for every rate the app itself writes. A view that says no
+/// rate at all keeps the 30 a fresh project is born with.
+fn rate_of(view: &Value) -> (i64, i64) {
+    let fps = view
+        .pointer("/project/fps")
+        .and_then(Value::as_f64)
+        .filter(|fps| fps.is_finite() && *fps > 0.0)
+        .unwrap_or(30.0);
+    for whole in [24_i64, 30, 48, 60, 120, 240] {
+        let ntsc = whole as f64 * 1000.0 / 1001.0;
+        if (fps - ntsc).abs() < 0.006 {
+            return (whole * 1000, 1001);
+        }
+    }
+    let num = (fps * 1000.0).round() as i64;
+    let divisor = gcd(num, 1000);
+    (num / divisor, 1000 / divisor)
+}
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        a.abs().max(1)
+    } else {
+        gcd(b, a % b)
+    }
 }
 
 /// The preflight's next call: the transcriber the words stage spends,
@@ -8677,16 +8772,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 2. The handoff, read back: the sibling is opened on the window's
     //    server - the same register a forge run's edit sits in - and the
     //    voiceover lane is read as the run's own ground truth.
-    steps.push(
-        StageStep::run(
-            Stage::HandoffVoiceover,
-            vec![
-                call("project_open", json!({ "path": project.clone() })),
-                call("timeline_read", json!({ "path": project.clone() })),
-            ],
-        )
-        .into(),
-    );
+    let mut handoff = vec![call("project_open", json!({ "path": project.clone() }))];
+    // The orientation the run was handed lands before anything else
+    // reads the frame: everything downstream - the stock the plan shops,
+    // the caption band, the motion canvas, the plan's own aspect - reads
+    // the project's frame, so one early set adapts the whole pipeline.
+    // The frame-set is an ordinary undoable edit on the open timeline,
+    // keeping the project's own rate; a source that names an orientation
+    // the project already has - and a source that names none - keeps
+    // today's exact calls.
+    if let Some((width, height)) = source.orientation.as_deref().and_then(orientation_frame) {
+        let (rate_num, rate_den) = source.frame_rate.unwrap_or((30, 1));
+        handoff.push(call(
+            "project_set_video",
+            json!({
+                "path": project.clone(),
+                "video": {
+                    "width": width,
+                    "height": height,
+                    "rateNum": rate_num,
+                    "rateDen": rate_den,
+                }
+            }),
+        ));
+    }
+    handoff.push(call("timeline_read", json!({ "path": project.clone() })));
+    steps.push(StageStep::run(Stage::HandoffVoiceover, handoff).into());
     // 3. The repair, per distinct take, on its own lane: measured first,
     //    then only the chain the measurements ordered. The old spine ran
     //    the same generic clean on every take - a hum paid for a
@@ -14075,6 +14186,7 @@ mod tests {
             &view,
             Some("  ".to_owned()),
             "pixabay".to_owned(),
+            None,
         )
         .expect("the view is a narration timeline");
         assert_eq!(source.takes.len(), 2);
@@ -14093,12 +14205,140 @@ mod tests {
         assert_eq!(source.script, None, "a blank script is no script");
 
         let empty = json!({ "media": [], "timeline": { "clips": [] } });
-        let refused =
-            match auto_edit_source_from_view("/edits/Empty", &empty, None, "pexels".to_owned()) {
-                Ok(_) => panic!("no narration is a refusal"),
-                Err(refused) => refused,
-            };
+        let refused = match auto_edit_source_from_view(
+            "/edits/Empty",
+            &empty,
+            None,
+            "pexels".to_owned(),
+            None,
+        ) {
+            Ok(_) => panic!("no narration is a refusal"),
+            Err(refused) => refused,
+        };
         assert!(refused.contains("no narration audio"), "{refused}");
+    }
+
+    /// The orientation pick a headless `auto_edit` call can carry: a
+    /// frame the project is not is set before anything else reads the
+    /// frame - between the open and the read, with the project's own
+    /// rate kept - while no pick, a word the run does not know, and a
+    /// pick the project already answers keep the handoff's calls exactly
+    /// as they always were.
+    #[test]
+    fn an_orientation_pick_sets_the_frame_the_edit_is_built_for() {
+        let landscape = json!({
+            "project": { "name": "Reel", "width": 1920, "height": 1080, "fps": 29.97 },
+            "timeline": { "clips": [
+                { "kind": "audio", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ] },
+            "media": [{ "id": "m1", "path": "/edits/Reel/voice/a.wav" }],
+        });
+        let handoff_calls = |source: &AutoEditProgramSource| {
+            let program = auto_edit_program(source);
+            program
+                .steps
+                .iter()
+                .find_map(|step| match step {
+                    ProgramStep::Static(step) if step.stage == Stage::HandoffVoiceover => {
+                        Some(step.calls.clone())
+                    }
+                    _ => None,
+                })
+                .expect("the program has a handoff step")
+        };
+
+        // A vertical pick over a landscape project: the frame is set
+        // between the open and the read, and the NTSC rate the view's fps
+        // stands for lands as the exact fraction, not a rounded decimal.
+        let turned = auto_edit_source_from_view(
+            "/edits/Reel edit",
+            &landscape,
+            None,
+            "pexels".to_owned(),
+            Some("vertical".to_owned()),
+        )
+        .expect("the view is a narration timeline");
+        assert_eq!(turned.orientation.as_deref(), Some("vertical"));
+        assert_eq!(turned.frame_rate, Some((30000, 1001)));
+        let calls = handoff_calls(&turned);
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert_eq!(calls[0].tool, "project_open");
+        assert_eq!(calls[1].tool, "project_set_video");
+        assert_eq!(
+            calls[1].arguments["video"],
+            json!({ "width": 1080, "height": 1920, "rateNum": 30000, "rateDen": 1001 })
+        );
+        assert_eq!(calls[1].arguments["path"], json!("/edits/Reel edit"));
+        assert_eq!(calls[2].tool, "timeline_read");
+
+        // No pick keeps the handoff byte-identical to today's: open,
+        // read, and nothing else.
+        let as_is = auto_edit_source_from_view(
+            "/edits/Reel edit",
+            &landscape,
+            None,
+            "pexels".to_owned(),
+            None,
+        )
+        .expect("the view is a narration timeline");
+        assert_eq!(as_is.orientation, None);
+        assert_eq!(as_is.frame_rate, None);
+        assert_eq!(
+            handoff_calls(&as_is),
+            vec![
+                ToolCall {
+                    tool: "project_open".to_owned(),
+                    arguments: json!({ "path": "/edits/Reel edit" }),
+                },
+                ToolCall {
+                    tool: "timeline_read".to_owned(),
+                    arguments: json!({ "path": "/edits/Reel edit" }),
+                },
+            ]
+        );
+
+        // A pick the project already answers, and a word the run does not
+        // know, are no pick at all.
+        for word in ["horizontal", "diagonal", ""] {
+            let kept = auto_edit_source_from_view(
+                "/edits/Reel edit",
+                &landscape,
+                None,
+                "pexels".to_owned(),
+                Some(word.to_owned()),
+            )
+            .expect("the view is a narration timeline");
+            assert_eq!(kept.orientation, None, "a {word} pick sets nothing");
+            assert_eq!(handoff_calls(&kept).len(), 2);
+        }
+
+        // A source built by hand - the GUI's sibling is born in its own
+        // frame, so its program needs no set - is still allowed to carry
+        // one; with no rate read it falls back to the 30 a fresh project
+        // is born with.
+        let handmade = AutoEditProgramSource {
+            project: "/edits/Reel edit".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voice/a.wav".to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: Some("square".to_owned()),
+            frame_rate: None,
+        };
+        let calls = handoff_calls(&handmade);
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert_eq!(calls[1].tool, "project_set_video");
+        assert_eq!(
+            calls[1].arguments["video"],
+            json!({ "width": 1080, "height": 1080, "rateNum": 30, "rateDen": 1 })
+        );
     }
 
     /// The preflight asks for the transcriber before anything else is
@@ -14269,6 +14509,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let program = super::auto_edit_program(&source);
 
@@ -14689,6 +14931,8 @@ mod tests {
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
                 script: None,
+                orientation: None,
+                frame_rate: None,
             },
         )
         .expect("a plan from the read");
@@ -14769,6 +15013,8 @@ mod tests {
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
                 script: None,
+                orientation: None,
+                frame_rate: None,
             },
         )
         .expect("a plan from the read");
@@ -14878,6 +15124,8 @@ mod tests {
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
                 script: None,
+                orientation: None,
+                frame_rate: None,
             },
         )
         .expect("a plan from the read");
@@ -15145,6 +15393,8 @@ mod tests {
                 sheet: "sheet.png".to_owned(),
                 stock_provider: "pexels".to_owned(),
                 script: None,
+                orientation: None,
+                frame_rate: None,
             },
         )
         .expect("a plan from the read");
@@ -16074,6 +16324,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let pacing = |log: &[Value]| {
             let plan = auto_plan(log, &takes, &source()).expect("a plan from the read");
@@ -16141,6 +16393,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         // The weight and the size, for a line whose pitch range was read
         // as `range`. `None` is a take whose prosody was never measured.
@@ -16241,6 +16495,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mix = |lufs: Option<f64>| {
             let read = match lufs {
@@ -16385,6 +16641,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let at = program
@@ -16437,6 +16695,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let program = auto_edit_program(&source);
         let order: Vec<&str> = program
@@ -16495,6 +16755,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let at = program
@@ -16637,6 +16899,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(timeline) = program
@@ -16705,6 +16969,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(timeline) = program
@@ -16765,6 +17031,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let bed_for = |floor_dbfs: f64| {
             let mut program = auto_edit_program(&source);
@@ -16811,6 +17079,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let bed_for = |decision: &str| {
             let mut program = auto_edit_program(&source);
@@ -16902,6 +17172,8 @@ mod tests {
                     sheet: "sheet.png".to_owned(),
                     stock_provider: "pexels".to_owned(),
                     script: None,
+                    orientation: None,
+                    frame_rate: None,
                 },
             )
             .expect("a plan from the read");
@@ -16940,6 +17212,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -17070,6 +17344,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -17205,6 +17481,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -17475,6 +17753,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = program
@@ -17540,6 +17820,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let view = json!({
             "timeline": { "id": "t1", "clips": [
@@ -17731,6 +18013,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = program
@@ -17823,6 +18107,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let weight_for = |relative_lu: f64| {
             let mut program = auto_edit_program(&source);
@@ -18537,6 +18823,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -18783,6 +19071,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -18936,6 +19226,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -19007,6 +19299,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -19375,6 +19669,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(understand) = &mut program.steps[5] else {
@@ -20232,6 +20528,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -20347,6 +20645,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         // One fresh program per scenario: the derived step keeps its own
         // rotation and spent ids, and a second scenario must not inherit
@@ -20531,6 +20831,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -20659,6 +20961,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -20775,6 +21079,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -20929,6 +21235,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let base = || {
             vec![
@@ -21051,6 +21359,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let log = vec![
             json!({
@@ -21215,6 +21525,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -21362,6 +21674,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -21482,6 +21796,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -21533,6 +21849,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -21757,6 +22075,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -21844,6 +22164,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let program = auto_edit_program(&source);
         // The program's own Verify stage is the timeline's: the lanes it

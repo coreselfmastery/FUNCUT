@@ -125,11 +125,16 @@ pub enum ForgeMsg {
     /// to a measured, verified export, deterministically, with no agent.
     /// The runner (`concat-director`, through the
     /// `concat_mcp::director` seam) owns the stages, the progress, the
-    /// cancellation with rollback and the retries. The string is the
-    /// script box's own text, when the page carried one: the run hands
+    /// cancellation with rollback and the retries. The first string is
+    /// the script box's own text, when the page carried one: the run hands
     /// it to the voice reading, which aligns the transcript against the
-    /// author's wording.
-    AutoEditStart(String),
+    /// author's wording. The second is the orientation the page's pick
+    /// named, when it named one: the sibling the run edits is born in
+    /// that frame, so everything downstream - the stock the plan shops,
+    /// the caption band, the motion canvas, the plan's own aspect -
+    /// follows it; empty ("same as project") keeps the frame the
+    /// project already has.
+    AutoEditStart(String, String),
     /// AUTO EDIT: stop at the next stage boundary; the edits the run
     /// applied are rolled back, one `edit_undo` each.
     AutoEditCancel,
@@ -483,7 +488,9 @@ impl ForgePane {
                 }
                 studio.prefs.save(&studio.host.dirs);
             }
-            ForgeMsg::AutoEditStart(script) => self.auto_edit_start(script, studio),
+            ForgeMsg::AutoEditStart(script, orientation) => {
+                self.auto_edit_start(script, orientation, studio)
+            }
             ForgeMsg::AutoEditCancel => {
                 if self.auto.running {
                     if let Some(runner) = &self.auto.runner {
@@ -813,7 +820,7 @@ impl ForgePane {
     /// The plan's creative brief, the eye-picked stock and the baked motion
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
-    fn auto_edit_start(&mut self, script: String, studio: &mut Studio) {
+    fn auto_edit_start(&mut self, script: String, orientation: String, studio: &mut Studio) {
         if auto_edit_busy(self.auto.running, self.auto.checking) {
             studio.notify(
                 "AUTO EDIT is still running or checking its previous timeline",
@@ -919,6 +926,10 @@ impl ForgePane {
                     &studio.prefs.stock.pixabay,
                 ),
                 script: source.script.clone(),
+                // The sibling this resume reopens was born in the frame it
+                // was born in: no frame-set is wanted.
+                orientation: None,
+                frame_rate: None,
             });
             let tool_cancel = Arc::new(AtomicBool::new(false));
             let project = source.project.clone();
@@ -948,8 +959,12 @@ impl ForgePane {
             studio.notify(&t("forge.needProject"), true);
             return;
         };
-        let built =
-            build_voiceover_sibling(studio.project(), std::path::Path::new(session.path()), true);
+        let built = build_voiceover_sibling(
+            studio.project(),
+            std::path::Path::new(session.path()),
+            true,
+            orientation.as_deref(),
+        );
         let (_, auto) = match built {
             Ok(built) => built,
             Err(error) => {
@@ -1038,6 +1053,10 @@ impl ForgePane {
                 &studio.prefs.stock.pixabay,
             ),
             script: auto.script.clone(),
+            // The sibling was born in the picked frame (or the source's
+            // own, when nothing was picked): the handoff needs no set.
+            orientation: None,
+            frame_rate: None,
         });
         // The Director gets the edit whenever the page has a model to run
         // it: AUTO EDIT is the one-click form of Start Forge, so the
@@ -1954,10 +1973,13 @@ fn voiceover_project(
     let Some(session) = studio.session.as_ref() else {
         return Err(t("forge.needProject"));
     };
+    // An agent run's sibling is always born in the source project's own
+    // frame: the orientation pick is AUTO EDIT's alone.
     build_voiceover_sibling(
         studio.project(),
         std::path::Path::new(session.path()),
         for_auto_edit,
+        None,
     )
 }
 
@@ -2239,6 +2261,20 @@ fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<String
     })
 }
 
+/// The frame an orientation pick maps to: horizontal 1920x1080, vertical
+/// 1080x1920, square 1080x1080. The rate and the colour are never the
+/// pick's to name - the sibling keeps the source project's own. `None` for
+/// no pick, or a word the table does not know: the sibling is born in the
+/// source's own frame, exactly as the handoff always built it.
+fn orientation_frame(orientation: Option<&str>) -> Option<(u32, u32)> {
+    match orientation.map(str::trim) {
+        Some("horizontal") => Some((1920, 1080)),
+        Some("vertical") => Some((1080, 1920)),
+        Some("square") => Some((1080, 1080)),
+        _ => None,
+    }
+}
+
 /// The handoff itself, apart from the studio so a test can drive it with
 /// a plain project model: [`voiceover_project`] supplies the window's
 /// two arguments and nothing else. With `for_auto_edit`, the copied
@@ -2249,6 +2285,7 @@ fn build_voiceover_sibling(
     source: &concat_project::model::Project,
     source_root: &std::path::Path,
     for_auto_edit: bool,
+    orientation: Option<&str>,
 ) -> Result<(VoiceoverSource, Option<AutoEditSource>), String> {
     use concat_project::model::ClipKind;
 
@@ -2347,8 +2384,20 @@ fn build_voiceover_sibling(
     }
     // The sibling folder: `<name> edit`, then `edit 2`, `edit 3`, ... so
     // every run gets a fresh project and an earlier edit is never
-    // overwritten. The canvas matches the source project's.
-    let video = timeline.video;
+    // overwritten. The canvas matches the source project's, unless the
+    // orientation pick named a frame for the AUTO EDIT to be built for:
+    // a sibling born in the picked frame needs no frame-set call, so one
+    // early decision at the birth adapts everything downstream - the
+    // stock the plan shops, the caption band, the motion canvas, the
+    // plan's own aspect - with no downstream change at all.
+    let video = match orientation_frame(orientation) {
+        Some((width, height)) => concat_project::model::VideoSettings {
+            width,
+            height,
+            ..timeline.video
+        },
+        None => timeline.video,
+    };
     let folder = source_root
         .parent()
         .map(std::path::Path::to_path_buf)
@@ -4215,7 +4264,8 @@ mod tests {
         }
 
         // The handoff.
-        let (built, auto) = super::build_voiceover_sibling(&source, &source_root, false).unwrap();
+        let (built, auto) =
+            super::build_voiceover_sibling(&source, &source_root, false, None).unwrap();
         assert_eq!(built.segments.len(), 2);
         // The forge run's handoff carries no AUTO EDIT paths.
         assert!(auto.is_none());
@@ -4315,7 +4365,7 @@ mod tests {
         clip.media_id = "m1".to_owned();
         source.active_mut().clips.push(std::sync::Arc::new(clip));
 
-        let (_, auto) = super::build_voiceover_sibling(&source, &source_root, true).unwrap();
+        let (_, auto) = super::build_voiceover_sibling(&source, &source_root, true, None).unwrap();
         let auto = auto.expect("the AUTO EDIT's paths");
         assert_eq!(auto.takes.len(), 1);
         let row = &auto.takes[0];
@@ -4334,6 +4384,72 @@ mod tests {
         assert!(auto.export.ends_with("export/auto-edit.mp4"));
         assert!(auto.export.starts_with(&auto.project));
         assert_eq!(auto.sheet, "auto-edit-sheet.png");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The orientation pick births the sibling in the picked frame: the
+    /// AUTO EDIT's canvas turns while its rate and everything else stay
+    /// the source project's, and no pick - or a word the table does not
+    /// know - keeps the source's own canvas, exactly as the handoff
+    /// always built it.
+    #[test]
+    fn an_orientation_pick_births_the_sibling_in_the_picked_frame() {
+        use concat_project::model::{Clip, ClipKind, MediaItem, MediaKind, Project, VideoSettings};
+
+        let dir = std::env::temp_dir().join(format!(
+            "funcut-orientation-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let source_root = dir.join("Narration");
+        let takes = dir.join("takes");
+        std::fs::create_dir_all(&source_root).unwrap();
+        std::fs::create_dir_all(&takes).unwrap();
+        let take = takes.join("take-1.wav");
+        std::fs::write(&take, b"take one").unwrap();
+
+        let mut source = Project::with_video(VideoSettings {
+            width: 1920,
+            height: 1080,
+            rate_num: 30000,
+            rate_den: 1001,
+            ..Default::default()
+        });
+        source.media.push(MediaItem {
+            id: "m1".to_owned(),
+            path: take.to_string_lossy().into_owned(),
+            name: "take-1.wav".to_owned(),
+            duration: Some(6.0),
+            kind: MediaKind::Audio,
+            has_audio: true,
+            ..Default::default()
+        });
+        let mut clip = Clip::blank("c1", "T1", ClipKind::Audio, "c1", 0.0, 6.0);
+        clip.media_id = "m1".to_owned();
+        source.active_mut().clips.push(std::sync::Arc::new(clip));
+
+        let frame_of = |orientation: Option<&str>| {
+            let (_, auto) =
+                super::build_voiceover_sibling(&source, &source_root, true, orientation).unwrap();
+            let auto = auto.expect("the AUTO EDIT's paths");
+            let document =
+                std::fs::read_to_string(std::path::Path::new(&auto.project).join("concat.json"))
+                    .unwrap();
+            let document: serde_json::Value = serde_json::from_str(&document).unwrap();
+            (
+                document["video"]["width"].as_u64().unwrap(),
+                document["video"]["height"].as_u64().unwrap(),
+                document["video"]["rateNum"].as_i64().unwrap(),
+                document["video"]["rateDen"].as_i64().unwrap(),
+            )
+        };
+        // A vertical pick turns the canvas and keeps the NTSC rate.
+        assert_eq!(frame_of(Some("vertical")), (1080, 1920, 30000, 1001));
+        // No pick - and a word the table does not know - keeps the
+        // source's own canvas.
+        assert_eq!(frame_of(None), (1920, 1080, 30000, 1001));
+        assert_eq!(frame_of(Some("widescreen")), (1920, 1080, 30000, 1001));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -4431,11 +4547,11 @@ mod tests {
         assert!(narrated(&mixed), "the bed does not unarm a real take");
         // And the sibling build takes the same side: the bed is not a
         // segment of the voiceover.
-        let (built, _) = super::build_voiceover_sibling(&mixed, &root, false).unwrap();
+        let (built, _) = super::build_voiceover_sibling(&mixed, &root, false, None).unwrap();
         assert_eq!(built.segments.len(), 1, "only the take is the voiceover");
         // A project whose only audio is the bed refuses the handoff with
         // the no-voiceover notice, not a sibling of its music.
-        assert!(super::build_voiceover_sibling(&bed_only, &root, false).is_err());
+        assert!(super::build_voiceover_sibling(&bed_only, &root, false, None).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 

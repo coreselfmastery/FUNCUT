@@ -293,6 +293,11 @@ pub struct TakeRead {
     /// amplifies whatever was squashed into it, so the gain stage caps
     /// what it will add.
     pub loudness_range_lu: Option<f64>,
+    /// The ebur128 momentary-loudness curve, at most 256 `[t, LUFS]`
+    /// points, times in file seconds: the envelope the per-line fold
+    /// flattens away, spent by the bed's volume ride - the duck follows
+    /// the voice's measured rise, not a span average.
+    pub momentary_lufs: Vec<(f64, f64)>,
     /// The take's true peak, in dBTP, when the loudness pass measured one.
     pub true_peak_dbfs: Option<f64>,
     /// How many utterances the VAD found: the count of pause-separated
@@ -1192,6 +1197,21 @@ fn take_wide_of(reply: &Value) -> TakeRead {
         loudness_range_lu: whole
             .pointer("/loudness/loudnessRangeLu")
             .and_then(Value::as_f64),
+        momentary_lufs: whole
+            .pointer("/loudness/momentaryLufs")
+            .and_then(Value::as_array)
+            .map(|points| {
+                points
+                    .iter()
+                    .filter_map(|point| {
+                        let row = point.as_array()?;
+                        let at = row.first()?.as_f64()?;
+                        let level = row.get(1)?.as_f64()?;
+                        (at.is_finite() && level.is_finite()).then_some((at, level))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         true_peak_dbfs: whole
             .pointer("/loudness/truePeakDbfs")
             .and_then(Value::as_f64),

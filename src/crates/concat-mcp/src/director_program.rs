@@ -2786,7 +2786,11 @@ fn model_ready(log: &[Value], id: &str) -> bool {
 /// verdicts, and the cut's own in-point reads the boundary the shot
 /// door measured.
 #[allow(clippy::too_many_lines)]
-fn door_calls(log: &[Value], subject: &str) -> Vec<ToolCall> {
+fn door_calls(
+    call: &dyn Fn(&str, Value) -> ToolCall,
+    log: &[Value],
+    subject: &str,
+) -> Vec<ToolCall> {
     let mut calls: Vec<ToolCall> = Vec::new();
     if ready_visual_doors(log) == 0 {
         return calls;
@@ -10423,7 +10427,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             door_asks = if pending_gate.is_empty() {
                                 None
                             } else {
-                                Some(door_calls(log, &pending_gate[0].local_path))
+                                Some(door_calls(&call, log, &pending_gate[0].local_path))
                             };
                             phase = GatherPhase::ReadDoors;
                             continue;
@@ -22347,12 +22351,16 @@ mod tests {
     /// can answer, one ask per door, for the top candidate only.
     #[test]
     fn the_picture_doors_open_only_for_the_ready() {
-        assert!(door_calls(&[], "/cache/top.mp4").is_empty());
+        let call = |tool: &str, arguments: Value| ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        assert!(door_calls(&call, &[], "/cache/top.mp4").is_empty());
         let bare = vec![json!({
             "action": "models", "ok": true,
             "models": [ { "id": "transnetv2", "present": false, "ready": false } ],
         })];
-        assert!(door_calls(&bare, "/cache/top.mp4").is_empty());
+        assert!(door_calls(&call, &bare, "/cache/top.mp4").is_empty());
         let rich = vec![json!({
             "action": "models", "ok": true,
             "models": [
@@ -22361,7 +22369,7 @@ mod tests {
                 { "id": "dover-mobile", "present": true, "ready": false },
             ],
         })];
-        let calls = door_calls(&rich, "/cache/top.mp4");
+        let calls = door_calls(&call, &rich, "/cache/top.mp4");
         let actions: Vec<&str> = calls
             .iter()
             .filter_map(|call| call.arguments["action"].as_str())

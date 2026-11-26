@@ -2485,7 +2485,7 @@ fn voice_read_of<'a>(reads: &'a [VoiceRead], take: &str) -> Option<&'a VoiceRead
 /// The take's room verdict, when the voice-quality door read it: the
 /// family reply that names the member it ran and the take it read. The
 /// fan lands its lanes in completion order, so the reply's own `audio`
-/// - echoed by the family dispatch - is the only attribution a consumer
+/// (echoed by the family dispatch) is the only attribution a consumer
 /// may lean on.
 fn classify_of<'a>(log: &'a [Value], take: &str) -> Option<&'a Value> {
     log.iter().rev().find(|reply| {
@@ -6633,7 +6633,9 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             continue;
         };
         let verdict = reply.pointer("/verdict").and_then(Value::as_str);
-        let floor = reply.pointer("/measures/noiseFloorDbfs").and_then(Value::as_f64);
+        let floor = reply
+            .pointer("/measures/noiseFloorDbfs")
+            .and_then(Value::as_f64);
         let snr = reply.pointer("/measures/snrDb").and_then(Value::as_f64);
         let bed = reply.pointer("/bgmDecision").and_then(Value::as_str);
         signal_log.push(json!({
@@ -6681,7 +6683,10 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 .pointer("/span/start")
                 .and_then(Value::as_f64)
                 .and_then(|moment| timeline_at(view, &media, &take.take, moment));
-            let kind = restart.get("kind").and_then(Value::as_str).unwrap_or("restart");
+            let kind = restart
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("restart");
             let cut_safe = restart.get("cutSafe") == Some(&json!(true));
             signal_log.push(json!({
                 "at": round3(at.unwrap_or(0.0)),

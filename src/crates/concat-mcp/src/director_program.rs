@@ -9742,9 +9742,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                             .any(|placed| cosine(vector, placed) >= 0.93)
                                     })
                             };
-                            let eligible = |pool: Vec<usize>| -> Option<usize> {
+                            let eligible = |pool: &[usize]| -> Option<usize> {
                                 let mut pool: Vec<usize> = pool
-                                    .into_iter()
+                                    .iter()
+                                    .copied()
                                     .filter(|index| visual.contains(index))
                                     .filter(|index| !any_picture_ok || picture_ok(*index))
                                     .collect();
@@ -9755,9 +9756,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .or_else(|| pool.first().copied())
                             };
                             let chosen = if gate_answered {
-                                eligible(passing)
+                                eligible(&passing)
                             } else {
-                                eligible(visual)
+                                eligible(&visual)
                             };
                             if let Some(chosen) = chosen {
                                 let best = &pending_gate[chosen];

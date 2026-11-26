@@ -2066,7 +2066,8 @@ mod tests {
             Stage::Preflight,
             vec!["analysis_wait".to_owned()],
         )];
-        let receipt = AcceptanceReceipt::new("/p", "timeline", preflight, Vec::new(), Vec::new());
+        let receipt =
+            AcceptanceReceipt::new("/p", "timeline", preflight.to_vec(), Vec::new(), Vec::new());
         let measurement = receipt
             .capabilities
             .iter()
@@ -2078,8 +2079,13 @@ mod tests {
             Stage::Transcribe,
             vec!["analysis_wait".to_owned()],
         )];
-        let receipt =
-            AcceptanceReceipt::new("/p", "timeline", transcription, Vec::new(), Vec::new());
+        let receipt = AcceptanceReceipt::new(
+            "/p",
+            "timeline",
+            transcription.to_vec(),
+            Vec::new(),
+            Vec::new(),
+        );
         let measurement = receipt
             .capabilities
             .iter()

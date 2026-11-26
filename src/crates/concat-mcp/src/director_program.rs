@@ -14340,15 +14340,16 @@ mod tests {
         assert_eq!(turned.orientation.as_deref(), Some("vertical"));
         assert_eq!(turned.frame_rate, Some((30000, 1001)));
         let calls = handoff_calls(&turned);
-        assert_eq!(calls.len(), 3, "{calls:?}");
-        assert_eq!(calls[0].tool, "project_open");
-        assert_eq!(calls[1].tool, "project_set_video");
+        assert_eq!(calls.len(), 4, "{calls:?}");
+        assert_eq!(calls[0].tool, "sense_visual");
+        assert_eq!(calls[1].tool, "project_open");
+        assert_eq!(calls[2].tool, "project_set_video");
         assert_eq!(
-            calls[1].arguments["video"],
+            calls[2].arguments["video"],
             json!({ "width": 1080, "height": 1920, "rateNum": 30000, "rateDen": 1001 })
         );
-        assert_eq!(calls[1].arguments["path"], json!("/edits/Reel edit"));
-        assert_eq!(calls[2].tool, "timeline_read");
+        assert_eq!(calls[2].arguments["path"], json!("/edits/Reel edit"));
+        assert_eq!(calls[3].tool, "timeline_read");
 
         // No pick keeps the handoff byte-identical to today's: open,
         // read, and nothing else.
@@ -14365,6 +14366,10 @@ mod tests {
         assert_eq!(
             handoff_calls(&as_is),
             vec![
+                ToolCall {
+                    tool: "sense_visual".to_owned(),
+                    arguments: json!({ "action": "models" }),
+                },
                 ToolCall {
                     tool: "project_open".to_owned(),
                     arguments: json!({ "path": "/edits/Reel edit" }),
@@ -14388,7 +14393,7 @@ mod tests {
             )
             .expect("the view is a narration timeline");
             assert_eq!(kept.orientation, None, "a {word} pick sets nothing");
-            assert_eq!(handoff_calls(&kept).len(), 2);
+            assert_eq!(handoff_calls(&kept).len(), 3);
         }
 
         // A source built by hand - the GUI's sibling is born in its own

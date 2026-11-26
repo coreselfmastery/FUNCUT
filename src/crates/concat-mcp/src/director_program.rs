@@ -8187,7 +8187,11 @@ fn signal_brief(log: &[Value]) -> Value {
     {
         let grade = readability
             .iter()
-            .filter_map(|reply| reply.pointer("/grades/fleschKincaidGrade").as_f64())
+            .filter_map(|reply| {
+                reply
+                    .pointer("/grades/fleschKincaidGrade")
+                    .and_then(Value::as_f64)
+            })
             .next();
         brief.insert(
             "script".to_owned(),
@@ -8259,7 +8263,7 @@ fn signal_brief(log: &[Value]) -> Value {
         let named: Vec<String> = distribution
             .iter()
             .filter(|(emotion, count)| {
-                count.as_f64().unwrap_or(0.0) > 0.0 && emotion.as_str() != Some("neutral")
+                count.as_f64().unwrap_or(0.0) > 0.0 && emotion.as_str() != "neutral"
             })
             .map(|(emotion, count)| format!("{emotion}: {count}"))
             .collect();

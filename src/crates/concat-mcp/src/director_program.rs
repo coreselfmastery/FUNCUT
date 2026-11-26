@@ -2553,6 +2553,25 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
         .collect()
 }
 
+/// The visual doors the machine reported ready: the handoff's
+/// `sense_visual {action: "models"}` reply, read once. No reply, no
+/// numpy, no runtime or no checkpoint is zero - and zero keeps the
+/// sheet's original shape, so a bare machine's run is the run it
+/// always was.
+fn ready_visual_doors(log: &[Value]) -> usize {
+    log.iter()
+        .rev()
+        .find(|reply| reply.get("action") == Some(&json!("models")))
+        .and_then(|reply| reply.get("models"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter(|row| row.get("ready") == Some(&json!(true)))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
 /// Every take's `voice_signals` reading, in the order the replies landed.
 /// A reply that is not a reading (a transcript, an emotion extract, a
 /// timeline view) is skipped, and a reading of a file the run does not
@@ -8392,6 +8411,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         StageStep::run(
             Stage::HandoffVoiceover,
             vec![
+                // What the machine can actually read, asked before
+                // anything is read. The sheet below asks for exactly
+                // the enrichment this reply says is installed, so a
+                // checkpoint nobody downloaded is a door the run does
+                // not pretend to open, and one that is there is never
+                // left shut for want of a question.
+                call("sense_visual", json!({ "action": "models" })),
                 call("project_open", json!({ "path": project.clone() })),
                 call("timeline_read", json!({ "path": project.clone() })),
             ],
@@ -9299,7 +9325,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // because the argument did, not because the mood did.
                 let mut chapters: Option<Vec<TopicBoundary>> = None;
                 let mut pivots: Option<Vec<(String, f64)>> = None;
+                // The doors the machine reported ready, read once from
+                // the handoff's capability reply: they decide how many
+                // candidates a slot is worth looking at and how many
+                // frames of each the sheet measures.
+                let mut doors: Option<usize> = None;
                 move |log| loop {
+                    let doors = *doors.get_or_insert_with(|| ready_visual_doors(log).min(6));
+                    // Enough alternates for the continuity pass to swap
+                    // to; with doors installed, enough more that the
+                    // enrichment has something to choose between.
+                    let look_at = if doors > 0 { 5 } else { LOOK_AT };
                     let voice = voice.get_or_insert_with(|| voice_reads(log, &gather_emotion));
                     let chapters =
                         chapters.get_or_insert_with(|| topic_boundaries(log, &gather_emotion));
@@ -9345,7 +9381,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .and_then(|reply| reply["hits"].as_array())
                                 .cloned()
                                 .unwrap_or_default();
-                            let fits = fitting_hits(&hits, span, &aspect, &used_ids, LOOK_AT);
+                            let fits = fitting_hits(&hits, span, &aspect, &used_ids, look_at);
                             if fits.is_empty() {
                                 // A page with no eligible hit is a slot
                                 // left empty - the honest answer - not a
@@ -9430,7 +9466,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "stock_contact_sheet",
                                 json!({
                                     "paths": paths,
-                                    "cols": LOOK_AT,
+                                    "cols": look_at,
                                     "aspect": aspect,
                                     "autoSetup": false,
                                 }),
@@ -9503,9 +9539,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "action": "measure_clips",
                                     "paths": paths,
                                     "intent": "cut",
-                                    "samples": 6,
+                                    // A door-backed machine sees more
+                                    // frames of more clips, because the
+                                    // enrichment is what makes the extra
+                                    // candidates worth looking at; a bare
+                                    // one keeps the shape it always had.
+                                    "samples": if doors > 0 { 8 } else { 6 },
                                     "width": 64,
-                                    "maxClips": 3,
+                                    "maxClips": look_at,
+                                    "enrichDoors": doors,
                                 }),
                             ));
                         }

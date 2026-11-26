@@ -10753,7 +10753,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // second, at its own default intensity - no keys, so
                     // a package whose parameter names differ from the
                     // grade's still lands whole.
-                    let texture = texture_for_look(&look);
+                    let texture = texture_for_look(look);
                     let mut commands: Vec<Value> = vec![json!({
                         "op": "addLayerClip",
                         "trackId": null,

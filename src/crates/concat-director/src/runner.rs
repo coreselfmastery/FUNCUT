@@ -1610,9 +1610,10 @@ mod tests {
             "status": "degraded",
             "degradations": ["voice-signals binary absent: prosody/forensics/speakers/NER missing"],
         }))]);
-        let mut program = program(vec![
-            StageStep::run(Stage::VoiceSignals, vec![call("voice_signals")]).into(),
-        ]);
+        let mut program = program(vec![StageStep::run(
+            Stage::VoiceSignals,
+            vec![call("voice_signals")],
+        )]);
 
         let outcome = runner.run(&mut program, &mut caller);
         assert_eq!(outcome, RunOutcome::CompletedWithWarnings);
@@ -1637,16 +1638,13 @@ mod tests {
             "ok": false,
             "error": "could not inspect the placed SFX file",
         }))]);
-        let mut program = program(vec![
-            StageStep::run(
-                Stage::Sfx,
-                vec![call_with(
-                    "sense_sound",
-                    json!({ "action": "check_placement", "path": "/sounds/hit.wav" }),
-                )],
-            )
-            .into(),
-        ]);
+        let mut program = program(vec![StageStep::run(
+            Stage::Sfx,
+            vec![call_with(
+                "sense_sound",
+                json!({ "action": "check_placement", "path": "/sounds/hit.wav" }),
+            )],
+        )]);
 
         let outcome = runner.run(&mut program, &mut caller);
         assert_eq!(outcome, RunOutcome::CompletedWithWarnings);

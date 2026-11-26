@@ -232,6 +232,23 @@ one has:
   moved to sherpa-onnx 2.x and deleted every ignore; the audit is green on
   `main` with zero suppressions, and a new advisory is meant to fail the
   lane rather than be suppressed.
+- **A check that never looked at the tests.** `cargo check -p <crate>`
+  compiles the library and stops; the engine lane's `Build the tests`
+  is the first thing that compiles `#[cfg(test)]` code. Three test-only
+  errors on PR #226 - two stage records built as arrays where the
+  receipt takes a `Vec`, one profile moved into its first gate and
+  asked for again - passed every local check and were only found when
+  the lane linked the test binaries, 1h20m in. Run
+  `cargo check -p <crate> --all-targets` (or clippy with the same flag)
+  before pushing test changes.
+- **A branch rebased when it should have been merged.** #226 carried
+  commits that had already landed on `main` in another form, so the
+  rebase wanted the same caption resolution once per replayed commit
+  (three times, growing). `git merge origin/main` wanted it once, and
+  the resolution was the same in each hunk: keep main's newer structure
+  and re-apply the branch's one semantic change inside it. When a
+  branch's commits may already be on `main`, merge; rebase when they
+  are not.
 
 When a lane goes red, read the job's steps first: a step with no
 conclusion and a log that stops mid-line is a runner death, not a test

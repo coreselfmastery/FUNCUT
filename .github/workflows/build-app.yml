@@ -38,9 +38,9 @@ on:
   # so a green source tree also has a runnable application bundle.
   push:
     branches: [main]
-  # Exercise both distributable architectures before merge when native inputs
-  # or packaging workflow changes; engine tests alone do not prove the
-  # installable bundles still stage, launch and package.
+  # The window binary links the workspace crates, including concat-mcp
+  # and concat-director. Any crate can change the app that ships, so exercise
+  # both distributable architectures before merge, not only after the push.
   pull_request:
     paths:
       - ".github/workflows/build-app.yml"
@@ -59,7 +59,7 @@ on:
       - "src/rust-toolchain.toml"
       - "src/Cargo.toml"
       - "src/Cargo.lock"
-      - "src/crates/concat/src/**"
+      - "src/crates/**"
   workflow_call:
     inputs:
       ref:

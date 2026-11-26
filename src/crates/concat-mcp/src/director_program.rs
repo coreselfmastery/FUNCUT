@@ -18886,8 +18886,9 @@ mod tests {
                           "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
                     ],
                     // The forensic ear's estimate: a tail the old gate
-                    // retired the peak for.
-                    "forensic": { "reverbTailSec": 0.5 },
+                    // retired the peak for. The take-wide readings live
+                    // under the profile's own `wholeTake` block.
+                    "wholeTake": { "forensic": { "reverbTailSec": 0.5 } },
                 }),
                 json!({
                     "lines": [
@@ -19006,6 +19007,9 @@ mod tests {
                     { "start": 0.0, "end": 2.0,
                       "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
                 ],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "wordConfidence", "confidence": 0.9 },
+                ] },
             }),
             json!({
                 "lines": [

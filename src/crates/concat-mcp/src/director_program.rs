@@ -2746,6 +2746,25 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
         .collect()
 }
 
+/// The visual doors the machine reported ready: the handoff's
+/// `sense_visual {action: "models"}` reply, read once. No reply, no
+/// numpy, no runtime or no checkpoint is zero - and zero keeps the
+/// sheet's original shape, so a bare machine's run is the run it
+/// always was.
+fn ready_visual_doors(log: &[Value]) -> usize {
+    log.iter()
+        .rev()
+        .find(|reply| reply.get("action") == Some(&json!("models")))
+        .and_then(|reply| reply.get("models"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter(|row| row.get("ready") == Some(&json!(true)))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
 /// The take's measured rhythm: the syllable period in seconds and the
 /// regularity of the delivery, from the prosody door's
 /// `measure_rhythm_meter` reply. A take with no reply, or a delivery too
@@ -7774,6 +7793,20 @@ fn signal_evidence(log: &[Value]) -> Value {
     Value::Object(digest)
 }
 
+/// How well a stock clip's measured colour temperature agrees with the
+/// one before it: the same temperature is 2, either side neutral is 1,
+/// and two opposites are 0. A cut from a warm clip straight to a cool one
+/// reads as a different film, so the shelf prefers the neighbour that
+/// agrees when the scores are level.
+fn temperature_agreement(previous: Option<&str>, next: Option<&str>) -> u8 {
+    match (previous, next) {
+        (Some(previous), Some(next)) if previous == next => 2,
+        (Some(previous), Some(next)) if previous == "neutral" || next == "neutral" => 1,
+        (Some(_), Some(_)) => 0,
+        _ => 1,
+    }
+}
+
 /// Every decision a family informs, in the profile's own decision-policy
 /// words. A family may drive more than one choice: `forensic` names the
 /// bed, the repair, the mix, the grade's tone and the accent's placement,
@@ -8772,7 +8805,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 2. The handoff, read back: the sibling is opened on the window's
     //    server - the same register a forge run's edit sits in - and the
     //    voiceover lane is read as the run's own ground truth.
-    let mut handoff = vec![call("project_open", json!({ "path": project.clone() }))];
+    let mut handoff = vec![
+        // What the machine can actually read, asked before anything is
+        // read. The sheet below asks for exactly the enrichment this
+        // reply says is installed, so a checkpoint nobody downloaded is
+        // a door the run does not pretend to open, and one that is there
+        // is never left shut for want of a question.
+        call("sense_visual", json!({ "action": "models" })),
+        call("project_open", json!({ "path": project.clone() })),
+    ];
     // The orientation the run was handed lands before anything else
     // reads the frame: everything downstream - the stock the plan shops,
     // the caption band, the motion canvas, the plan's own aspect - reads
@@ -9711,6 +9752,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // energy actually repeats on, so a slow take dissolves
                 // slowly and a clipped one snaps.
                 let mut pending_period: Option<f64> = None;
+                // The colour temperature of the last stock clip placed:
+                // the shelf prefers a neighbour that agrees with it.
+                let mut last_temperature: Option<String> = None;
                 // The delivery's regularity, from the same rhythm read:
                 // a metronomic take snaps its seam tighter.
                 let mut pending_meter: Option<String> = None;
@@ -9740,7 +9784,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // because the argument did, not because the mood did.
                 let mut chapters: Option<Vec<TopicBoundary>> = None;
                 let mut pivots: Option<Vec<(String, f64)>> = None;
+                // The doors the machine reported ready, read once from
+                // the handoff's capability reply: they decide how many
+                // candidates a slot is worth looking at and how many
+                // frames of each the sheet measures.
+                let mut doors: Option<usize> = None;
                 move |log| loop {
+                    let doors = *doors.get_or_insert_with(|| ready_visual_doors(log).min(6));
+                    // Enough alternates for the continuity pass to swap
+                    // to; with doors installed, enough more that the
+                    // enrichment has something to choose between.
+                    let look_at = if doors > 0 { 5 } else { LOOK_AT };
                     let voice = voice.get_or_insert_with(|| voice_reads(log, &gather_emotion));
                     let chapters =
                         chapters.get_or_insert_with(|| topic_boundaries(log, &gather_emotion));
@@ -9786,7 +9840,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .and_then(|reply| reply["hits"].as_array())
                                 .cloned()
                                 .unwrap_or_default();
-                            let fits = fitting_hits(&hits, span, &aspect, &used_ids, LOOK_AT);
+                            let fits = fitting_hits(&hits, span, &aspect, &used_ids, look_at);
                             if fits.is_empty() {
                                 // A page with no eligible hit is a slot
                                 // left empty - the honest answer - not a
@@ -9871,7 +9925,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "stock_contact_sheet",
                                 json!({
                                     "paths": paths,
-                                    "cols": LOOK_AT,
+                                    "cols": look_at,
                                     "aspect": aspect,
                                     "autoSetup": false,
                                 }),
@@ -9944,9 +9998,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "action": "measure_clips",
                                     "paths": paths,
                                     "intent": "cut",
-                                    "samples": 6,
+                                    // A door-backed machine sees more
+                                    // frames of more clips, because the
+                                    // enrichment is what makes the extra
+                                    // candidates worth looking at; a bare
+                                    // one keeps the shape it always had.
+                                    "samples": if doors > 0 { 8 } else { 6 },
                                     "width": 64,
-                                    "maxClips": 3,
+                                    "maxClips": look_at,
+                                    "enrichDoors": doors,
                                 }),
                             ));
                         }
@@ -9961,7 +10021,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // not a re-ranking.
                             let refused = |candidate: &StockCandidate| {
                                 visual_read_of(&reads, &candidate.local_path)
-                                    .is_some_and(|read| !read.passes() || read.montage())
+                                    .is_some_and(|read| !read.usable() || read.montage())
                             };
                             let any_pass = pending_gate.iter().any(|candidate| !refused(candidate));
                             if any_pass {
@@ -9995,7 +10055,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                                     };
                                                 beauty(right).total_cmp(&beauty(left)).then_with(|| {
                                                     // The action door's answer
-                                                    // is the last tiebreak: a
+                                                    // is the next tiebreak: a
                                                     // candidate the door could
                                                     // read outranks one it
                                                     // could not, measured
@@ -10010,7 +10070,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                                                 })
                                                                 .is_some()
                                                         };
-                                                    answered(right).cmp(&answered(left))
+                                                    answered(right).cmp(&answered(left)).then_with(|| {
+                                                        // The neighbour's warmth
+                                                        // is the last tiebreak,
+                                                        // so a level pair keeps
+                                                        // the palette the grade
+                                                        // set.
+                                                        let warmth =
+                                                            |candidate: &StockCandidate| {
+                                                                temperature_agreement(
+                                                                    last_temperature.as_deref(),
+                                                                    read(candidate).and_then(|read| {
+                                                                        read.temperature.as_deref()
+                                                                    }),
+                                                                )
+                                                            };
+                                                        warmth(right).cmp(&warmth(left))
+                                                    })
                                                 })
                                             })
                                     })
@@ -10203,7 +10279,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let reads = visual_reads(log);
                             let picture_ok = |index: usize| {
                                 visual_read_of(&reads, &pending_gate[index].local_path)
-                                    .is_none_or(|read| read.passes() && !read.montage())
+                                    .is_none_or(|read| read.usable() && !read.montage())
                             };
                             let any_picture_ok = (0..pending_gate.len()).any(picture_ok);
                             // The semantic order the CLIP rerank measured:
@@ -10271,6 +10347,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 {
                                     used_hashes.push(hash.to_owned());
                                 }
+                                last_temperature = visual_read_of(&reads, &best.local_path)
+                                    .and_then(|read| read.temperature.clone());
                                 // The chosen clip's own look joins the
                                 // placed set: the next slot's
                                 // near-duplicate line is drawn against it.
@@ -14758,6 +14836,19 @@ mod tests {
     /// stage never read the signal, so the claim was decorative. A caption
     /// carrying one of the take's own stressed words takes the accent; one
     /// carrying none stays plain.
+    #[test]
+    fn a_neighbouring_clip_prefers_the_temperature_that_agrees() {
+        // Same warmth is the strongest agreement; either side neutral is
+        // a soft one; two opposites are none at all.
+        assert_eq!(temperature_agreement(Some("warm"), Some("warm")), 2);
+        assert_eq!(temperature_agreement(Some("warm"), Some("neutral")), 1);
+        assert_eq!(temperature_agreement(Some("warm"), Some("cool")), 0);
+        // Nothing measured on either side is not a disagreement.
+        assert_eq!(temperature_agreement(None, Some("cool")), 1);
+        assert_eq!(temperature_agreement(Some("warm"), None), 1);
+        assert_eq!(temperature_agreement(None, None), 1);
+    }
+
     #[test]
     fn a_stressed_word_takes_the_caption_accent() {
         let takes = vec![TakePaths {

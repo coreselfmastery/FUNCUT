@@ -56,6 +56,13 @@ pub struct VisualRead {
     pub scene_cuts: usize,
     /// The sheet's combined score: sharpness, noise, bars and motion.
     pub visual_score: Option<f64>,
+    /// Whether the clip's frames smear: a pan's motion blur is a movement,
+    /// not an entrance, and the sheet's own note says so.
+    pub blurred: bool,
+    /// The clip's measured colour temperature - warm, cool or neutral -
+    /// from the same reply's palette. It is the one reading that says
+    /// whether a stock clip will sit inside the grade or fight it.
+    pub temperature: Option<String>,
     /// The film-shot classifier's word for the shot, with its
     /// confidence, when the door is installed: the labelled reading the
     /// classical scale's three words cannot name - an `extreme_wide`
@@ -131,6 +138,16 @@ impl VisualRead {
                 .and_then(|scene| scene["cuts"].as_u64())
                 .unwrap_or(0) as usize,
             visual_score: number(&row["visualScore"]),
+            blurred: row
+                .get("blur")
+                .and_then(|blur| blur.get("blurredShare"))
+                .and_then(Value::as_f64)
+                .is_some_and(|share| share >= 0.5),
+            temperature: row
+                .get("palette")
+                .and_then(|palette| palette.get("temperature"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             shot_type: models.and_then(|row| {
                 let said = row.get("shotType")?;
                 Some((
@@ -163,6 +180,14 @@ impl VisualRead {
     /// a candidate the reader could not judge is not one it refused.
     pub fn passes(&self) -> bool {
         matches!(self.verdict.as_str(), "pass" | "unknown" | "")
+    }
+
+    /// Whether the picture is one a slot can take: it passed the
+    /// technical read and its frames are not smeared. `passes` alone is
+    /// the quality verdict; a pan's blur passes quality and still makes a
+    /// bad entrance.
+    pub fn usable(&self) -> bool {
+        self.passes() && !self.blurred
     }
 
     /// Whether anything in the frame already moves - the camera, the
@@ -337,6 +362,14 @@ pub const CONSUMERS: &[(&str, &str)] = &[
         "the stock ranking: the sheet's combined score breaks the choice",
     ),
     (
+        "blurred",
+        "the gather's veto: a pan's smear passes quality and is still no entrance",
+    ),
+    (
+        "temperature",
+        "the gather's neighbour tie-break: a clip that fights the last one's warmth reads as another film",
+    ),
+    (
         "shot_type",
         "the scale the ladder walks: the classifier's labelled word outranks the classical three when the door is installed",
     ),
@@ -371,6 +404,24 @@ mod tests {
             "scene": { "cuts": 0, "dissolves": 0, "firstCut": null },
             "visualScore": 71.5,
         })
+    }
+
+    #[test]
+    fn a_smeared_pan_is_not_an_entrance_and_the_palette_names_its_warmth() {
+        let mut smeared = row();
+        smeared["blur"] = json!({ "verdict": "directional blur", "blurredShare": 0.8 });
+        smeared["palette"] = json!({ "dominant": [], "temperature": "cool", "saturation": 0.3 });
+        let read = VisualRead::parse(&smeared).expect("a measured row");
+        // Quality said pass; the frames still smear, and a smear is a
+        // movement, not an entrance.
+        assert!(read.passes());
+        assert!(read.blurred);
+        assert!(!read.usable());
+        assert_eq!(read.temperature.as_deref(), Some("cool"));
+        // A clean row carries no blur and no palette, and stays usable.
+        let clean = VisualRead::parse(&row()).expect("a measured row");
+        assert!(!clean.blurred && clean.usable());
+        assert_eq!(clean.temperature, None);
     }
 
     #[test]

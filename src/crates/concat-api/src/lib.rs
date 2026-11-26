@@ -1916,7 +1916,11 @@ impl Api {
             licence: licence.clone(),
             author: author.unwrap_or_default().trim().to_owned(),
         });
-        let author = item.stock.as_ref().map_or_default(|stock| stock.author.clone());
+        let author = item
+            .stock
+            .as_ref()
+            .map(|stock| stock.author.clone())
+            .unwrap_or_default();
         let mut view = self.apply(path, Command::AddMedia { item: item.clone() })?;
         let media_id = view
             .project

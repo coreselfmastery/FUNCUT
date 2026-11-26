@@ -439,7 +439,12 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
                 Some(AssetRecord {
                     provider: provider.clone().unwrap_or_else(|| "stock".to_owned()),
                     id: id.clone().unwrap_or_default(),
-                    author: None,
+                    // The credit the licence asks to keep: the import's
+                    // own reply names the author it wrote into the
+                    // document, and a reply from before it spelled one
+                    // is read from the call's own argument - the search
+                    // hit's author, passed through by the spine.
+                    author: text(reply, "author").or_else(|| text(&call.arguments, "author")),
                     url: url.clone(),
                     commercial_ok: Some(license.is_some()),
                     license,
@@ -2097,9 +2102,18 @@ mod tests {
             (
                 call(
                     "stock_import",
-                    json!({ "provider": "pexels", "id": "2499611", "url": "https://x/y.mp4" }),
+                    json!({
+                        "provider": "pexels",
+                        "id": "2499611",
+                        "url": "https://x/y.mp4",
+                        "author": "Grizzly Bear Films"
+                    }),
                 ),
-                json!({ "mediaIds": ["m1"], "license": "Pexels License" }),
+                json!({
+                    "mediaIds": ["m1"],
+                    "license": "Pexels License",
+                    "author": "Grizzly Bear Films"
+                }),
             ),
             (
                 call("openvid_import", json!({ "ids": [820338756299i64] })),
@@ -2116,6 +2130,9 @@ mod tests {
         assert_eq!(pexels.provider, "pexels");
         assert_eq!(pexels.license.as_deref(), Some("Pexels License"));
         assert_eq!(pexels.commercial_ok, Some(true));
+        // The credit the licence asks to keep: the import's own reply
+        // names the author the document now holds.
+        assert_eq!(pexels.author.as_deref(), Some("Grizzly Bear Films"));
         // OpenVid carries no per-clip record, and the manifest says so
         // rather than assuming the clip is clean.
         let openvid = &assets[1];

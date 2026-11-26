@@ -691,6 +691,11 @@ struct StockCandidate {
     /// tile ordinal, and the gate was deaf to the difference between
     /// them.
     caption: String,
+    /// Who shot the clip, when the search named them: the credit the
+    /// licence asks to keep, carried from the search hit into the
+    /// import so the document can answer for the clip after this run's
+    /// replies are gone.
+    author: String,
     local_path: String,
     width: f64,
     height: f64,
@@ -9078,6 +9083,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .or_else(|| hit["name"].as_str())
                                         .unwrap_or_default()
                                         .to_owned(),
+                                    author: hit["author"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
                                     local_path: path,
                                     width: hit["width"].as_f64().unwrap_or(0.0),
                                     height: hit["height"].as_f64().unwrap_or(0.0),
@@ -9448,6 +9457,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "provider": candidate.provider.clone(),
                                     "id": candidate.id.clone(),
                                     "url": candidate.url.clone(),
+                                    "author": candidate.author.clone(),
                                 }),
                             ));
                         }
@@ -15560,6 +15570,7 @@ mod tests {
             id: id.to_owned(),
             url: format!("https://x/{id}"),
             caption: format!("caption for {id}"),
+            author: "the shelf's own author".to_owned(),
             local_path: format!("/cache/{id}.mp4"),
             width: 1080.0,
             height: 1920.0,

@@ -1041,11 +1041,12 @@ struct CaptionGroup {
 
 /// The caption groups one transcript segment carries: the recogniser's
 /// own word times, chunked where a viewer reads a seam - the sentence's
-/// own punctuation, a breath gap the recogniser measured, four words,
-/// or three and a half seconds, whichever comes first. The safe-remove
-/// fillers the profile timed are dropped here, so the viewer never sees
-/// the `um` they already heard.
-fn caption_groups(segment: &Value, fillers: &[String]) -> Vec<CaptionGroup> {
+/// own punctuation, a breath gap the recogniser measured, the word
+/// budget the caller hands it (four by default, three when the accent
+/// read asked for more reading time), or three and a half seconds,
+/// whichever comes first. The safe-remove fillers the profile timed are
+/// dropped here, so the viewer never sees the `um` they already heard.
+fn caption_groups(segment: &Value, fillers: &[String], max_words: usize) -> Vec<CaptionGroup> {
     fn close(groups: &mut Vec<CaptionGroup>, current: &mut Vec<CaptionWord>, text: &mut String) {
         if current.is_empty() {
             text.clear();
@@ -1100,7 +1101,7 @@ fn caption_groups(segment: &Value, fillers: &[String]) -> Vec<CaptionGroup> {
             at,
         });
         let span = end - current.first().map(|first| first.start).unwrap_or(end);
-        if ends_sentence || current.len() >= 4 || span >= 3.5 {
+        if ends_sentence || current.len() >= max_words.max(1) || span >= 3.5 {
             close(&mut groups, &mut current, &mut text);
         }
     }
@@ -2500,6 +2501,35 @@ fn spoken_lines(log: &[Value], take: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The spoken lines a take's transcript measured, with the timed words
+/// still on them: the delivery's own doors - the rhythm, the tempo, the
+/// emphasis, the fillers - read words with times, and a line stripped of
+/// its words is a line none of them can measure. The rhythm read learned
+/// this the quiet way: it spent its whole first day answering "no word
+/// timings" to every take it was asked about, because the only lines
+/// builder kept handing it word-less spans.
+fn worded_lines(log: &[Value], take: &str) -> Vec<Value> {
+    segments_of(log, take)
+        .into_iter()
+        .filter(|segment| {
+            let Some(start) = segment["start"].as_f64() else {
+                return false;
+            };
+            let Some(end) = segment["end"].as_f64() else {
+                return false;
+            };
+            let Some(text) = segment["text"].as_str().map(str::trim) else {
+                return false;
+            };
+            end > start
+                && !text.is_empty()
+                && segment["words"]
+                    .as_array()
+                    .is_some_and(|words| !words.is_empty())
+        })
+        .collect()
+}
+
 /// One line of the emotional read, keyed by the take it was read from.
 #[derive(Clone)]
 struct EmotionLine {
@@ -2731,15 +2761,25 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
         .collect()
 }
 
+/// The last reply a family reading left for a take, keyed by the action
+/// it answered and the audio it was asked about: the fan's lanes land in
+/// completion order, so the call order is no attribution to lean on,
+/// and the door's own reply names the reading, not its subject. A reply
+/// that failed is still found - the readers that spend one check `ok`
+/// themselves, and the ones that only record it record the refusal too.
+fn family_reply_of<'a>(log: &'a [Value], action: &str, take: &str) -> Option<&'a Value> {
+    log.iter().rev().find(|reply| {
+        reply.get("action").and_then(Value::as_str) == Some(action)
+            && reply.get("audio").and_then(Value::as_str) == Some(take)
+    })
+}
+
 /// The take's measured rhythm: the syllable period in seconds and the
 /// regularity of the delivery, from the prosody door's
 /// `measure_rhythm_meter` reply. A take with no reply, or a delivery too
 /// short to time, is `None` - the seam keeps the blend it had.
 fn rhythm_read(log: &[Value], take: &str) -> Option<(f64, String)> {
-    let row = log.iter().rev().find(|reply| {
-        reply.get("action") == Some(&json!("measure_rhythm_meter"))
-            && reply.get("audio").and_then(Value::as_str) == Some(take)
-    })?;
+    let row = family_reply_of(log, "measure_rhythm_meter", take)?;
     if row.get("ok").and_then(Value::as_bool) == Some(false) {
         return None;
     }
@@ -2754,6 +2794,67 @@ fn rhythm_read(log: &[Value], take: &str) -> Option<(f64, String)> {
         .unwrap_or_default()
         .to_owned();
     Some((period, meter))
+}
+
+/// The delivery's measured tempo change over a moment, in percent: the
+/// `detect_tempo_changes` segment that covers the second, and its
+/// `changePct`. A take with no reply, no segments, or no segment over
+/// the moment is `None` - nothing downstream slows or quickens for a
+/// delivery that kept one tempo.
+fn tempo_change_at(log: &[Value], take: &str, at: f64) -> Option<f64> {
+    let row = family_reply_of(log, "detect_tempo_changes", take)?;
+    if row.get("ok").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    row.get("segments")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|segment| {
+            let from = segment["from"].as_f64().unwrap_or(f64::MIN);
+            let to = segment["to"].as_f64().unwrap_or(f64::MAX);
+            at >= from && at <= to
+        })
+        .and_then(|segment| segment["changePct"].as_f64())
+}
+
+/// The caption pacing the accent read asked for, in characters per
+/// second: an accent the door read as needing more reading time asks for
+/// slower captions. A take with no reply keeps the default - a door that
+/// never answered does not get to slow anyone's captions.
+fn accent_caption_pacing(log: &[Value], take: &str) -> Option<f64> {
+    let row = family_reply_of(log, "detect_accent", take)?;
+    if row.get("ok").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    row.pointer("/captionPacing/charsPerSecond")
+        .and_then(Value::as_f64)
+}
+
+/// The filled-pause words the filler door classified inside a span: the
+/// `classify_filler_type` instances between two seconds, one word each,
+/// ready to join the profile's own fillers on the caption's skip list. A
+/// door that never answered hands back nothing, and the captions keep
+/// the profile's list exactly as it was.
+fn door_fillers_between(log: &[Value], take: &str, from: f64, to: f64) -> Vec<String> {
+    let Some(row) = family_reply_of(log, "classify_filler_type", take) else {
+        return Vec::new();
+    };
+    if row.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Vec::new();
+    }
+    row.get("instances")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|instance| {
+            let class = instance["class"].as_str()?;
+            let word = instance["text"].as_str()?.trim().to_lowercase();
+            let start = instance["start"].as_f64()?;
+            let end = instance["end"].as_f64()?;
+            let filled_pause = class == "filled_pause" || class == "stalling_repeat";
+            (filled_pause && !word.is_empty() && start >= from && end <= to).then_some(word)
+        })
+        .collect()
 }
 
 /// The seam's blend for a measured period and the delivery's own meter: a
@@ -6646,6 +6747,137 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             ),
         }));
     }
+    // The delivery's own doors, each naming the decision it informed: a
+    // reading the run asked about appears in the plan's own ledger, with
+    // the decision it drove - so a door that answered nothing is visible
+    // as the entry it never earned, and a door that never answered leaves
+    // the plan exactly as it was. Every entry below cites a family the
+    // voice profile rates.
+    let door_row = |action: &str| {
+        log.iter()
+            .rev()
+            .find(|reply| reply.get("action").and_then(Value::as_str) == Some(action))
+    };
+    // The fillers the door classified as safe removals: the captions'
+    // skip list extended with the taxonomy's own pure sounds.
+    if let Some(reply) = door_row("classify_filler_type")
+        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+    {
+        let removable = reply["safeRemovalSeconds"].as_f64().unwrap_or(0.0);
+        let counts = reply["counts"].as_object();
+        if removable > 0.0 || counts.is_some_and(|counts| !counts.is_empty()) {
+            signal_log.push(json!({
+                "at": 0.0,
+                "decision": "caption",
+                "signals": ["fillers", "words"],
+                "note": format!(
+                    "the filler door read {removable:.1}s of safe-removal fillers; the captions' skip list takes the pure sounds it named"
+                ),
+            }));
+        }
+    }
+    // The languages the take switches between: the caption style turns
+    // with the language, and a mixed-script caption needs the
+    // per-script font fallback the typography names.
+    if let Some(reply) = door_row("detect_code_switching")
+        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+        && reply["switches"]
+            .as_array()
+            .is_some_and(|switches| !switches.is_empty())
+    {
+        let switches = reply["switches"].as_array().map(Vec::len).unwrap_or(0);
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "caption",
+            "signals": ["language", "words"],
+            "note": format!(
+                "the take switches language {switches} time(s); the caption style turns with the language the delivery turned to"
+            ),
+        }));
+    }
+    // The delivery's register and the voice's own class: the motion
+    // presets and the bed's texture read them, not the mood alone.
+    if let Some(reply) = door_row("detect_speaking_style")
+        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+        && let Some(style) = reply["style"].as_str().filter(|style| !style.is_empty())
+    {
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "motion",
+            "signals": ["prosody.range", "words"],
+            "note": format!(
+                "the delivery reads {style}: the entrances hold the register the voice actually carries"
+            ),
+        }));
+    }
+    // The voice's own class - breathy, creaky, pressed, modal - as the
+    // bed's texture decision: a creaky take earns a softer bed.
+    if let Some(reply) = door_row("classify_voice_quality")
+        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+        && let Some(class) = reply["primaryClass"]
+            .as_str()
+            .filter(|class| !class.is_empty())
+    {
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "bgm",
+            "signals": ["prosody.range", "words"],
+            "note": format!(
+                "the voice reads {class}: the bed's texture answers the voice the take actually carries"
+            ),
+        }));
+    }
+    // The events inside the phrases: the measured noises worth cutting,
+    // marked for the tighten the way the restarts are.
+    if let Some(reply) = door_row("detect_vocal_events")
+        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+        && let Some(cuts) = reply["cutCandidates"]
+            .as_array()
+            .filter(|cuts| !cuts.is_empty())
+    {
+        let first = cuts
+            .first()
+            .and_then(|cut| cut["start"].as_f64())
+            .unwrap_or(0.0);
+        let kinds: Vec<String> = cuts
+            .iter()
+            .filter_map(|cut| cut["kind"].as_str().map(str::to_owned))
+            .take(3)
+            .collect();
+        signal_log.push(json!({
+            "at": round3(first),
+            "decision": "assemble",
+            "signals": ["sentence.type", "words"],
+            "note": format!(
+                "the voice carries {} measured noise(s) worth cutting ({}): marked, the way the restarts are",
+                cuts.len(),
+                kinds.join(", ")
+            ),
+        }));
+    }
+    // The Searle balance: a script that is all assertives is a lecture,
+    // and the card policy reads the balance.
+    if let Some(reply) = door_row("classify_speech_acts")
+        && reply.get("ok").and_then(Value::as_bool) == Some(true)
+        && let Some(balance) = reply["balance"]
+            .as_object()
+            .filter(|balance| !balance.is_empty())
+    {
+        let directives = balance
+            .get("directive")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        if directives > 0.0 {
+            signal_log.push(json!({
+                "at": 0.0,
+                "decision": "graphic",
+                "signals": ["speechActs", "words"],
+                "note": format!(
+                    "the script is {directives:.0}% directives: the viewer is addressed, and the cards hold the asks"
+                ),
+            }));
+        }
+    }
     if let Some(peak) = read
         .iter()
         .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
@@ -7913,6 +8145,177 @@ fn signal_brief(log: &[Value]) -> Value {
             json!(format!("{hot} of {} lines read warm", rows.len())),
         );
     }
+    // The delivery's own doors, as the critic's evidence: every section
+    // below is one reading the run asked about, and every one is skipped
+    // whole when the door never answered - a door that was never asked
+    // does not get to speak for the take, and a reply that never landed
+    // leaves the critic's brief exactly as it was.
+    let door = |action: &str| {
+        log.iter()
+            .filter(|reply| reply.get("action").and_then(Value::as_str) == Some(action))
+            .collect::<Vec<&Value>>()
+    };
+    // The sarcasm read: a flagged line is never read straight - the
+    // critic is told which lines carry irony, and the deadpan pause
+    // after the beat is kept.
+    let sarcasm: Vec<&Value> = door("detect_sarcasm");
+    let flagged: Vec<&Value> = sarcasm
+        .iter()
+        .flat_map(|reply| reply["perLine"].as_array().into_iter().flatten())
+        .filter(|line| line["sarcasm"].as_bool() == Some(true))
+        .collect();
+    if !flagged.is_empty() {
+        let first = flagged
+            .first()
+            .and_then(|line| line["text"].as_str())
+            .unwrap_or_default();
+        brief.insert(
+            "irony".to_owned(),
+            json!(format!(
+                "{} sarcastic line(s) flagged - never read them straight (first: \"{first}\")"
+            )),
+        );
+    }
+    // The script's own craft score and reading level: the critic's first
+    // question is this reply.
+    let script: Vec<&Value> = door("score_script_quality");
+    let readability: Vec<&Value> = door("score_readability");
+    if let Some(score) = script
+        .iter()
+        .filter_map(|reply| reply["score"].as_f64())
+        .max_by(|left, right| left.total_cmp(right))
+    {
+        let grade = readability
+            .iter()
+            .filter_map(|reply| reply.pointer("/grades/fleschKincaidGrade").as_f64())
+            .next();
+        brief.insert(
+            "script".to_owned(),
+            json!(match grade {
+                Some(grade) => {
+                    format!("craft score {score:.1}/10, reading level grade {grade:.1}")
+                }
+                None => format!("craft score {score:.1}/10"),
+            }),
+        );
+    }
+    // The voice's own class, register and timbre: a creaky take earns a
+    // different bed than a modal one, and a newsread delivery asks the
+    // motion for steadier presets.
+    let voice_class: Vec<String> = door("classify_voice_quality")
+        .iter()
+        .filter_map(|reply| reply["primaryClass"].as_str())
+        .map(str::to_owned)
+        .collect();
+    let speaking_style: Vec<String> = door("detect_speaking_style")
+        .iter()
+        .filter_map(|reply| reply["style"].as_str())
+        .map(str::to_owned)
+        .collect();
+    let timbre: Vec<String> = door("measure_vocal_tract")
+        .iter()
+        .filter_map(|reply| reply["timbre"].as_str())
+        .map(str::to_owned)
+        .collect();
+    if !voice_class.is_empty() || !speaking_style.is_empty() || !timbre.is_empty() {
+        let mut voice: Vec<String> = Vec::new();
+        if let Some(first) = voice_class.first() {
+            voice.push(format!("class {first}"));
+        }
+        if let Some(first) = speaking_style.first() {
+            voice.push(format!("style {first}"));
+        }
+        if let Some(first) = timbre.first() {
+            voice.push(format!("timbre {first}"));
+        }
+        brief.insert("voice".to_owned(), json!(voice.join(", ")));
+    }
+    // The events inside the phrases: the throat clears the cut can lose
+    // and the laughs the authenticity keeps.
+    let events: Vec<&Value> = door("detect_vocal_events");
+    let cut_candidates: usize = events
+        .iter()
+        .filter_map(|reply| reply["cutCandidates"].as_array().map(Vec::len))
+        .sum();
+    let keeps: usize = events
+        .iter()
+        .filter_map(|reply| reply["keepForAuthenticity"].as_array().map(Vec::len))
+        .sum();
+    if cut_candidates > 0 || keeps > 0 {
+        brief.insert(
+            "events".to_owned(),
+            json!(format!(
+                "{cut_candidates} cut candidate(s) (throat clears, coughs), {keeps} to keep (laughs, sighs)"
+            )),
+        );
+    }
+    // The emotion a non-English line carries, in its own language.
+    let cross: Vec<&Value> = door("detect_cross_lingual_emotion");
+    if let Some(distribution) = cross
+        .iter()
+        .find_map(|reply| reply["distribution"].as_object())
+        .filter(|distribution| !distribution.is_empty())
+    {
+        let named: Vec<String> = distribution
+            .iter()
+            .filter(|(emotion, count)| {
+                count.as_f64().unwrap_or(0.0) > 0.0 && emotion.as_str() != Some("neutral")
+            })
+            .map(|(emotion, count)| format!("{emotion}: {count}"))
+            .collect();
+        if !named.is_empty() {
+            brief.insert("crossLingual".to_owned(), json!(named.join(", ")));
+        }
+    }
+    // The languages the take switches between: each switch point is a
+    // caption-style change, and a mixed-script caption needs the
+    // per-script font fallback the typography names.
+    let switching: Vec<&Value> = door("detect_code_switching");
+    let switches: usize = switching
+        .iter()
+        .filter_map(|reply| reply["switches"].as_array().map(Vec::len))
+        .sum();
+    if switches > 0 {
+        brief.insert(
+            "switches".to_owned(),
+            json!(format!(
+                "{switches} language switch(es) - caption style turns with the language"
+            )),
+        );
+    }
+    // The Searle balance: a script that is all assertives is a lecture.
+    if let Some(balance) = door("classify_speech_acts")
+        .iter()
+        .find_map(|reply| reply["balance"].as_object())
+        .filter(|balance| !balance.is_empty())
+    {
+        let dominant = balance
+            .iter()
+            .max_by(|left, right| {
+                left.1
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .total_cmp(&right.1.as_f64().unwrap_or(0.0))
+            })
+            .map(|(class, share)| format!("{class} {share:.0}%"));
+        if let Some(dominant) = dominant {
+            brief.insert("speechActs".to_owned(), json!(dominant));
+        }
+    }
+    // The accent's own pacing ask, as a pacing question only: slower
+    // captions, a lighter bed, never a verdict on the speaker.
+    if let Some((band, pacing)) = door("detect_accent").iter().find_map(|reply| {
+        let band = reply["band"].as_str()?.to_owned();
+        let pacing = reply
+            .pointer("/captionPacing/charsPerSecond")
+            .and_then(Value::as_f64)?;
+        Some((band, pacing))
+    }) {
+        brief.insert(
+            "accent".to_owned(),
+            json!(format!("band {band}, caption pacing {pacing:.0} cps")),
+        );
+    }
     // The measured emphasis, as the peaks the SFX stage spends: the words
     // the voice leaned on, which a cut that honours the narration puts
     // its strongest pictures and titles under.
@@ -8851,6 +9254,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if lines.is_empty() {
                                 continue;
                             }
+                            // The lines with the timed words still on them:
+                            // the delivery's own doors - the rhythm, the
+                            // tempo, the emphasis, the fillers - read words
+                            // with times, and a word-less line is a span
+                            // none of them can measure. The text-only doors
+                            // (the discourse reads) keep the word-less
+                            // lines: their work is the wording, not the
+                            // timing, and the smaller payload is the whole
+                            // point of the split.
+                            let worded = worded_lines(log, &take.take);
+                            let timed_words: usize = worded
+                                .iter()
+                                .filter_map(|line| {
+                                    line["words"].as_array().map(|words| words.len())
+                                })
+                                .sum();
                             // The script read as language: the topic
                             // tiling names the chapter boundaries, and
                             // the connective analysis names the pivots
@@ -8917,11 +9336,202 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // seam's blend when the profile found no
                             // pulse or breath worth its strength, and
                             // the meter says whether the beat is real
-                            // enough for a seam to sit on.
+                            // enough for a seam to sit on. The lines
+                            // carry their words: the door reads nuclei
+                            // from timed words, and a word-less line
+                            // was always its refusal.
                             calls.push(call(
                                 "sense_prosody_style",
                                 json!({
                                     "action": "measure_rhythm_meter",
+                                    "audio": take.take,
+                                    "lines": worded.clone(),
+                                }),
+                            ));
+                            // The tempo's own trend: a delivery that
+                            // decelerates into a seam slows the blend
+                            // with it, and one that accelerates tightens
+                            // it - the edit point the delivery already
+                            // made. It needs eight timed words to read a
+                            // trend at all; a shorter take has one tempo
+                            // by definition.
+                            if timed_words >= 8 {
+                                calls.push(call(
+                                    "sense_prosody_style",
+                                    json!({
+                                        "action": "detect_tempo_changes",
+                                        "audio": take.take,
+                                        "lines": worded.clone(),
+                                    }),
+                                ));
+                            }
+                            // The emphasis the voice actually carries,
+                            // typed: pitch-accented words hold the
+                            // caption's accent, contrastive ones ("but
+                            // THIS") carry the turn. The profile names
+                            // the stressed words; the door names what
+                            // KIND of stress each one carries.
+                            calls.push(call(
+                                "sense_prosody_style",
+                                json!({
+                                    "action": "score_emphasis_type",
+                                    "audio": take.take,
+                                    "lines": worded.clone(),
+                                }),
+                            ));
+                            // The delivery's own register - podcast,
+                            // newsread, conversational, presenter - with
+                            // the cut style it implies, the words per
+                            // minute and the pause rate. The motion
+                            // presets and the bed's busyness read this,
+                            // not the mood alone.
+                            calls.push(call(
+                                "sense_prosody_style",
+                                json!({
+                                    "action": "detect_speaking_style",
+                                    "audio": take.take,
+                                }),
+                            ));
+                            // The accent's own reading, as a pacing
+                            // question and nothing else: an accent the
+                            // door reads as needing more reading time
+                            // asks for slower captions and a lighter
+                            // bed. An honest proxy for pacing, never a
+                            // verdict on the speaker.
+                            calls.push(call(
+                                "sense_prosody_style",
+                                json!({
+                                    "action": "detect_accent",
+                                    "audio": take.take,
+                                    "lines": worded.clone(),
+                                }),
+                            ));
+                            // The voice's own timbre and tract: the
+                            // formant fingerprint that says whether two
+                            // narrators can sit side by side, and the
+                            // dark-or-bright read the grade and the
+                            // motion texture lean on.
+                            calls.push(call(
+                                "sense_prosody_style",
+                                json!({
+                                    "action": "measure_vocal_tract",
+                                    "audio": take.take,
+                                }),
+                            ));
+                            // The voice's own class - breathy, creaky,
+                            // pressed, modal - with the jitter and
+                            // shimmer proxies behind it. The receipt
+                            // records it and the critic reads it: a
+                            // creaky take earns a different bed than a
+                            // modal one.
+                            calls.push(call(
+                                "sense_voice_quality",
+                                json!({
+                                    "action": "classify_voice_quality",
+                                    "audio": take.take,
+                                }),
+                            ));
+                            // The events inside the phrases: throat
+                            // clears and coughs the cut can lose,
+                            // laughs and sighs the authenticity keeps.
+                            // The tighten cuts measured silence; this
+                            // names the measured noises worth cutting
+                            // inside the speech itself.
+                            calls.push(call(
+                                "sense_voice_quality",
+                                json!({
+                                    "action": "detect_vocal_events",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The fillers, classified: pure sounds
+                            // ("um", "uh") are safe caption skips,
+                            // discourse markers ("well", "i mean") are a
+                            // style dial the cut does not turn on the
+                            // door's behalf. The captions' skip list
+                            // extends with the door's own safe removals.
+                            calls.push(call(
+                                "sense_voice_quality",
+                                json!({
+                                    "action": "classify_filler_type",
+                                    "audio": take.take,
+                                    "lines": worded.clone(),
+                                }),
+                            ));
+                            // The Searle acts the lines perform -
+                            // assertives, directives, expressives,
+                            // commissives, declarations - with the
+                            // balance a script that is all assertives
+                            // is a lecture. The card policy reads the
+                            // balance beside the surface asks it
+                            // already had.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({
+                                    "action": "classify_speech_acts",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The script's own reading level: the grades,
+                            // the words per sentence, the passive voice.
+                            // The caption budget and the critic's
+                            // clarity question read this.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({
+                                    "action": "score_readability",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The script's craft score: the hook, the
+                            // curiosity gap, the payoff, the CTA, with
+                            // the checks that earned the number. The
+                            // critic's first question is this reply.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({
+                                    "action": "score_script_quality",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The sarcasm the wording carries, if any:
+                            // a flagged line is never read straight -
+                            // the critic is told, the irony cut is
+                            // earned, and the deadpan pause after the
+                            // beat is kept.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({
+                                    "action": "detect_sarcasm",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The languages the take switches between:
+                            // each switch point is a caption-style and
+                            // scene change the delivery already made,
+                            // and a mixed-script caption needs per-script
+                            // font fallback the typography names.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({
+                                    "action": "detect_code_switching",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The emotion a non-English line carries, in
+                            // its own language: the offline lexicons
+                            // answer per line where the English-only
+                            // read read nothing.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({
+                                    "action": "detect_cross_lingual_emotion",
                                     "audio": take.take,
                                     "lines": lines.clone(),
                                 }),
@@ -10416,7 +11026,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         // delivery's own rhythm, which
                                         // stands where the profile found
                                         // no period worth its strength.
-                                        .or_else(|| rhythm.map(|(period, _)| period));
+                                        .or_else(|| rhythm.map(|(period, _)| period))
+                                        // The tempo's own trend over the
+                                        // gap: a delivery that slows
+                                        // into a seam slows the blend
+                                        // with it - the delivery already
+                                        // made the edit point gentler,
+                                        // and the seam follows it. No
+                                        // trend, no change: a take that
+                                        // kept one tempo keeps the blend
+                                        // it had.
+                                        .map(|period| {
+                                            match tempo_change_at(log, &slot.take, slot.from) {
+                                                Some(change) if change < -10.0 => {
+                                                    (period * 1.15).min(1.2)
+                                                }
+                                                _ => period,
+                                            }
+                                        });
                                     pending_energy = voice_read_of(voice, &slot.take)
                                         .and_then(|read| read.local_energy(slot.from));
                                     pending_transition = Some(seam_transition(
@@ -10841,7 +11468,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // discourse markers (`like`, `you know`) are
                                     // context calls the profile does not
                                     // decide, so they stay.
-                                    let fillers: Vec<String> = take_read
+                                    let mut fillers: Vec<String> = take_read
                                         .map(|take_read| {
                                             let start = segment["start"].as_f64().unwrap_or(0.0);
                                             let end = segment["end"].as_f64().unwrap_or(0.0);
@@ -10852,7 +11479,35 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                                 .collect()
                                         })
                                         .unwrap_or_default();
-                                    for base in caption_groups(&segment, &fillers) {
+                                    // The filler door's own safe removals, in
+                                    // the same span: a `classify_filler_type`
+                                    // reply names the words its taxonomy read
+                                    // as pure sound, and the caption's skip
+                                    // list takes them beside the profile's.
+                                    // A door that never answered adds
+                                    // nothing, and the list is exactly what
+                                    // it was.
+                                    if let (Some(start), Some(end)) =
+                                        (segment["start"].as_f64(), segment["end"].as_f64())
+                                    {
+                                        for filler in door_fillers_between(log, &take, start, end) {
+                                            if !fillers.iter().any(|known| known == &filler) {
+                                                fillers.push(filler);
+                                            }
+                                        }
+                                    }
+                                    // The caption budget the accent read
+                                    // asked for: a take the door read as
+                                    // needing more reading time holds fewer
+                                    // words per block, so key terms get the
+                                    // hold the door asked for. No reply, no
+                                    // change - the door does not get to slow
+                                    // captions it never read.
+                                    let max_words = match accent_caption_pacing(log, &take) {
+                                        Some(pacing) if pacing <= 12.0 => 3,
+                                        _ => 4,
+                                    };
+                                    for base in caption_groups(&segment, &fillers, max_words) {
                                         // The words either side of a speaker
                                         // change belong to different voices:
                                         // the split keeps one block from
@@ -17693,7 +18348,7 @@ mod tests {
                 word("six", 3.15, 3.4), word("seven", 3.45, 3.7),
             ],
         });
-        let groups = caption_groups(&segment, &["um".to_owned()]);
+        let groups = caption_groups(&segment, &["um".to_owned()], 4);
         let texts: Vec<&str> = groups.iter().map(|group| group.text.as_str()).collect();
         assert_eq!(
             texts,
@@ -19408,6 +20063,207 @@ mod tests {
         assert_eq!(lines[0]["text"], "we found it");
         assert_eq!(lines[0]["start"], 0.0);
         assert_eq!(lines[1]["end"], 3.0);
+    }
+
+    /// The delivery's own doors are asked with the words the transcript
+    /// timed: the rhythm read carries word-bearing lines (a word-less line
+    /// was always its refusal), every ask is keyed by the take it reads,
+    /// and the tempo read is skipped whole when the take has fewer than
+    /// eight timed words - a shorter take has one tempo by definition.
+    #[test]
+    fn the_delivery_doors_are_asked_with_the_take_s_own_words() {
+        use concat_director::ProgramStep;
+
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/a.wav".to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(understand) = &mut program.steps[5] else {
+            panic!("step 5 is the understand stage");
+        };
+        let word =
+            |text: &str, start: f64, end: f64| json!({ "text": text, "start": start, "end": end });
+        let log = vec![
+            json!({ "musicPresent": false }),
+            json!({
+                "path": "/edits/Reel/voiceover/a.wav",
+                "output": json!({
+                    "segments": [
+                        {
+                            "start": 0.0, "end": 4.0, "text": "we found it and we kept it",
+                            "words": [
+                                word("we", 0.0, 0.2), word("found", 0.25, 0.6),
+                                word("it", 0.65, 0.8), word("and", 0.85, 1.0),
+                                word("we", 1.05, 1.2), word("kept", 1.25, 1.7),
+                                word("it", 1.75, 1.9),
+                            ],
+                        },
+                    ],
+                }).to_string(),
+            }),
+        ];
+        let mut asked: Vec<ToolCall> = Vec::new();
+        while let Some(next) = (understand.next)(&log) {
+            asked.push(next);
+        }
+        // The rhythm read carries the timed words: the nuclei it reads are
+        // the words the transcript timed, not the word-less spans that made
+        // it refuse every take it was ever asked about.
+        let rhythm = asked
+            .iter()
+            .find(|c| {
+                c.tool == "sense_prosody_style" && c.arguments["action"] == "measure_rhythm_meter"
+            })
+            .expect("the rhythm read is asked");
+        let rhythm_lines = rhythm.arguments["lines"].as_array().expect("worded lines");
+        assert!(
+            rhythm_lines[0]["words"]
+                .as_array()
+                .is_some_and(|words| !words.is_empty()),
+            "the rhythm read is given the timed words"
+        );
+        // Every new ask names the take it reads, so the reply can be
+        // attributed to the take that produced it no matter the fan's
+        // landing order.
+        for tool in [
+            "sense_prosody_style",
+            "sense_voice_quality",
+            "sense_discourse",
+        ] {
+            for call in asked.iter().filter(|c| c.tool == tool) {
+                assert_eq!(
+                    call.arguments["audio"], "/edits/Reel/voiceover/a.wav",
+                    "every {tool} ask names the take it reads"
+                );
+            }
+        }
+        // Seven timed words is under the tempo read's floor: a take this
+        // short has one tempo by definition, and the read is not asked.
+        assert!(
+            !asked.iter().any(|c| c.tool == "sense_prosody_style"
+                && c.arguments["action"] == "detect_tempo_changes"),
+            "the tempo read is skipped under eight timed words"
+        );
+        // The doors the run can ask without a model: the plan and the
+        // captions read their replies, and a missing reply is the exact
+        // behaviour the run had before the door existed.
+        let mut actions: Vec<&str> = Vec::new();
+        for call in asked.iter() {
+            if let Some(action) = call.arguments["action"].as_str() {
+                actions.push(action);
+            }
+        }
+        for expected in [
+            "score_emphasis_type",
+            "detect_speaking_style",
+            "detect_accent",
+            "measure_vocal_tract",
+            "classify_voice_quality",
+            "detect_vocal_events",
+            "classify_filler_type",
+            "classify_speech_acts",
+            "score_readability",
+            "score_script_quality",
+            "detect_sarcasm",
+            "detect_code_switching",
+            "detect_cross_lingual_emotion",
+        ] {
+            assert!(
+                actions.contains(&expected),
+                "the understand stage asks {expected}"
+            );
+        }
+    }
+
+    /// The readers the doors feed fall back to nothing when the door
+    /// refused: a tempo the door never read is no tempo, an accent with
+    /// no reply keeps the caption budget, and a filler door that failed
+    /// leaves the profile's own list alone.
+    #[test]
+    fn a_door_that_did_not_answer_changes_nothing() {
+        let take = "/edits/Reel/voiceover/a.wav";
+        let refused = vec![
+            json!({
+                "action": "detect_tempo_changes", "audio": take, "ok": false,
+            }),
+            json!({
+                "action": "detect_accent", "audio": take, "ok": false,
+            }),
+            json!({
+                "action": "classify_filler_type", "audio": take, "ok": false,
+            }),
+        ];
+        assert!(tempo_change_at(&refused, take, 1.0).is_none());
+        assert!(accent_caption_pacing(&refused, take).is_none());
+        assert!(door_fillers_between(&refused, take, 0.0, 4.0).is_empty());
+        assert!(tempo_change_at(&[], take, 1.0).is_none());
+        assert!(door_fillers_between(&[], take, 0.0, 4.0).is_empty());
+        // A door that answered is read by the same readers: the decelerating
+        // segment over a moment, the accent's own caption ask, and the
+        // filler's safe removals inside a span.
+        let answered = vec![json!({
+            "action": "detect_tempo_changes", "audio": take, "ok": true,
+            "segments": [
+                { "from": 0.0, "to": 2.0, "trend": "accelerating", "changePct": 12.0 },
+                { "from": 2.0, "to": 4.0, "trend": "decelerating", "changePct": -18.0 },
+            ],
+        })];
+        assert_eq!(tempo_change_at(&answered, take, 3.0), Some(-18.0));
+        assert_eq!(tempo_change_at(&answered, take, 1.0), Some(12.0));
+        assert_eq!(tempo_change_at(&answered, "/other.wav", 3.0), None);
+        let filler_answered = vec![json!({
+            "action": "classify_filler_type", "audio": take, "ok": true,
+            "instances": [
+                { "text": "um", "class": "filled_pause", "start": 0.5, "end": 0.7 },
+                { "text": "well", "class": "discourse_marker", "start": 0.8, "end": 1.0 },
+                { "text": "uh", "class": "filled_pause", "start": 9.0, "end": 9.2 },
+            ],
+        })];
+        assert_eq!(
+            door_fillers_between(&filler_answered, take, 0.0, 2.0),
+            vec!["um".to_owned()],
+            "the safe removals inside the span, and only those"
+        );
+    }
+
+    /// The accent read's own caption budget: a take the door read as
+    /// needing more reading time holds fewer words per block, and a take
+    /// with no reply keeps the four it always had.
+    #[test]
+    fn the_accent_s_own_pacing_holds_fewer_words_per_block() {
+        let word =
+            |text: &str, start: f64, end: f64| json!({ "text": text, "start": start, "end": end });
+        let segment = json!({
+            "start": 0.0, "end": 6.0, "text": "one two three four five six",
+            "words": [
+                word("one", 0.0, 0.3), word("two", 0.35, 0.6), word("three", 0.65, 0.9),
+                word("four", 0.95, 1.2), word("five", 1.25, 1.5), word("six", 1.55, 1.8),
+            ],
+        });
+        let four = caption_groups(&segment, &[], 4);
+        assert_eq!(
+            four.len(),
+            2,
+            "four-word cap: one two three four | five six"
+        );
+        let three = caption_groups(&segment, &[], 3);
+        assert_eq!(
+            three.len(),
+            2,
+            "three-word budget: one two three | four five six"
+        );
+        assert_eq!(three[0].text, "one two three");
+        assert_eq!(three[1].text, "four five six");
     }
 
     /// The delivery the reading measured reaches the decisions it should:

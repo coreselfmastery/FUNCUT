@@ -582,7 +582,11 @@ mod tests {
         // A reading the director cannot call is a reading the edit paid
         // for and never read; a generator the director cannot spell is
         // the same.
-        assert!(total < 278_000, "{total}: {sizes:?}");
+        // 278,000 -> 280,000 at 117: the orientation pick rides the
+        // auto_edit schema with its three-word enum and the frame it
+        // maps each word to - the user-picked frame the whole pipeline
+        // already knows how to build on. Measured 278,144 on the branch.
+        assert!(total < 280_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

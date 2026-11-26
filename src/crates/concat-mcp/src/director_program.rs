@@ -10765,13 +10765,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     if commands.is_empty() {
                         return None;
                     }
-                    Some(ToolCall {
+                    return Some(ToolCall {
                         tool: "edit_apply".to_owned(),
                         arguments: json!({
                             "path": caption_project,
                             "command": { "op": "batch", "commands": commands },
                         }),
-                    })
+                    });
+                    }
+                    // No phase falls through to here: 0 through 3 all
+                    // return, and 4 answers at the top. The word is the
+                    // closure's own answer for a stage that is done.
+                    None
                 }
             }),
         )

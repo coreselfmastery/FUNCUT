@@ -15270,7 +15270,7 @@ mod tests {
                     "lines": [{ "start": 0.5, "end": 1.5, "prosody": prosody }],
                 }),
             ];
-            let call = captions_edit_after_readings(&mut captions, &mut log);
+            let call = captions_edit_after_readings(captions, &mut log);
             let style = &call.arguments["command"]["commands"][0]["style"];
             (
                 style["fontWeight"].as_f64().expect("a weight"),
@@ -16169,7 +16169,7 @@ mod tests {
             view,
             json!({ "path": "/edits/Reel/voiceover/take-000-a.wav", "output": transcript.to_string() }),
         ];
-        let first = captions_edit_after_readings(&mut captions, &mut log);
+        let first = captions_edit_after_readings(captions, &mut log);
         assert_eq!(first.tool, "edit_apply");
         // The edit's own reply: another view. The stage is done.
         log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
@@ -16433,7 +16433,7 @@ mod tests {
             json!({ "path": take, "output": transcript.to_string() }),
             signals,
         ];
-        let first = captions_edit_after_readings(&mut captions, &mut log);
+        let first = captions_edit_after_readings(captions, &mut log);
         assert_eq!(first.tool, "edit_apply");
         assert_eq!(
             first.arguments["command"]["commands"][0]["style"]["content"], "hello there",
@@ -16525,7 +16525,7 @@ mod tests {
                                 "loudness": { "relativeLu": relative_lu } }],
                 }),
             ];
-            let call = captions_edit_after_readings(&mut captions, &mut log);
+            let call = captions_edit_after_readings(captions, &mut log);
             call.arguments["command"]["commands"][0]["style"]["fontWeight"]
                 .as_f64()
                 .expect("the caption carries a weight")

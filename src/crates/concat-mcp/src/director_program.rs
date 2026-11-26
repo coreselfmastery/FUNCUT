@@ -7541,12 +7541,6 @@ fn signal_evidence(log: &[Value]) -> Value {
     Value::Object(digest)
 }
 
-/// Every decision a family informs, in the profile's own decision-policy
-/// words. A family may drive more than one choice: `forensic` names the
-/// bed, the repair, the mix, the grade's tone and the accent's placement,
-/// and a single mapping would make the critic believe it only chose BGM.
-/// A family with no entry drives no choice here, and the digest leaves it
-/// out of `decides` rather than inventing one.
 /// How well a stock clip's measured colour temperature agrees with the
 /// one before it: the same temperature is 2, either side neutral is 1,
 /// and two opposites are 0. A cut from a warm clip straight to a cool one
@@ -7561,6 +7555,12 @@ fn temperature_agreement(previous: Option<&str>, next: Option<&str>) -> u8 {
     }
 }
 
+/// Every decision a family informs, in the profile's own decision-policy
+/// words. A family may drive more than one choice: `forensic` names the
+/// bed, the repair, the mix, the grade's tone and the accent's placement,
+/// and a single mapping would make the critic believe it only chose BGM.
+/// A family with no entry drives no choice here, and the digest leaves it
+/// out of `decides` rather than inventing one.
 fn decision_for(family: &str) -> &'static [&'static str] {
     match family {
         "pause" => &["cut", "transition"],

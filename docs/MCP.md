@@ -411,6 +411,10 @@ return MCP `type: image` content blocks, so the model can actually look:
   map). `action "extract"` takes the voiceover `audio`, the `transcript`
   (for the word timings) and optionally the `emotion` extract (for the
   arc), and returns per line: momentary **loudness relative to the take**,
+  the take's own **momentary-loudness curve** (at most 256 `[t, LUFS]`
+  points - the envelope the per-line fold flattens away, which the bed's
+  volume ride keys itself on: the duck follows the voice's measured rise,
+  not a span average),
   the **speech rate** with a pace class, the **sentence type**
   cross-checked against the pitch's terminal rise, the **emphasis words**
   the energy peaks land on, **fillers**, per-word **confidence** (a

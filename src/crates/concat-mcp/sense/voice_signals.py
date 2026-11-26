@@ -187,6 +187,15 @@ SIGNAL_CATALOGUE = [
      "reads": "Each line's level against the take's integrated level, in LU.",
      "why": "The measured lift behind the caption's weight-800 arm.",
      "where": ("line", "loudness.relativeLu"), "rust": False, "new": False},
+    {"name": "loudness.momentaryLufs", "family": "Loudness",
+     "label": "Momentary curve",
+     "reads": "The ebur128 momentary-loudness curve, at most 256 [t, LUFS] "
+              "points, times in file seconds.",
+     "why": "The bed's volume ride keys itself on the measured envelope: "
+            "the duck follows the voice's own rise and fall, not a span "
+            "average (decision: the bed's volume keys).",
+     "where": ("take", "wholeTake.loudness.momentaryLufs"), "rust": False,
+     "new": False},
     # The pause family, one silencedetect pass.
     {"name": "pauses.classes", "family": "Pauses",
      "label": "Classified pauses",
@@ -1157,6 +1166,25 @@ def _line_loudness(series, start, end):
         "maxTpDbfs": round(max(peaks), 2) if peaks else None,
         "samples": len(values),
     }
+
+
+def _decimated_momentary(series, most=256):
+    """The momentary curve itself, decimated to at most `most` points:
+    [[t, LUFS], ...], unmeasured readings dropped, times ascending,
+    values rounded for the wire. The per-line fold answers 'how loud was
+    this line'; this is the shape the fold flattened away - the envelope
+    a bed's volume ride keys itself on, so the duck follows the voice's
+    measured rise instead of a span average."""
+    points = [(t, m) for t, m, _ in series if m is not None]
+    if not points:
+        return None
+    if len(points) <= most:
+        picked = points
+    else:
+        step = len(points) / most
+        last = len(points) - 1
+        picked = [points[min(last, int(i * step))] for i in range(most)]
+    return [[round(t, 3), round(m, 1)] for t, m in picked]
 
 
 def _classify_pauses(spans, lines):
@@ -2688,7 +2716,10 @@ def extract(spec):
         "wholeTake": {
             "loudness": {"integratedLufs": integrated,
                          "loudnessRangeLu": lra,
-                         "truePeakDbfs": true_peak},
+                         "truePeakDbfs": true_peak,
+                         # The curve the per-line fold flattens away:
+                         # the bed's volume ride keys itself on this.
+                         "momentaryLufs": _decimated_momentary(series)},
             "prosody": (rust or {}).get("prosody", {}).get("rhythmLayers"),
             "dominantPeriodSec": (rust or {}).get("prosody", {}).get("dominantPeriodSec"),
             "phrases": (rust or {}).get("prosody", {}).get("phrases"),

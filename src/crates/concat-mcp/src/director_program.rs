@@ -11193,32 +11193,96 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         })];
                         let at_fraction =
                             |moment: f64| ((moment - bed_start) / bed_len.max(0.1)).clamp(0.0, 1.0);
-                        for (at, to) in &merged {
-                            if commands.len() >= MOST_KEYS {
-                                break;
+                        // The voice's own measured envelope, when the
+                        // loudness pass left its curve: the ride keys
+                        // itself on what the ebur128 actually measured -
+                        // deeper under the voice's own lifts, back up
+                        // where it settles - instead of one binary depth
+                        // under every merged span. The depth is graded
+                        // against the take's integrated level: a moment
+                        // 5 LU over it is a shout the bed must clear,
+                        // one 5 LU under it is a murmur the bed can sit
+                        // closer to, and silence lifts the bed all the
+                        // way home.
+                        let mut ride: Vec<(f64, f64)> = Vec::new();
+                        for read in voice_reads(log, &music_source) {
+                            let Some(reference) = read.take_wide.integrated_lufs else {
+                                continue;
+                            };
+                            for (at, level) in &read.take_wide.momentary_lufs {
+                                let Some(moment) = timeline_at(view, &media, &read.take, *at)
+                                else {
+                                    continue;
+                                };
+                                let fraction = at_fraction(moment);
+                                if fraction <= 0.0 || fraction >= 1.0 {
+                                    continue;
+                                }
+                                let depth =
+                                    (0.45 - (level - reference) * 0.02).clamp(0.25, 1.0) * lift;
+                                ride.push((fraction, depth));
                             }
-                            let duck_at = at_fraction(*at);
-                            let lift_at = at_fraction(to + 0.2);
-                            if duck_at > 0.0 && duck_at < 1.0 {
+                        }
+                        // Hysteresis: the keys are the curve's own turns,
+                        // not the curve itself - a key only where the
+                        // depth moved enough to hear (a twelfth of the
+                        // lift) and enough apart to read as a ride rather
+                        // than a stutter (a third of a second).
+                        ride.sort_by(|left, right| left.0.total_cmp(&right.0));
+                        let min_apart = 0.33 / bed_len.max(0.1);
+                        let mut keyed: Vec<(f64, f64)> = Vec::new();
+                        for (fraction, depth) in ride {
+                            if let Some((last_at, last_depth)) = keyed.last() {
+                                if fraction - *last_at < min_apart
+                                    || (depth - *last_depth).abs() < lift / 12.0
+                                {
+                                    continue;
+                                }
+                            }
+                            keyed.push((fraction, depth));
+                        }
+                        if let Some((_, last_depth)) = keyed.last().copied() {
+                            keyed.push((1.0, last_depth.max(lift * 0.6)));
+                        }
+                        if keyed.len() >= 2 {
+                            for (fraction, depth) in keyed.into_iter().take(MOST_KEYS) {
                                 commands.push(json!({
                                     "op": "setClipKey", "clipId": bed_id,
                                     "property": "volume",
-                                    "at": round3(duck_at), "value": round3(duck),
+                                    "at": round3(fraction), "value": round3(depth),
                                 }));
                             }
-                            // Lift only where the gap can hold it: the
-                            // next line more than half a second away, or
-                            // the bed's own end.
-                            let next = merged
-                                .iter()
-                                .find(|(next_at, _)| *next_at > to + 0.05)
-                                .map(|(next_at, _)| *next_at);
-                            if lift_at < 1.0 && next.is_none_or(|next| next > to + 0.6) {
-                                commands.push(json!({
-                                    "op": "setClipKey", "clipId": bed_id,
-                                    "property": "volume",
-                                    "at": round3(lift_at), "value": round3(lift),
-                                }));
+                        } else {
+                            // No curve the ride could read: the binary
+                            // shape the merged spans carry, the honest
+                            // fallback a curve-less machine keeps.
+                            for (at, to) in &merged {
+                                if commands.len() >= MOST_KEYS {
+                                    break;
+                                }
+                                let duck_at = at_fraction(*at);
+                                let lift_at = at_fraction(to + 0.2);
+                                if duck_at > 0.0 && duck_at < 1.0 {
+                                    commands.push(json!({
+                                        "op": "setClipKey", "clipId": bed_id,
+                                        "property": "volume",
+                                        "at": round3(duck_at), "value": round3(duck),
+                                    }));
+                                }
+                                // Lift only where the gap can hold it: the
+                                // next line more than half a second away, or
+                                // the bed's own end.
+                                let next = merged
+                                    .iter()
+                                    .find(|(next_at, _)| *next_at > to + 0.05)
+                                    .map(|(next_at, _)| *next_at);
+                                if lift_at < 1.0 && next.is_none_or(|next| next > to + 0.6) {
+                                    commands.push(json!({
+                                        "op": "setClipKey", "clipId": bed_id,
+                                        "property": "volume",
+                                        "at": round3(lift_at), "value": round3(lift),
+                                    }));
+                                }
                             }
                         }
                         if commands.len() < 2 {
@@ -15308,6 +15372,236 @@ mod tests {
         // ducking a second time.
         log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
         assert_eq!((music.next)(log.as_slice()), None);
+    }
+
+    /// The bed's volume ride follows the measured loudness curve, not a
+    /// span average: deeper under the voice's own lift, lifted where the
+    /// take settles - and a machine whose loudness pass left no curve
+    /// keeps the binary shape the merged spans carry.
+    #[test]
+    fn the_bed_s_ride_follows_the_measured_loudness_curve() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "music")
+            .expect("the program has a music stage")
+        else {
+            panic!("the music stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "project": { "name": "Reel" },
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            // The voice's own reading: a take whose ebur128 pass left its
+            // curve - the voice at its integrated level, a lift at 0.6 s,
+            // and a settle at 1.4 s the bed is expected to ride through.
+            json!({
+                "audio": { "path": take },
+                "lines": [],
+                "wholeTake": {
+                    "loudness": {
+                        "integratedLufs": -20.0,
+                        "momentaryLufs": [
+                            [0.2, -20.0], [0.6, -14.0], [1.0, -20.0], [1.4, -30.0],
+                        ],
+                    },
+                },
+            }),
+        ];
+        // The bed is generated, absent, and the shelf serves it instead -
+        // the same walk the music stage always takes.
+        let _ = (music.next)(&log).expect("the bed is asked for");
+        log.push(
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }),
+        );
+        let _ = (music.next)(&log).expect("the shelf's state");
+        log.push(json!({ "freepd": "missing", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is prepared");
+        log.push(json!({ "freepd": "ready", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is searched");
+        log.push(json!({ "tracks": [{ "id": "freepd-abc123" }] }));
+        let _ = (music.next)(&log).expect("the bed is imported");
+        log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
+        let _ = (music.next)(&log).expect("the timeline is read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        let _ = (music.next)(&log).expect("the bed is trimmed to the cut");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 2.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        let _ = (music.next)(&log).expect("the bed is ducked");
+        // The duck's own reply is another view carrying the same bed and
+        // voice: the ride that follows keys itself on the curve.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 2.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        let ride = (music.next)(&log).expect("the bed's ride is keyed");
+        assert_eq!(ride.tool, "edit_apply");
+        let commands = ride.arguments["command"]["commands"]
+            .as_array()
+            .expect("one undoable ride batch");
+        let keys: Vec<(f64, f64)> = commands
+            .iter()
+            .filter(|command| command["property"] == json!("volume"))
+            .filter_map(|command| Some((command["at"].as_f64()?, command["value"].as_f64()?)))
+            .collect();
+        assert!(keys.len() >= 4, "the ride carries the curve's own turns");
+        // The lift at 0.6 s is the voice's own: the bed ducks DEEPER
+        // there than at its integrated level.
+        let at_level = keys
+            .iter()
+            .find(|(at, _)| (*at - 0.1).abs() < 0.02)
+            .expect("a key where the voice sits at its own level");
+        let lifted = keys
+            .iter()
+            .find(|(at, _)| (*at - 0.3).abs() < 0.02)
+            .expect("a key where the voice lifted");
+        assert!(
+            lifted.1 < at_level.1,
+            "the voice's own lift ducks the bed deeper: {keys:?}"
+        );
+        // The settle at 1.4 s lifts the bed back toward the light -
+        // the quiet moment is the gap the bed was waiting for.
+        let settled = keys
+            .iter()
+            .find(|(at, _)| (*at - 0.7).abs() < 0.02)
+            .expect("a key where the voice settled");
+        assert!(settled.1 > at_level.1, "the settle lifts the bed: {keys:?}");
+        // A curve-less machine keeps the binary shape: the same walk
+        // with no curve in the read ducks to one depth per span.
+        let mut log = vec![
+            json!({
+                "project": { "name": "Reel" },
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.2, "end": 0.9, "text": "we found it" },
+                    { "start": 1.2, "end": 1.8, "text": "under the pier" },
+                ],
+            }),
+        ];
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "music")
+            .expect("the program has a music stage")
+        else {
+            panic!("the music stage is derived");
+        };
+        let _ = (music.next)(&log).expect("the bed is asked for");
+        log.push(
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }),
+        );
+        let _ = (music.next)(&log).expect("the shelf's state");
+        log.push(json!({ "freepd": "missing", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is prepared");
+        log.push(json!({ "freepd": "ready", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is searched");
+        log.push(json!({ "tracks": [{ "id": "freepd-abc123" }] }));
+        let _ = (music.next)(&log).expect("the bed is imported");
+        log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
+        let _ = (music.next)(&log).expect("the timeline is read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        let _ = (music.next)(&log).expect("the bed is trimmed to the cut");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 2.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        let _ = (music.next)(&log).expect("the bed is ducked");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 2.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        let shape = (music.next)(&log).expect("the binary shape the spans carry");
+        assert_eq!(shape.tool, "edit_apply");
+        let commands = shape.arguments["command"]["commands"]
+            .as_array()
+            .expect("one undoable shape batch");
+        assert!(
+            commands
+                .iter()
+                .any(|command| command["op"] == json!("setClipKey")
+                    && command["property"] == json!("volume")),
+            "the curve-less machine still rides the bed"
+        );
     }
 
     /// The captions are one edit, made once: the edit's own reply is a

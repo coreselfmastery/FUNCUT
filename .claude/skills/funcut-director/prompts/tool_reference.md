@@ -303,7 +303,7 @@ extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
 `sense_audio_repair` · `sense_captions` · `sense_sound` · `sense_sound_model` ·
 `sense_visual {action:
 measure_motion|camera_motion|shot_scale|visual_sync|scene_cuts|visual_quality|
-palette|saliency|composition|motion_blur|tracks|measure_clips|bench|models|
+palette|saliency|composition|motion_blur|tracks|measure_clips|rank_frames|bench|models|
 action_class|depth_map|subject_mask|visual_embedding|describe_scene|shot_boundaries|
 film_shot_type|optical_flow|aesthetic|pose|…|hf_search|hf_files|download, …}` · `measure_loudness {path,
 targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
@@ -330,9 +330,9 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
   the ten discourse readings, the six voice-quality readings, the six
   prosody readings, the eight audio-repair actions, the five caption
   readings, the four sound measurements, the five sound-model actions and
-  the picture's thirty-eight — motion, camera travel and its
+  the picture's thirty-nine — motion, camera travel and its
   direction, shot scale, audio-visual sync, scene cuts, the technical
-  read, palette, saliency, the batch `measure_clips` read, the `bench`,
+  read, palette, saliency, the batch `measure_clips` read, the `rank_frames` CLIP rerank (the stock gather's own fetched candidates scored against the slot's words, each winner's vision embedding handed back for near-duplicate suppression), the `bench`,
   the `models` listing and the shelf's door actions; `selftest: true` proves
   one). Each reading names its own traps
   in its reply; the family schema documents the shared inputs. Three

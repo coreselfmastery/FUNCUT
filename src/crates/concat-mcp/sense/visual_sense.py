@@ -37,6 +37,10 @@ already can produce and answers the questions an edit actually asks:
   saliency         a classical center-surround attention map and its
                    peak, with no learned model
   measure_clips    the compact batch read stock ranking spends
+  rank_frames      the stock gather's CLIP rerank: fetched candidates
+                   scored against the slot's words, and each winner's
+                   vision embedding handed back for near-duplicate
+                   suppression (the openvid pair, no fetching)
   bench            does cutting on a motion peak beat cutting on a
                    pause? the measurement the wiring must answer
   models           the visual model doors and whether each file is on
@@ -1272,6 +1276,52 @@ def subject_mask(spec):
         }
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def rank_frames(spec):
+    """The stock gather's semantic look at its own fetched candidates: the
+    same MobileCLIP2-S0 pair the openvid shelf's search reranks by, pointed
+    at files that are already on disk. `query` is the slot's words (its
+    shelf query and the register the emotional read named); `paths` are the
+    candidates the fetch cached. The reply is rerank.py's own - `order` by
+    text-image cosine, `scores`, and `vectors`, the winning look's vision
+    embedding per clip, which the gather spends on near-duplicate
+    suppression. Nothing is fetched and nothing is downloaded here: a
+    missing pair is an honest refusal the caller keeps its sheet order
+    through, never a zero-filled score pretending to be one."""
+    query = str(spec.get("query") or "").strip()
+    if not query:
+        return {"ok": False, "error": "`query` is the words the candidates are ranked against"}
+    paths = spec.get("paths") or []
+    if not isinstance(paths, list) or not paths:
+        return {"ok": False, "error": "`paths` is the fetched candidate files"}
+    try:
+        import rerank  # the runtime dir's own: the pair, the tokenizer, the looks
+    except Exception as exc:
+        return {"ok": False, "error": f"the rerank half is absent: {exc}"}
+    frames = []
+    for index, path in enumerate(paths):
+        if not isinstance(path, str) or not path.strip():
+            continue
+        duration = _probe_duration(path)
+        if duration and duration > 1.2:
+            # Two looks, the same timing the openvid rerank gives its own
+            # shortlist: a clip whose subject only appears mid-clip is
+            # ranked on what it shows there.
+            frames.append({"id": index, "path": path, "at": round(duration * 0.35, 3)})
+            frames.append({"id": index, "path": path, "at": round(duration * 0.65, 3)})
+        else:
+            frames.append({"id": index, "path": path, "at": 0.0})
+    if not frames:
+        return {"ok": False, "error": "no candidate path could be asked for"}
+    reply = rerank.rerank({
+        "query": query,
+        "frames": frames,
+        "candidates": [{"id": frame["id"]} for frame in frames],
+        **{key: spec[key] for key in ("ffmpeg", "autoSetup") if key in spec},
+    })
+    reply["tool"] = "rank_frames"
+    return reply
 
 
 def visual_embedding(spec):
@@ -3192,6 +3242,7 @@ TOOLS = {
     "motion_blur": motion_blur,
     "tracks": tracks_from_file,
     "measure_clips": measure_clips,
+    "rank_frames": rank_frames,
     "bench": bench,
     "models": models,
     "download": download,

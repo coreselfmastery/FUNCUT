@@ -219,6 +219,7 @@ def rerank(spec):
         vision_in = _input_name(vision_session, ["image", "pixel", "visual", "input"])
         wanted = _output_of(vision_session, dimension)
         best: dict[int, float] = {}
+        looks: dict[int, "np.ndarray"] = {}
         for frame in frames:
             identifier = frame.get("id")
             if identifier is None:
@@ -247,6 +248,12 @@ def rerank(spec):
             previous = best.get(identifier)
             if previous is None or score > previous:
                 best[identifier] = score
+                # The winning look's own vector, kept beside its score: the
+                # vision tower already paid for it, and the near-duplicate
+                # check the stock gather runs - is this the clip an earlier
+                # slot already placed, wearing another shelf id? - is a
+                # cosine between two of these. No second model run.
+                looks[identifier] = vector
     except Exception:  # a broken half is a fallback, not a failure
         import sys
         caught = sys.exc_info()[1]
@@ -262,6 +269,14 @@ def rerank(spec):
         "ok": True,
         "order": order,
         "scores": {str(key): round(value, 6) for key, value in best.items()},
+        # The best look's normalised vision vector per scored clip, rounded
+        # for the wire: 4 decimals keep the cosine honest to ~2e-3, which a
+        # duplicate threshold at 0.93 cannot feel. Unscaled clips are
+        # absent, never zero-filled - a zero vector is a reading that lies.
+        "vectors": {
+            str(key): [round(float(value), 4) for value in vector]
+            for key, vector in looks.items()
+        },
         "scored": len(scored),
         "ms": round((time.perf_counter() - started) * 1000.0),
         "engine": "mobileclip2-s0",

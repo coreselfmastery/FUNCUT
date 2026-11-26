@@ -694,7 +694,34 @@ struct StockCandidate {
     local_path: String,
     width: f64,
     height: f64,
+    /// The hit's own length in seconds, as the shelf answered it: the
+    /// rerank's two looks are taken inside it, not at fixed seconds a
+    /// shorter clip could not carry.
+    seconds: f64,
     tile: Value,
+}
+
+/// The cosine between two vectors the rerank normalised: the pair was
+/// unit length when it left the vision tower, and the wire's 4-decimal
+/// rounding leaves the measure honest to about 2e-3 - a duplicate line
+/// drawn at 0.93 cannot feel it. Vectors that cannot be compared -
+/// different lengths, empty, all-zero - answer 0.0, the cosine that
+/// asserts nothing, so an unmeasurable pair is never read as a
+/// near-duplicate.
+fn cosine(left: &[f64], right: &[f64]) -> f64 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let (mut dot, mut left_sq, mut right_sq) = (0.0, 0.0, 0.0);
+    for (one, other) in left.iter().zip(right.iter()) {
+        dot += one * other;
+        left_sq += one * one;
+        right_sq += other * other;
+    }
+    if left_sq == 0.0 || right_sq == 0.0 {
+        return 0.0;
+    }
+    dot / (left_sq * right_sq).sqrt()
 }
 
 impl StockCandidate {
@@ -1071,8 +1098,16 @@ enum GatherPhase {
     /// frames: motion, camera travel, scale, quality and scene cuts.
     Visual,
     /// The visual reply is in: a candidate the frames refuse sinks, then
-    /// the emotion gate weighs the register.
+    /// the CLIP rerank scores what the candidates SHOW against the
+    /// slot's own words.
     ReadVisual,
+    /// About to score the ranked candidates' frames against the slot's
+    /// words with the CLIP pair - the same rerank the openvid shelf's
+    /// search runs, pointed at files already on disk.
+    Rerank,
+    /// The rerank reply is in: the semantic order and the near-duplicate
+    /// evidence land, then the emotion gate weighs the register.
+    ReadRerank,
     /// The sheet's choice is ranked: the emotion gate weighs the
     /// register before the choice is spent.
     Gate,
@@ -9043,6 +9078,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut phase = GatherPhase::Search;
                 let mut fetch_queue: Vec<Value> = Vec::new();
                 let mut fetched: Vec<StockCandidate> = Vec::new();
+                // The CLIP rerank's answer for the slot being shopped:
+                // each looked-at candidate's text-image cosine against
+                // the slot's own words. Empty until a rank_frames reply
+                // lands; a candidate absent from it keeps the sheet's
+                // order - unmeasured is not the same answer as mismatched.
+                let mut semantic: Vec<Option<f64>> = Vec::new();
+                // The same reply's vision embedding per candidate - the
+                // near-duplicate check's evidence. A candidate whose
+                // cosine to a clip the run already placed crosses the
+                // duplicate line sinks behind one the page's diversity
+                // still holds, whatever its shelf id said.
+                let mut look_vectors: Vec<Option<Vec<f64>>> = Vec::new();
+                // The embeddings of every clip the run actually placed:
+                // the near-duplicate line is drawn against these, so two
+                // visually identical clips wearing different shelf ids
+                // never cut back to back even when their frames' dHashes
+                // differed.
+                let mut placed_vectors: Vec<Vec<f64>> = Vec::new();
+                // Whether the rerank pair answered: one refusal - the
+                // models absent, the sidecar broken - stops every later
+                // slot from paying the ask again. The sheet's own order
+                // stands in for the semantic one from that point on.
+                let mut rerank_absent = false;
                 // The sheet-ranked candidates awaiting the emotion gate's
                 // word - the choice is spent only after the register
                 // allowed it.
@@ -9214,6 +9272,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     local_path: path,
                                     width: hit["width"].as_f64().unwrap_or(0.0),
                                     height: hit["height"].as_f64().unwrap_or(0.0),
+                                    seconds: hit["seconds"].as_f64().unwrap_or(0.0),
                                     tile: Value::Null,
                                 });
                             }
@@ -9381,6 +9440,100 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     })
                                 });
                             }
+                            // The CLIP rerank rides between the picture's
+                            // own read and the gate: the sheet judged the
+                            // frame, the picture judged the clip - this is
+                            // the pass that asks whether what the clip
+                            // SHOWS is what the slot's words asked for. A
+                            // pair that already refused once is not asked
+                            // again: the sheet's order stands in.
+                            if rerank_absent || pending_gate.is_empty() {
+                                semantic = vec![None; pending_gate.len()];
+                                look_vectors = vec![None; pending_gate.len()];
+                                phase = GatherPhase::Gate;
+                            } else {
+                                phase = GatherPhase::Rerank;
+                            }
+                            continue;
+                        }
+                        GatherPhase::Rerank => {
+                            // The words the frames are ranked against: the
+                            // slot's own query first, then the register the
+                            // emotional read named for the line this gap
+                            // plays under - the same vocabulary the search
+                            // shopped with, judged now against what the
+                            // pixels actually show.
+                            let slot = &slots[shopping];
+                            let lines = emotion_lines(log, &gather_source);
+                            let line = emotion_at(&lines, &slot.take, slot.from);
+                            let mut query = slot.query.clone();
+                            if let Some(line) = line {
+                                for words in line.queries.iter().take(3) {
+                                    if !words.trim().is_empty() && !query.contains(words) {
+                                        query.push(' ');
+                                        query.push_str(words);
+                                    }
+                                }
+                            }
+                            let paths: Vec<Value> = pending_gate
+                                .iter()
+                                .map(|candidate| json!(candidate.local_path))
+                                .collect();
+                            phase = GatherPhase::ReadRerank;
+                            return Some(call(
+                                "sense_visual",
+                                json!({
+                                    "action": "rank_frames",
+                                    "query": query,
+                                    "paths": paths,
+                                }),
+                            ));
+                        }
+                        GatherPhase::ReadRerank => {
+                            let reply = log.last();
+                            let answered =
+                                reply.is_some_and(|reply| reply.get("ok").and_then(Value::as_bool) == Some(true));
+                            if answered {
+                                let scores = reply
+                                    .and_then(|reply| reply.get("scores"))
+                                    .and_then(Value::as_object);
+                                let vectors = reply
+                                    .and_then(|reply| reply.get("vectors"))
+                                    .and_then(Value::as_object);
+                                semantic = (0..pending_gate.len())
+                                    .map(|index| {
+                                        scores.and_then(|scores| {
+                                            scores
+                                                .get(index.to_string())
+                                                .and_then(Value::as_f64)
+                                                .filter(|score| score.is_finite())
+                                        })
+                                    })
+                                    .collect();
+                                look_vectors = (0..pending_gate.len())
+                                    .map(|index| {
+                                        vectors.and_then(|vectors| {
+                                            vectors
+                                                .get(index.to_string())
+                                                .and_then(Value::as_array)
+                                                .map(|vector| {
+                                                    vector
+                                                        .iter()
+                                                        .filter_map(Value::as_f64)
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .filter(|vector| vector.len() >= 2)
+                                        })
+                                    })
+                                    .collect();
+                            } else {
+                                // The pair is absent or broken: the honest
+                                // answer is no semantic order at all, and
+                                // no later slot pays the ask again.
+                                rerank_absent = true;
+                                semantic = vec![None; pending_gate.len()];
+                                look_vectors = vec![None; pending_gate.len()];
+                            }
                             phase = GatherPhase::Gate;
                             continue;
                         }
@@ -9477,17 +9630,61 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .is_none_or(|read| read.passes() && !read.montage())
                             };
                             let any_picture_ok = (0..pending_gate.len()).any(picture_ok);
-                            let chosen = if gate_answered {
-                                passing
+                            // The semantic order the CLIP rerank measured:
+                            // within the register the gate allowed, the
+                            // candidate whose frames answer the slot's own
+                            // words outranks one the sheet liked on looks
+                            // alone. A candidate the rerank could not read
+                            // keeps the gate's own order behind every
+                            // measured one - unmeasured is not the same
+                            // answer as mismatched, but a measured match is
+                            // the surer bet when both passed.
+                            let semantic_of = |index: usize| {
+                                semantic.get(index).and_then(|score| *score)
+                            };
+                            let by_semantics = |left: &usize, right: &usize| {
+                                match (semantic_of(*left), semantic_of(*right)) {
+                                    (Some(left), Some(right)) => right.total_cmp(&left),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => std::cmp::Ordering::Equal,
+                                }
+                            };
+                            // Near-duplicate suppression: a candidate whose
+                            // vision embedding crosses the duplicate line
+                            // against a clip the run already placed sinks
+                            // behind the page's diversity - two visually
+                            // identical clips wearing different shelf ids
+                            // read as one mistake to anyone watching. When
+                            // every survivor is a duplicate the best of
+                            // them still takes the slot: a duplicate clip
+                            // beats an empty beat.
+                            let duplicate_of_placed = |index: usize| {
+                                look_vectors
+                                    .get(index)
+                                    .and_then(|vector| vector.as_ref())
+                                    .is_some_and(|vector| {
+                                        placed_vectors
+                                            .iter()
+                                            .any(|placed| cosine(vector, placed) >= 0.93)
+                                    })
+                            };
+                            let eligible = |pool: Vec<usize>| -> Option<usize> {
+                                let mut pool: Vec<usize> = pool
                                     .into_iter()
                                     .filter(|index| visual.contains(index))
                                     .filter(|index| !any_picture_ok || picture_ok(*index))
-                                    .min()
+                                    .collect();
+                                pool.sort_by(by_semantics);
+                                pool.iter()
+                                    .copied()
+                                    .find(|index| !duplicate_of_placed(*index))
+                                    .or_else(|| pool.first().copied())
+                            };
+                            let chosen = if gate_answered {
+                                eligible(passing)
                             } else {
-                                visual
-                                    .into_iter()
-                                    .filter(|index| !any_picture_ok || picture_ok(*index))
-                                    .min()
+                                eligible(visual)
                             };
                             if let Some(chosen) = chosen {
                                 let best = &pending_gate[chosen];
@@ -9496,6 +9693,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     best.tile["hash"].as_str().filter(|hash| !hash.is_empty())
                                 {
                                     used_hashes.push(hash.to_owned());
+                                }
+                                // The chosen clip's own look joins the
+                                // placed set: the next slot's
+                                // near-duplicate line is drawn against it.
+                                if let Some(vector) =
+                                    look_vectors.get(chosen).and_then(|vector| vector.clone())
+                                {
+                                    placed_vectors.push(vector);
                                 }
                                 shopped.push(SlotChoice {
                                     id: format!("slot-{:02}", shopped.len()),
@@ -16146,6 +16351,23 @@ mod tests {
                 "visualScore": 74.0,
             }],
         }));
+        // The CLIP rerank rides between the picture's read and the gate;
+        // this machine's pair is absent, and the refusal is the honest
+        // answer the sheet's order stands through.
+        let rerank = (gather.next)(&log).expect("the candidates' frames are ranked");
+        assert_eq!(rerank.tool, "sense_visual");
+        assert_eq!(rerank.arguments["action"], "rank_frames");
+        assert_eq!(
+            rerank.arguments["paths"],
+            json!(["/cache/stock/pexels/2499611.mp4"])
+        );
+        assert!(
+            rerank.arguments["query"]
+                .as_str()
+                .is_some_and(|query| !query.is_empty()),
+            "the rerank asks with the slot's own words"
+        );
+        log.push(json!({ "ok": false, "error": "the rerank pair is not installed" }));
         // The emotion gate rides between the sheet and the choice: the
         // candidate it weighs carries the shelf's own caption (not the
         // slot's shared query), and the segment defaults to neutral - the
@@ -16341,6 +16563,12 @@ mod tests {
                 assert_eq!(visual.tool, "sense_visual");
                 assert_eq!(visual.arguments["action"], "measure_clips");
                 log.push(visual_reply.clone());
+                // The CLIP pair is absent on this machine: one refusal,
+                // and the sheet's order stands through to the gate.
+                let rerank = (gather)(log).expect("the candidates' frames are ranked");
+                assert_eq!(rerank.tool, "sense_visual");
+                assert_eq!(rerank.arguments["action"], "rank_frames");
+                log.push(json!({ "ok": false, "error": "the rerank pair is not installed" }));
                 let gate = (gather)(log).expect("the gate is asked");
                 assert_eq!(gate.tool, "emotion");
             };
@@ -16445,6 +16673,240 @@ mod tests {
         assert!(
             (gather.next)(&log).is_none(),
             "a hit without licence metadata is left unused"
+        );
+    }
+
+    /// The CLIP rerank orders the gate's survivors by what the frames
+    /// SHOW against the slot's own words, and the winning look's vision
+    /// embedding suppresses near-duplicates across slots: a later clip
+    /// whose embedding crosses the duplicate line against one the run
+    /// already placed sinks behind the page's diversity even when the
+    /// gate ranked it first and the semantics liked it best - two
+    /// visually identical clips wearing different shelf ids read as one
+    /// mistake to anyone watching.
+    #[test]
+    fn the_rerank_orders_the_gate_s_survivors_and_suppresses_duplicates() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        // A seven-second take: the coverage floor tiles it into two
+        // shots - the cadence's second tile absorbs the short tail - so
+        // the run shops two slots and the second is judged against what
+        // the first placed.
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "voice",
+                "media": "voice-media",
+                "start": 0.0,
+                "duration": 7.0,
+                "sourceStart": 0.0,
+                "speed": 1.0
+            }]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 5.0, "end": 7.0, "text": "crowds crossing the bridge at night" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+        // One slot's whole shopping trip, scripted: two licensed hits
+        // are fetched, measured, ranked against the slot's words, and
+        // gated - the caller answers each call as it comes.
+        let search_hits = |ids: [&str; 2]| {
+            json!({
+                "provider": "pexels",
+                "license": "Pexels License",
+                "hits": [
+                    {
+                        "id": ids[0], "provider": "pexels",
+                        "url": format!("https://videos.pexels.com/files/{}.mp4", ids[0]),
+                        "license": "Pexels License",
+                        "caption": "aerial city skyline at dusk",
+                        "width": 1920.0, "height": 1080.0, "seconds": 10.0
+                    },
+                    {
+                        "id": ids[1], "provider": "pexels",
+                        "url": format!("https://videos.pexels.com/files/{}.mp4", ids[1]),
+                        "license": "Pexels License",
+                        "caption": "drone over neon skyscrapers at night",
+                        "width": 1920.0, "height": 1080.0, "seconds": 8.0
+                    },
+                ],
+            })
+        };
+        let fetch_reply = |id: &str| {
+            json!({
+                "id": id, "provider": "pexels",
+                "path": format!("/cache/stock/pexels/{id}.mp4"), "bytes": 8_000_000,
+            })
+        };
+        let sheet_reply = |ids: [&str; 2]| {
+            json!({
+                "pngPath": "/cache/sense/sheet-1.png",
+                "tiles": ids.iter().enumerate().map(|(index, id)| json!({
+                    "index": index,
+                    "localPath": format!("/cache/stock/pexels/{id}.mp4"),
+                    "luma": 128.0, "contrast": 40.0, "detail": 4.0,
+                    "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+                    "saturation": 0.4, "warmth": 0.2,
+                    "hash": format!("hash-{id}"),
+                    "cropHint": { "x": 0.0, "y": 0.0 },
+                    "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
+                })).collect::<Vec<_>>(),
+            })
+        };
+        let visual_reply = |ids: [&str; 2]| {
+            json!({
+                "clips": ids.iter().map(|id| json!({
+                    "path": format!("/cache/stock/pexels/{id}.mp4"),
+                    "ok": true,
+                    "motion": { "mean": 0.03, "peak": 0.09, "peakAt": 1.2, "still": false },
+                    "camera": { "kind": "pan", "cameraMoving": true,
+                                "subjectMoving": false, "travel": "left" },
+                    "shotScale": { "scale": "wide" },
+                    "quality": { "verdict": "pass" },
+                    "saliency": { "focus": "center" },
+                    "scene": { "cuts": 0 },
+                    "visualScore": 74.0,
+                })).collect::<Vec<_>>(),
+            })
+        };
+        // The rerank's answer: a cosine per candidate against the slot's
+        // words, and the winning look's vision embedding per candidate.
+        let rerank_reply = |scores: [f64; 2], vectors: [Vec<f64>; 2]| {
+            json!({
+                "ok": true,
+                "order": [0, 1],
+                "scores": {
+                    "0": scores[0],
+                    "1": scores[1],
+                },
+                "vectors": {
+                    "0": vectors[0],
+                    "1": vectors[1],
+                },
+                "scored": 2,
+            })
+        };
+
+        // Slot one: the sheet and the gate both prefer the first hit,
+        // but the CLIP pair reads the SECOND hit's frames as the one the
+        // words ask for - and the choice follows the measurement.
+        let _ = (gather.next)(&log).expect("the first slot is searched");
+        log.push(search_hits(["110011", "88110022"]));
+        let _ = (gather.next)(&log).expect("the first hit is fetched");
+        log.push(fetch_reply("110011"));
+        let _ = (gather.next)(&log).expect("the second hit is fetched");
+        log.push(fetch_reply("88110022"));
+        let _ = (gather.next)(&log).expect("both are looked at");
+        log.push(sheet_reply(["110011", "88110022"]));
+        let _ = (gather.next)(&log).expect("both pictures are measured");
+        log.push(visual_reply(["110011", "88110022"]));
+        let rerank = (gather.next)(&log).expect("both frames are ranked");
+        assert_eq!(rerank.tool, "sense_visual");
+        assert_eq!(rerank.arguments["action"], "rank_frames");
+        assert_eq!(
+            rerank.arguments["paths"],
+            json!([
+                "/cache/stock/pexels/110011.mp4",
+                "/cache/stock/pexels/88110022.mp4"
+            ])
+        );
+        log.push(rerank_reply([0.18, 0.41], [vec![1.0, 0.0], vec![0.0, 1.0]]));
+        let gate = (gather.next)(&log).expect("the gate is asked");
+        assert_eq!(gate.tool, "emotion");
+        log.push(json!({ "ok": true, "order": [0, 1] }));
+
+        // Slot two: the near-duplicate wears a fresh shelf id and BOTH
+        // the sheet and the semantics like it best - but its embedding is
+        // the clip slot one placed to within the duplicate line, and the
+        // fresh alternate takes the slot instead.
+        let _ = (gather.next)(&log).expect("the second slot is searched");
+        log.push(search_hits(["77220033", "99002211"]));
+        let _ = (gather.next)(&log).expect("the near-duplicate is fetched");
+        log.push(fetch_reply("77220033"));
+        let _ = (gather.next)(&log).expect("the fresh alternate is fetched");
+        log.push(fetch_reply("99002211"));
+        let _ = (gather.next)(&log).expect("both are looked at");
+        log.push(sheet_reply(["77220033", "99002211"]));
+        let _ = (gather.next)(&log).expect("both pictures are measured");
+        log.push(visual_reply(["77220033", "99002211"]));
+        // The pair is asked once more: this slot's words are its own, and
+        // its candidates' looks are their own.
+        let _ = (gather.next)(&log).expect("both frames are ranked");
+        log.push(rerank_reply(
+            [0.40, 0.22],
+            [vec![0.0, 0.99], vec![0.7, 0.71]],
+        ));
+        let gate = (gather.next)(&log).expect("the gate is asked");
+        assert_eq!(gate.tool, "emotion");
+        log.push(json!({ "ok": true, "order": [0, 1] }));
+
+        // The continuity gate runs over the two chosen shots, flags
+        // nothing, and the import pass spends the choices in order: the
+        // semantically better clip first, the fresh alternate second -
+        // never the near-duplicate the shelf offered as the top hit.
+        let continuity = (gather.next)(&log).expect("the continuity gate runs");
+        assert_eq!(continuity.tool, "footage_continuity");
+        log.push(json!({ "flags": [] }));
+        let first = (gather.next)(&log).expect("the first choice is imported");
+        assert_eq!(
+            first.arguments["id"], "88110022",
+            "the clip whose frames answered the slot's words takes the slot"
+        );
+        log.push(json!({
+            "mediaIds": ["stock-media-1"],
+            "license": "Pexels License",
+            "view": { "timeline": { "clips": [] }, "media": [] }
+        }));
+        let lane = (gather.next)(&log).expect("the shared lane is minted");
+        assert_eq!(lane.arguments["command"]["op"], "addTrack");
+        log.push(json!({ "createdId": "t-broll" }));
+        let place = (gather.next)(&log).expect("the first clip is placed");
+        assert_eq!(place.arguments["command"]["op"], "addClip");
+        log.push(json!({
+            "timeline": { "clips": [
+                { "id": "voice", "media": "voice-media", "start": 0.0,
+                  "duration": 7.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "stock-1", "media": "stock-media-1", "start": 0.0, "duration": 8.0 }
+            ]},
+            "media": [
+                { "id": "voice-media", "path": take },
+                { "id": "stock-media-1", "path": "/edits/Reel/stock/pexels-88110022.mp4" }
+            ]
+        }));
+        let _ = (gather.next)(&log).expect("the first clip is styled");
+        let second = (gather.next)(&log).expect("the second choice is imported");
+        assert_eq!(
+            second.arguments["id"], "99002211",
+            "a near-duplicate of a placed clip never takes the next slot"
         );
     }
 

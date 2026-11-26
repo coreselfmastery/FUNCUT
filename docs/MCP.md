@@ -435,7 +435,7 @@ return MCP `type: image` content blocks, so the model can actually look:
   creativeReady. `action "selftest"` proves the whole chain on a
   synthetic take.
 
-**The consumption layer** — the eighty-two readings behind eight family
+**The consumption layer** — the eighty-three readings behind eight family
 tools, what the director DOES with the readings. One tool per family:
 `action` names the reading, the family's other arguments are the inputs
 it reads (`transcript` / `lines` / `script`, the acoustic ones also
@@ -443,7 +443,7 @@ it reads (`transcript` / `lines` / `script`, the acoustic ones also
 runs the reading's own proof, and every family shares the voiceover
 tools' honest degradation contract. The thirty-five readings behind the
 five voice doors, the sound shelf's nine behind the next two, then the
-picture's thirty-eight behind the eighth (the eleven classical readings,
+picture's thirty-nine behind the eighth (the eleven classical readings,
 the shelf's twenty-one door actions - thirty model entries, several
 sharing an action - and the batch sheet, bench and install machinery,
 each model naming the file, licence and consumer it carries -
@@ -635,6 +635,11 @@ bounded by the `width` it is asked for:
 - `saliency` - a classical center-surround attention map and its peak.
 - `measure_clips` - the compact batch read the gather spends: one row
   per candidate, with `visualScore` and the per-clip reads.
+- `rank_frames` - the stock gather's CLIP rerank: the fetched candidates'
+  frames scored against the slot's words with the same MobileCLIP2-S0 pair
+  `openvid_search` reranks by, and each winner's vision embedding handed
+  back for near-duplicate suppression. A missing pair refuses honestly and
+  the sheet's order stands.
 - `bench` - does cutting on a motion peak beat cutting on a pause? The
   measurement the wiring answers, not a claim.
 - `models` - every row of the shelf (thirty checkpoints) and whether each
@@ -660,12 +665,17 @@ bounded by the `width` it is asked for:
   without one the digest that arrived is pinned in the folder's
   `index.json` and checked on every later download.
 
-The gather spends the picture in five places: `measure_clips` ranks the
+The gather spends the picture in six places: `measure_clips` ranks the
 sheet's candidates and vetoes a soft, noisy, letterboxed, flat, dark,
 blown, blurred or self-cutting clip, and - when the shelf's doors are
 installed - adds a measured taste prior, shot type, depth and pose at most
 `enrichDoors` (default 3) doors per clip (`enrich: false` keeps it
-classical); the choice re-checks the veto; the chosen
+classical); `rank_frames` scores what the surviving candidates SHOW against
+the slot's own words and hands back each winner's vision embedding, which
+orders the gate's survivors and suppresses near-duplicates across slots
+(a clip whose embedding crosses the duplicate line against one the run
+already placed sinks behind the page's diversity, whatever its shelf id
+said); the choice re-checks the veto; the chosen
 shot's in-point lands just before its motion peak; and the drift is
 skipped on a shot that already moves (a still clip in a slot that wanted
 motion gets the push instead). The continuity manifest now carries
@@ -685,7 +695,9 @@ for the arc) -> the consumption layer where the edit needs it
 to music, `align_captions` + `clean_subtitles` before burning captions)
 -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
 -> `sense_visual {action: "measure_clips"}` (the picture's veto and
-rank) -> `emotion` (gate, before anything is placed) -> build ->
+rank) -> `sense_visual {action: "rank_frames"}` (the CLIP rerank: what
+the candidates show against the slot's words, plus the near-duplicate
+evidence) -> `emotion` (gate, before anything is placed) -> build ->
 `sense_visual {action: "bench"}` on the cuts it made -> `watch_render` ->
 `craft_critique` -> revise -> `watch_render` again -> export ->
 `normalize_loudness` on the shipped file -> `watch_render {path}` +

@@ -2385,6 +2385,18 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
         ],
     },
     SenseFamilyTool {
+        // The stock gather's CLIP look at its own candidates: the model
+        // pair loads once and two frames per clip score in milliseconds,
+        // but a cold Python start on a weak machine is real seconds - the
+        // budget holds room for the pair, the probe and the looks. The
+        // ffmpeg the looks decode with is found the way every other
+        // visual door finds it: the env, then PATH.
+        tool: "rank_frames",
+        cmd: "visual",
+        base: 150,
+        fields: &["query", "paths"],
+    },
+    SenseFamilyTool {
         tool: "bench",
         cmd: "visual",
         base: 300,
@@ -2814,6 +2826,7 @@ const SENSE_FAMILIES: &[(&str, &[&str])] = &[
             "palette",
             "saliency",
             "measure_clips",
+            "rank_frames",
             "bench",
             "models",
             "action_class",
@@ -2984,7 +2997,7 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         );
         props.insert(
             "paths".to_owned(),
-            json!({ "type": "array", "items": { "type": "string" }, "maxItems": 16, "description": "measure_clips / bench: the candidate files." }),
+            json!({ "type": "array", "items": { "type": "string" }, "maxItems": 16, "description": "measure_clips / bench / rank_frames: the candidate files." }),
         );
         props.insert(
             "intent".to_owned(),
@@ -3048,8 +3061,12 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
             string("A Hugging Face token for a gated repo; HF_TOKEN when absent."),
         );
         props.insert(
+            "revision".to_owned(),
+            string("download: the repo revision to fetch from - a commit hash, a branch or a tag; the repo's default when absent."),
+        );
+        props.insert(
             "query".to_owned(),
-            string("hf_search: what to look for, e.g. \"depth anything onnx\"."),
+            string("rank_frames: the words the candidates' frames are ranked against - the slot's shelf query and its register. hf_search: what to look for, e.g. \"depth anything onnx\"."),
         );
         props.insert(
             "limit".to_owned(),
@@ -4025,7 +4042,7 @@ mod tests {
             }
             members += expected.len();
         }
-        assert_eq!(members, 82, "eighty-two readings behind eight doors");
+        assert_eq!(members, 83, "eighty-three readings behind eight doors");
         // A member named through the wrong family is refused by name,
         // with the family's real members listed - no Python involved.
         let wrong = match sense_family_action(
@@ -4072,6 +4089,7 @@ mod tests {
             ("sense_sound", "sound"),
             ("sense_sound_model", "soundmodel"),
             ("sense_captions", "captions"),
+            ("sense_visual", "visual"),
         ] {
             let schema = sense_family_schema(tool);
             let properties = schema["properties"]

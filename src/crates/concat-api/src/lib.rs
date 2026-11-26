@@ -754,11 +754,18 @@ impl Api {
                 provider,
                 id,
                 url,
+                author,
                 start,
                 track,
-            } => Ok(Reply::StockImported(
-                self.stock_import(&path, &provider, &id, &url, start, track)?,
-            )),
+            } => Ok(Reply::StockImported(self.stock_import(
+                &path,
+                &provider,
+                &id,
+                &url,
+                author.as_deref(),
+                start,
+                track,
+            )?)),
             Request::SoundsSearch {
                 query,
                 category,
@@ -1865,6 +1872,7 @@ impl Api {
         provider: &str,
         id: &str,
         url: &str,
+        author: Option<&str>,
         start: Option<f64>,
         track: Option<String>,
     ) -> Result<StockImported, ApiError> {
@@ -1894,9 +1902,25 @@ impl Api {
         std::fs::copy(&cached, &into).map_err(|error| {
             ApiError::failed(format!("could not copy into the project: {error}"))
         })?;
-        let item = media::probe(&into.to_string_lossy())
+        let mut item = media::probe(&into.to_string_lossy())
             .map_err(ApiError::failed)?
             .to_new_media();
+        // Where the clip came from, kept beside the file it landed as:
+        // once this reply is gone only the document can answer for the
+        // clip - the licence it stands on, the creator it credits.
+        let licence = live_stock::license_of(provider).to_owned();
+        item.stock = Some(concat_project::StockSource {
+            provider: provider.name().to_owned(),
+            id: id.to_owned(),
+            url: url.to_owned(),
+            licence: licence.clone(),
+            author: author.unwrap_or_default().trim().to_owned(),
+        });
+        let author = item
+            .stock
+            .as_ref()
+            .map(|stock| stock.author.clone())
+            .unwrap_or_default();
         let mut view = self.apply(path, Command::AddMedia { item: item.clone() })?;
         let media_id = view
             .project
@@ -1921,6 +1945,7 @@ impl Api {
         Ok(StockImported {
             media_ids: vec![media_id],
             license: live_stock::license_of(provider).to_owned(),
+            author,
             view: Box::new(view),
         })
     }
@@ -3638,6 +3663,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         }
     }
 

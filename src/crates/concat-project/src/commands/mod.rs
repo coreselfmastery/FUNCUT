@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::model::{
     AppliedFilter, AudioTrack, Background, Clip, ClipKind, ClipMask, ColorRange, ColorSpace, Crop,
     CustomFont, Cutout, CutoutMode, Enhanced, Framing, KeyEase, KeyProperty, MediaItem, MediaKind,
-    MediaOrigin, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, Stroke, TextStyle, Timeline,
-    Track, Transition, VideoSettings,
+    MediaOrigin, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, StockSource, Stroke,
+    TextStyle, Timeline, Track, Transition, VideoSettings,
 };
 
 mod audio;
@@ -280,6 +280,11 @@ pub struct NewMedia {
     /// to SDR.
     #[serde(default)]
     pub color_space: ColorSpace,
+    /// Where the file came from when the editor fetched it from a live
+    /// stock shelf; see `MediaItem::stock`. Defaulted, for a local import
+    /// and for a caller from before it.
+    #[serde(default)]
+    pub stock: Option<StockSource>,
 }
 
 /// Every edit, as the window sends it: a tagged `op` plus camelCase

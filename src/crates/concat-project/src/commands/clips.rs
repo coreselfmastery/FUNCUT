@@ -643,6 +643,14 @@ pub(super) fn apply(
             if project.active().clip(&clip_id).is_none() {
                 return Ok(Outcome::default());
             }
+            // A derivative keeps the licence its footage stands on: the
+            // copy is still the creator's work, and the document has to
+            // answer for it once the import reply is gone.
+            let stock = project
+                .active()
+                .clip(&clip_id)
+                .and_then(|clip| project.media.iter().find(|media| media.id == clip.media_id))
+                .and_then(|media| media.stock.clone());
             // The copy's bin entry, or the one already there for its path:
             // two clips of one file enhanced in turn share one copy.
             let media_id = match project.media.iter().find(|media| media.path == item.path) {
@@ -667,6 +675,7 @@ pub(super) fn apply(
                         placeholder: false,
                         color_range: None,
                         color_space: item.color_space,
+                        stock,
                         extra: Default::default(),
                     });
                     id
@@ -782,6 +791,13 @@ pub(super) fn apply(
                     existing.id.clone()
                 } else {
                     let id = mint.next("m");
+                    // The still is a frame of the source clip, so it
+                    // stands on the same licence the source does.
+                    let stock = project
+                        .media
+                        .iter()
+                        .find(|media| media.id == media_id)
+                        .and_then(|media| media.stock.clone());
                     project.media.push(MediaItem {
                         id: id.clone(),
                         path: item.path,
@@ -800,6 +816,7 @@ pub(super) fn apply(
                         placeholder: false,
                         color_range: None,
                         color_space: item.color_space,
+                        stock,
                         extra: Default::default(),
                     });
                     id

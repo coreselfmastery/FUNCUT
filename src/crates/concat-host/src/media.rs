@@ -134,6 +134,7 @@ impl MediaSummary {
                 .as_ref()
                 .map(|video| video.color_space)
                 .unwrap_or_default(),
+            stock: None,
         }
     }
 }
@@ -1342,6 +1343,7 @@ mod tests {
                         audio_tracks: Vec::new(),
                         origin: None,
                         color_space: Default::default(),
+                        stock: None,
                     },
                 })
                 .expect("adds")

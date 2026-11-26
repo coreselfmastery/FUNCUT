@@ -8989,6 +8989,7 @@ impl Studio {
                         audio_tracks: item.audio_tracks.clone(),
                         origin: item.origin,
                         color_space: item.color_space,
+                        stock: None,
                     },
                 },
             )?,
@@ -13995,6 +13996,7 @@ mod tests {
                 audio_tracks: Vec::new(),
                 origin: None,
                 color_space: Default::default(),
+                stock: None,
             };
             let apply =
                 |editor: &mut Editor, command| editor.apply(command).expect("applies").created_id;
@@ -14383,6 +14385,7 @@ mod tests {
                     audio_tracks: Vec::new(),
                     origin: None,
                     color_space: Default::default(),
+                    stock: None,
                 },
             })
             .expect("adds")

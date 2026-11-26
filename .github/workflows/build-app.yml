@@ -308,16 +308,45 @@ jobs:
       # (tried, reverted) cannot cure a single link that is itself too
       # big. Thin LTO splits that work into per-crate modules, for a
       # binary a few per cent slower on the lane with the fewest users.
-      # The x86_64 lane keeps the profile as Cargo.toml writes it. Set
-      # before the cache step, so these are part of its key (CARGO is in
-      # env-vars).
-      - name: Thin LTO (Linux aarch64)
-        if: matrix.platform == 'linux' && matrix.arch == 'aarch64'
+      # The x86_64 lane kept the profile as Cargo.toml wrote it, and the
+      # tree has since grown a third LTO binary (`voice-signals`) beside
+      # the window; the lane began dying the same death in the same
+      # stretch - the runner's shutdown signal mid-compile, exit 143, the
+      # same signature the ARM lane left - so the lane takes the same
+      # cure the ARM lane proved, and the swap below pays for the room
+      # the one process still needs. Set before the cache step, so these
+      # are part of its key (CARGO is in env-vars).
+      - name: Thin LTO (Linux)
+        if: matrix.platform == 'linux'
         run: |
           {
             echo "CARGO_PROFILE_APP_LTO=thin"
             echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
           } >> "$GITHUB_ENV"
+      # The same room the nix and engine lanes pay for: the link step's
+      # peak is one process on a 16 GB machine, and the image's ~3 GB of
+      # swap does not cover a thin-LTO link of the window binary either.
+      # Sixteen gigabytes beside the build turns the death into a slow
+      # link.
+      - name: Room for the build
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          echo "== memory =="; free -h
+          swap_kib() { awk 'NR>1 { sum += $3 } END { print sum + 0 }' /proc/swaps; }
+          had_kib=$(swap_kib)
+          if [ "$had_kib" -lt 16777216 ]; then
+            for where in /mnt /; do
+              if sudo fallocate -l 16G "$where/swapfile" 2>/dev/null; then
+                sudo chmod 600 "$where/swapfile"
+                sudo mkswap "$where/swapfile"
+                sudo swapon "$where/swapfile"
+                echo "swap on at $where/swapfile, beside the ${had_kib} KiB already there"
+                break
+              fi
+            done
+          fi
+          echo "== swap after =="; swapon --show || true
 
       # ── Build ──────────────────────────────────────────────────────────
       # The cache comes after the environment is set, not before: its key

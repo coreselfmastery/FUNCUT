@@ -38,22 +38,31 @@ taught in signal_matrix.md: 75/75
 Read this before Batch 1: most of it is already done, and two things
 that are not in the batch list are now the real blockers.
 
-### The board
+### The board (after the 2026-11-26 merges)
 
 | Branch | PR | What it wires | Ledger |
 |---|---|---|---|
 | `forge/clap-ear` | #230 | the CLAP ear ranks the accents the keyword gate offered | 13/75 |
-| `forge/room-and-restarts` | #231 | room graded before repair, restarts marked, `assemble` family | 16/75 |
-| `forge/captions-that-do-not-drift` | #232 | `align_captions` drift + `clean_subtitles` words | 19/75 |
-| `forge/capability-pass-2026-11-26` | #234 | the capability question, spent on the sheet | 10/75 (enabler) |
-| `ci/runner-disk-headroom-2026-11-26` | #233 | the engine job's disk | - |
-| `forge/signal-consumers-2026-11-26` | #226 | the bed described, duck on the measured curve | 13/75 |
+| `forge/room-and-restarts` | #231 | **merged** - room graded before repair, restarts marked | 16/75 |
+| `forge/captions-that-do-not-drift` | #232 | **merged** - `align_captions` drift, `clean_subtitles` words | 19/75 |
+| `forge/signal-consumers-2026-11-26` | #226 | **merged** - the bed described, duck on the measured curve | 19/75 |
+| `forge/signal-coverage-ledger-2026-11-26` | #229 | **merged** - this file and the ledger | - |
+| `ci/runner-disk-headroom-2026-11-26` | #233 | **merged** - the engine job's disk | - |
+| `forge/capability-pass-2026-11-26` | #234 | the capability question, spent on the sheet | 19/75 (enabler) |
+| `forge/rhythm-meter-seams-2026-11-26` | #235 | the seam's blend spends the measured rhythm | 20/75 |
 
-`main` was **10/75** when this file was written; the captions branch is
-**19/75** with the same script. The number moves only when the reply
-changes a decision - the three branches above each pass that test
-(`restarts` -> `assemble`, `cleaned_cues_of` reseats the word offsets,
-the CLAP rank replaces the keyword guess).
+`main` asks **19 of 75**:
+
+```
+audio_repair 4/8   captions 3/5   discourse 4/10   sound_model 3/4
+sound_sense 1/3    visual_sense 1/33   voice_quality 3/6   prosody_style 0/6
+```
+
+The number moves only when a reply changes a decision - every merged
+branch above passes that test (`restarts` -> `assemble`,
+`cleaned_cues_of` reseats the word offsets, the CLAP rank replaces the
+keyword guess, the room verdict sets the bed's floor, the rhythm meter
+sizes and tightens a seam's blend).
 
 ### Two blockers that are not on the batch list
 

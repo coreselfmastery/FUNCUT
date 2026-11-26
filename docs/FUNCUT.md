@@ -197,7 +197,7 @@ arguments. Three changes made the surface one an agent can actually hold:
   (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`)
   and the window's playhead arrived as `timeline_seek`; the sound
   readers brought it to 116 (`sense_sound`, `sense_sound_model`), and
-  the picture's thirty-eight arrived as the last family, `sense_visual`
+  the picture's thirty-nine arrived as the last family, `sense_visual`
   (motion, camera, shot scale, sync, scene cuts, quality, palette,
   saliency, composition, blur, tracks, the batch `measure_clips` read
   and its `bench`, the `models` listing and the shelf's twenty-one ONNX

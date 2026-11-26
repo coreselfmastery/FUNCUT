@@ -415,6 +415,10 @@ return MCP `type: image` content blocks, so the model can actually look:
   map). `action "extract"` takes the voiceover `audio`, the `transcript`
   (for the word timings) and optionally the `emotion` extract (for the
   arc), and returns per line: momentary **loudness relative to the take**,
+  the take's own **momentary-loudness curve** (at most 256 `[t, LUFS]`
+  points - the envelope the per-line fold flattens away, which the bed's
+  volume ride keys itself on: the duck follows the voice's measured rise,
+  not a span average),
   the **speech rate** with a pace class, the **sentence type**
   cross-checked against the pitch's terminal rise, the **emphasis words**
   the energy peaks land on, **fillers**, per-word **confidence** (a
@@ -439,7 +443,7 @@ return MCP `type: image` content blocks, so the model can actually look:
   creativeReady. `action "selftest"` proves the whole chain on a
   synthetic take.
 
-**The consumption layer** — the eighty-two readings behind eight family
+**The consumption layer** — the eighty-three readings behind eight family
 tools, what the director DOES with the readings. One tool per family:
 `action` names the reading, the family's other arguments are the inputs
 it reads (`transcript` / `lines` / `script`, the acoustic ones also
@@ -447,7 +451,7 @@ it reads (`transcript` / `lines` / `script`, the acoustic ones also
 runs the reading's own proof, and every family shares the voiceover
 tools' honest degradation contract. The thirty-five readings behind the
 five voice doors, the sound shelf's nine behind the next two, then the
-picture's thirty-eight behind the eighth (the eleven classical readings,
+picture's thirty-nine behind the eighth (the eleven classical readings,
 the shelf's twenty-one door actions - thirty model entries, several
 sharing an action - and the batch sheet, bench and install machinery,
 each model naming the file, licence and consumer it carries -
@@ -639,6 +643,11 @@ bounded by the `width` it is asked for:
 - `saliency` - a classical center-surround attention map and its peak.
 - `measure_clips` - the compact batch read the gather spends: one row
   per candidate, with `visualScore` and the per-clip reads.
+- `rank_frames` - the stock gather's CLIP rerank: the fetched candidates'
+  frames scored against the slot's words with the same MobileCLIP2-S0 pair
+  `openvid_search` reranks by, and each winner's vision embedding handed
+  back for near-duplicate suppression. A missing pair refuses honestly and
+  the sheet's order stands.
 - `bench` - does cutting on a motion peak beat cutting on a pause? The
   measurement the wiring answers, not a claim.
 - `models` - every row of the shelf (thirty checkpoints) and whether each
@@ -664,12 +673,17 @@ bounded by the `width` it is asked for:
   without one the digest that arrived is pinned in the folder's
   `index.json` and checked on every later download.
 
-The gather spends the picture in five places: `measure_clips` ranks the
+The gather spends the picture in six places: `measure_clips` ranks the
 sheet's candidates and vetoes a soft, noisy, letterboxed, flat, dark,
 blown, blurred or self-cutting clip, and - when the shelf's doors are
 installed - adds a measured taste prior, shot type, depth and pose at most
 `enrichDoors` (default 3) doors per clip (`enrich: false` keeps it
-classical); the choice re-checks the veto; the chosen
+classical); `rank_frames` scores what the surviving candidates SHOW against
+the slot's own words and hands back each winner's vision embedding, which
+orders the gate's survivors and suppresses near-duplicates across slots
+(a clip whose embedding crosses the duplicate line against one the run
+already placed sinks behind the page's diversity, whatever its shelf id
+said); the choice re-checks the veto; the chosen
 shot's in-point lands just before its motion peak; and the drift is
 skipped on a shot that already moves (a still clip in a slot that wanted
 motion gets the push instead). The continuity manifest now carries
@@ -689,7 +703,9 @@ for the arc) -> the consumption layer where the edit needs it
 to music, `align_captions` + `clean_subtitles` before burning captions)
 -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
 -> `sense_visual {action: "measure_clips"}` (the picture's veto and
-rank) -> `emotion` (gate, before anything is placed) -> build ->
+rank) -> `sense_visual {action: "rank_frames"}` (the CLIP rerank: what
+the candidates show against the slot's words, plus the near-duplicate
+evidence) -> `emotion` (gate, before anything is placed) -> build ->
 `sense_visual {action: "bench"}` on the cuts it made -> `watch_render` ->
 `craft_critique` -> revise -> `watch_render` again -> export ->
 `normalize_loudness` on the shipped file -> `watch_render {path}` +
@@ -711,9 +727,12 @@ project whose timeline already carries narration audio (an audio clip
 outside the project's `bgm/` folder); it does not generate a video from
 nothing. By default it edits a sibling copy named `<project> edit`, so
 the source project is never overwritten, then runs the deterministic
-spine: repair the voice, transcribe it, read the voice signals, cut dead
-air, place captions, shop licensed B-roll, grade, add and duck music, add
-sound accents, save the timeline, look at the result and score it.
+spine: preflight the transcriber (downloaded headlessly when the machine
+is cold, so the run fails fast with the model named instead of dying at
+the transcription), repair the voice, transcribe it, read the voice
+signals, cut dead air, place captions, shop licensed B-roll, grade, add
+and duck music, add sound accents, save the timeline, look at the result
+and score it.
 
 ```json
 {
@@ -729,15 +748,23 @@ sound accents, save the timeline, look at the result and score it.
 
 The reply carries `project` (the folder to open next), `copy`, `outcome`
 (`completed`, `completed-with-warnings`, `failed` or `cancelled`) and the
-runner's full `state` with its stage-by-stage receipt. Every stage record
-carries `elapsedMs` - the wall-clock time that stage spent - and the
-resumed stages carry `0`, so a slow run names its slow stage instead of
-leaving it to guesswork. The plan also carries a `youtube` package: the
-mode and creative profile, five title directions, three thumbnail
-`frameAt` concepts, up to three transcript-backed Short windows with
-their scores, a section-by-section retention map, a `profilePlan` that
-says what the creative profile changed in pacing, motion, captions and
-the B-roll query, and a plan-level `quality` report. See
+runner's full `state` with its stage-by-stage receipt. The per-take
+stages - the repair, the transcription and the voice read - run side by
+side here the way they do behind the window's button: every lane its own
+backend, opened the way this run's own backend was opened, so a
+five-take voiceover lands in the time of the slowest take, not the sum.
+A client that cancels the call carries the cancellation to every lane.
+These fan stages can run concurrently rather than serially; actual wall-time
+improvement depends on CPU, storage and model contention and still needs a
+measured multi-take run on the target machine. Every stage record carries
+`elapsedMs` - the wall-clock time that stage
+spent - and the resumed stages carry `0`, so a slow run names its slow
+stage instead of leaving it to guesswork. The plan also carries a
+`youtube` package: the mode and creative profile, five title directions,
+three thumbnail `frameAt` concepts, up to three transcript-backed Short
+windows with their scores, a section-by-section retention map, a
+`profilePlan` that says what the creative profile changed in pacing,
+motion, captions and the B-roll query, and a plan-level `quality` report. See
 [docs/YOUTUBE.md](YOUTUBE.md); no thumbnail image is rendered, and the
 `frameAt` times are `preview_frame` targets. It also writes
 `auto-edit-report.json` and, when the run reached the end,

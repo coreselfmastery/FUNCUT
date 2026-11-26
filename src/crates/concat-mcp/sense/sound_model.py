@@ -587,6 +587,16 @@ def describe_file(spec, path, models):
             "embedding": [_r(float(v), 4) for v in embedding],
             "description": models.describe(embedding),
         }
+        # The caller's own words for the mood they asked the bed to
+        # carry, scored against the file the CLAP pair actually heard:
+        # the cosine between the bed's audio embedding and the words'
+        # text one. A bed that measures as another mood's music is the
+        # swap the caller has candidates for.
+        mood = str(spec.get("mood") or "").strip()
+        if mood:
+            record["clap"]["mood"] = mood
+            record["clap"]["moodSimilarity"] = _r(
+                float(embedding @ models.text_embedding(mood)), 3)
         if yam and (yam.get("music") or 0.0) >= 0.25:
             record["kind"] = "music"
             record["clap"]["moods"] = models.moods(embedding)

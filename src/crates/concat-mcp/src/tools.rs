@@ -3797,6 +3797,11 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     // decision that marks which attempt survives.
     "room",
     "restarts",
+    // The delivery's own rhythm, measured by `sense_prosody_style`'s
+    // `measure_rhythm_meter`: the syllable period, the pairwise
+    // variability that tells stress-timed from syllable-timed, and the
+    // regularity that says whether the beat is one a cut can sit on.
+    "rhythmMeter",
 ];
 
 /// Every family the profile answers, in the profile's own names. Exposed

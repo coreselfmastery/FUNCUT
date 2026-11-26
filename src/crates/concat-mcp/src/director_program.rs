@@ -2553,6 +2553,46 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
         .collect()
 }
 
+/// The take's measured rhythm: the syllable period in seconds and the
+/// regularity of the delivery, from the prosody door's
+/// `measure_rhythm_meter` reply. A take with no reply, or a delivery too
+/// short to time, is `None` - the seam keeps the blend it had.
+fn rhythm_read(log: &[Value], take: &str) -> Option<(f64, String)> {
+    let row = log.iter().rev().find(|reply| {
+        reply.get("action") == Some(&json!("measure_rhythm_meter"))
+            && reply.get("audio").and_then(Value::as_str) == Some(take)
+    })?;
+    if row.get("ok").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    let period = row.get("interNucleusMs").and_then(Value::as_f64)? / 1000.0;
+    if !period.is_finite() || period <= 0.05 {
+        return None;
+    }
+    let meter = row
+        .get("regularity")
+        .and_then(|regularity| regularity.get("meter"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Some((period, meter))
+}
+
+/// The seam's blend for a measured period and the delivery's own meter: a
+/// third of the period, or a quarter when the rhythm meter called the
+/// delivery metronomic - a real beat is one a seam can sit on - held
+/// between a snap and a breath so no period makes a stall.
+fn seam_blend(period: Option<f64>, meter: Option<&str>) -> f64 {
+    let share = if meter.is_some_and(|meter| meter.contains("metronomic")) {
+        4.0
+    } else {
+        3.0
+    };
+    period
+        .map(|period| round3((period / share).clamp(0.2, 0.6)))
+        .unwrap_or(0.3)
+}
+
 /// Every take's `voice_signals` reading, in the order the replies landed.
 /// A reply that is not a reading (a transcript, an emotion extract, a
 /// timeline view) is skipped, and a reading of a file the run does not
@@ -7566,6 +7606,8 @@ fn decision_for(family: &str) -> &'static [&'static str] {
         "speechRatio" => &["bgm", "mix"],
         "forensic" => &["bgm", "repair", "mix", "grade", "sfx"],
         "speakerChanges" | "discourseMarkers" => &["transition"],
+        // The rhythm meter sizes and tightens the seam's blend.
+        "rhythmMeter" => &["transition"],
         "speaker" => &["transition", "bgm"],
         "topics" => &["transition", "graphic"],
         "loudness" => &["caption", "mix", "pacing"],
@@ -8622,6 +8664,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "lines": lines.clone(),
                                 }),
                             ));
+                            // The delivery's own rhythm, timed from
+                            // the syllable nuclei the transcript
+                            // already gave: the period sizes a B-roll
+                            // seam's blend when the profile found no
+                            // pulse or breath worth its strength, and
+                            // the meter says whether the beat is real
+                            // enough for a seam to sit on.
+                            calls.push(call(
+                                "sense_prosody_style",
+                                json!({
+                                    "action": "measure_rhythm_meter",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
                             calls.push(call(
                                 "emotion",
                                 json!({ "action": "extract", "audio": take.take, "lines": lines }),
@@ -9273,6 +9330,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // energy actually repeats on, so a slow take dissolves
                 // slowly and a clipped one snaps.
                 let mut pending_period: Option<f64> = None;
+                // The delivery's regularity, from the same rhythm read:
+                // a metronomic take snaps its seam tighter.
+                let mut pending_meter: Option<String> = None;
                 let mut pending_transition: Option<&'static str> = None;
                 // The gap's own timeline position, held across the lane
                 // minting call: the placement that follows the lane's
@@ -9874,6 +9934,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     {
                                         pending_style = "building".to_owned();
                                     }
+                                    let rhythm = rhythm_read(log, &slot.take);
+                                    pending_meter =
+                                        rhythm.as_ref().map(|(_, meter)| meter.clone());
                                     pending_period = take_read
                                         .as_ref()
                                         // The period the pulse has
@@ -9892,7 +9955,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         // so it stands without the guard.
                                         .or_else(|| {
                                             take_read.as_ref().and_then(|read| read.breath_period())
-                                        });
+                                        })
+                                        // The syllable period the
+                                        // prosody door measured: a
+                                        // delivery's own rhythm, which
+                                        // stands where the profile found
+                                        // no period worth its strength.
+                                        .or_else(|| rhythm.map(|(period, _)| period));
                                     pending_energy = voice_read_of(voice, &slot.take)
                                         .and_then(|read| read.local_energy(slot.from));
                                     pending_transition = Some(seam_transition(
@@ -10162,13 +10231,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                             let chosen = pending_transition.unwrap_or("concat.dissolve");
                             last_transition = Some(chosen);
-                            // The blend is a share of the tempo: a third of
-                            // the period the take repeats on, held between
-                            // a snap and a breath so no measured period can
-                            // make a seam that reads as a stall.
-                            let blend = pending_period
-                                .map(|period| round3((period / 3.0).clamp(0.2, 0.6)))
-                                .unwrap_or(0.3);
+                            let blend = seam_blend(pending_period, pending_meter.as_deref());
                             commands.push(json!({
                                 "op": "updateClip",
                                 "clipId": clip_id,
@@ -13619,6 +13682,26 @@ mod tests {
         let _: &FanStep = repair;
     }
 
+    #[test]
+    fn a_metronomic_delivery_snaps_its_seam_tighter() {
+        // 0.9 s per syllable: a third is a 0.3 s blend, a quarter is
+        // 0.225 s. The meter is the only thing that moved.
+        assert_eq!(seam_blend(Some(0.9), None), 0.3);
+        assert_eq!(
+            seam_blend(Some(0.9), Some("regular (metronomic delivery)")),
+            0.225
+        );
+        assert_eq!(seam_blend(Some(0.9), Some("loosely regular")), 0.3);
+        // The clamp holds the floor and the ceiling whatever the share.
+        assert_eq!(
+            seam_blend(Some(0.2), Some("regular (metronomic delivery)")),
+            0.2
+        );
+        assert_eq!(seam_blend(Some(9.0), None), 0.6);
+        // No period at all is the blend the program shipped with.
+        assert_eq!(seam_blend(None, Some("regular (metronomic delivery)")), 0.3);
+    }
+
     /// A stressed word really does reach the captions: the log entry has
     /// always claimed `emphasisWords`, and until this was wired the caption
     /// stage never read the signal, so the claim was decorative. A caption
@@ -14346,6 +14429,9 @@ mod tests {
             // decision marks.
             "room",
             "restarts",
+            // The delivery's rhythm, measured by the prosody door: the
+            // syllable period and whether the beat is real.
+            "rhythmMeter",
         ];
         // Families the vocabulary names but this program deliberately does
         // not spend, and why. Each is a real reading the profile makes; the

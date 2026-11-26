@@ -10288,111 +10288,111 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let voice = voice_reads(log, &caption_source);
                             let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
                             for (take, segments) in drifted_transcripts(log, &caption_source) {
-                            let take_read = voice_read_of(&voice, &take);
-                            for segment in segments {
-                                // The safe-remove fillers the profile timed
-                                // for this segment: `um`, `uh` and their kin
-                                // are pure noise in a caption - the viewer
-                                // hears the pause, not the syllable. The
-                                // discourse markers (`like`, `you know`) are
-                                // context calls the profile does not
-                                // decide, so they stay.
-                                let fillers: Vec<String> = take_read
-                                    .map(|take_read| {
-                                        let start = segment["start"].as_f64().unwrap_or(0.0);
-                                        let end = segment["end"].as_f64().unwrap_or(0.0);
-                                        take_read
-                                            .fillers_between(start, end)
-                                            .into_iter()
-                                            .map(|filler| filler.word.to_lowercase())
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                for mut group in caption_groups(&segment, &fillers) {
-                                    group.take = take.clone();
-                                    // The opening bound must land inside a
-                                    // surviving piece (a caption whose
-                                    // first word was cut has no start to
-                                    // show at), but the closing bound is
-                                    // allowed to sit at the join the cut
-                                    // made: a group whose last word ends
-                                    // exactly at the piece's edge - a take
-                                    // trimmed to its last word, or a
-                                    // trailing pause the tighten took -
-                                    // still shows its words, so the bound
-                                    // maps to the nearest surviving second
-                                    // at or before it, the same mercy the
-                                    // B-roll slot bounds already get.
-                                    let (Some(at), Some(to)) = (
-                                        timeline_at(view, &media, &take, group.start),
-                                        timeline_at_or_before(view, &media, &take, group.end),
-                                    ) else {
-                                        continue;
-                                    };
-                                    if to - at < 0.25 {
-                                        continue;
+                                let take_read = voice_read_of(&voice, &take);
+                                for segment in segments {
+                                    // The safe-remove fillers the profile timed
+                                    // for this segment: `um`, `uh` and their kin
+                                    // are pure noise in a caption - the viewer
+                                    // hears the pause, not the syllable. The
+                                    // discourse markers (`like`, `you know`) are
+                                    // context calls the profile does not
+                                    // decide, so they stay.
+                                    let fillers: Vec<String> = take_read
+                                        .map(|take_read| {
+                                            let start = segment["start"].as_f64().unwrap_or(0.0);
+                                            let end = segment["end"].as_f64().unwrap_or(0.0);
+                                            take_read
+                                                .fillers_between(start, end)
+                                                .into_iter()
+                                                .map(|filler| filler.word.to_lowercase())
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    for mut group in caption_groups(&segment, &fillers) {
+                                        group.take = take.clone();
+                                        // The opening bound must land inside a
+                                        // surviving piece (a caption whose
+                                        // first word was cut has no start to
+                                        // show at), but the closing bound is
+                                        // allowed to sit at the join the cut
+                                        // made: a group whose last word ends
+                                        // exactly at the piece's edge - a take
+                                        // trimmed to its last word, or a
+                                        // trailing pause the tighten took -
+                                        // still shows its words, so the bound
+                                        // maps to the nearest surviving second
+                                        // at or before it, the same mercy the
+                                        // B-roll slot bounds already get.
+                                        let (Some(at), Some(to)) = (
+                                            timeline_at(view, &media, &take, group.start),
+                                            timeline_at_or_before(view, &media, &take, group.end),
+                                        ) else {
+                                            continue;
+                                        };
+                                        if to - at < 0.25 {
+                                            continue;
+                                        }
+                                        groups.push((at, to, group));
                                     }
-                                    groups.push((at, to, group));
                                 }
                             }
-                        }
-                        if groups.is_empty() {
-                            phase = 4;
-                            return None;
-                        }
-                        // Overlaps cannot happen on a clean transcript, but a
-                        // merged one can carry them: the later group waits
-                        // for the one before it to leave. The walk is by
-                        // timeline position, not take order - groups are
-                        // built take-major, and an interleaved multi-take
-                        // run would otherwise set `until` from take A and
-                        // drop every one of take B's groups as "overlaps".
-                        groups.sort_by(|left, right| {
-                            left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
-                        });
-                        let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
-                        let mut until = 0.0;
-                        for (at, to, group) in groups {
-                            if at < until - 0.05 {
-                                continue;
+                            if groups.is_empty() {
+                                phase = 4;
+                                return None;
                             }
-                            until = to;
-                            kept.push((at, to, group));
-                        }
-                        kept.truncate(240);
-                        // The clean asks, one per take: the groups' own
-                        // texts, in the take's file clock the groups were
-                        // built in, so the door's punctuation and casing
-                        // repairs come back matched to the words that
-                        // spoke them. The original text stays in the
-                        // transcript the log already holds - the evidence
-                        // the cleaning was made against. The profile's
-                        // own filler timing already took the um/uh out, so
-                        // the cleaner is asked to leave fillers be and do
-                        // the work only it can see: the sentence shapes.
-                        let mut by_take: Vec<(String, Vec<Value>)> = Vec::new();
-                        for (_, _, group) in &kept {
-                            let row = json!({
-                                "start": group.start, "end": group.end,
-                                "text": group.text,
+                            // Overlaps cannot happen on a clean transcript, but a
+                            // merged one can carry them: the later group waits
+                            // for the one before it to leave. The walk is by
+                            // timeline position, not take order - groups are
+                            // built take-major, and an interleaved multi-take
+                            // run would otherwise set `until` from take A and
+                            // drop every one of take B's groups as "overlaps".
+                            groups.sort_by(|left, right| {
+                                left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
                             });
-                            match by_take.iter_mut().find(|(take, _)| *take == group.take) {
-                                Some((_, lines)) => lines.push(row),
-                                None => by_take.push((group.take.clone(), vec![row])),
+                            let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                            let mut until = 0.0;
+                            for (at, to, group) in groups {
+                                if at < until - 0.05 {
+                                    continue;
+                                }
+                                until = to;
+                                kept.push((at, to, group));
                             }
-                        }
-                        for (take, lines) in by_take {
-                            clean_asks.push(call(
-                                "sense_captions",
-                                json!({
-                                    "action": "clean_subtitles",
-                                    "audio": take,
-                                    "lines": lines,
-                                    "stripFillers": false,
-                                }),
-                            ));
-                        }
-                        kept_groups = Some(kept);
+                            kept.truncate(240);
+                            // The clean asks, one per take: the groups' own
+                            // texts, in the take's file clock the groups were
+                            // built in, so the door's punctuation and casing
+                            // repairs come back matched to the words that
+                            // spoke them. The original text stays in the
+                            // transcript the log already holds - the evidence
+                            // the cleaning was made against. The profile's
+                            // own filler timing already took the um/uh out, so
+                            // the cleaner is asked to leave fillers be and do
+                            // the work only it can see: the sentence shapes.
+                            let mut by_take: Vec<(String, Vec<Value>)> = Vec::new();
+                            for (_, _, group) in &kept {
+                                let row = json!({
+                                    "start": group.start, "end": group.end,
+                                    "text": group.text,
+                                });
+                                match by_take.iter_mut().find(|(take, _)| *take == group.take) {
+                                    Some((_, lines)) => lines.push(row),
+                                    None => by_take.push((group.take.clone(), vec![row])),
+                                }
+                            }
+                            for (take, lines) in by_take {
+                                clean_asks.push(call(
+                                    "sense_captions",
+                                    json!({
+                                        "action": "clean_subtitles",
+                                        "audio": take,
+                                        "lines": lines,
+                                        "stripFillers": false,
+                                    }),
+                                ));
+                            }
+                            kept_groups = Some(kept);
                         }
                         if let Some(next) = clean_asks.pop() {
                             return Some(next);
@@ -10414,12 +10414,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // nothing, and the words' own text stands.
                         for (_, _, group) in kept.iter_mut() {
                             let cues = cleaned_cues_of(log, &group.take);
-                            let Some(cleaned) = cues
-                                .iter()
-                                .find(|(start, end, _)| {
-                                    *start <= group.start + 0.05 && *end >= group.end - 0.05
-                                })
-                            else {
+                            let Some(cleaned) = cues.iter().find(|(start, end, _)| {
+                                *start <= group.start + 0.05 && *end >= group.end - 0.05
+                            }) else {
                                 continue;
                             };
                             let words_still_fit = group
@@ -10674,105 +10671,105 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // one patch per word, through the title's own range
                     // styling.
                     if phase == 3 {
-                    let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|clip| clip["kind"] == json!("text"))
-                        .filter_map(|clip| {
-                            Some((clip["start"].as_f64()?, clip["id"].as_str()?.to_owned()))
-                        })
-                        .collect();
-                    titles.sort_by(|left, right| left.0.total_cmp(&right.0));
-                    let emphasis = stressed_words(log, &caption_source);
-                    let read = emotion_lines(log, &caption_emotion);
-                    let voice = voice_reads(log, &caption_source);
-                    let mut commands: Vec<Value> = Vec::new();
-                    for (at, group) in &placed_groups {
-                        let Some((_, clip_id)) =
-                            titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
-                        else {
-                            continue;
-                        };
-                        let line = emotion_at(&read, &group.take, group.start);
-                        let take_read = voice_read_of(&voice, &group.take);
-                        let unsure_share = take_read
-                            .map(|take_read| {
-                                let flagged =
-                                    take_read.unsure_between(group.start, group.end).len();
-                                let total = group.words.len();
-                                if total == 0 {
-                                    0.0
-                                } else {
-                                    flagged as f64 / total as f64
-                                }
-                            })
-                            .unwrap_or(0.0);
-                        if unsure_share > 0.5 {
-                            continue;
-                        }
-                        let hot = line.is_some_and(|line| {
-                            matches!(line.temperature.as_str(), "hot" | "split")
-                        });
-                        // The words the profile's own emphasis read named:
-                        // the delivery's, not the mood's - and the take's
-                        // own delivery, never another take's.
-                        let take_emphasis = emphasis
-                            .iter()
-                            .find(|(take, _)| *take == group.take)
-                            .map(|(_, words)| words);
-                        let mut accents: Vec<&CaptionWord> = group
-                            .words
-                            .iter()
-                            .filter(|word| {
-                                let bare = word
-                                    .text
-                                    .trim_matches(|c: char| !c.is_alphanumeric())
-                                    .to_lowercase();
-                                !bare.is_empty()
-                                    && take_emphasis.is_some_and(|words| words.contains(&bare))
+                        let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|clip| clip["kind"] == json!("text"))
+                            .filter_map(|clip| {
+                                Some((clip["start"].as_f64()?, clip["id"].as_str()?.to_owned()))
                             })
                             .collect();
-                        // A hot line with no stressed word still earns its
-                        // accent: the group's own longest word is the one
-                        // carrying the claim.
-                        if accents.is_empty() && hot {
-                            let longest = group
-                                .words
-                                .iter()
-                                .max_by_key(|word| word.text.chars().count());
-                            if let Some(longest) = longest {
-                                accents.push(longest);
-                            }
-                        }
-                        for word in accents {
-                            let chars = word.text.chars().count();
-                            if chars == 0 || word.at + chars > group.text.chars().count() {
+                        titles.sort_by(|left, right| left.0.total_cmp(&right.0));
+                        let emphasis = stressed_words(log, &caption_source);
+                        let read = emotion_lines(log, &caption_emotion);
+                        let voice = voice_reads(log, &caption_source);
+                        let mut commands: Vec<Value> = Vec::new();
+                        for (at, group) in &placed_groups {
+                            let Some((_, clip_id)) =
+                                titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
+                            else {
+                                continue;
+                            };
+                            let line = emotion_at(&read, &group.take, group.start);
+                            let take_read = voice_read_of(&voice, &group.take);
+                            let unsure_share = take_read
+                                .map(|take_read| {
+                                    let flagged =
+                                        take_read.unsure_between(group.start, group.end).len();
+                                    let total = group.words.len();
+                                    if total == 0 {
+                                        0.0
+                                    } else {
+                                        flagged as f64 / total as f64
+                                    }
+                                })
+                                .unwrap_or(0.0);
+                            if unsure_share > 0.5 {
                                 continue;
                             }
-                            commands.push(json!({
-                                "op": "styleTextRange",
-                                "clipId": clip_id,
-                                "start": word.at,
-                                "end": word.at + chars,
-                                "patch": {
-                                    "color": "#ffd400",
-                                    "fontScale": 1.18,
-                                },
-                            }));
+                            let hot = line.is_some_and(|line| {
+                                matches!(line.temperature.as_str(), "hot" | "split")
+                            });
+                            // The words the profile's own emphasis read named:
+                            // the delivery's, not the mood's - and the take's
+                            // own delivery, never another take's.
+                            let take_emphasis = emphasis
+                                .iter()
+                                .find(|(take, _)| *take == group.take)
+                                .map(|(_, words)| words);
+                            let mut accents: Vec<&CaptionWord> = group
+                                .words
+                                .iter()
+                                .filter(|word| {
+                                    let bare = word
+                                        .text
+                                        .trim_matches(|c: char| !c.is_alphanumeric())
+                                        .to_lowercase();
+                                    !bare.is_empty()
+                                        && take_emphasis.is_some_and(|words| words.contains(&bare))
+                                })
+                                .collect();
+                            // A hot line with no stressed word still earns its
+                            // accent: the group's own longest word is the one
+                            // carrying the claim.
+                            if accents.is_empty() && hot {
+                                let longest = group
+                                    .words
+                                    .iter()
+                                    .max_by_key(|word| word.text.chars().count());
+                                if let Some(longest) = longest {
+                                    accents.push(longest);
+                                }
+                            }
+                            for word in accents {
+                                let chars = word.text.chars().count();
+                                if chars == 0 || word.at + chars > group.text.chars().count() {
+                                    continue;
+                                }
+                                commands.push(json!({
+                                    "op": "styleTextRange",
+                                    "clipId": clip_id,
+                                    "start": word.at,
+                                    "end": word.at + chars,
+                                    "patch": {
+                                        "color": "#ffd400",
+                                        "fontScale": 1.18,
+                                    },
+                                }));
+                            }
                         }
-                    }
-                    phase = 4;
-                    if commands.is_empty() {
-                        return None;
-                    }
-                    return Some(ToolCall {
-                        tool: "edit_apply".to_owned(),
-                        arguments: json!({
-                            "path": caption_project,
-                            "command": { "op": "batch", "commands": commands },
-                        }),
-                    });
+                        phase = 4;
+                        if commands.is_empty() {
+                            return None;
+                        }
+                        return Some(ToolCall {
+                            tool: "edit_apply".to_owned(),
+                            arguments: json!({
+                                "path": caption_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        });
                     }
                     // No phase falls through to here: 0 through 3 all
                     // return, and 4 answers at the top. The word is the
@@ -16254,7 +16251,10 @@ mod tests {
                 "aiLikeness": { "score": 5, "band": "likely human" },
             }));
             let clean = (captions.next)(log.as_slice()).expect("the clean read is asked");
-            let lines = clean.arguments["lines"].as_array().cloned().unwrap_or_default();
+            let lines = clean.arguments["lines"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let cues: Vec<Value> = lines
                 .iter()
                 .map(|line| json!({ "start": line["start"], "end": line["end"], "text": line["text"] }))
@@ -16323,9 +16323,7 @@ mod tests {
             .unwrap_or_default();
         let cues: Vec<Value> = lines
             .iter()
-            .map(|line| {
-                json!({ "start": line["start"], "end": line["end"], "text": line["text"] })
-            })
+            .map(|line| json!({ "start": line["start"], "end": line["end"], "text": line["text"] }))
             .collect();
         log.push(json!({
             "tool": "clean_subtitles", "ok": true,

@@ -1768,7 +1768,7 @@ mod tests {
                 ]
             }
         });
-        let (status, evidence) = signal_evidence_gate(&plan, &[earless, whole], None);
+        let (status, evidence) = signal_evidence_gate(&plan, &[earless, whole.clone()], None);
         assert_eq!(status, GateStatus::Fail);
         assert!(
             evidence.contains("1 of 2 take profile(s) were read without the voice-signals binary"),
@@ -2062,7 +2062,7 @@ mod tests {
 
     #[test]
     fn analysis_wait_is_attributed_to_the_stage_that_owns_the_job() {
-        let preflight = [StageRecord::completed(
+        let preflight = vec![StageRecord::completed(
             Stage::Preflight,
             vec!["analysis_wait".to_owned()],
         )];
@@ -2074,7 +2074,7 @@ mod tests {
             .expect("measurement capability is listed");
         assert!(!measurement.consumed);
 
-        let transcription = [StageRecord::completed(
+        let transcription = vec![StageRecord::completed(
             Stage::Transcribe,
             vec!["analysis_wait".to_owned()],
         )];

@@ -694,10 +694,6 @@ struct StockCandidate {
     local_path: String,
     width: f64,
     height: f64,
-    /// The hit's own length in seconds, as the shelf answered it: the
-    /// rerank's two looks are taken inside it, not at fixed seconds a
-    /// shorter clip could not carry.
-    seconds: f64,
     tile: Value,
 }
 
@@ -2010,7 +2006,17 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
             .find(|(path, _)| path == take)
             .map(|(_, bounds)| bounds)
             .cloned()
-            .unwrap_or_default();
+            // A take the voice read never measured still has its
+            // music: the bed's downbeats are the timeline's own grid,
+            // not a reading of the voice, so they are offered for the
+            // snap even when the voice's own moments are all absent -
+            // an arbitrary cadence frame is the last resort, never the
+            // choice, and a bed was asked for precisely so the cut
+            // could land on its bar.
+            .unwrap_or_else(|| SnapBounds {
+                downbeats: downbeats_of(take),
+                ..SnapBounds::default()
+            });
         let spoken = transcripts_of(log, takes)
             .into_iter()
             .find(|(path, _)| path == take)
@@ -9345,7 +9351,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     local_path: path,
                                     width: hit["width"].as_f64().unwrap_or(0.0),
                                     height: hit["height"].as_f64().unwrap_or(0.0),
-                                    seconds: hit["seconds"].as_f64().unwrap_or(0.0),
                                     tile: Value::Null,
                                 });
                             }
@@ -11332,14 +11337,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         let min_apart = 0.33 / bed_len.max(0.1);
                         let mut keyed: Vec<(f64, f64)> = Vec::new();
                         for (fraction, depth) in ride {
-                            if let Some((last_at, last_depth)) = keyed.last() {
-                                if fraction - *last_at < min_apart
+                            let too_near = keyed.last().is_some_and(|(last_at, last_depth)| {
+                                fraction - *last_at < min_apart
                                     || (depth - *last_depth).abs() < lift / 12.0
-                                {
-                                    continue;
-                                }
+                            });
+                            if !too_near {
+                                keyed.push((fraction, depth));
                             }
-                            keyed.push((fraction, depth));
                         }
                         if let Some((_, last_depth)) = keyed.last().copied() {
                             keyed.push((1.0, last_depth.max(lift * 0.6)));
@@ -12716,7 +12720,7 @@ mod tests {
 
         // The download's Started names the job a caller waits on.
         let started = json!({ "job": "j1", "path": "base.bin", "output": "" });
-        let ask = whisper_preflight(&[started.clone()]).expect("the wait");
+        let ask = whisper_preflight(std::slice::from_ref(&started)).expect("the wait");
         assert_eq!(ask.tool, "analysis_wait");
         assert_eq!(ask.arguments["job"], json!("j1"));
 
@@ -12957,7 +12961,7 @@ mod tests {
         // ordered - a hum gets its notch, a DC offset its blocker, a
         // muffled take a presence lift instead of the denoise that
         // would deepen it.
-        let ProgramStep::Fanned(repair) = &program.steps[1] else {
+        let ProgramStep::Fanned(repair) = &program.steps[2] else {
             panic!("the repair is fanned");
         };
         assert_eq!(repair.groups.len(), 2, "one lane per take");
@@ -12987,7 +12991,7 @@ mod tests {
 
         // The transcription is fanned too: both takes transcribe at the
         // same time, each lane waiting on its own file.
-        let ProgramStep::Fanned(words) = &program.steps[2] else {
+        let ProgramStep::Fanned(words) = &program.steps[3] else {
             panic!("the transcription is fanned");
         };
         assert_eq!(words.groups.len(), 2);
@@ -13005,7 +13009,7 @@ mod tests {
         // keyed by the stage, so a second step sharing `Stage::Timeline`
         // was skipped the moment the first completed and the run never
         // graded.
-        for at in [4usize, 6, 7, 8, 9, 10, 11, 12, 13, 16] {
+        for at in [5usize, 7, 8, 9, 10, 11, 12, 13, 14, 17] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
@@ -13015,12 +13019,12 @@ mod tests {
         // The saved timeline is explicitly written and read back; the
         // final verify checks collisions, and the final watch reviews the
         // open project rather than an automatically encoded MP4.
-        let ready = program.steps[14].as_static();
+        let ready = program.steps[15].as_static();
         assert_eq!(ready.calls[0].tool, "project_save");
         assert_eq!(ready.calls[0].arguments["path"], source.project.as_str());
         assert_eq!(ready.calls[1].tool, "timeline_read");
         assert_eq!(ready.calls[1].arguments["path"], source.project.as_str());
-        let verify = program.steps[15].as_static();
+        let verify = program.steps[16].as_static();
         assert_eq!(verify.calls[0].tool, "collision_check");
         assert_eq!(verify.calls[1].tool, "timeline_read");
         assert_eq!(
@@ -13030,13 +13034,13 @@ mod tests {
                 what: "clips share a lane on the saved timeline",
             }]
         );
-        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
+        assert!(matches!(program.steps[17], ProgramStep::Derived(_)));
         // The transcription's own done gate: a wait that gives up with
         // "still running" used to complete the stage over a transcript
         // that never arrived, and every word-derived stage downstream
         // silently shipped defaults.
         assert_eq!(
-            program.steps[2].gates(),
+            program.steps[3].gates(),
             vec![ReplyGate::Word {
                 field: "state",
                 equals: "done",
@@ -13044,7 +13048,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            program.steps[16].gates(),
+            program.steps[17].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -13054,15 +13058,16 @@ mod tests {
         // The plan's own gate: its structure is refused before a single
         // edit lands, not warned about after the fact.
         assert_eq!(
-            program.steps[5].gates(),
+            program.steps[6].gates(),
             vec![ReplyGate::True {
                 field: "valid",
                 what: "the plan the run wrote did not validate",
             }]
         );
-        // No other step gates its replies.
+        // No other step gates its replies: the preflight's arrival gate
+        // beside the transcription, plan, verify and watch ones.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 2 && at != 5 && at != 15 && at != 16 {
+            if at != 0 && at != 3 && at != 6 && at != 16 && at != 17 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -17770,8 +17775,8 @@ mod tests {
             script: None,
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(understand) = &mut program.steps[4] else {
-            panic!("step 4 is the understand stage");
+        let ProgramStep::Derived(understand) = &mut program.steps[5] else {
+            panic!("step 5 is the understand stage");
         };
         // Only the first take transcribed: one music gate per take, one
         // emotion read for the take with words.

@@ -309,6 +309,7 @@ impl Backend for Headless {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use concat_api::{Api, AppDirs, Request};
 
     /// A finished run's hand-off, over a real server: the session an

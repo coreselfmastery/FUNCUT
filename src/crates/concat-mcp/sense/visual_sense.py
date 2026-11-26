@@ -1657,6 +1657,10 @@ def measure_clips(spec):
                 "still": motion["still"],
             }
             doors = _enrich(sub, frames) if _enrich_on(spec) else {}
+            door_report = (_enrich_doors(sub, _enrich_budget(sub))
+                           if _enrich_on(spec)
+                           else {"ready": [], "absent": [], "budget": 0})
+            door_report["answered"] = sorted(doors)
             score = _visual_score(motion_row, quality, intent, scene_row, comp, blur,
                                   aesthetic=doors.get("aesthetic"))
             rows.append({
@@ -1674,6 +1678,7 @@ def measure_clips(spec):
                 "composition": comp,
                 "blur": blur,
                 "models": doors,
+                "doors": door_report,
                 "visualScore": score,
                 "notes": _notes(motion_row, quality, camera, intent, scene_row,
                                 comp, blur),
@@ -1724,6 +1729,23 @@ def _ready_door(spec, model_id):
     return bool(path) and np is not None and _has_onnxruntime()
 
 
+def _enrich_budget(spec):
+    """How many doors one clip may open: all four listed by default."""
+    return max(0, min(6, _int(spec, "enrichDoors", len(ENRICH_DOORS))))
+
+
+def _enrich_doors(spec, budget):
+    """Which enrich doors were installed, which were absent.
+
+    The coverage ledger needs the difference between a reading that could
+    not run (no checkpoint on disk) and one nobody asked for.
+    """
+    ready, absent = [], []
+    for model_id in ENRICH_DOORS:
+        (ready if _ready_door(spec, model_id) else absent).append(model_id)
+    return {"ready": ready, "absent": absent, "budget": budget}
+
+
 def _enrich(spec, frames):
     """The shelf's cheap reads on a clip the sheet already measured.
 
@@ -1732,7 +1754,7 @@ def _enrich(spec, frames):
     rather than a batch of inferences. With nothing installed this is an
     empty dict and costs a stat() per door.
     """
-    budget = max(0, min(6, _int(spec, "enrichDoors", 3)))
+    budget = _enrich_budget(spec)
     if budget == 0:
         return {}
     middle = [frames[len(frames) // 2]]

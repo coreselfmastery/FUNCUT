@@ -7547,6 +7547,20 @@ fn signal_evidence(log: &[Value]) -> Value {
 /// and a single mapping would make the critic believe it only chose BGM.
 /// A family with no entry drives no choice here, and the digest leaves it
 /// out of `decides` rather than inventing one.
+/// How well a stock clip's measured colour temperature agrees with the
+/// one before it: the same temperature is 2, either side neutral is 1,
+/// and two opposites are 0. A cut from a warm clip straight to a cool one
+/// reads as a different film, so the shelf prefers the neighbour that
+/// agrees when the scores are level.
+fn temperature_agreement(previous: Option<&str>, next: Option<&str>) -> u8 {
+    match (previous, next) {
+        (Some(previous), Some(next)) if previous == next => 2,
+        (Some(previous), Some(next)) if previous == "neutral" || next == "neutral" => 1,
+        (Some(_), Some(_)) => 0,
+        _ => 1,
+    }
+}
+
 fn decision_for(family: &str) -> &'static [&'static str] {
     match family {
         "pause" => &["cut", "transition"],
@@ -9273,6 +9287,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // energy actually repeats on, so a slow take dissolves
                 // slowly and a clipped one snaps.
                 let mut pending_period: Option<f64> = None;
+                // The colour temperature of the last stock clip placed:
+                // the shelf prefers a neighbour that agrees with it.
+                let mut last_temperature: Option<String> = None;
                 let mut pending_transition: Option<&'static str> = None;
                 // The gap's own timeline position, held across the lane
                 // minting call: the placement that follows the lane's
@@ -9520,20 +9537,37 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // not a re-ranking.
                             let refused = |candidate: &StockCandidate| {
                                 visual_read_of(&reads, &candidate.local_path)
-                                    .is_some_and(|read| !read.passes() || read.montage())
+                                    .is_some_and(|read| !read.usable() || read.montage())
                             };
                             let any_pass = pending_gate.iter().any(|candidate| !refused(candidate));
                             if any_pass {
                                 pending_gate.sort_by(|left, right| {
                                     let class = refused(left).cmp(&refused(right));
                                     class.then_with(|| {
-                                        let left = visual_read_of(&reads, &left.local_path)
-                                            .and_then(|read| read.score())
-                                            .unwrap_or(0.0);
-                                        let right = visual_read_of(&reads, &right.local_path)
-                                            .and_then(|read| read.score())
-                                            .unwrap_or(0.0);
-                                        right.total_cmp(&left)
+                                        let left_read =
+                                            visual_read_of(&reads, &left.local_path);
+                                        let right_read =
+                                            visual_read_of(&reads, &right.local_path);
+                                        let left_score =
+                                            left_read.and_then(|read| read.score()).unwrap_or(0.0);
+                                        let right_score =
+                                            right_read.and_then(|read| read.score()).unwrap_or(0.0);
+                                        // The sheet's score first; then the
+                                        // neighbour's warmth, so a level pair
+                                        // keeps the palette the grade set.
+                                        right_score.total_cmp(&left_score).then_with(|| {
+                                            let left = temperature_agreement(
+                                                last_temperature.as_deref(),
+                                                left_read
+                                                    .and_then(|read| read.temperature.as_deref()),
+                                            );
+                                            let right = temperature_agreement(
+                                                last_temperature.as_deref(),
+                                                right_read
+                                                    .and_then(|read| read.temperature.as_deref()),
+                                            );
+                                            right.cmp(&left)
+                                        })
                                     })
                                 });
                             }
@@ -9630,7 +9664,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let reads = visual_reads(log);
                             let picture_ok = |index: usize| {
                                 visual_read_of(&reads, &pending_gate[index].local_path)
-                                    .is_none_or(|read| read.passes() && !read.montage())
+                                    .is_none_or(|read| read.usable() && !read.montage())
                             };
                             let any_picture_ok = (0..pending_gate.len()).any(picture_ok);
                             let chosen = if gate_answered {
@@ -9653,6 +9687,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 {
                                     used_hashes.push(hash.to_owned());
                                 }
+                                last_temperature = visual_read_of(&reads, &best.local_path)
+                                    .and_then(|read| read.temperature.clone());
                                 shopped.push(SlotChoice {
                                     id: format!("slot-{:02}", shopped.len()),
                                     slot: slots[shopping].clone(),
@@ -13624,6 +13660,19 @@ mod tests {
     /// stage never read the signal, so the claim was decorative. A caption
     /// carrying one of the take's own stressed words takes the accent; one
     /// carrying none stays plain.
+    #[test]
+    fn a_neighbouring_clip_prefers_the_temperature_that_agrees() {
+        // Same warmth is the strongest agreement; either side neutral is
+        // a soft one; two opposites are none at all.
+        assert_eq!(temperature_agreement(Some("warm"), Some("warm")), 2);
+        assert_eq!(temperature_agreement(Some("warm"), Some("neutral")), 1);
+        assert_eq!(temperature_agreement(Some("warm"), Some("cool")), 0);
+        // Nothing measured on either side is not a disagreement.
+        assert_eq!(temperature_agreement(None, Some("cool")), 1);
+        assert_eq!(temperature_agreement(Some("warm"), None), 1);
+        assert_eq!(temperature_agreement(None, None), 1);
+    }
+
     #[test]
     fn a_stressed_word_takes_the_caption_accent() {
         let takes = vec![TakePaths {

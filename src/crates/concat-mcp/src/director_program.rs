@@ -2859,6 +2859,16 @@ fn thumbnail_candidates(reads: &[VoiceRead], view: Option<&Value>) -> Vec<f64> {
         .collect()
 }
 
+/// Save a rendered emphasis frame inside the project's AUTO EDIT artifacts.
+fn thumbnail_output_path(project: &str, index: usize) -> String {
+    PathBuf::from(project)
+        .join("auto-edit")
+        .join("thumbnails")
+        .join(format!("emphasis-{:02}.png", index + 1))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// The visual doors the machine reported ready: the handoff's
 /// `sense_visual {action: "models"}` reply, read once. No reply, no
 /// numpy, no runtime or no checkpoint is zero - and zero keeps the
@@ -15410,6 +15420,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The thumbnail candidates left to render, strongest
                 // measured moments first.
                 let mut watch_thumbnails: Vec<f64> = Vec::new();
+                let mut watch_thumbnail_index = 0usize;
                 let watch_source = watch_source.clone();
                 move |log| {
                     if phase == 0 {
@@ -15451,13 +15462,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }),
                         ));
                     }
-                    // The thumbnail candidates, rendered as PNGs beside
-                    // the edit: the plan names its concepts with
-                    // frameAt positions and no stage ever painted them.
-                    // The three strongest measured moments the plan's
-                    // own concepts point at are rendered here - the
-                    // frames a channel can actually pick a thumbnail
-                    // from, rather than the plan's sentence about them.
+                    // The three strongest measured moments are saved as
+                    // PNGs under auto-edit/thumbnails. Use preview_frame's
+                    // output path: BackendToolCaller keeps structured
+                    // replies and discards inline MCP image content.
                     if phase == 2 {
                         // The strongest measured moments, mapped from the
                         // take's own seconds onto the timeline the preview
@@ -15473,11 +15481,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     if let Some(at) = watch_thumbnails.first().copied() {
                         watch_thumbnails.remove(0);
+                        let output = thumbnail_output_path(&watch_project, watch_thumbnail_index);
+                        watch_thumbnail_index += 1;
                         return Some(call(
                             "preview_frame",
                             json!({
                                 "path": watch_project,
                                 "time": round3(at),
+                                "output": output,
                             }),
                         ));
                     }
@@ -20985,6 +20996,14 @@ mod tests {
     /// Thumbnail frames use the strongest emphasis that survives the
     /// current timeline's trims and map through clip speed to timeline
     /// seconds. A peak at the exclusive end of a source span is not played.
+    #[test]
+    fn thumbnail_output_paths_are_numbered_inside_the_project() {
+        assert_eq!(
+            PathBuf::from(thumbnail_output_path("/tmp/Cut", 1)),
+            PathBuf::from("/tmp/Cut/auto-edit/thumbnails/emphasis-02.png")
+        );
+    }
+
     #[test]
     fn thumbnail_candidates_map_played_emphasis_to_timeline_time() {
         use crate::voice_read::Emphasis;

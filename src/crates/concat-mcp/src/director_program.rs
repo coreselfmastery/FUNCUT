@@ -896,6 +896,7 @@ fn reframe_offsets(tile: &Value, aspect: &str, width: f64, height: f64) -> Optio
 /// times it measured for it, and the character offset the word holds in
 /// the group's own shown text - the number the title's range styling
 /// counts.
+#[derive(Clone)]
 struct CaptionWord {
     text: String,
     start: f64,
@@ -907,6 +908,7 @@ struct CaptionWord {
 /// the span they occupy in the take's file seconds, and every word's
 /// place in the text - so the accent pass can style the word that
 /// carried the line without re-deriving anything.
+#[derive(Clone)]
 struct CaptionGroup {
     /// The take file the group was read from.
     take: String,
@@ -12231,7 +12233,7 @@ mod tests {
 
         // The download's Started names the job a caller waits on.
         let started = json!({ "job": "j1", "path": "base.bin", "output": "" });
-        let ask = whisper_preflight(&[started]).expect("the wait");
+        let ask = whisper_preflight(&[started.clone()]).expect("the wait");
         assert_eq!(ask.tool, "analysis_wait");
         assert_eq!(ask.arguments["job"], json!("j1"));
 

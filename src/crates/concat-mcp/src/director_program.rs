@@ -14416,10 +14416,10 @@ mod tests {
             frame_rate: None,
         };
         let calls = handoff_calls(&handmade);
-        assert_eq!(calls.len(), 3, "{calls:?}");
-        assert_eq!(calls[1].tool, "project_set_video");
+        assert_eq!(calls.len(), 4, "{calls:?}");
+        assert_eq!(calls[2].tool, "project_set_video");
         assert_eq!(
-            calls[1].arguments["video"],
+            calls[2].arguments["video"],
             json!({ "width": 1080, "height": 1080, "rateNum": 30, "rateDen": 1 })
         );
     }

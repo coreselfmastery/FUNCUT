@@ -64,6 +64,15 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         .and_then(Value::as_str)
         .unwrap_or("pexels")
         .to_owned();
+    // The orientation the run was asked to build for: one of the three
+    // words, or nothing at all. Anything else is treated as nothing - the
+    // run is never failed over a pick it cannot read - and nothing keeps
+    // the frame the project already has, exactly as before.
+    let orientation = arguments
+        .get("orientation")
+        .and_then(Value::as_str)
+        .map(|word| word.trim().to_owned())
+        .filter(|word| matches!(word.as_str(), "horizontal" | "vertical" | "square"));
 
     let project = if copy {
         copy_project(&source)?
@@ -91,8 +100,9 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         "timeline_read",
         json!({ "path": project_path }),
     )?;
-    let program_source = auto_edit_source_from_view(&project_path, &view, script, stock_provider)
-        .map_err(ApiError::invalid)?;
+    let program_source =
+        auto_edit_source_from_view(&project_path, &view, script, stock_provider, orientation)
+            .map_err(ApiError::invalid)?;
     let mut program = auto_edit_program(&program_source);
     let (runner, _events) = Runner::new(project.clone());
     // The mode is read before the caller takes the backend: the lanes

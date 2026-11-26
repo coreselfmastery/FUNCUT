@@ -99,8 +99,10 @@ export global Forge {
     /// A key field was edited: the provider, and what it says now.
     callback key-edited(provider: string, key: string);
     /// The AUTO EDIT button: run the unattended edit of the timeline's
-    /// voiceover - or stop the run that is going.
-    callback auto-edit-start(string);
+    /// voiceover - or stop the run that is going. The script is the box's
+    /// own text; the orientation is the pick's own word - empty is "same
+    /// as project", so the run keeps the frame the project already has.
+    callback auto-edit-start(string, string);
     /// Stop the auto-edit at its next stage boundary; the edits it
     /// applied are rolled back.
     callback auto-edit-cancel();
@@ -320,6 +322,27 @@ export component ForgePage inherits VerticalLayout {
                           "Synth pulse", "Elegant strings", "Lo-fi chill"];
             }
         }
+
+        // The frame the AUTO EDIT is built for: a sibling born vertical
+        // is edited vertical end to end - the stock, the captions, the
+        // motion, the plan - without a frame-set anywhere downstream. The
+        // default keeps the project's own frame, exactly as the edit
+        // always ran.
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: I18n.t("forge.orientation");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+            }
+            orientation-select := Select {
+                current: 0;
+                enabled: !Forge.running && !Forge.auto-edit-running;
+                options: [I18n.t("forge.orientationProject"), I18n.t("forge.orientationHorizontal"),
+                          I18n.t("forge.orientationVertical"), I18n.t("forge.orientationSquare")];
+            }
+        }
     }
 
     // Start, or Cancel while it runs; and the setup beside it: the harness
@@ -401,8 +424,14 @@ export component ForgePage inherits VerticalLayout {
                     // voiceover was read from a script gets the script's
                     // own wording aligned against the transcript, so the
                     // captions show what was written, not what the
-                    // recogniser guessed.
-                    Forge.auto-edit-start(Forge.script);
+                    // recogniser guessed. The orientation pick travels
+                    // with it: empty is "same as project", so nothing
+                    // picked keeps the frame the project already has.
+                    Forge.auto-edit-start(Forge.script,
+                        orientation-select.current == 1 ? "horizontal"
+                        : orientation-select.current == 2 ? "vertical"
+                        : orientation-select.current == 3 ? "square"
+                        : "");
                 }
             }
         }

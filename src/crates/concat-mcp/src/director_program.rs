@@ -555,7 +555,7 @@ fn round3(value: f64) -> f64 {
 /// and look again rather than end the stage and drop every later peak.
 fn next_played_peak(
     placed: &mut usize,
-    peaks: &[(String, f64, f64)],
+    peaks: &[(String, f64, f64, String)],
     log: &[Value],
 ) -> Option<f64> {
     let view = latest_view(log)?;
@@ -565,7 +565,7 @@ fn next_played_peak(
         // span the same file-second: a file-second only means anything
         // inside its own take's clock, and a multi-take cut plays both
         // clocks at once.
-        let (take, moment, _) = &peaks[*placed];
+        let (take, moment, _, _) = &peaks[*placed];
         if let Some(at) = timeline_at(view, &media, take, *moment) {
             return Some(at);
         }
@@ -2443,8 +2443,12 @@ fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<String
 
 /// The emphasis peaks the sound stage may spend, read from the same typed
 /// profile as captions and pacing. A raw walk through lines[].prosody can
-/// drift independently of the parser the other consumers use.
-fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64)> {
+/// drift independently of the parser the other consumers use. Each peak
+/// carries its own word: the shelf's CLAP ear is asked about the word the
+/// voice stressed, and a peak reduced to a moment would leave the ear
+/// shopping with the family's name alone - the very keyword metadata the
+/// ranking exists to better.
+fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
     reads
         .iter()
         .flat_map(|read| {
@@ -2454,7 +2458,12 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64)> {
                     // nominal start: when the flux ear measured one
                     // nearby, the hit moves to it.
                     let at = read.onset_near(word.at, 0.12).unwrap_or(word.at);
-                    (read.take.clone(), at, word.strength)
+                    (
+                        read.take.clone(),
+                        at,
+                        word.strength,
+                        word.word.clone(),
+                    )
                 })
             })
         })
@@ -3838,6 +3847,43 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
     } else {
         named.to_vec()
     }
+}
+
+/// The sound a role asks for, said in words the CLAP text tower was
+/// benched against: this mirrors `TEXTURE_WORDS` in `sound_model.py`,
+/// whose phrases are the vocabulary the plan's own queries were fitted
+/// with - a query in another register is a query the ear was never
+/// measured to answer.
+fn sfx_texture_for_role(role: &str) -> &'static str {
+    match role {
+        "action_impact" => "a sharp heavy impact",
+        "cinematic_reveal" => "a deep heavy cinematic boom",
+        "quick_transition" => "a short bright whoosh of air",
+        "gentle_entrance" => "a soft light interface entrance",
+        "tension_build" => "a rising tension build",
+        "emotional_texture" => "a warm sustained emotional texture",
+        _ => "a sound effect",
+    }
+}
+
+/// The question the shelf's CLAP ear is asked about one accent: the
+/// register's own sound, the word the voice stressed, the line that word
+/// was spoken in, and the mood the line read in - the same shape the
+/// model's `plan` builds its queries from (`_query_for`), because that is
+/// the shape the ranking was fitted on. The family's keyword stays what
+/// GATES the candidates (the search already asked it); this is what
+/// ORDERS them, so a ladder that walks to its third word does not drag
+/// the ear's question along - the moment did not change, only the net.
+fn sfx_clap_query(role: &str, word: &str, line: Option<&EmotionLine>, emotion: &str) -> String {
+    let mut ask = sfx_texture_for_role(role).to_owned();
+    if !word.is_empty() {
+        ask.push_str(&format!(" for the word '{word}'"));
+    }
+    if let Some(line) = line.filter(|line| !line.text.is_empty()) {
+        ask.push_str(&format!(", {}", line.text));
+    }
+    ask.push_str(&format!(", {emotion} moment"));
+    ask
 }
 
 /// Translate the shelf's search words into the sound role that the
@@ -11297,6 +11343,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
             tried: usize,
+            /// The question the CLAP ear will be asked if the shelf ends
+            /// up shopping this peak: built where the peak's own word and
+            /// line were in hand, carried because the reply that needs it
+            /// arrives calls later.
+            context: String,
         },
         /// The search's reply is in: pick a hit this run has not spent, or
         /// walk the family's next word.
@@ -11314,6 +11365,73 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The exact shelf word whose results this state is reading.
             query: &'static str,
+            /// The question the CLAP ear is asked about this accent, when
+            /// the ear is spent at all.
+            context: String,
+        },
+        /// The probe's reply is in: the describe of one cached shelf file
+        /// says whether this machine can hear the shelf by CLAP at all.
+        /// The record itself is the price of the question - the state is
+        /// the answer the run spends - and a machine that cannot hear
+        /// keeps the keyword ladder for the rest of the run without ever
+        /// paying for the index it could not use.
+        Ear {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The exact shelf word whose results are being shopped.
+            query: &'static str,
+            /// The question the CLAP ear is asked about this accent.
+            context: String,
+            /// The search's own rows, carried because this state's reply
+            /// replaces theirs at the tail of the log.
+            hits: Vec<Value>,
+        },
+        /// The index's reply is in: the shelf was measured once, and the
+        /// rank can now order the family's candidates by what the ear
+        /// heard instead of by the order the manifest happened to list
+        /// them in.
+        Index {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The exact shelf word whose results are being shopped.
+            query: &'static str,
+            /// The question the CLAP ear is asked about this accent.
+            context: String,
+            /// The search's own rows, carried because this state's reply
+            /// replaces theirs at the tail of the log.
+            hits: Vec<Value>,
+        },
+        /// The rank's reply is in: the family's candidates in the ear's
+        /// own order, spent on the search's rows - a rank row only
+        /// matters where it names a file the shelf actually offered.
+        Ranked {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The exact shelf word whose results are being shopped.
+            query: &'static str,
+            /// The question the CLAP ear was asked about this accent.
+            context: String,
+            /// The search's own rows: the rank orders them, the ladder's
+            /// own order stays the floor beneath.
+            hits: Vec<Value>,
         },
         /// The add's reply is in: the clip is on the lane. The placement
         /// is verified against the file the timeline will actually play
@@ -11336,6 +11454,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The exact shelf word that selected this file.
             query: &'static str,
+            /// The question the CLAP ear was asked about this accent,
+            /// carried for the re-shop a failed check sends it back to.
+            context: String,
         },
         /// The check's reply is in: move the clip onto the moment, drop
         /// it as the wrong sound, or let it stand and gain it.
@@ -11352,6 +11473,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The clip the add placed.
             clip_id: String,
+            /// The question the CLAP ear was asked about this accent,
+            /// carried for the re-shop a failed check sends it back to.
+            context: String,
         },
         /// The move's reply is in: gain the clip it moved.
         Level {
@@ -11371,13 +11495,155 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
             tried: usize,
+            /// The question the CLAP ear will be asked about this accent
+            /// again, when the re-shop reaches the ear's door.
+            context: String,
         },
+    }
+
+    /// One accent's shopping, as the keyword ladder walks it - the fields
+    /// every door into the ladder needs, in one place so the walk itself
+    /// is written once and spent from wherever the ear could not answer.
+    struct AccentShop<'a> {
+        /// The peak's timeline moment, already resolved.
+        at: f64,
+        /// The level the accent lands at, in dB.
+        gain_db: f64,
+        /// The family the peak's emotion named, walked word by word.
+        queries: &'a [&'static str],
+        /// How many of those words have already come back spent.
+        tried: usize,
+        /// The exact shelf word whose results are being shopped.
+        query: &'static str,
+        /// The question the CLAP ear is asked about this accent.
+        context: &'a str,
+    }
+
+    /// The keyword ladder's own answer to a search reply, in the order the
+    /// ladder has always given it: the first hit this run has not spent
+    /// that is an accent and not a bed, the family's next word, or the
+    /// family spent. This is the FLOOR - the CLAP ear reorders the same
+    /// rows when it can, and every way it refuses lands here, unchanged.
+    enum SfxLadder {
+        /// A hit to place: the Add the chosen hit becomes, and the
+        /// `sounds_add` call that places it.
+        Place(SfxPending, ToolCall),
+        /// The family's next word: the Pick that asks it, and the
+        /// `sounds_search` call that shops it.
+        Next(SfxPending, ToolCall),
+        /// The family is spent: the peak goes unaccented, the way a mixer
+        /// with a thin shelf leaves it.
+        Spent,
+    }
+
+    /// The keyword ladder's walk over one search reply. Extracted from the
+    /// Pick state when the CLAP ear grew its own doors into the same
+    /// walk: an ear that refuses mid-flight (an index that would not
+    /// write, a rank that would not answer) must land on exactly the
+    /// order the ladder kept before the ear existed - a fallback that
+    /// orders differently is not a fallback, it is a second opinion.
+    fn walk_the_ladder(
+        project: &str,
+        hits: &[Value],
+        used: &[String],
+        rotation: usize,
+        shop: AccentShop<'_>,
+    ) -> SfxLadder {
+        let AccentShop {
+            at,
+            gain_db,
+            queries,
+            tried,
+            query,
+            context,
+        } = shop;
+        // The search's answer: the first hit this run has not already
+        // spent, accents being short - a five-second ambience is a bed,
+        // not an accent, whatever word the query shared.
+        let fresh = hits
+            .iter()
+            .filter(|hit| {
+                hit.get("id")
+                    .and_then(|id| id.as_str())
+                    .is_some_and(|id| !used.iter().any(|spent| spent == id))
+            })
+            .collect::<Vec<_>>();
+        // An accent is a hit, not a bed: when every unspent hit runs past
+        // three seconds the word moves on to its next query rather than
+        // placing a six-second ambience at -9 dB (the shelf carries
+        // sounds up to 40 s; "drone" and "ambience" families return
+        // nothing shorter).
+        let chosen = fresh
+            .into_iter()
+            .find(|hit| hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0));
+        if let Some(hit) = chosen {
+            let id = hit["id"].as_str().unwrap_or_default().to_owned();
+            // The manifest's own `syncAt` says how far into the file the
+            // sound lands its peak: the add is offset by exactly that, so
+            // the peak meets the moment the emphasis measured - not the
+            // file's first byte. The check below then holds that
+            // placement against the file itself, which is where a stale
+            // manifest answer is caught.
+            let sync = hit["syncAt"]
+                .as_f64()
+                .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                .unwrap_or(0.0);
+            let start = round3((at - sync).max(0.0));
+            return SfxLadder::Place(
+                SfxPending::Add {
+                    at,
+                    gain_db,
+                    start,
+                    id: id.clone(),
+                    queries: queries.to_vec(),
+                    tried,
+                    query,
+                    context: context.to_owned(),
+                },
+                ToolCall {
+                    tool: "sounds_add".to_owned(),
+                    arguments: json!({
+                        "path": project,
+                        "id": id,
+                        "start": start,
+                    }),
+                },
+            );
+        }
+        // Every hit the word answered is spent or absent: the family's
+        // next word, and the peak is dropped only when the family is
+        // exhausted - one empty shelf answer is not a peak without a
+        // sound.
+        let tried = tried + 1;
+        if tried < queries.len() {
+            let query = queries[(rotation + tried) % queries.len()];
+            return SfxLadder::Next(
+                SfxPending::Pick {
+                    at,
+                    gain_db,
+                    queries: queries.to_vec(),
+                    tried,
+                    query,
+                    context: context.to_owned(),
+                },
+                ToolCall {
+                    tool: "sounds_search".to_owned(),
+                    arguments: json!({
+                        "query": query,
+                        "limit": 3,
+                    }),
+                },
+            );
+        }
+        // The family is spent: the peak goes unaccented, the way a mixer
+        // with a thin shelf leaves it.
+        SfxLadder::Spent
     }
     steps.push(
         DerivedStep::react(
             Stage::Sfx,
             Box::new({
-                let mut peaks: Option<Vec<(String, f64, f64)>> = None;
+                let mut peaks: Option<Vec<(String, f64, f64, String)>> = None;
                 // The per-take accent attenuation, resolved once with the
                 // peaks: a take whose SNR sits under 15 dB is a take whose
                 // floor lives close under the voice, and an accent at its
@@ -11402,6 +11668,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // file was written, Some(false) after the model said it was
                 // absent - which stops every later peak from asking again.
                 let mut ai_accent: Option<bool> = None;
+                // Whether this machine's shelf can be listened to by CLAP:
+                // resolved once, the first time a search answers with a
+                // cached file to describe. Some(true) sends every later
+                // shop through the rank; Some(false) - the pair is not
+                // installed, or the one probe file would not decode -
+                // leaves the keyword ladder standing for the whole run,
+                // which is the honest answer, never a zero dressed as a
+                // similarity.
+                let mut clap_ear: Option<bool> = None;
+                // The shelf index, written once per run: the file the rank
+                // reads and how many records it holds (the rank's own
+                // limit, so the reply carries the whole order and not a
+                // clipped head of it). The attempt itself is also spent
+                // once - an index that would not write is not asked again
+                // on the next peak.
+                let mut shelf_index: Option<(String, u64)> = None;
+                let mut index_tried = false;
                 move |log| {
                     let peaks = peaks.get_or_insert_with(|| {
                         // Each peak carries the take it was measured on:
@@ -11423,7 +11706,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // knows.
                         let read = emotion_lines(log, &sfx_emotion);
                         if !read.is_empty() {
-                            found.retain(|(take, time, _)| {
+                            found.retain(|(take, time, _, _)| {
                                 emotion_at(&read, take, *time).is_some_and(|line| {
                                     line.emotion != "neutral" && line.intensity >= 0.5
                                 })
@@ -11453,7 +11736,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // emphasis the delivery cannot hold. A line with no
                         // voice-quality reading keeps its peak - unmeasured
                         // is not the same answer as hoarse.
-                        found.retain(|(take, time, _)| {
+                        found.retain(|(take, time, _, _)| {
                             voice_read_of(&voice, take)
                                 .and_then(|voice_read| {
                                     voice_read
@@ -11470,7 +11753,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // accent the mix must not place. A take with no
                         // tail reading keeps its peaks: unmeasured is not
                         // the same answer as reverberant.
-                        found.retain(|(take, _, _)| {
+                        found.retain(|(take, _, _, _)| {
                             voice_read_of(&voice, take)
                                 .and_then(|voice_read| voice_read.take_wide.reverb_tail_sec)
                                 .is_none_or(|tail| tail <= 0.4)
@@ -11504,6 +11787,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries,
                             tried,
+                            context,
                         }) => {
                             // The generator's own reply: a written file is
                             // placed the way a shelf hit is, and a model
@@ -11537,6 +11821,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     queries: queries.clone(),
                                     tried,
                                     query: queries[0],
+                                    context,
                                 });
                                 return Some(call(
                                     "sounds_add",
@@ -11555,6 +11840,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 queries: queries.clone(),
                                 tried,
                                 query,
+                                context,
                             });
                             return Some(call(
                                 "sounds_search",
@@ -11568,98 +11854,405 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             at,
                             gain_db,
                             queries,
-                            mut tried,
+                            tried,
                             query,
+                            context,
                         }) => {
-                            // The search's answer: the first hit this run
-                            // has not already spent, accents being short -
-                            // a five-second ambience is a bed, not an
-                            // accent, whatever word the query shared.
-                            let hits: Vec<&Value> = log
+                            // The search's own rows: the keyword gate has
+                            // already spoken - these are the family's
+                            // candidates, and the only question left is
+                            // their ORDER.
+                            let hits: Vec<Value> = log
                                 .last()
                                 .and_then(|reply| {
                                     reply.get("sounds").and_then(|sounds| sounds.as_array())
                                 })
-                                .into_iter()
-                                .flatten()
-                                .collect();
-                            let fresh: Vec<&Value> = hits
-                                .iter()
-                                .copied()
-                                .filter(|hit| {
-                                    hit.get("id")
-                                        .and_then(|id| id.as_str())
-                                        .is_some_and(|id| !used.iter().any(|spent| spent == id))
+                                .cloned()
+                                .unwrap_or_default();
+                            // The ear, when it can still be spent: a run
+                            // that has not yet learned whether this machine
+                            // can hear asks the one cheap question first,
+                            // and a run that has an index in hand goes
+                            // straight to the rank. A search that answered
+                            // with no cached file at all has nothing the
+                            // ear could listen to, so the ladder answers
+                            // alone - the ear stays unresolved, because a
+                            // later family's search may yet name a file.
+                            if clap_ear != Some(false)
+                                && let Some(local) = hits
+                                    .iter()
+                                    .find_map(|hit| hit["localPath"].as_str())
+                                    .map(str::to_owned)
+                            {
+                                if clap_ear.is_none() {
+                                    pending = Some(SfxPending::Ear {
+                                        at,
+                                        gain_db,
+                                        queries,
+                                        tried,
+                                        query,
+                                        context,
+                                        hits,
+                                    });
+                                    return Some(call(
+                                        "sense_sound_model",
+                                        json!({
+                                            "action": "describe",
+                                            "file": local,
+                                        }),
+                                    ));
+                                }
+                                if let Some((index, count)) = shelf_index.clone() {
+                                    pending = Some(SfxPending::Ranked {
+                                        at,
+                                        gain_db,
+                                        queries,
+                                        tried,
+                                        query,
+                                        context: context.clone(),
+                                        hits,
+                                    });
+                                    return Some(call(
+                                        "sense_sound_model",
+                                        json!({
+                                            "action": "rank",
+                                            "index": index,
+                                            "query": context,
+                                            "role": sfx_role_for_query(query),
+                                            "limit": count,
+                                        }),
+                                    ));
+                                }
+                                if !index_tried {
+                                    // The attempt is spent the moment it is
+                                    // asked, the way a hit is spent at the
+                                    // add: an index that refuses is not
+                                    // re-asked on every later peak.
+                                    index_tried = true;
+                                    let dir = std::path::Path::new(&local)
+                                        .parent()
+                                        .and_then(|dir| dir.to_str())
+                                        .unwrap_or_default()
+                                        .to_owned();
+                                    pending = Some(SfxPending::Index {
+                                        at,
+                                        gain_db,
+                                        queries,
+                                        tried,
+                                        query,
+                                        context,
+                                        hits,
+                                    });
+                                    return Some(call(
+                                        "sense_sound_model",
+                                        json!({
+                                            "action": "index",
+                                            "dir": dir,
+                                        }),
+                                    ));
+                                }
+                            }
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
+                                    at,
+                                    gain_db,
+                                    queries: &queries,
+                                    tried,
+                                    query,
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                // The family is spent: the peak goes
+                                // unaccented, the way a mixer with a thin
+                                // shelf leaves it.
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
+                            }
+                        }
+                        Some(SfxPending::Ear {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                            query,
+                            context,
+                            hits,
+                        }) => {
+                            // The probe's own word: the describe reply's
+                            // model block says whether CLAP is on this
+                            // machine, and a reply that could not be made
+                            // at all (a file that would not decode) is the
+                            // same answer - a shelf this run cannot hear.
+                            // Either way the reply stays in the log, so
+                            // the run's own record says why the accents
+                            // shopped by keyword.
+                            let heard = log
+                                .last()
+                                .filter(|reply| reply.get("ok") == Some(&json!(true)))
+                                .and_then(|reply| reply.pointer("/sound/model/state"))
+                                .and_then(Value::as_str)
+                                == Some("ready");
+                            clap_ear = Some(heard);
+                            if heard
+                                && let Some(local) = hits
+                                    .iter()
+                                    .find_map(|hit| hit["localPath"].as_str())
+                                    .map(str::to_owned)
+                                && let Some(dir) = std::path::Path::new(&local)
+                                    .parent()
+                                    .and_then(|dir| dir.to_str())
+                            {
+                                index_tried = true;
+                                pending = Some(SfxPending::Index {
+                                    at,
+                                    gain_db,
+                                    queries,
+                                    tried,
+                                    query,
+                                    context,
+                                    hits,
+                                });
+                                return Some(call(
+                                    "sense_sound_model",
+                                    json!({
+                                        "action": "index",
+                                        "dir": dir,
+                                    }),
+                                ));
+                            }
+                            // No ear: the ladder's own order stands, and
+                            // stands for the rest of the run.
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
+                                    at,
+                                    gain_db,
+                                    queries: &queries,
+                                    tried,
+                                    query,
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
+                            }
+                        }
+                        Some(SfxPending::Index {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                            query,
+                            context,
+                            hits,
+                        }) => {
+                            // The index's own reply: `out` names the file
+                            // the rank reads and `count` how many records
+                            // it holds - the limit that keeps the rank's
+                            // answer whole rather than a clipped head. An
+                            // index that wrote nothing, or whose model
+                            // block says the pair went absent between the
+                            // probe and the walk, leaves the ladder to
+                            // answer - and marks the ear spent so no later
+                            // peak pays for the rank it cannot use.
+                            let reply = log.last();
+                            let model_ready = reply
+                                .and_then(|reply| reply.pointer("/model/state"))
+                                .and_then(Value::as_str)
+                                == Some("ready");
+                            let index = reply
+                                .filter(|reply| reply.get("ok") == Some(&json!(true)))
+                                .and_then(|reply| reply.get("out"))
+                                .and_then(Value::as_str)
+                                .map(str::to_owned);
+                            let count = reply
+                                .and_then(|reply| reply.get("count"))
+                                .and_then(Value::as_u64);
+                            if !model_ready {
+                                clap_ear = Some(false);
+                            }
+                            if let (Some(index), Some(count)) = (index, count)
+                                && model_ready
+                                && count > 0
+                            {
+                                shelf_index = Some((index.clone(), count));
+                                pending = Some(SfxPending::Ranked {
+                                    at,
+                                    gain_db,
+                                    queries,
+                                    tried,
+                                    query,
+                                    context: context.clone(),
+                                    hits,
+                                });
+                                return Some(call(
+                                    "sense_sound_model",
+                                    json!({
+                                        "action": "rank",
+                                        "index": index,
+                                        "query": context,
+                                        "role": sfx_role_for_query(query),
+                                        "limit": count,
+                                    }),
+                                ));
+                            }
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
+                                    at,
+                                    gain_db,
+                                    queries: &queries,
+                                    tried,
+                                    query,
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
+                            }
+                        }
+                        Some(SfxPending::Ranked {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                            query,
+                            context,
+                            hits,
+                        }) => {
+                            // The rank's own reply: the ear's order, best
+                            // first, each row a file the index measured. A
+                            // row is spent only where it names a file the
+                            // keyword gate actually offered - the family's
+                            // own candidate, matched by the cached file the
+                            // search handed back - and the same two gates
+                            // the ladder keeps (unspent, an accent and not
+                            // a bed) still apply, because a rank that loved
+                            // a six-second ambience has not made it an
+                            // accent. A reply that is not ok, or whose
+                            // model block says the pair was never there,
+                            // is no order at all: the ladder's own order
+                            // stands, never a measured-looking number
+                            // invented for the files the ear never heard.
+                            let candidates = log
+                                .last()
+                                .filter(|reply| {
+                                    reply.get("ok") == Some(&json!(true))
+                                        && reply.pointer("/model/state") == Some(&json!("ready"))
                                 })
-                                .collect();
-                            // An accent is a hit, not a bed: when every
-                            // unspent hit runs past three seconds the word
-                            // moves on to its next query rather than
-                            // placing a six-second ambience at -9 dB (the
-                            // shelf carries sounds up to 40 s; "drone" and
-                            // "ambience" families return nothing shorter).
-                            let chosen = fresh.iter().copied().find(|hit| {
-                                hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0)
-                            });
-                            if let Some(hit) = chosen {
-                                let id = hit["id"].as_str().unwrap_or_default().to_owned();
-                                // The manifest's own `syncAt` says how far
-                                // into the file the sound lands its peak:
-                                // the add is offset by exactly that, so the
-                                // peak meets the moment the emphasis
-                                // measured - not the file's first byte. The
-                                // check below then holds that placement
-                                // against the file itself, which is where a
-                                // stale manifest answer is caught.
-                                let sync = hit["syncAt"]
-                                    .as_f64()
-                                    .filter(|sync| sync.is_finite() && *sync >= 0.0)
-                                    .unwrap_or(0.0);
-                                let start = round3((at - sync).max(0.0));
-                                pending = Some(SfxPending::Add {
+                                .and_then(|reply| reply.get("candidates"))
+                                .and_then(Value::as_array);
+                            if let Some(candidates) = candidates {
+                                for candidate in candidates {
+                                    let Some(file) = candidate["file"].as_str() else {
+                                        continue;
+                                    };
+                                    let Some(hit) = hits.iter().find(|hit| {
+                                        hit["localPath"]
+                                            .as_str()
+                                            .and_then(|local| {
+                                                std::path::Path::new(local)
+                                                    .file_name()
+                                                    .and_then(|name| name.to_str())
+                                            })
+                                            == Some(file)
+                                    }) else {
+                                        continue;
+                                    };
+                                    let Some(id) = hit["id"].as_str() else {
+                                        continue;
+                                    };
+                                    if used.iter().any(|spent| spent == id) {
+                                        continue;
+                                    }
+                                    if !hit["duration"]
+                                        .as_f64()
+                                        .is_none_or(|secs| secs <= 3.0)
+                                    {
+                                        continue;
+                                    }
+                                    // The hit the ear chose: placed exactly
+                                    // as the ladder would place it, the
+                                    // manifest's own `syncAt` included, so
+                                    // the placement check below holds this
+                                    // pick to the same standard as any
+                                    // other.
+                                    let sync = hit["syncAt"]
+                                        .as_f64()
+                                        .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                                        .unwrap_or(0.0);
+                                    let start = round3((at - sync).max(0.0));
+                                    pending = Some(SfxPending::Add {
+                                        at,
+                                        gain_db,
+                                        start,
+                                        id: id.to_owned(),
+                                        queries,
+                                        tried,
+                                        query,
+                                        context,
+                                    });
+                                    return Some(call(
+                                        "sounds_add",
+                                        json!({
+                                            "path": sfx_project,
+                                            "id": id,
+                                            "start": start,
+                                        }),
+                                    ));
+                                }
+                            }
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
                                     at,
                                     gain_db,
-                                    start,
-                                    id: id.clone(),
-                                    queries,
+                                    queries: &queries,
                                     tried,
                                     query,
-                                });
-                                return Some(call(
-                                    "sounds_add",
-                                    json!({
-                                        "path": sfx_project,
-                                        "id": id,
-                                        "start": start,
-                                    }),
-                                ));
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
                             }
-                            // Every hit the word answered is spent or absent:
-                            // the family's next word, and the peak is dropped
-                            // only when the family is exhausted - one empty
-                            // shelf answer is not a peak without a sound.
-                            tried += 1;
-                            if tried < queries.len() {
-                                let query = queries[(rotation + tried) % queries.len()];
-                                pending = Some(SfxPending::Pick {
-                                    at,
-                                    gain_db,
-                                    queries,
-                                    tried,
-                                    query,
-                                });
-                                return Some(call(
-                                    "sounds_search",
-                                    json!({
-                                        "query": query,
-                                        "limit": 3,
-                                    }),
-                                ));
-                            }
-                            // The family is spent: the peak goes unaccented,
-                            // the way a mixer with a thin shelf leaves it.
-                            placed += 1;
-                            rotation = rotation.wrapping_add(1);
                         }
                         Some(SfxPending::Add {
                             at,
@@ -11669,6 +12262,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             queries,
                             tried,
                             query,
+                            context,
                         }) => {
                             // The accent is spent the moment it is placed:
                             // the id goes on the `used` list whether the
@@ -11727,6 +12321,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     queries,
                                     tried,
                                     clip_id: clip_id.clone(),
+                                    context,
                                 });
                                 return Some(call(
                                     "sense_sound",
@@ -11750,6 +12345,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             queries,
                             tried,
                             clip_id,
+                            context,
                         }) => {
                             let checked = log.last();
                             let issues = checked
@@ -11792,6 +12388,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     gain_db,
                                     queries,
                                     tried,
+                                    context,
                                 });
                                 return Some(call(
                                     "clips_remove",
@@ -11862,6 +12459,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries,
                             mut tried,
+                            context,
                         }) => {
                             // The broken accent is off the lane; the family's
                             // next word shops the peak again, and the peak
@@ -11877,6 +12475,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     queries,
                                     tried,
                                     query,
+                                    context,
                                 });
                                 return Some(call(
                                     "sounds_search",
@@ -11907,7 +12506,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // the emotion read there names the sound.
                     let (take, moment) = peaks
                         .get(placed)
-                        .map(|(take, moment, _)| (take.clone(), *moment))
+                        .map(|(take, moment, _, _)| (take.clone(), *moment))
                         .unwrap_or_default();
                     let read = emotion_lines(log, &sfx_emotion);
                     let line = emotion_at(&read, &take, moment);
@@ -11928,7 +12527,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     };
                     let strength = peaks
                         .get(placed)
-                        .map(|(_, _, strength)| *strength)
+                        .map(|(_, _, strength, _)| *strength)
                         .unwrap_or(0.5);
                     // The level this accent lands at: the strength's own
                     // bucket, attenuated by the take's own noise penalty -
@@ -11941,6 +12540,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         .map(|(_, penalty)| *penalty)
                         .unwrap_or(0.0);
                     let gain_db = accent_gain_db(strength) - penalty;
+                    // The question the CLAP ear will be asked about this
+                    // accent, built here because the peak's own word and
+                    // line are in hand here and nowhere else: the register
+                    // the first shelf word translates to, the word the
+                    // voice stressed, the line it was spoken in, the mood
+                    // the line read in. The ladder's word below is the
+                    // net; this is what the ear listens FOR.
+                    let word = peaks
+                        .get(placed)
+                        .map(|(_, _, _, word)| word.clone())
+                        .unwrap_or_default();
+                    let context = sfx_clap_query(
+                        sfx_role_for_query(queries[rotation % queries.len()]),
+                        &word,
+                        line,
+                        &emotion,
+                    );
                     // The generator first, when the machine has one: the
                     // hook is the one accent worth the heavier model, and
                     // every other peak is a short sound the small model
@@ -11954,6 +12570,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries: queries.clone(),
                             tried: 0,
+                            context,
                         });
                         return Some(call(
                             "sense_sound_model",
@@ -11974,6 +12591,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         queries: queries.clone(),
                         tried: 0,
                         query,
+                        context,
                     });
                     Some(call(
                         "sounds_search",
@@ -14347,9 +14965,9 @@ mod tests {
             ]},
         })];
         let peaks = [
-            ("/takes/a.wav".to_owned(), 1.0, 0.9),
-            ("/takes/a.wav".to_owned(), 50.0, 0.8),
-            ("/takes/b.wav".to_owned(), 2.0, 0.7),
+            ("/takes/a.wav".to_owned(), 1.0, 0.9, "first".to_owned()),
+            ("/takes/a.wav".to_owned(), 50.0, 0.8, "late".to_owned()),
+            ("/takes/b.wav".to_owned(), 2.0, 0.7, "this".to_owned()),
         ];
         let mut placed = 1;
         assert_eq!(
@@ -17139,7 +17757,7 @@ mod tests {
         }];
         assert_eq!(
             emphasis_peaks(&reads),
-            vec![("/t/a.wav".to_owned(), 2.5, 0.85)]
+            vec![("/t/a.wav".to_owned(), 2.5, 0.85, "launch".to_owned())]
         );
     }
 
@@ -17750,6 +18368,269 @@ mod tests {
             .expect("the replacement must leave the next voiceover peak to be processed");
         assert_eq!(next_peak.tool, "sounds_search");
         assert_eq!(next_peak.arguments["query"], json!("ambience"));
+    }
+
+    /// The ear's one cheap question, and the two ways it answers no: the
+    /// first cached file a search hands back is described once, and a
+    /// machine whose CLAP pair is absent (or a file that will not decode)
+    /// keeps the keyword ladder for the rest of the run - the probe is
+    /// never paid for twice.
+    #[test]
+    fn a_shelf_the_machine_cannot_hear_keeps_the_keyword_ladder() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "timeline": { "clips": [{
+                    "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                    "sourceStart": 0.0, "speed": 1.0,
+                }]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        { "start": 5.0, "end": 9.0, "text": "the danger grew" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 4.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                    { "start": 5.0, "end": 9.0,
+                      "prosody": { "emphasisWords": [{ "word": "danger", "t": 6.0, "strength": 0.9 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    emotion_row(5.0, 9.0, "fear", 0.9, "tension", "cold", "drone"),
+                ],
+            }),
+        ];
+        assert_eq!(
+            (sfx.next)(&log).expect("the first generator is asked").tool,
+            "sense_sound_model"
+        );
+        log.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                         "generated": false }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the shelf is asked").tool,
+            "sounds_search"
+        );
+        // A cached hit: the file is on disk, so the ear's probe is worth
+        // its one question before the ladder spends anything.
+        log.push(json!({ "sounds": [
+            { "id": "hit-1", "duration": 0.8, "syncAt": 0.1,
+              "localPath": "/cache/hit-1.ogg" },
+        ] }));
+        let probe = (sfx.next)(&log).expect("the ear's probe is asked");
+        assert_eq!(probe.tool, "sense_sound_model");
+        assert_eq!(probe.arguments["action"], json!("describe"));
+        assert_eq!(probe.arguments["file"], json!("/cache/hit-1.ogg"));
+        // The model's own word: this machine cannot hear the shelf.
+        log.push(json!({ "tool": "describe", "ok": true,
+                         "sound": { "model": { "state": "absent" } } }));
+        let place = (sfx.next)(&log).expect("the ladder places its own first hit");
+        assert_eq!(place.tool, "sounds_add");
+        assert_eq!(place.arguments["id"], json!("hit-1"));
+        log.push(json!({ "clipId": "clip-1", "file": "/edits/Reel/audio/hit-1.ogg" }));
+        let check = (sfx.next)(&log).expect("the placement is checked");
+        assert_eq!(check.tool, "sense_sound");
+        log.push(json!({ "ok": true, "issues": [], "measured": { "moveBy": 0.0 } }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the accent is gained").tool,
+            "clip_audio_levels_db"
+        );
+        log.push(json!({ "ok": true }));
+        // The second peak's search answers with a cached file too, and the
+        // ear is not asked again: the spent `Some(false)` is the run's own
+        // answer for every later shop.
+        assert_eq!(
+            (sfx.next)(&log).expect("the next peak is shopped").tool,
+            "sounds_search"
+        );
+        log.push(json!({ "sounds": [
+            { "id": "hit-2", "duration": 0.7, "syncAt": 0.1,
+              "localPath": "/cache/hit-2.ogg" },
+        ] }));
+        let direct = (sfx.next)(&log).expect("the ladder answers alone");
+        assert_eq!(direct.tool, "sounds_add");
+        assert_eq!(direct.arguments["id"], json!("hit-2"));
+    }
+
+    /// The ear that can hear: the probe says the pair is ready, the shelf
+    /// is indexed once, and the rank's own order decides which cached hit
+    /// is placed - a rank that loved the ladder's second choice spends
+    /// that one, and the manifest's `syncAt` is honoured exactly as the
+    /// ladder honours it.
+    #[test]
+    fn a_ranking_ear_reorders_the_family_candidates() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "timeline": { "clips": [{
+                    "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                    "sourceStart": 0.0, "speed": 1.0,
+                }]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        { "start": 5.0, "end": 9.0, "text": "the danger grew" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 4.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                    { "start": 5.0, "end": 9.0,
+                      "prosody": { "emphasisWords": [{ "word": "danger", "t": 6.0, "strength": 0.9 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    emotion_row(5.0, 9.0, "fear", 0.9, "tension", "cold", "drone"),
+                ],
+            }),
+        ];
+        assert_eq!(
+            (sfx.next)(&log).expect("the first generator is asked").tool,
+            "sense_sound_model"
+        );
+        log.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                         "generated": false }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the shelf is asked").tool,
+            "sounds_search"
+        );
+        log.push(json!({ "sounds": [
+            { "id": "hit-1", "duration": 0.8, "syncAt": 0.1,
+              "localPath": "/cache/a.ogg" },
+            { "id": "hit-2", "duration": 0.9, "syncAt": 0.2,
+              "localPath": "/cache/b.ogg" },
+        ] }));
+        let probe = (sfx.next)(&log).expect("the ear's probe is asked");
+        assert_eq!(probe.arguments["action"], json!("describe"));
+        // The pair is on this machine: the shelf is indexed before any
+        // ranking question is asked.
+        log.push(json!({ "tool": "describe", "ok": true,
+                         "sound": { "model": { "state": "ready" } } }));
+        let index = (sfx.next)(&log).expect("the shelf is indexed");
+        assert_eq!(index.tool, "sense_sound_model");
+        assert_eq!(index.arguments["action"], json!("index"));
+        assert_eq!(index.arguments["dir"], json!("/cache"));
+        log.push(json!({ "tool": "index", "ok": true,
+                         "model": { "state": "ready" },
+                         "out": "/cache/sound-model-index.json", "count": 2 }));
+        let rank = (sfx.next)(&log).expect("the ear is asked to rank");
+        assert_eq!(rank.tool, "sense_sound_model");
+        assert_eq!(rank.arguments["action"], json!("rank"));
+        assert_eq!(rank.arguments["index"], json!("/cache/sound-model-index.json"));
+        assert_eq!(rank.arguments["limit"], json!(2));
+        // The rank's own order: b.ogg first, and only rows the search
+        // actually offered can be spent.
+        log.push(json!({ "tool": "rank", "ok": true,
+                         "model": { "state": "ready" },
+                         "candidates": [
+                             { "file": "b.ogg", "fused": 1.4 },
+                             { "file": "a.ogg", "fused": 0.2 },
+                         ] }));
+        let place = (sfx.next)(&log).expect("the ear's own choice is placed");
+        assert_eq!(place.tool, "sounds_add");
+        assert_eq!(place.arguments["id"], json!("hit-2"));
+        // The manifest's syncAt is honoured exactly as the ladder honours
+        // it: the peak meets the moment the emphasis measured.
+        assert_eq!(place.arguments["start"], json!(0.8));
+        log.push(json!({ "clipId": "clip-1", "file": "/edits/Reel/audio/hit-2.ogg" }));
+        let check = (sfx.next)(&log).expect("the placement is checked");
+        assert_eq!(check.tool, "sense_sound");
+        log.push(json!({ "ok": true, "issues": [], "measured": { "moveBy": 0.0 } }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the accent is gained").tool,
+            "clip_audio_levels_db"
+        );
+        log.push(json!({ "ok": true }));
+        // The second peak, on a machine the ear has already measured: the
+        // probe and the index are spent, so the shop goes straight to the
+        // rank - the steady state every later accent lives in.
+        assert_eq!(
+            (sfx.next)(&log).expect("the second peak is shopped").tool,
+            "sounds_search"
+        );
+        log.push(json!({ "sounds": [
+            { "id": "hit-3", "duration": 0.6, "syncAt": 0.0,
+              "localPath": "/cache/c.ogg" },
+        ] }));
+        let rank_again = (sfx.next)(&log).expect("the ear is asked to rank again");
+        assert_eq!(rank_again.tool, "sense_sound_model");
+        assert_eq!(rank_again.arguments["action"], json!("rank"));
+        assert_eq!(rank_again.arguments["index"], json!("/cache/sound-model-index.json"));
+        log.push(json!({ "tool": "rank", "ok": true,
+                         "model": { "state": "ready" },
+                         "candidates": [
+                             { "file": "c.ogg", "fused": 0.9 },
+                         ] }));
+        let place_again = (sfx.next)(&log).expect("the ear's choice is placed again");
+        assert_eq!(place_again.tool, "sounds_add");
+        assert_eq!(place_again.arguments["id"], json!("hit-3"));
     }
 
     /// The plan the run writes is the one it measured, and it says which

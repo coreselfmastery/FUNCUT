@@ -2532,6 +2532,7 @@ fn build_voiceover_sibling(
                 placeholder: false,
                 color_range: None,
                 color_space: item.color_space,
+                stock: None,
                 extra: Default::default(),
             };
             sibling_media.push(entry);

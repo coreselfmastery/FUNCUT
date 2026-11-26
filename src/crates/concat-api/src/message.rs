@@ -381,6 +381,11 @@ pub enum Request {
         id: String,
         /// The download URL `stock.search` gave for the chosen file.
         url: String,
+        /// Who shot the clip, when the search named them - the credit
+        /// the licence asks to keep, written into the document beside
+        /// the file.
+        #[serde(default)]
+        author: Option<String>,
         /// Lay it on the timeline from this moment, in sequence.
         #[serde(default)]
         start: Option<f64>,
@@ -1074,6 +1079,11 @@ pub struct ModelsState {
     /// The sound sets: CLAP and YAMNet, and the three generators. The ids
     /// are the ones `models.download` takes with `kind: "sound"`.
     pub sound: Vec<SoundModelStatus>,
+    /// The picture reader's first-edit set, one row the same shape as the
+    /// sound rows: the id is the one `models.download` takes with
+    /// `kind: "picture"`. Absent from nothing - a machine that has not
+    /// fetched it is shown the row missing, never told it is not there.
+    pub visual: Vec<SoundModelStatus>,
 }
 
 /// One downloadable sound set, as `models.list` shows it: a row of the
@@ -1318,6 +1328,10 @@ pub struct StockImported {
     pub media_ids: Vec<String>,
     /// The licence the clip carries, the words the import stands on.
     pub license: String,
+    /// Who shot the clip, when the search named them: the credit the
+    /// licence asks to keep, now written into the document beside the
+    /// file and carried back here for the receipt's own record.
+    pub author: String,
     /// The project as it now stands.
     pub view: Box<EditorView>,
 }

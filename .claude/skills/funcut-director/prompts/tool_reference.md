@@ -184,9 +184,9 @@ packages)
 ## Libraries
 
 The licensed live shelves a monetized brief MUST shop (Pexels, Pixabay):
-- `stock_search {provider: "pexels"|"pixabay", query, orientation}` - hits carry `id`, `caption`, `url`, `license`, `width`, `height`, `seconds`
+- `stock_search {provider: "pexels"|"pixabay", query, orientation}` - hits carry `id`, `caption`, `url`, `license`, `author`, `width`, `height`, `seconds`
 - `stock_fetch {provider, id, url}` - downloads to the cache, replies `{path, bytes}`
-- `stock_import {path, provider, id, url}` - imports with licence metadata, replies `{mediaIds, view}`; keep the provider/id/url triple - the receipt's provenance reads it
+- `stock_import {path, provider, id, url, author?}` - imports with licence metadata, replies `{mediaIds, license, author, view}`; the author is written into the document beside the file, so the credit survives the reply; keep the provider/id/url triple - the receipt's provenance reads it
 
 `openvid_status/prepare/search/search_batch/rank_for_slot/get/fetch/import`
 (937k clips;
@@ -239,7 +239,9 @@ output all *answer* — `ok: true`, `model: absent` or `reason: "licence"`,
 sfx-large pad) takes over; never retry, and never treat the answer as a
 failure. The generator sets download headless:
 `models_download {kind: "sound", id: "sfx-small"}` — the ids are
-`sound-models`, `sfx-small`, `sfx-large`, `bgm` · `magick_status/prepare/search/fetch/add` (shelves:
+`sound-models`, `sfx-small`, `sfx-large`, `bgm`. The picture reader's
+first-edit set (TransNetV2, Depth Anything, DINOv2, CLIP) downloads the
+same way: `models_download {kind: "picture", id: "picture-models"}` · `magick_status/prepare/search/fetch/add` (shelves:
 `magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
 `openmoji` 4,565 emoji CC-BY 4.0)
 

@@ -865,7 +865,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "models_list",
             "List the AI models",
-            "List the local AI models - voices, transcribers, and the sound sets - and which are missing.",
+            "List the local AI models - voices, transcribers, the sound sets and the picture set - and which are missing.",
             "models.list",
             Raw,
         )
@@ -873,8 +873,9 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "models_download",
             "Download an AI model",
-            "Download a missing model - voice (kind tts), transcriber (whisper) or sound set \
-             (kind sound, id sound-models|sfx-small|sfx-large|bgm); a job, poll models_list.",
+            "Download a missing voice (tts), transcriber (whisper), sound set \
+             (sound-models|sfx-small|sfx-large|bgm), or picture set (picture-models); \
+             poll models_list for job status.",
             "models.download",
             Raw,
         ),
@@ -3787,6 +3788,20 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "visualQuality",
     "saliency",
     "scene",
+    // The voice-quality door's own families, measured by
+    // `sense_voice_quality` rather than the voice profile: the room the
+    // take was recorded in (its verdict and its tail) and the false
+    // starts the spoken words contain. The room verdict and the tail are
+    // spent by `mix` decisions - the floor the bed sits on, the accents
+    // the tail retires - and the restart spans by `assemble`, the
+    // decision that marks which attempt survives.
+    "room",
+    "restarts",
+    // The delivery's own rhythm, measured by `sense_prosody_style`'s
+    // `measure_rhythm_meter`: the syllable period, the pairwise
+    // variability that tells stress-timed from syllable-timed, and the
+    // regularity that says whether the beat is one a cut can sit on.
+    "rhythmMeter",
 ];
 
 /// Every family the profile answers, in the profile's own names. Exposed
@@ -3852,9 +3867,10 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
                 | "grade"
                 | "sfx"
                 | "motion"
+                | "assemble"
         ) {
             problems.push(format!(
-                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing, repair, mix, grade, sfx, motion"
+                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing, repair, mix, grade, sfx, motion, assemble"
             ));
             continue;
         }

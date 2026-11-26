@@ -60,6 +60,7 @@ pub(super) fn apply(
                 placeholder: false,
                 color_range: None,
                 color_space: item.color_space,
+                stock: item.stock,
                 extra: Default::default(),
             });
             Ok(Outcome {

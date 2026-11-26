@@ -535,6 +535,7 @@ impl Api {
             tts: tts.models,
             transcriber: transcriber.models,
             sound: sound_sets(&self.dirs.data),
+            visual: picture_sets(&self.dirs.data),
         })
     }
 
@@ -555,10 +556,14 @@ impl Api {
                 .iter()
                 .any(|model| model.id == id),
             "sound" => concat_host::soundmodel::set_by_id(id).is_some(),
+            // One row, four files: the picture set is a set the way the
+            // sound sets are, so a headless caller installs the first-edit
+            // picture reader the same way it installs a voice.
+            "picture" => id == concat_host::visualmodel::SET_ID,
             other => {
                 return Err(ApiError::new(
                     ErrorCode::Invalid,
-                    format!("unknown model kind {other:?} - tts, whisper or sound"),
+                    format!("unknown model kind {other:?} - tts, whisper, sound or picture"),
                 ));
             }
         };
@@ -636,6 +641,21 @@ fn sound_sets(data: &std::path::Path) -> Vec<SoundModelStatus> {
         .collect()
 }
 
+/// The picture row `models.list` reports: one row the same shape as the
+/// sound rows, from what is on disk - the four files the picture reader
+/// spends on a first edit, fetched together because that is how they are
+/// spent.
+fn picture_sets(data: &std::path::Path) -> Vec<SoundModelStatus> {
+    vec![SoundModelStatus {
+        id: concat_host::visualmodel::SET_ID.to_owned(),
+        label: "Picture models".to_owned(),
+        licence: concat_host::visualmodel::licences(),
+        bytes: concat_host::visualmodel::bytes(),
+        missing_bytes: concat_host::visualmodel::missing_bytes(data),
+        downloaded: concat_host::visualmodel::ready(data),
+    }]
+}
+
 /// What one speech job is.
 enum Work {
     /// Hear a recording.
@@ -655,7 +675,8 @@ enum Work {
     },
     /// Bring one model down from the mirror: the headless download.
     Download {
-        /// Which engine the model serves: "tts", "whisper" or "sound".
+        /// Which engine the model serves: "tts", "whisper", "sound" or
+        /// "picture".
         kind: String,
         /// The model's id.
         id: String,
@@ -754,6 +775,15 @@ impl SpeechJob {
                 let downloaded = match kind.as_str() {
                     "tts" => self.speech.download_model(&self.dirs, id, |_| {}),
                     "whisper" => self.transcriber.download_model(&self.dirs, id, |_| {}),
+                    // The picture set is fetched by the host's own table,
+                    // the same path the settings sheet's row takes, so a
+                    // headless caller and a window install the same four
+                    // files the same way.
+                    "picture" => concat_host::visualmodel::download(
+                        &self.dirs.data,
+                        &self.cancel,
+                        &mut |_, _| {},
+                    ),
                     // The sound sets are files of the app's model folder,
                     // fetched by the host's own table: the same path the
                     // settings sheet's row takes, so a headless caller and

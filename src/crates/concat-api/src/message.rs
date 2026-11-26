@@ -381,6 +381,11 @@ pub enum Request {
         id: String,
         /// The download URL `stock.search` gave for the chosen file.
         url: String,
+        /// Who shot the clip, when the search named them - the credit
+        /// the licence asks to keep, written into the document beside
+        /// the file.
+        #[serde(default)]
+        author: Option<String>,
         /// Lay it on the timeline from this moment, in sequence.
         #[serde(default)]
         start: Option<f64>,
@@ -1323,6 +1328,10 @@ pub struct StockImported {
     pub media_ids: Vec<String>,
     /// The licence the clip carries, the words the import stands on.
     pub license: String,
+    /// Who shot the clip, when the search named them: the credit the
+    /// licence asks to keep, now written into the document beside the
+    /// file and carried back here for the receipt's own record.
+    pub author: String,
     /// The project as it now stands.
     pub view: Box<EditorView>,
 }

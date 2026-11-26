@@ -184,9 +184,9 @@ packages)
 ## Libraries
 
 The licensed live shelves a monetized brief MUST shop (Pexels, Pixabay):
-- `stock_search {provider: "pexels"|"pixabay", query, orientation}` - hits carry `id`, `caption`, `url`, `license`, `width`, `height`, `seconds`
+- `stock_search {provider: "pexels"|"pixabay", query, orientation}` - hits carry `id`, `caption`, `url`, `license`, `author`, `width`, `height`, `seconds`
 - `stock_fetch {provider, id, url}` - downloads to the cache, replies `{path, bytes}`
-- `stock_import {path, provider, id, url}` - imports with licence metadata, replies `{mediaIds, view}`; keep the provider/id/url triple - the receipt's provenance reads it
+- `stock_import {path, provider, id, url, author?}` - imports with licence metadata, replies `{mediaIds, license, author, view}`; the author is written into the document beside the file, so the credit survives the reply; keep the provider/id/url triple - the receipt's provenance reads it
 
 `openvid_status/prepare/search/search_batch/rank_for_slot/get/fetch/import`
 (937k clips;

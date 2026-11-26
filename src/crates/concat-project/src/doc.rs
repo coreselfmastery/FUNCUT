@@ -487,6 +487,7 @@ mod tests {
             color_range: None,
             color_space: Default::default(),
             origin: None,
+            stock: None,
             extra: Map::new(),
         });
         let error = to_document(&settings(), &project).expect_err("refused");

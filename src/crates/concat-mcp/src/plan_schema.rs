@@ -237,7 +237,7 @@ pub fn compact() -> Value {
         {
             signal_log.insert(
                 "description".to_owned(),
-                json!("The decision log: for each cut, caption, graphic, BGM, transition, repair, mix, grade, SFX and motion choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition|pacing|repair|mix|grade|sfx|motion, signals: [names from the profile's decisionPolicy], confidence: 0-1, note: the basis}. An entry with no confidence, confidence 0, or no note is refused; a cut entry must land on a segment boundary; and a plan with a voiceover and no signalLog is not creativeReady."),
+                json!("The decision log: for each cut, caption, graphic, BGM, transition, repair, mix, grade, SFX, motion and assemble choice, which signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition|pacing|repair|mix|grade|sfx|motion|assemble, signals: [names from the profile's decisionPolicy], confidence: 0-1, note: the basis}. An entry with no confidence, confidence 0, or no note is refused; a cut entry must land on a segment boundary; and a plan with a voiceover and no signalLog is not creativeReady."),
             );
         }
     }

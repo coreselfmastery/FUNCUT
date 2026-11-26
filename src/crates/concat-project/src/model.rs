@@ -46,6 +46,29 @@ pub enum MediaOrigin {
     Processed,
 }
 
+/// Where a live-stock clip came from, kept beside the file it landed as:
+/// the licence's one ask is that the creator is not passed off as
+/// someone else's, and once the import's reply is gone only the document
+/// itself can answer for the clip. Absent for a local import and for
+/// every document written before it was kept - which reads the same as
+/// a local import, the honest standing for an unrecorded one.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StockSource {
+    /// Which live shelf the clip came from: "pexels" or "pixabay".
+    pub provider: String,
+    /// The clip's id on that shelf, as `stock.search` gave it.
+    pub id: String,
+    /// The download URL the search gave for the chosen file.
+    pub url: String,
+    /// The licence the clip carries, spelled as the import stood on it.
+    pub licence: String,
+    /// Who shot it, when the provider named them - the credit the
+    /// licence asks to keep. Empty when the shelf said nothing.
+    pub author: String,
+}
+
 /// What a clip can be - wider than [`MediaKind`] because a text clip has no
 /// file behind it; it *is* its own content.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -195,6 +218,13 @@ pub struct MediaItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub origin: Option<MediaOrigin>,
+    /// Where the clip came from when it is a live-stock import; see
+    /// [`StockSource`]. Absent, and left out of the document, for a local
+    /// file and for documents written before it was kept - the clip is
+    /// still a clip, just one the document cannot answer for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub stock: Option<StockSource>,
     /// Fields this build does not know, kept so a document written by a
     /// newer or a different build round-trips through this one intact.
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]

@@ -555,7 +555,7 @@ fn round3(value: f64) -> f64 {
 /// and look again rather than end the stage and drop every later peak.
 fn next_played_peak(
     placed: &mut usize,
-    peaks: &[(String, f64, f64)],
+    peaks: &[(String, f64, f64, String)],
     log: &[Value],
 ) -> Option<f64> {
     let view = latest_view(log)?;
@@ -565,7 +565,7 @@ fn next_played_peak(
         // span the same file-second: a file-second only means anything
         // inside its own take's clock, and a multi-take cut plays both
         // clocks at once.
-        let (take, moment, _) = &peaks[*placed];
+        let (take, moment, _, _) = &peaks[*placed];
         if let Some(at) = timeline_at(view, &media, take, *moment) {
             return Some(at);
         }
@@ -655,6 +655,89 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
     found
 }
 
+/// The drift the captions door measured between one take's word times
+/// and the audio they claim to time: the median offset from each word
+/// start to the nearest onset, the same number the door's own cue
+/// builder snaps out. `None` when the door never answered for this take
+/// - unmeasured is not the same answer as aligned.
+fn align_drift_of(log: &[Value], take: &str) -> Option<f64> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("align_captions"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("driftSeconds"))
+        .and_then(Value::as_f64)
+        .filter(|drift| drift.is_finite())
+}
+
+/// The transcripts with every take's measured drift snapped out: a word
+/// that claims second 4.4 while the audio says 4.0 is a caption that
+/// flashes 0.4 s late, and the whole drift correction is this one
+/// subtraction, applied to the words and the segment bounds alike. The
+/// original transcript stays in the log untouched - the evidence the
+/// correction was made against.
+fn drifted_transcripts(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>)> {
+    transcripts_of(log, takes)
+        .into_iter()
+        .map(|(take, mut segments)| {
+            let drift = align_drift_of(log, &take).unwrap_or(0.0);
+            if drift == 0.0 {
+                return (take, segments);
+            }
+            for segment in &mut segments {
+                let shift = |moment: Option<f64>| moment.map(|at| (at - drift).max(0.0));
+                if let Some(at) = shift(segment.get("start").and_then(Value::as_f64)) {
+                    segment["start"] = json!(round3(at));
+                }
+                if let Some(to) = shift(segment.get("end").and_then(Value::as_f64)) {
+                    segment["end"] = json!(round3(to));
+                }
+                let Some(words) = segment.get_mut("words").and_then(Value::as_array_mut) else {
+                    continue;
+                };
+                for word in words {
+                    if let Some(at) = shift(word.get("start").and_then(Value::as_f64)) {
+                        word["start"] = json!(round3(at));
+                    }
+                    if let Some(to) = shift(word.get("end").and_then(Value::as_f64)) {
+                        word["end"] = json!(round3(to));
+                    }
+                }
+            }
+            (take, segments)
+        })
+        .collect()
+}
+
+/// The cleaned cues the captions door returned for one take: the group
+/// texts sent for cleaning, with the punctuation, casing and filler
+/// repairs the door made. Matched back to the groups by span, the same
+/// clock the groups were built in.
+fn cleaned_cues_of(log: &[Value], take: &str) -> Vec<(f64, f64, String)> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("clean_subtitles"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("cues"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|cue| {
+                    Some((
+                        cue["start"].as_f64()?,
+                        cue["end"].as_f64()?,
+                        cue["text"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// One B-roll slot: a stretch of the narration with no words in it, the
 /// take it was read from, and the words that describe what the picture
 /// should show there.
@@ -691,6 +774,11 @@ struct StockCandidate {
     /// tile ordinal, and the gate was deaf to the difference between
     /// them.
     caption: String,
+    /// Who shot the clip, when the search named them: the credit the
+    /// licence asks to keep, carried from the search hit into the
+    /// import so the document can answer for the clip after this run's
+    /// replies are gone.
+    author: String,
     local_path: String,
     width: f64,
     height: f64,
@@ -2443,8 +2531,12 @@ fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<String
 
 /// The emphasis peaks the sound stage may spend, read from the same typed
 /// profile as captions and pacing. A raw walk through lines[].prosody can
-/// drift independently of the parser the other consumers use.
-fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64)> {
+/// drift independently of the parser the other consumers use. Each peak
+/// carries its own word: the shelf's CLAP ear is asked about the word the
+/// voice stressed, and a peak reduced to a moment would leave the ear
+/// shopping with the family's name alone - the very keyword metadata the
+/// ranking exists to better.
+fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
     reads
         .iter()
         .flat_map(|read| {
@@ -2454,11 +2546,51 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64)> {
                     // nominal start: when the flux ear measured one
                     // nearby, the hit moves to it.
                     let at = read.onset_near(word.at, 0.12).unwrap_or(word.at);
-                    (read.take.clone(), at, word.strength)
+                    (read.take.clone(), at, word.strength, word.word.clone())
                 })
             })
         })
         .collect()
+}
+
+/// The take's measured rhythm: the syllable period in seconds and the
+/// regularity of the delivery, from the prosody door's
+/// `measure_rhythm_meter` reply. A take with no reply, or a delivery too
+/// short to time, is `None` - the seam keeps the blend it had.
+fn rhythm_read(log: &[Value], take: &str) -> Option<(f64, String)> {
+    let row = log.iter().rev().find(|reply| {
+        reply.get("action") == Some(&json!("measure_rhythm_meter"))
+            && reply.get("audio").and_then(Value::as_str) == Some(take)
+    })?;
+    if row.get("ok").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    let period = row.get("interNucleusMs").and_then(Value::as_f64)? / 1000.0;
+    if !period.is_finite() || period <= 0.05 {
+        return None;
+    }
+    let meter = row
+        .get("regularity")
+        .and_then(|regularity| regularity.get("meter"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Some((period, meter))
+}
+
+/// The seam's blend for a measured period and the delivery's own meter: a
+/// third of the period, or a quarter when the rhythm meter called the
+/// delivery metronomic - a real beat is one a seam can sit on - held
+/// between a snap and a breath so no period makes a stall.
+fn seam_blend(period: Option<f64>, meter: Option<&str>) -> f64 {
+    let share = if meter.is_some_and(|meter| meter.contains("metronomic")) {
+        4.0
+    } else {
+        3.0
+    };
+    period
+        .map(|period| round3((period / share).clamp(0.2, 0.6)))
+        .unwrap_or(0.3)
 }
 
 /// Every take's `voice_signals` reading, in the order the replies landed.
@@ -2476,6 +2608,48 @@ fn voice_reads(log: &[Value], takes: &[TakePaths]) -> Vec<VoiceRead> {
 /// The take's reading, when one landed.
 fn voice_read_of<'a>(reads: &'a [VoiceRead], take: &str) -> Option<&'a VoiceRead> {
     reads.iter().find(|read| read.take == take)
+}
+
+/// The take's room verdict, when the voice-quality door read it: the
+/// family reply that names the member it ran and the take it read. The
+/// fan lands its lanes in completion order, so the reply's own `audio`
+/// (echoed by the family dispatch) is the only attribution a consumer
+/// may lean on.
+fn classify_of<'a>(log: &'a [Value], take: &str) -> Option<&'a Value> {
+    log.iter().rev().find(|reply| {
+        reply.get("action") == Some(&json!("classify_recording_quality"))
+            && reply.get("audio").and_then(Value::as_str) == Some(take)
+    })
+}
+
+/// The take's measured tail, in seconds, when the voice-quality door
+/// read the room the shipped take sits in. `None` when the door never
+/// answered for this take - unmeasured is not the same answer as dry.
+fn room_rt60_of(log: &[Value], take: &str) -> Option<f64> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("measure_reverb"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("rt60"))
+        .and_then(Value::as_f64)
+}
+
+/// The restart spans the voice-quality door found in one take's words:
+/// false starts, repeated phrases, held words and abandoned fragments,
+/// each with the door's own word on whether the span is safe to cut.
+fn restart_rows_of<'a>(log: &'a [Value], take: &str) -> Vec<&'a Value> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("detect_restarts"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("restarts"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().collect())
+        .unwrap_or_default()
 }
 
 /// A topic boundary the discourse tiling found: where one chapter ends and
@@ -3838,6 +4012,43 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
     } else {
         named.to_vec()
     }
+}
+
+/// The sound a role asks for, said in words the CLAP text tower was
+/// benched against: this mirrors `TEXTURE_WORDS` in `sound_model.py`,
+/// whose phrases are the vocabulary the plan's own queries were fitted
+/// with - a query in another register is a query the ear was never
+/// measured to answer.
+fn sfx_texture_for_role(role: &str) -> &'static str {
+    match role {
+        "action_impact" => "a sharp heavy impact",
+        "cinematic_reveal" => "a deep heavy cinematic boom",
+        "quick_transition" => "a short bright whoosh of air",
+        "gentle_entrance" => "a soft light interface entrance",
+        "tension_build" => "a rising tension build",
+        "emotional_texture" => "a warm sustained emotional texture",
+        _ => "a sound effect",
+    }
+}
+
+/// The question the shelf's CLAP ear is asked about one accent: the
+/// register's own sound, the word the voice stressed, the line that word
+/// was spoken in, and the mood the line read in - the same shape the
+/// model's `plan` builds its queries from (`_query_for`), because that is
+/// the shape the ranking was fitted on. The family's keyword stays what
+/// GATES the candidates (the search already asked it); this is what
+/// ORDERS them, so a ladder that walks to its third word does not drag
+/// the ear's question along - the moment did not change, only the net.
+fn sfx_clap_query(role: &str, word: &str, line: Option<&EmotionLine>, emotion: &str) -> String {
+    let mut ask = sfx_texture_for_role(role).to_owned();
+    if !word.is_empty() {
+        ask.push_str(&format!(" for the word '{word}'"));
+    }
+    if let Some(line) = line.filter(|line| !line.text.is_empty()) {
+        ask.push_str(&format!(", {}", line.text));
+    }
+    ask.push_str(&format!(", {emotion} moment"));
+    ask
 }
 
 /// Translate the shelf's search words into the sound role that the
@@ -6539,6 +6750,84 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             "note": note,
         }));
     }
+    // The room the voice-quality door graded, per take: the verdict with
+    // its floor, its SNR and the bed hint it earns. The repair chain
+    // itself is the diagnosis's own call - measured, not guessed - so the
+    // verdict's decision is `mix`: it is the floor the bed must sit on,
+    // and the note says which chain the room names for a human to check
+    // the repair against.
+    for take in takes {
+        let Some(reply) = classify_of(log, &take.take) else {
+            continue;
+        };
+        let verdict = reply.pointer("/verdict").and_then(Value::as_str);
+        let floor = reply
+            .pointer("/measures/noiseFloorDbfs")
+            .and_then(Value::as_f64);
+        let snr = reply.pointer("/measures/snrDb").and_then(Value::as_f64);
+        let bed = reply.pointer("/bgmDecision").and_then(Value::as_str);
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "mix",
+            "signals": ["room.verdict"],
+            "note": format!(
+                "the room graded {}: floor {} dBFS, SNR {} dB - {}",
+                verdict.unwrap_or("unmeasured"),
+                floor.map(|db| format!("{db:.0}")).unwrap_or_else(|| "n/a".to_owned()),
+                snr.map(|db| format!("{db:.0}")).unwrap_or_else(|| "n/a".to_owned()),
+                bed.unwrap_or("no bed hint"),
+            ),
+        }));
+    }
+    // The room's tail, where the door could measure one: the answer the
+    // accent gate and the duck depth read, logged as `mix` because it is
+    // the same decision's other half - how much room the voice leaves
+    // for anything under it.
+    for take in takes {
+        let Some(rt60) = room_rt60_of(log, &take.take) else {
+            continue;
+        };
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "mix",
+            "signals": ["room.rt60"],
+            "note": format!(
+                "the shipped take's tail measures {rt60:.2} s: accents {} and the bed ducks {}",
+                if rt60 > 0.4 { "retire under it" } else { "hold their timing" },
+                if rt60 >= 0.4 { "deeper" } else { "as planned" },
+            ),
+        }));
+    }
+    // The restarts, marked: which attempt survives is a cut decision the
+    // plan records and the tighten does not make on its own - the door's
+    // own cutSafe word is the honesty here, and a not-cut-safe span is a
+    // human's rewrite, not an automatic edit. The span is marked in the
+    // TIMELINE's clock, the clock every other entry's `at` speaks: a
+    // multi-take cut plays several file clocks at once, and a take-file
+    // second means nothing to the plan that reads it.
+    for take in takes {
+        for restart in restart_rows_of(log, &take.take) {
+            let at = restart
+                .pointer("/span/start")
+                .and_then(Value::as_f64)
+                .and_then(|moment| timeline_at(view, &media, &take.take, moment));
+            let kind = restart
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("restart");
+            let cut_safe = restart.get("cutSafe") == Some(&json!(true));
+            signal_log.push(json!({
+                "at": round3(at.unwrap_or(0.0)),
+                "decision": "assemble",
+                "signals": ["restarts.span"],
+                "note": format!(
+                    "a {kind} is marked{}",
+                    if cut_safe { " - the door calls it safe to punch out" }
+                    else { " - the door calls it NOT safe to cut: a human decides" },
+                ),
+            }));
+        }
+    }
     // The grade: emotion names the temperature, the forensic tone breaks
     // a neutral tie, and the arc decides whether the look lifts at the
     // end. This is the decision the colour stage spends, so it is logged
@@ -6882,6 +7171,14 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 // A pivot is a marker the lexicon matched; the profile
                 // rates the marker family at 0.65, like the fillers.
                 "discourseMarkers" => 0.65,
+                // The voice-quality door's own families: deterministic
+                // window statistics and a lexical scan, the same class
+                // of instrument the marker lexicon is. A fixed rating
+                // says what the instrument is, not what it measured -
+                // and 0 would say the run never asked, which is the one
+                // thing it did do.
+                "room" => 0.7,
+                "restarts" => 0.65,
                 // `words` is the transcript's own text; the profile rates
                 // the gate that produced them as `wordConfidence`.
                 "words" => reads
@@ -7309,6 +7606,8 @@ fn decision_for(family: &str) -> &'static [&'static str] {
         "speechRatio" => &["bgm", "mix"],
         "forensic" => &["bgm", "repair", "mix", "grade", "sfx"],
         "speakerChanges" | "discourseMarkers" => &["transition"],
+        // The rhythm meter sizes and tightens the seam's blend.
+        "rhythmMeter" => &["transition"],
         "speaker" => &["transition", "bgm"],
         "topics" => &["transition", "graphic"],
         "loudness" => &["caption", "mix", "pacing"],
@@ -7330,6 +7629,12 @@ fn decision_for(family: &str) -> &'static [&'static str] {
         "visualQuality" => &["cut", "motion"],
         "saliency" => &["cut", "caption", "motion"],
         "scene" => &["cut", "transition"],
+        // The voice-quality door's own families: the room verdict and the
+        // tail are the floor the bed sits on and the accents the tail
+        // retires - both `mix` - and a restart span is marked as the
+        // `assemble` decision that names which attempt survives.
+        "room" => &["mix"],
+        "restarts" => &["assemble"],
         _ => &[],
     }
 }
@@ -8150,6 +8455,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .iter()
         .map(|take| {
             vec![
+                // The room before anything measures it: the verdict -
+                // broadcast, clean, home, rough - with the floor, the
+                // SNR and the hum tones, is the reading every later
+                // repair answer is read against, and the bed hint it
+                // carries is the Music stage's own floor decision. It
+                // writes nothing: a reading, never a repair.
+                call(
+                    "sense_voice_quality",
+                    json!({
+                        "action": "classify_recording_quality",
+                        "audio": take.take,
+                    }),
+                ),
                 // The measurement is a call of its own so the reply - the
                 // hum frequency, the DC offset, the flatness, the rolloff
                 // - sits in the log where the critic and the signal brief
@@ -8186,6 +8504,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // 60 Hz door and nothing else, the diagnosis's
                         // own word that the take is cleaner than the cure.
                         "force": true,
+                    }),
+                ),
+                // The room the mix actually sits in: the tail of the
+                // take the timeline will play, measured after the repair
+                // so the answer is the shipped room and not the recorded
+                // one. The Sfx stage's reverb gate and the Music stage's
+                // duck depth read this before they fall back to the
+                // profile's own estimate. It writes nothing.
+                call(
+                    "sense_voice_quality",
+                    json!({
+                        "action": "measure_reverb",
+                        "audio": take.take,
                     }),
                 ),
             ]
@@ -8314,6 +8645,39 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             calls.push(call(
                                 "sense_discourse",
                                 json!({ "action": "extract_claim_graph", "lines": lines.clone() }),
+                            ));
+                            // The false starts and repeated phrases, read
+                            // from the words this take actually spoke: a
+                            // restart span is MARKED in the plan, because
+                            // which attempt survives is a cut decision
+                            // the tighten does not make on its own - the
+                            // door itself calls an abandoned clause not
+                            // cut-safe, and that honesty is the reading's
+                            // value. It needs the transcript, so it lives
+                            // here and not in the repair fan, which runs
+                            // before any words exist.
+                            calls.push(call(
+                                "sense_voice_quality",
+                                json!({
+                                    "action": "detect_restarts",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
+                            ));
+                            // The delivery's own rhythm, timed from
+                            // the syllable nuclei the transcript
+                            // already gave: the period sizes a B-roll
+                            // seam's blend when the profile found no
+                            // pulse or breath worth its strength, and
+                            // the meter says whether the beat is real
+                            // enough for a seam to sit on.
+                            calls.push(call(
+                                "sense_prosody_style",
+                                json!({
+                                    "action": "measure_rhythm_meter",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
                             ));
                             calls.push(call(
                                 "emotion",
@@ -8966,6 +9330,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // energy actually repeats on, so a slow take dissolves
                 // slowly and a clipped one snaps.
                 let mut pending_period: Option<f64> = None;
+                // The delivery's regularity, from the same rhythm read:
+                // a metronomic take snaps its seam tighter.
+                let mut pending_meter: Option<String> = None;
                 let mut pending_transition: Option<&'static str> = None;
                 // The gap's own timeline position, held across the lane
                 // minting call: the placement that follows the lane's
@@ -9092,6 +9459,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     caption: hit["caption"]
                                         .as_str()
                                         .or_else(|| hit["name"].as_str())
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    author: hit["author"]
+                                        .as_str()
                                         .unwrap_or_default()
                                         .to_owned(),
                                     local_path: path,
@@ -9464,6 +9835,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "provider": candidate.provider.clone(),
                                     "id": candidate.id.clone(),
                                     "url": candidate.url.clone(),
+                                    "author": candidate.author.clone(),
                                 }),
                             ));
                         }
@@ -9562,6 +9934,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     {
                                         pending_style = "building".to_owned();
                                     }
+                                    let rhythm = rhythm_read(log, &slot.take);
+                                    pending_meter =
+                                        rhythm.as_ref().map(|(_, meter)| meter.clone());
                                     pending_period = take_read
                                         .as_ref()
                                         // The period the pulse has
@@ -9580,7 +9955,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         // so it stands without the guard.
                                         .or_else(|| {
                                             take_read.as_ref().and_then(|read| read.breath_period())
-                                        });
+                                        })
+                                        // The syllable period the
+                                        // prosody door measured: a
+                                        // delivery's own rhythm, which
+                                        // stands where the profile found
+                                        // no period worth its strength.
+                                        .or_else(|| rhythm.map(|(period, _)| period));
                                     pending_energy = voice_read_of(voice, &slot.take)
                                         .and_then(|read| read.local_energy(slot.from));
                                     pending_transition = Some(seam_transition(
@@ -9850,13 +10231,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                             let chosen = pending_transition.unwrap_or("concat.dissolve");
                             last_transition = Some(chosen);
-                            // The blend is a share of the tempo: a third of
-                            // the period the take repeats on, held between
-                            // a snap and a breath so no measured period can
-                            // make a seam that reads as a stall.
-                            let blend = pending_period
-                                .map(|period| round3((period / 3.0).clamp(0.2, 0.6)))
-                                .unwrap_or(0.3);
+                            let blend = seam_blend(pending_period, pending_meter.as_deref());
                             commands.push(json!({
                                 "op": "updateClip",
                                 "clipId": clip_id,
@@ -9909,95 +10284,231 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // reply is a timeline view carrying the titles just
                 // placed, and re-deriving from it would place every
                 // caption a second time.
+                //
+                // The readings come first, because a caption built on
+                // drifted word times is wrong in a way no styling fixes:
+                // the align door measures the drift between the words
+                // and the audio (phase 0), the groups are built from the
+                // corrected times (phase 1), the cleaned texts ride back
+                // (phase 1's asks), and the edit lands with the words
+                // where the audio actually says them (phase 2).
                 let mut phase = 0u8;
+                // The phase-0 asks: the align read and the synthetic-voice
+                // read, one pair per take that has a transcript. The ai
+                // read is recorded, never a gate - the door's own band is
+                // the honest word, and the reply stays in the log the
+                // receipt and the critic read.
+                let mut asks: Vec<ToolCall> = Vec::new();
+                let mut asked = false;
+                // The phase-1 asks: the groups' texts, one clean call per
+                // take, the punctuation and casing repairs the door
+                // makes before the viewer ever sees the words.
+                let mut clean_asks: Vec<ToolCall> = Vec::new();
+                // The groups phase 2 spends, with their spans in the
+                // timeline's clock and their text still the words' own.
+                let mut kept_groups: Option<Vec<(f64, f64, CaptionGroup)>> = None;
                 // The groups the batch placed, kept for the accent pass:
                 // each carries the timeline span it landed at and the
                 // character ranges of its own words.
                 let mut placed_groups: Vec<(f64, CaptionGroup)> = Vec::new();
                 move |log| {
-                    if phase == 2 {
+                    if phase == 4 {
                         return None;
                     }
                     let view = latest_view(log)?;
                     let aspect = aspect_of(view).to_owned();
                     let portrait = matches!(aspect.as_str(), "9:16" | "4:5" | "1:1");
                     let media = media_paths(view);
+                    // Phase 0: the readings that must land before the words
+                    // are grouped - the drift the grouping will snap out,
+                    // and the synthetic-voice read the run records.
                     if phase == 0 {
-                        let voice = voice_reads(log, &caption_source);
-                        let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
-                        for (take, segments) in transcripts_of(log, &caption_source) {
-                            let take_read = voice_read_of(&voice, &take);
-                            for segment in segments {
-                                // The safe-remove fillers the profile timed
-                                // for this segment: `um`, `uh` and their kin
-                                // are pure noise in a caption - the viewer
-                                // hears the pause, not the syllable. The
-                                // discourse markers (`like`, `you know`) are
-                                // context calls the profile does not
-                                // decide, so they stay.
-                                let fillers: Vec<String> = take_read
-                                    .map(|take_read| {
-                                        let start = segment["start"].as_f64().unwrap_or(0.0);
-                                        let end = segment["end"].as_f64().unwrap_or(0.0);
-                                        take_read
-                                            .fillers_between(start, end)
-                                            .into_iter()
-                                            .map(|filler| filler.word.to_lowercase())
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                for mut group in caption_groups(&segment, &fillers) {
-                                    group.take = take.clone();
-                                    // The opening bound must land inside a
-                                    // surviving piece (a caption whose
-                                    // first word was cut has no start to
-                                    // show at), but the closing bound is
-                                    // allowed to sit at the join the cut
-                                    // made: a group whose last word ends
-                                    // exactly at the piece's edge - a take
-                                    // trimmed to its last word, or a
-                                    // trailing pause the tighten took -
-                                    // still shows its words, so the bound
-                                    // maps to the nearest surviving second
-                                    // at or before it, the same mercy the
-                                    // B-roll slot bounds already get.
-                                    let (Some(at), Some(to)) = (
-                                        timeline_at(view, &media, &take, group.start),
-                                        timeline_at_or_before(view, &media, &take, group.end),
-                                    ) else {
-                                        continue;
-                                    };
-                                    if to - at < 0.25 {
-                                        continue;
+                        if !asked {
+                            asked = true;
+                            for (take, segments) in transcripts_of(log, &caption_source) {
+                                // The synthetic-voice read is queued first
+                                // so the align read - the one the grouping
+                                // waits on - is the ask that pops first.
+                                asks.push(call(
+                                    "sense_captions",
+                                    json!({
+                                        "action": "detect_ai_voice",
+                                        "audio": take,
+                                    }),
+                                ));
+                                asks.push(call(
+                                    "sense_captions",
+                                    json!({
+                                        "action": "align_captions",
+                                        "audio": take,
+                                        "transcript": { "segments": segments },
+                                    }),
+                                ));
+                            }
+                        }
+                        if let Some(next) = asks.pop() {
+                            return Some(next);
+                        }
+                        phase = 1;
+                    }
+                    if phase == 1 {
+                        if kept_groups.is_none() {
+                            // The groups are built ONCE, from the
+                            // drift-corrected transcripts: the align
+                            // door's reply is already in the log, and the
+                            // correction it measured is the whole point
+                            // of asking before grouping.
+                            let voice = voice_reads(log, &caption_source);
+                            let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                            for (take, segments) in drifted_transcripts(log, &caption_source) {
+                                let take_read = voice_read_of(&voice, &take);
+                                for segment in segments {
+                                    // The safe-remove fillers the profile timed
+                                    // for this segment: `um`, `uh` and their kin
+                                    // are pure noise in a caption - the viewer
+                                    // hears the pause, not the syllable. The
+                                    // discourse markers (`like`, `you know`) are
+                                    // context calls the profile does not
+                                    // decide, so they stay.
+                                    let fillers: Vec<String> = take_read
+                                        .map(|take_read| {
+                                            let start = segment["start"].as_f64().unwrap_or(0.0);
+                                            let end = segment["end"].as_f64().unwrap_or(0.0);
+                                            take_read
+                                                .fillers_between(start, end)
+                                                .into_iter()
+                                                .map(|filler| filler.word.to_lowercase())
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    for mut group in caption_groups(&segment, &fillers) {
+                                        group.take = take.clone();
+                                        // The opening bound must land inside a
+                                        // surviving piece (a caption whose
+                                        // first word was cut has no start to
+                                        // show at), but the closing bound is
+                                        // allowed to sit at the join the cut
+                                        // made: a group whose last word ends
+                                        // exactly at the piece's edge - a take
+                                        // trimmed to its last word, or a
+                                        // trailing pause the tighten took -
+                                        // still shows its words, so the bound
+                                        // maps to the nearest surviving second
+                                        // at or before it, the same mercy the
+                                        // B-roll slot bounds already get.
+                                        let (Some(at), Some(to)) = (
+                                            timeline_at(view, &media, &take, group.start),
+                                            timeline_at_or_before(view, &media, &take, group.end),
+                                        ) else {
+                                            continue;
+                                        };
+                                        if to - at < 0.25 {
+                                            continue;
+                                        }
+                                        groups.push((at, to, group));
                                     }
-                                    groups.push((at, to, group));
+                                }
+                            }
+                            if groups.is_empty() {
+                                phase = 4;
+                                return None;
+                            }
+                            // Overlaps cannot happen on a clean transcript, but a
+                            // merged one can carry them: the later group waits
+                            // for the one before it to leave. The walk is by
+                            // timeline position, not take order - groups are
+                            // built take-major, and an interleaved multi-take
+                            // run would otherwise set `until` from take A and
+                            // drop every one of take B's groups as "overlaps".
+                            groups.sort_by(|left, right| {
+                                left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
+                            });
+                            let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                            let mut until = 0.0;
+                            for (at, to, group) in groups {
+                                if at < until - 0.05 {
+                                    continue;
+                                }
+                                until = to;
+                                kept.push((at, to, group));
+                            }
+                            kept.truncate(240);
+                            // The clean asks, one per take: the groups' own
+                            // texts, in the take's file clock the groups were
+                            // built in, so the door's punctuation and casing
+                            // repairs come back matched to the words that
+                            // spoke them. The original text stays in the
+                            // transcript the log already holds - the evidence
+                            // the cleaning was made against. The profile's
+                            // own filler timing already took the um/uh out, so
+                            // the cleaner is asked to leave fillers be and do
+                            // the work only it can see: the sentence shapes.
+                            let mut by_take: Vec<(String, Vec<Value>)> = Vec::new();
+                            for (_, _, group) in &kept {
+                                let row = json!({
+                                    "start": group.start, "end": group.end,
+                                    "text": group.text,
+                                });
+                                match by_take.iter_mut().find(|(take, _)| *take == group.take) {
+                                    Some((_, lines)) => lines.push(row),
+                                    None => by_take.push((group.take.clone(), vec![row])),
+                                }
+                            }
+                            for (take, lines) in by_take {
+                                clean_asks.push(call(
+                                    "sense_captions",
+                                    json!({
+                                        "action": "clean_subtitles",
+                                        "audio": take,
+                                        "lines": lines,
+                                        "stripFillers": false,
+                                    }),
+                                ));
+                            }
+                            kept_groups = Some(kept);
+                        }
+                        if let Some(next) = clean_asks.pop() {
+                            return Some(next);
+                        }
+                        phase = 2;
+                    }
+                    if phase == 2 {
+                        let Some(mut kept) = kept_groups.take() else {
+                            phase = 4;
+                            return None;
+                        };
+                        let voice = voice_reads(log, &caption_source);
+                        // The cleaned texts, spent where the door's cue
+                        // covers the group's span: the word offsets are
+                        // reseated against the cleaned text so the accent
+                        // pass still styles the word it measured, and a
+                        // cue that does not cover the group - or whose
+                        // text no longer holds the group's words - changes
+                        // nothing, and the words' own text stands.
+                        for (_, _, group) in kept.iter_mut() {
+                            let cues = cleaned_cues_of(log, &group.take);
+                            let Some(cleaned) = cues.iter().find(|(start, end, _)| {
+                                *start <= group.start + 0.05 && *end >= group.end - 0.05
+                            }) else {
+                                continue;
+                            };
+                            let words_still_fit = group
+                                .words
+                                .iter()
+                                .all(|word| cleaned.2.contains(word.text.trim()));
+                            if !words_still_fit {
+                                continue;
+                            }
+                            group.text = cleaned.2.clone();
+                            let mut cursor = 0usize;
+                            for word in group.words.iter_mut() {
+                                let bare = word.text.trim();
+                                if let Some(found) = group.text[cursor..].find(bare) {
+                                    word.at = group.text[..cursor + found].chars().count();
+                                    cursor = cursor + found + bare.len();
                                 }
                             }
                         }
-                        if groups.is_empty() {
-                            phase = 2;
-                            return None;
-                        }
-                        // Overlaps cannot happen on a clean transcript, but a
-                        // merged one can carry them: the later group waits
-                        // for the one before it to leave. The walk is by
-                        // timeline position, not take order - groups are
-                        // built take-major, and an interleaved multi-take
-                        // run would otherwise set `until` from take A and
-                        // drop every one of take B's groups as "overlaps".
-                        groups.sort_by(|left, right| {
-                            left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
-                        });
-                        let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
-                        let mut until = 0.0;
-                        for (at, to, group) in groups {
-                            if at < until - 0.05 {
-                                continue;
-                            }
-                            until = to;
-                            kept.push((at, to, group));
-                        }
-                        kept.truncate(240);
                         // The script's own font: the profile's language read
                         // names the family a non-Latin script needs, and the
                         // house face is only the fallback when the read did
@@ -10210,10 +10721,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             placed_groups.push((at, group));
                         }
                         if commands.is_empty() {
-                            phase = 2;
+                            phase = 4;
                             return None;
                         }
-                        phase = 1;
+                        // The captions are placed: the accent pass reads
+                        // the batch's own reply, the view carrying the
+                        // titles in order, and phases itself after it.
+                        phase = 3;
                         return Some(ToolCall {
                             tool: "edit_apply".to_owned(),
                             arguments: json!({
@@ -10222,113 +10736,118 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }),
                         });
                     }
-                    // The accent pass: the batch's own reply is a view
-                    // carrying the titles just placed, in order. The words
-                    // the delivery actually stressed - or, on a hot line
-                    // with no stressed word, the group's own longest word -
-                    // take the accent colour and a touch of scale, one
-                    // patch per word, through the title's own range
+                    // Phase 3, the accent pass: the batch's own reply is a
+                    // view carrying the titles just placed, in order. The
+                    // words the delivery actually stressed - or, on a hot
+                    // line with no stressed word, the group's own longest
+                    // word - take the accent colour and a touch of scale,
+                    // one patch per word, through the title's own range
                     // styling.
-                    let view = latest_view(log)?;
-                    let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|clip| clip["kind"] == json!("text"))
-                        .filter_map(|clip| {
-                            Some((clip["start"].as_f64()?, clip["id"].as_str()?.to_owned()))
-                        })
-                        .collect();
-                    titles.sort_by(|left, right| left.0.total_cmp(&right.0));
-                    let emphasis = stressed_words(log, &caption_source);
-                    let read = emotion_lines(log, &caption_emotion);
-                    let voice = voice_reads(log, &caption_source);
-                    let mut commands: Vec<Value> = Vec::new();
-                    for (at, group) in &placed_groups {
-                        let Some((_, clip_id)) =
-                            titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
-                        else {
-                            continue;
-                        };
-                        let line = emotion_at(&read, &group.take, group.start);
-                        let take_read = voice_read_of(&voice, &group.take);
-                        let unsure_share = take_read
-                            .map(|take_read| {
-                                let flagged =
-                                    take_read.unsure_between(group.start, group.end).len();
-                                let total = group.words.len();
-                                if total == 0 {
-                                    0.0
-                                } else {
-                                    flagged as f64 / total as f64
-                                }
-                            })
-                            .unwrap_or(0.0);
-                        if unsure_share > 0.5 {
-                            continue;
-                        }
-                        let hot = line.is_some_and(|line| {
-                            matches!(line.temperature.as_str(), "hot" | "split")
-                        });
-                        // The words the profile's own emphasis read named:
-                        // the delivery's, not the mood's - and the take's
-                        // own delivery, never another take's.
-                        let take_emphasis = emphasis
-                            .iter()
-                            .find(|(take, _)| *take == group.take)
-                            .map(|(_, words)| words);
-                        let mut accents: Vec<&CaptionWord> = group
-                            .words
-                            .iter()
-                            .filter(|word| {
-                                let bare = word
-                                    .text
-                                    .trim_matches(|c: char| !c.is_alphanumeric())
-                                    .to_lowercase();
-                                !bare.is_empty()
-                                    && take_emphasis.is_some_and(|words| words.contains(&bare))
+                    if phase == 3 {
+                        let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|clip| clip["kind"] == json!("text"))
+                            .filter_map(|clip| {
+                                Some((clip["start"].as_f64()?, clip["id"].as_str()?.to_owned()))
                             })
                             .collect();
-                        // A hot line with no stressed word still earns its
-                        // accent: the group's own longest word is the one
-                        // carrying the claim.
-                        if accents.is_empty() && hot {
-                            let longest = group
-                                .words
-                                .iter()
-                                .max_by_key(|word| word.text.chars().count());
-                            if let Some(longest) = longest {
-                                accents.push(longest);
-                            }
-                        }
-                        for word in accents {
-                            let chars = word.text.chars().count();
-                            if chars == 0 || word.at + chars > group.text.chars().count() {
+                        titles.sort_by(|left, right| left.0.total_cmp(&right.0));
+                        let emphasis = stressed_words(log, &caption_source);
+                        let read = emotion_lines(log, &caption_emotion);
+                        let voice = voice_reads(log, &caption_source);
+                        let mut commands: Vec<Value> = Vec::new();
+                        for (at, group) in &placed_groups {
+                            let Some((_, clip_id)) =
+                                titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
+                            else {
+                                continue;
+                            };
+                            let line = emotion_at(&read, &group.take, group.start);
+                            let take_read = voice_read_of(&voice, &group.take);
+                            let unsure_share = take_read
+                                .map(|take_read| {
+                                    let flagged =
+                                        take_read.unsure_between(group.start, group.end).len();
+                                    let total = group.words.len();
+                                    if total == 0 {
+                                        0.0
+                                    } else {
+                                        flagged as f64 / total as f64
+                                    }
+                                })
+                                .unwrap_or(0.0);
+                            if unsure_share > 0.5 {
                                 continue;
                             }
-                            commands.push(json!({
-                                "op": "styleTextRange",
-                                "clipId": clip_id,
-                                "start": word.at,
-                                "end": word.at + chars,
-                                "patch": {
-                                    "color": "#ffd400",
-                                    "fontScale": 1.18,
-                                },
-                            }));
+                            let hot = line.is_some_and(|line| {
+                                matches!(line.temperature.as_str(), "hot" | "split")
+                            });
+                            // The words the profile's own emphasis read named:
+                            // the delivery's, not the mood's - and the take's
+                            // own delivery, never another take's.
+                            let take_emphasis = emphasis
+                                .iter()
+                                .find(|(take, _)| *take == group.take)
+                                .map(|(_, words)| words);
+                            let mut accents: Vec<&CaptionWord> = group
+                                .words
+                                .iter()
+                                .filter(|word| {
+                                    let bare = word
+                                        .text
+                                        .trim_matches(|c: char| !c.is_alphanumeric())
+                                        .to_lowercase();
+                                    !bare.is_empty()
+                                        && take_emphasis.is_some_and(|words| words.contains(&bare))
+                                })
+                                .collect();
+                            // A hot line with no stressed word still earns its
+                            // accent: the group's own longest word is the one
+                            // carrying the claim.
+                            if accents.is_empty() && hot {
+                                let longest = group
+                                    .words
+                                    .iter()
+                                    .max_by_key(|word| word.text.chars().count());
+                                if let Some(longest) = longest {
+                                    accents.push(longest);
+                                }
+                            }
+                            for word in accents {
+                                let chars = word.text.chars().count();
+                                if chars == 0 || word.at + chars > group.text.chars().count() {
+                                    continue;
+                                }
+                                commands.push(json!({
+                                    "op": "styleTextRange",
+                                    "clipId": clip_id,
+                                    "start": word.at,
+                                    "end": word.at + chars,
+                                    "patch": {
+                                        "color": "#ffd400",
+                                        "fontScale": 1.18,
+                                    },
+                                }));
+                            }
                         }
+                        phase = 4;
+                        if commands.is_empty() {
+                            return None;
+                        }
+                        return Some(ToolCall {
+                            tool: "edit_apply".to_owned(),
+                            arguments: json!({
+                                "path": caption_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        });
                     }
-                    phase = 2;
-                    if commands.is_empty() {
-                        return None;
-                    }
-                    Some(ToolCall {
-                        tool: "edit_apply".to_owned(),
-                        arguments: json!({
-                            "path": caption_project,
-                            "command": { "op": "batch", "commands": commands },
-                        }),
-                    })
+                    // No phase falls through to here: 0 through 3 all
+                    // return, and 4 answers at the top. The word is the
+                    // closure's own answer for a stage that is done.
+                    None
                 }
             }),
         )
@@ -11229,12 +11748,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // band a bed's own brightness occupies - each
                         // deepens the duck a little, measured, not
                         // guessed. A take with neither reading keeps
-                        // the act-and-density level alone.
-                        let room_db = if voice_reads(log, &music_source)
-                            .iter()
-                            .filter_map(|read| read.take_wide.reverb_tail_sec)
-                            .any(|tail| tail >= 0.4)
-                        {
+                        // the act-and-density level alone. The tail the
+                        // voice-quality door measured on the shipped
+                        // take outranks the profile's estimate: the door
+                        // is the dedicated instrument, and the estimate
+                        // the fallback.
+                        let room_db = if voice_reads(log, &music_source).iter().any(|read| {
+                            room_rt60_of(log, &read.take)
+                                .or(read.take_wide.reverb_tail_sec)
+                                .is_some_and(|tail| tail >= 0.4)
+                        }) {
                             -3.0
                         } else {
                             0.0
@@ -11297,6 +11820,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
             tried: usize,
+            /// The question the CLAP ear will be asked if the shelf ends
+            /// up shopping this peak: built where the peak's own word and
+            /// line were in hand, carried because the reply that needs it
+            /// arrives calls later.
+            context: String,
         },
         /// The search's reply is in: pick a hit this run has not spent, or
         /// walk the family's next word.
@@ -11314,6 +11842,73 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The exact shelf word whose results this state is reading.
             query: &'static str,
+            /// The question the CLAP ear is asked about this accent, when
+            /// the ear is spent at all.
+            context: String,
+        },
+        /// The probe's reply is in: the describe of one cached shelf file
+        /// says whether this machine can hear the shelf by CLAP at all.
+        /// The record itself is the price of the question - the state is
+        /// the answer the run spends - and a machine that cannot hear
+        /// keeps the keyword ladder for the rest of the run without ever
+        /// paying for the index it could not use.
+        Ear {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The exact shelf word whose results are being shopped.
+            query: &'static str,
+            /// The question the CLAP ear is asked about this accent.
+            context: String,
+            /// The search's own rows, carried because this state's reply
+            /// replaces theirs at the tail of the log.
+            hits: Vec<Value>,
+        },
+        /// The index's reply is in: the shelf was measured once, and the
+        /// rank can now order the family's candidates by what the ear
+        /// heard instead of by the order the manifest happened to list
+        /// them in.
+        Index {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The exact shelf word whose results are being shopped.
+            query: &'static str,
+            /// The question the CLAP ear is asked about this accent.
+            context: String,
+            /// The search's own rows, carried because this state's reply
+            /// replaces theirs at the tail of the log.
+            hits: Vec<Value>,
+        },
+        /// The rank's reply is in: the family's candidates in the ear's
+        /// own order, spent on the search's rows - a rank row only
+        /// matters where it names a file the shelf actually offered.
+        Ranked {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The level the accent lands at, in dB.
+            gain_db: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+            /// The exact shelf word whose results are being shopped.
+            query: &'static str,
+            /// The question the CLAP ear was asked about this accent.
+            context: String,
+            /// The search's own rows: the rank orders them, the ladder's
+            /// own order stays the floor beneath.
+            hits: Vec<Value>,
         },
         /// The add's reply is in: the clip is on the lane. The placement
         /// is verified against the file the timeline will actually play
@@ -11336,6 +11931,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The exact shelf word that selected this file.
             query: &'static str,
+            /// The question the CLAP ear was asked about this accent,
+            /// carried for the re-shop a failed check sends it back to.
+            context: String,
         },
         /// The check's reply is in: move the clip onto the moment, drop
         /// it as the wrong sound, or let it stand and gain it.
@@ -11352,6 +11950,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             tried: usize,
             /// The clip the add placed.
             clip_id: String,
+            /// The question the CLAP ear was asked about this accent,
+            /// carried for the re-shop a failed check sends it back to.
+            context: String,
         },
         /// The move's reply is in: gain the clip it moved.
         Level {
@@ -11371,13 +11972,155 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             queries: Vec<&'static str>,
             /// How many of those words have already come back spent.
             tried: usize,
+            /// The question the CLAP ear will be asked about this accent
+            /// again, when the re-shop reaches the ear's door.
+            context: String,
         },
+    }
+
+    /// One accent's shopping, as the keyword ladder walks it - the fields
+    /// every door into the ladder needs, in one place so the walk itself
+    /// is written once and spent from wherever the ear could not answer.
+    struct AccentShop<'a> {
+        /// The peak's timeline moment, already resolved.
+        at: f64,
+        /// The level the accent lands at, in dB.
+        gain_db: f64,
+        /// The family the peak's emotion named, walked word by word.
+        queries: &'a [&'static str],
+        /// How many of those words have already come back spent.
+        tried: usize,
+        /// The exact shelf word whose results are being shopped.
+        query: &'static str,
+        /// The question the CLAP ear is asked about this accent.
+        context: &'a str,
+    }
+
+    /// The keyword ladder's own answer to a search reply, in the order the
+    /// ladder has always given it: the first hit this run has not spent
+    /// that is an accent and not a bed, the family's next word, or the
+    /// family spent. This is the FLOOR - the CLAP ear reorders the same
+    /// rows when it can, and every way it refuses lands here, unchanged.
+    enum SfxLadder {
+        /// A hit to place: the Add the chosen hit becomes, and the
+        /// `sounds_add` call that places it.
+        Place(SfxPending, ToolCall),
+        /// The family's next word: the Pick that asks it, and the
+        /// `sounds_search` call that shops it.
+        Next(SfxPending, ToolCall),
+        /// The family is spent: the peak goes unaccented, the way a mixer
+        /// with a thin shelf leaves it.
+        Spent,
+    }
+
+    /// The keyword ladder's walk over one search reply. Extracted from the
+    /// Pick state when the CLAP ear grew its own doors into the same
+    /// walk: an ear that refuses mid-flight (an index that would not
+    /// write, a rank that would not answer) must land on exactly the
+    /// order the ladder kept before the ear existed - a fallback that
+    /// orders differently is not a fallback, it is a second opinion.
+    fn walk_the_ladder(
+        project: &str,
+        hits: &[Value],
+        used: &[String],
+        rotation: usize,
+        shop: AccentShop<'_>,
+    ) -> SfxLadder {
+        let AccentShop {
+            at,
+            gain_db,
+            queries,
+            tried,
+            query,
+            context,
+        } = shop;
+        // The search's answer: the first hit this run has not already
+        // spent, accents being short - a five-second ambience is a bed,
+        // not an accent, whatever word the query shared.
+        let fresh = hits
+            .iter()
+            .filter(|hit| {
+                hit.get("id")
+                    .and_then(|id| id.as_str())
+                    .is_some_and(|id| !used.iter().any(|spent| spent == id))
+            })
+            .collect::<Vec<_>>();
+        // An accent is a hit, not a bed: when every unspent hit runs past
+        // three seconds the word moves on to its next query rather than
+        // placing a six-second ambience at -9 dB (the shelf carries
+        // sounds up to 40 s; "drone" and "ambience" families return
+        // nothing shorter).
+        let chosen = fresh
+            .into_iter()
+            .find(|hit| hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0));
+        if let Some(hit) = chosen {
+            let id = hit["id"].as_str().unwrap_or_default().to_owned();
+            // The manifest's own `syncAt` says how far into the file the
+            // sound lands its peak: the add is offset by exactly that, so
+            // the peak meets the moment the emphasis measured - not the
+            // file's first byte. The check below then holds that
+            // placement against the file itself, which is where a stale
+            // manifest answer is caught.
+            let sync = hit["syncAt"]
+                .as_f64()
+                .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                .unwrap_or(0.0);
+            let start = round3((at - sync).max(0.0));
+            return SfxLadder::Place(
+                SfxPending::Add {
+                    at,
+                    gain_db,
+                    start,
+                    id: id.clone(),
+                    queries: queries.to_vec(),
+                    tried,
+                    query,
+                    context: context.to_owned(),
+                },
+                ToolCall {
+                    tool: "sounds_add".to_owned(),
+                    arguments: json!({
+                        "path": project,
+                        "id": id,
+                        "start": start,
+                    }),
+                },
+            );
+        }
+        // Every hit the word answered is spent or absent: the family's
+        // next word, and the peak is dropped only when the family is
+        // exhausted - one empty shelf answer is not a peak without a
+        // sound.
+        let tried = tried + 1;
+        if tried < queries.len() {
+            let query = queries[(rotation + tried) % queries.len()];
+            return SfxLadder::Next(
+                SfxPending::Pick {
+                    at,
+                    gain_db,
+                    queries: queries.to_vec(),
+                    tried,
+                    query,
+                    context: context.to_owned(),
+                },
+                ToolCall {
+                    tool: "sounds_search".to_owned(),
+                    arguments: json!({
+                        "query": query,
+                        "limit": 3,
+                    }),
+                },
+            );
+        }
+        // The family is spent: the peak goes unaccented, the way a mixer
+        // with a thin shelf leaves it.
+        SfxLadder::Spent
     }
     steps.push(
         DerivedStep::react(
             Stage::Sfx,
             Box::new({
-                let mut peaks: Option<Vec<(String, f64, f64)>> = None;
+                let mut peaks: Option<Vec<(String, f64, f64, String)>> = None;
                 // The per-take accent attenuation, resolved once with the
                 // peaks: a take whose SNR sits under 15 dB is a take whose
                 // floor lives close under the voice, and an accent at its
@@ -11402,6 +12145,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // file was written, Some(false) after the model said it was
                 // absent - which stops every later peak from asking again.
                 let mut ai_accent: Option<bool> = None;
+                // Whether this machine's shelf can be listened to by CLAP:
+                // resolved once, the first time a search answers with a
+                // cached file to describe. Some(true) sends every later
+                // shop through the rank; Some(false) - the pair is not
+                // installed, or the one probe file would not decode -
+                // leaves the keyword ladder standing for the whole run,
+                // which is the honest answer, never a zero dressed as a
+                // similarity.
+                let mut clap_ear: Option<bool> = None;
+                // The shelf index, written once per run: the file the rank
+                // reads and how many records it holds (the rank's own
+                // limit, so the reply carries the whole order and not a
+                // clipped head of it). The attempt itself is also spent
+                // once - an index that would not write is not asked again
+                // on the next peak.
+                let mut shelf_index: Option<(String, u64)> = None;
+                let mut index_tried = false;
                 move |log| {
                     let peaks = peaks.get_or_insert_with(|| {
                         // Each peak carries the take it was measured on:
@@ -11423,7 +12183,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // knows.
                         let read = emotion_lines(log, &sfx_emotion);
                         if !read.is_empty() {
-                            found.retain(|(take, time, _)| {
+                            found.retain(|(take, time, _, _)| {
                                 emotion_at(&read, take, *time).is_some_and(|line| {
                                     line.emotion != "neutral" && line.intensity >= 0.5
                                 })
@@ -11453,7 +12213,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // emphasis the delivery cannot hold. A line with no
                         // voice-quality reading keeps its peak - unmeasured
                         // is not the same answer as hoarse.
-                        found.retain(|(take, time, _)| {
+                        found.retain(|(take, time, _, _)| {
                             voice_read_of(&voice, take)
                                 .and_then(|voice_read| {
                                     voice_read
@@ -11463,16 +12223,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .is_none_or(|clean| clean)
                         });
                         // A reverberant take smears anything tight-synced to
-                        // a word: the forensic ear's own tail estimate over
-                        // 0.4 s retires the peak, because an accent timed
-                        // to the sample under a room's tail is a smear, not
-                        // a hit - the accent the ear cannot hold is an
-                        // accent the mix must not place. A take with no
-                        // tail reading keeps its peaks: unmeasured is not
-                        // the same answer as reverberant.
-                        found.retain(|(take, _, _)| {
-                            voice_read_of(&voice, take)
-                                .and_then(|voice_read| voice_read.take_wide.reverb_tail_sec)
+                        // a word: the room's tail over 0.4 s retires the
+                        // peak, because an accent timed to the sample
+                        // under a tail is a smear, not a hit - the accent
+                        // the ear cannot hold is an accent the mix must
+                        // not place. The tail the voice-quality door
+                        // measured on the shipped take outranks the
+                        // forensic ear's estimate, and a take with
+                        // neither reading keeps its peaks: unmeasured is
+                        // not the same answer as reverberant.
+                        found.retain(|(take, _, _, _)| {
+                            room_rt60_of(log, take)
+                                .or_else(|| {
+                                    voice_read_of(&voice, take)
+                                        .and_then(|voice_read| voice_read.take_wide.reverb_tail_sec)
+                                })
                                 .is_none_or(|tail| tail <= 0.4)
                         });
                         // The strongest six, earliest first: the run's
@@ -11504,6 +12269,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries,
                             tried,
+                            context,
                         }) => {
                             // The generator's own reply: a written file is
                             // placed the way a shelf hit is, and a model
@@ -11537,6 +12303,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     queries: queries.clone(),
                                     tried,
                                     query: queries[0],
+                                    context,
                                 });
                                 return Some(call(
                                     "sounds_add",
@@ -11555,6 +12322,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 queries: queries.clone(),
                                 tried,
                                 query,
+                                context,
                             });
                             return Some(call(
                                 "sounds_search",
@@ -11568,98 +12336,399 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             at,
                             gain_db,
                             queries,
-                            mut tried,
+                            tried,
                             query,
+                            context,
                         }) => {
-                            // The search's answer: the first hit this run
-                            // has not already spent, accents being short -
-                            // a five-second ambience is a bed, not an
-                            // accent, whatever word the query shared.
-                            let hits: Vec<&Value> = log
+                            // The search's own rows: the keyword gate has
+                            // already spoken - these are the family's
+                            // candidates, and the only question left is
+                            // their ORDER.
+                            let hits: Vec<Value> = log
                                 .last()
                                 .and_then(|reply| {
                                     reply.get("sounds").and_then(|sounds| sounds.as_array())
                                 })
-                                .into_iter()
-                                .flatten()
-                                .collect();
-                            let fresh: Vec<&Value> = hits
-                                .iter()
-                                .copied()
-                                .filter(|hit| {
-                                    hit.get("id")
-                                        .and_then(|id| id.as_str())
-                                        .is_some_and(|id| !used.iter().any(|spent| spent == id))
+                                .cloned()
+                                .unwrap_or_default();
+                            // The ear, when it can still be spent: a run
+                            // that has not yet learned whether this machine
+                            // can hear asks the one cheap question first,
+                            // and a run that has an index in hand goes
+                            // straight to the rank. A search that answered
+                            // with no cached file at all has nothing the
+                            // ear could listen to, so the ladder answers
+                            // alone - the ear stays unresolved, because a
+                            // later family's search may yet name a file.
+                            if clap_ear != Some(false)
+                                && let Some(local) = hits
+                                    .iter()
+                                    .find_map(|hit| hit["localPath"].as_str())
+                                    .map(str::to_owned)
+                            {
+                                if clap_ear.is_none() {
+                                    pending = Some(SfxPending::Ear {
+                                        at,
+                                        gain_db,
+                                        queries,
+                                        tried,
+                                        query,
+                                        context,
+                                        hits,
+                                    });
+                                    return Some(call(
+                                        "sense_sound_model",
+                                        json!({
+                                            "action": "describe",
+                                            "file": local,
+                                        }),
+                                    ));
+                                }
+                                if let Some((index, count)) = shelf_index.clone() {
+                                    pending = Some(SfxPending::Ranked {
+                                        at,
+                                        gain_db,
+                                        queries,
+                                        tried,
+                                        query,
+                                        context: context.clone(),
+                                        hits,
+                                    });
+                                    return Some(call(
+                                        "sense_sound_model",
+                                        json!({
+                                            "action": "rank",
+                                            "index": index,
+                                            "query": context,
+                                            "role": sfx_role_for_query(query),
+                                            "limit": count,
+                                        }),
+                                    ));
+                                }
+                                if !index_tried {
+                                    // The attempt is spent the moment it is
+                                    // asked, the way a hit is spent at the
+                                    // add: an index that refuses is not
+                                    // re-asked on every later peak.
+                                    index_tried = true;
+                                    let dir = std::path::Path::new(&local)
+                                        .parent()
+                                        .and_then(|dir| dir.to_str())
+                                        .unwrap_or_default()
+                                        .to_owned();
+                                    pending = Some(SfxPending::Index {
+                                        at,
+                                        gain_db,
+                                        queries,
+                                        tried,
+                                        query,
+                                        context,
+                                        hits,
+                                    });
+                                    return Some(call(
+                                        "sense_sound_model",
+                                        json!({
+                                            "action": "index",
+                                            "dir": dir,
+                                        }),
+                                    ));
+                                }
+                            }
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
+                                    at,
+                                    gain_db,
+                                    queries: &queries,
+                                    tried,
+                                    query,
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                // The family is spent: the peak goes
+                                // unaccented, the way a mixer with a thin
+                                // shelf leaves it.
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
+                            }
+                        }
+                        Some(SfxPending::Ear {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                            query,
+                            context,
+                            hits,
+                        }) => {
+                            // The probe's own word: the describe reply's
+                            // model block says whether CLAP is on this
+                            // machine, and a reply that could not be made
+                            // at all (a file that would not decode) is the
+                            // same answer - a shelf this run cannot hear.
+                            // Either way the reply stays in the log, so
+                            // the run's own record says why the accents
+                            // shopped by keyword.
+                            let heard = log
+                                .last()
+                                .filter(|reply| reply.get("ok") == Some(&json!(true)))
+                                .and_then(|reply| reply.pointer("/sound/model/state"))
+                                .and_then(Value::as_str)
+                                == Some("ready");
+                            clap_ear = Some(heard);
+                            if heard
+                                && let Some(local) = hits
+                                    .iter()
+                                    .find_map(|hit| hit["localPath"].as_str())
+                                    .map(str::to_owned)
+                                && let Some(dir) = std::path::Path::new(&local)
+                                    .parent()
+                                    .and_then(|dir| dir.to_str())
+                            {
+                                index_tried = true;
+                                pending = Some(SfxPending::Index {
+                                    at,
+                                    gain_db,
+                                    queries,
+                                    tried,
+                                    query,
+                                    context,
+                                    hits,
+                                });
+                                return Some(call(
+                                    "sense_sound_model",
+                                    json!({
+                                        "action": "index",
+                                        "dir": dir,
+                                    }),
+                                ));
+                            }
+                            // No ear: the ladder's own order stands, and
+                            // stands for the rest of the run.
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
+                                    at,
+                                    gain_db,
+                                    queries: &queries,
+                                    tried,
+                                    query,
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
+                            }
+                        }
+                        Some(SfxPending::Index {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                            query,
+                            context,
+                            hits,
+                        }) => {
+                            // The index's own reply: `out` names the file
+                            // the rank reads and `count` how many records
+                            // it holds - the limit that keeps the rank's
+                            // answer whole rather than a clipped head. An
+                            // index that wrote nothing, or whose model
+                            // block says the pair went absent between the
+                            // probe and the walk, leaves the ladder to
+                            // answer - and marks the ear spent so no later
+                            // peak pays for the rank it cannot use.
+                            let reply = log.last();
+                            let model_ready = reply
+                                .and_then(|reply| reply.pointer("/model/state"))
+                                .and_then(Value::as_str)
+                                == Some("ready");
+                            let index = reply
+                                .filter(|reply| reply.get("ok") == Some(&json!(true)))
+                                .and_then(|reply| reply.get("out"))
+                                .and_then(Value::as_str)
+                                .map(str::to_owned);
+                            let count = reply
+                                .and_then(|reply| reply.get("count"))
+                                .and_then(Value::as_u64);
+                            if !model_ready {
+                                clap_ear = Some(false);
+                            }
+                            if let (Some(index), Some(count)) = (index, count)
+                                && model_ready
+                                && count > 0
+                            {
+                                shelf_index = Some((index.clone(), count));
+                                pending = Some(SfxPending::Ranked {
+                                    at,
+                                    gain_db,
+                                    queries,
+                                    tried,
+                                    query,
+                                    context: context.clone(),
+                                    hits,
+                                });
+                                return Some(call(
+                                    "sense_sound_model",
+                                    json!({
+                                        "action": "rank",
+                                        "index": index,
+                                        "query": context,
+                                        "role": sfx_role_for_query(query),
+                                        "limit": count,
+                                    }),
+                                ));
+                            }
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
+                                    at,
+                                    gain_db,
+                                    queries: &queries,
+                                    tried,
+                                    query,
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
+                            }
+                        }
+                        Some(SfxPending::Ranked {
+                            at,
+                            gain_db,
+                            queries,
+                            tried,
+                            query,
+                            context,
+                            hits,
+                        }) => {
+                            // The rank's own reply: the ear's order, best
+                            // first, each row a file the index measured. A
+                            // row is spent only where it names a file the
+                            // keyword gate actually offered - the family's
+                            // own candidate, matched by the cached file the
+                            // search handed back - and the same two gates
+                            // the ladder keeps (unspent, an accent and not
+                            // a bed) still apply, because a rank that loved
+                            // a six-second ambience has not made it an
+                            // accent. A reply that is not ok, or whose
+                            // model block says the pair was never there,
+                            // is no order at all: the ladder's own order
+                            // stands, never a measured-looking number
+                            // invented for the files the ear never heard.
+                            let candidates = log
+                                .last()
+                                .filter(|reply| {
+                                    reply.get("ok") == Some(&json!(true))
+                                        && reply.pointer("/model/state") == Some(&json!("ready"))
                                 })
-                                .collect();
-                            // An accent is a hit, not a bed: when every
-                            // unspent hit runs past three seconds the word
-                            // moves on to its next query rather than
-                            // placing a six-second ambience at -9 dB (the
-                            // shelf carries sounds up to 40 s; "drone" and
-                            // "ambience" families return nothing shorter).
-                            let chosen = fresh.iter().copied().find(|hit| {
-                                hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0)
-                            });
-                            if let Some(hit) = chosen {
-                                let id = hit["id"].as_str().unwrap_or_default().to_owned();
-                                // The manifest's own `syncAt` says how far
-                                // into the file the sound lands its peak:
-                                // the add is offset by exactly that, so the
-                                // peak meets the moment the emphasis
-                                // measured - not the file's first byte. The
-                                // check below then holds that placement
-                                // against the file itself, which is where a
-                                // stale manifest answer is caught.
-                                let sync = hit["syncAt"]
-                                    .as_f64()
-                                    .filter(|sync| sync.is_finite() && *sync >= 0.0)
-                                    .unwrap_or(0.0);
-                                let start = round3((at - sync).max(0.0));
-                                pending = Some(SfxPending::Add {
+                                .and_then(|reply| reply.get("candidates"))
+                                .and_then(Value::as_array);
+                            if let Some(candidates) = candidates {
+                                for candidate in candidates {
+                                    let Some(file) = candidate["file"].as_str() else {
+                                        continue;
+                                    };
+                                    let Some(hit) = hits.iter().find(|hit| {
+                                        hit["localPath"].as_str().and_then(|local| {
+                                            std::path::Path::new(local)
+                                                .file_name()
+                                                .and_then(|name| name.to_str())
+                                        }) == Some(file)
+                                    }) else {
+                                        continue;
+                                    };
+                                    let Some(id) = hit["id"].as_str() else {
+                                        continue;
+                                    };
+                                    if used.iter().any(|spent| spent == id) {
+                                        continue;
+                                    }
+                                    if !hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0) {
+                                        continue;
+                                    }
+                                    // The hit the ear chose: placed exactly
+                                    // as the ladder would place it, the
+                                    // manifest's own `syncAt` included, so
+                                    // the placement check below holds this
+                                    // pick to the same standard as any
+                                    // other.
+                                    let sync = hit["syncAt"]
+                                        .as_f64()
+                                        .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                                        .unwrap_or(0.0);
+                                    let start = round3((at - sync).max(0.0));
+                                    pending = Some(SfxPending::Add {
+                                        at,
+                                        gain_db,
+                                        start,
+                                        id: id.to_owned(),
+                                        queries,
+                                        tried,
+                                        query,
+                                        context,
+                                    });
+                                    return Some(call(
+                                        "sounds_add",
+                                        json!({
+                                            "path": sfx_project,
+                                            "id": id,
+                                            "start": start,
+                                        }),
+                                    ));
+                                }
+                            }
+                            match walk_the_ladder(
+                                &sfx_project,
+                                &hits,
+                                &used,
+                                rotation,
+                                AccentShop {
                                     at,
                                     gain_db,
-                                    start,
-                                    id: id.clone(),
-                                    queries,
+                                    queries: &queries,
                                     tried,
                                     query,
-                                });
-                                return Some(call(
-                                    "sounds_add",
-                                    json!({
-                                        "path": sfx_project,
-                                        "id": id,
-                                        "start": start,
-                                    }),
-                                ));
+                                    context: &context,
+                                },
+                            ) {
+                                SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
+                                    pending = Some(next);
+                                    return Some(call);
+                                }
+                                SfxLadder::Spent => {
+                                    placed += 1;
+                                    rotation = rotation.wrapping_add(1);
+                                }
                             }
-                            // Every hit the word answered is spent or absent:
-                            // the family's next word, and the peak is dropped
-                            // only when the family is exhausted - one empty
-                            // shelf answer is not a peak without a sound.
-                            tried += 1;
-                            if tried < queries.len() {
-                                let query = queries[(rotation + tried) % queries.len()];
-                                pending = Some(SfxPending::Pick {
-                                    at,
-                                    gain_db,
-                                    queries,
-                                    tried,
-                                    query,
-                                });
-                                return Some(call(
-                                    "sounds_search",
-                                    json!({
-                                        "query": query,
-                                        "limit": 3,
-                                    }),
-                                ));
-                            }
-                            // The family is spent: the peak goes unaccented,
-                            // the way a mixer with a thin shelf leaves it.
-                            placed += 1;
-                            rotation = rotation.wrapping_add(1);
                         }
                         Some(SfxPending::Add {
                             at,
@@ -11669,6 +12738,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             queries,
                             tried,
                             query,
+                            context,
                         }) => {
                             // The accent is spent the moment it is placed:
                             // the id goes on the `used` list whether the
@@ -11727,6 +12797,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     queries,
                                     tried,
                                     clip_id: clip_id.clone(),
+                                    context,
                                 });
                                 return Some(call(
                                     "sense_sound",
@@ -11750,6 +12821,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             queries,
                             tried,
                             clip_id,
+                            context,
                         }) => {
                             let checked = log.last();
                             let issues = checked
@@ -11792,6 +12864,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     gain_db,
                                     queries,
                                     tried,
+                                    context,
                                 });
                                 return Some(call(
                                     "clips_remove",
@@ -11862,6 +12935,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries,
                             mut tried,
+                            context,
                         }) => {
                             // The broken accent is off the lane; the family's
                             // next word shops the peak again, and the peak
@@ -11877,6 +12951,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     queries,
                                     tried,
                                     query,
+                                    context,
                                 });
                                 return Some(call(
                                     "sounds_search",
@@ -11907,7 +12982,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // the emotion read there names the sound.
                     let (take, moment) = peaks
                         .get(placed)
-                        .map(|(take, moment, _)| (take.clone(), *moment))
+                        .map(|(take, moment, _, _)| (take.clone(), *moment))
                         .unwrap_or_default();
                     let read = emotion_lines(log, &sfx_emotion);
                     let line = emotion_at(&read, &take, moment);
@@ -11928,7 +13003,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     };
                     let strength = peaks
                         .get(placed)
-                        .map(|(_, _, strength)| *strength)
+                        .map(|(_, _, strength, _)| *strength)
                         .unwrap_or(0.5);
                     // The level this accent lands at: the strength's own
                     // bucket, attenuated by the take's own noise penalty -
@@ -11941,6 +13016,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         .map(|(_, penalty)| *penalty)
                         .unwrap_or(0.0);
                     let gain_db = accent_gain_db(strength) - penalty;
+                    // The question the CLAP ear will be asked about this
+                    // accent, built here because the peak's own word and
+                    // line are in hand here and nowhere else: the register
+                    // the first shelf word translates to, the word the
+                    // voice stressed, the line it was spoken in, the mood
+                    // the line read in. The ladder's word below is the
+                    // net; this is what the ear listens FOR.
+                    let word = peaks
+                        .get(placed)
+                        .map(|(_, _, _, word)| word.clone())
+                        .unwrap_or_default();
+                    let context = sfx_clap_query(
+                        sfx_role_for_query(queries[rotation % queries.len()]),
+                        &word,
+                        line,
+                        &emotion,
+                    );
                     // The generator first, when the machine has one: the
                     // hook is the one accent worth the heavier model, and
                     // every other peak is a short sound the small model
@@ -11954,6 +13046,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             gain_db,
                             queries: queries.clone(),
                             tried: 0,
+                            context,
                         });
                         return Some(call(
                             "sense_sound_model",
@@ -11974,6 +13067,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         queries: queries.clone(),
                         tried: 0,
                         query,
+                        context,
                     });
                     Some(call(
                         "sounds_search",
@@ -12451,37 +13545,54 @@ mod tests {
         // The repair is fanned, one lane per take, and its chain lands on
         // the take the timeline plays: the export ships the repaired
         // sound, the watcher's own promise. The lane measures before it
-        // repairs: diagnose_take first (its reply sits in the log where
-        // the critic reads what the repair was chosen on), the
-        // enhancement second, and only then the repair the diagnosis
-        // ordered - a hum gets its notch, a DC offset its blocker, a
-        // muffled take a presence lift instead of the denoise that
-        // would deepen it.
+        // repairs: the room first (the voice-quality door's verdict is
+        // the reading every repair answer is read against), diagnose_take
+        // second (its reply sits in the log where the critic reads what
+        // the repair was chosen on), the enhancement third, the repair
+        // the diagnosis ordered fourth - a hum gets its notch, a DC
+        // offset its blocker, a muffled take a presence lift instead of
+        // the denoise that would deepen it - and the room's tail last,
+        // measured on the take the timeline will actually play.
         let ProgramStep::Fanned(repair) = &program.steps[1] else {
             panic!("the repair is fanned");
         };
         assert_eq!(repair.groups.len(), 2, "one lane per take");
-        assert_eq!(repair.groups[0][0].tool, "sense_audio_repair");
-        assert_eq!(repair.groups[0][0].arguments["action"], "diagnose_take");
+        assert_eq!(repair.groups[0][0].tool, "sense_voice_quality");
+        assert_eq!(
+            repair.groups[0][0].arguments["action"],
+            "classify_recording_quality"
+        );
         assert_eq!(
             repair.groups[0][0].arguments["audio"],
             source.takes[0].take.as_str()
         );
-        assert_eq!(repair.groups[0][1].arguments["action"], "enhance_speech");
+        assert_eq!(repair.groups[0][1].tool, "sense_audio_repair");
+        assert_eq!(repair.groups[0][1].arguments["action"], "diagnose_take");
         assert_eq!(
-            repair.groups[0][1].arguments["out"],
+            repair.groups[0][1].arguments["audio"],
+            source.takes[0].take.as_str()
+        );
+        assert_eq!(repair.groups[0][2].arguments["action"], "enhance_speech");
+        assert_eq!(
+            repair.groups[0][2].arguments["out"],
             source.takes[0].enhanced.as_str()
         );
         assert_eq!(
-            repair.groups[0][2].arguments["action"],
+            repair.groups[0][3].arguments["action"],
             "repair_by_diagnosis"
         );
         assert_eq!(
-            repair.groups[0][2].arguments["audio"],
+            repair.groups[0][3].arguments["audio"],
             source.takes[0].enhanced.as_str()
         );
         assert_eq!(
-            repair.groups[0][2].arguments["out"],
+            repair.groups[0][3].arguments["out"],
+            source.takes[0].take.as_str()
+        );
+        assert_eq!(repair.groups[0][4].tool, "sense_voice_quality");
+        assert_eq!(repair.groups[0][4].arguments["action"], "measure_reverb");
+        assert_eq!(
+            repair.groups[0][4].arguments["audio"],
             source.takes[0].take.as_str()
         );
 
@@ -12569,6 +13680,26 @@ mod tests {
         // The fan compile-time proof the type system wanted: the repair
         // grouping is the FanStep the runner fans out.
         let _: &FanStep = repair;
+    }
+
+    #[test]
+    fn a_metronomic_delivery_snaps_its_seam_tighter() {
+        // 0.9 s per syllable: a third is a 0.3 s blend, a quarter is
+        // 0.225 s. The meter is the only thing that moved.
+        assert_eq!(seam_blend(Some(0.9), None), 0.3);
+        assert_eq!(
+            seam_blend(Some(0.9), Some("regular (metronomic delivery)")),
+            0.225
+        );
+        assert_eq!(seam_blend(Some(0.9), Some("loosely regular")), 0.3);
+        // The clamp holds the floor and the ceiling whatever the share.
+        assert_eq!(
+            seam_blend(Some(0.2), Some("regular (metronomic delivery)")),
+            0.2
+        );
+        assert_eq!(seam_blend(Some(9.0), None), 0.6);
+        // No period at all is the blend the program shipped with.
+        assert_eq!(seam_blend(None, Some("regular (metronomic delivery)")), 0.3);
     }
 
     /// A stressed word really does reach the captions: the log entry has
@@ -13293,6 +14424,14 @@ mod tests {
             "visualQuality",
             "saliency",
             "scene",
+            // The voice-quality door's families: the room verdict and tail
+            // the mix decisions read, the restart spans the assemble
+            // decision marks.
+            "room",
+            "restarts",
+            // The delivery's rhythm, measured by the prosody door: the
+            // syllable period and whether the beat is real.
+            "rhythmMeter",
         ];
         // Families the vocabulary names but this program deliberately does
         // not spend, and why. Each is a real reading the profile makes; the
@@ -13872,6 +15011,7 @@ mod tests {
                             | "grade"
                             | "sfx"
                             | "motion"
+                            | "assemble"
                     ),
                     "{family} claims {decision:?}, which is not a logged decision"
                 );
@@ -14212,7 +15352,7 @@ mod tests {
             if let Some(range) = range {
                 prosody = json!({ "pitchRangeSemitones": range });
             }
-            let log = vec![
+            let mut log = vec![
                 view,
                 json!({
                     "path": "/edits/Reel/voiceover/take-000-a.wav",
@@ -14223,7 +15363,7 @@ mod tests {
                     "lines": [{ "start": 0.5, "end": 1.5, "prosody": prosody }],
                 }),
             ];
-            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            let call = captions_edit_after_readings(captions, &mut log);
             let style = &call.arguments["command"]["commands"][0]["style"];
             (
                 style["fontWeight"].as_f64().expect("a weight"),
@@ -14347,9 +15487,9 @@ mod tests {
             ]},
         })];
         let peaks = [
-            ("/takes/a.wav".to_owned(), 1.0, 0.9),
-            ("/takes/a.wav".to_owned(), 50.0, 0.8),
-            ("/takes/b.wav".to_owned(), 2.0, 0.7),
+            ("/takes/a.wav".to_owned(), 1.0, 0.9, "first".to_owned()),
+            ("/takes/a.wav".to_owned(), 50.0, 0.8, "late".to_owned()),
+            ("/takes/b.wav".to_owned(), 2.0, 0.7, "this".to_owned()),
         ];
         let mut placed = 1;
         assert_eq!(
@@ -15122,7 +16262,7 @@ mod tests {
             view,
             json!({ "path": "/edits/Reel/voiceover/take-000-a.wav", "output": transcript.to_string() }),
         ];
-        let first = (captions.next)(log.as_slice()).expect("the captions are placed");
+        let first = captions_edit_after_readings(captions, &mut log);
         assert_eq!(first.tool, "edit_apply");
         // The edit's own reply: another view. The stage is done.
         log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
@@ -15131,6 +16271,163 @@ mod tests {
             None,
             "the captions are issued once"
         );
+    }
+
+    /// The handoff's own acceptance test: a transcript whose every word
+    /// time is shifted +0.4 s past the audio, an align door that
+    /// measured the drift, and captions that land where the audio
+    /// actually says the words - not where the recogniser's clock
+    /// claimed. The same walk with no drift answer keeps the words' own
+    /// claim, which is the old behaviour, unchanged.
+    #[test]
+    fn the_captions_follow_the_measured_drift_not_the_words_claim() {
+        use concat_director::ProgramStep;
+
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let view = json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        // Every word time sits 0.4 s late: the recogniser's clock
+        // drifted, the way a four-minute take's does.
+        let drifted = json!({
+            "segments": [{
+                "start": 0.9, "end": 1.9, "text": "hello there",
+                "words": [
+                    { "text": "hello", "start": 0.9, "end": 1.3 },
+                    { "text": "there", "start": 1.35, "end": 1.9 },
+                ],
+            }],
+        });
+        let build = |drift: Option<f64>| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(captions) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "captions")
+                .expect("the program has a captions stage")
+            else {
+                panic!("the captions stage is derived");
+            };
+            let mut log = vec![
+                view.clone(),
+                json!({ "path": take, "output": drifted.to_string() }),
+            ];
+            // The align read is asked, and answers with the drift the
+            // audio measured - or with no drift at all.
+            let align = (captions.next)(log.as_slice()).expect("the align read is asked");
+            assert_eq!(align.tool, "sense_captions");
+            log.push(json!({
+                "tool": "align_captions", "ok": true,
+                "action": "align_captions",
+                "audio": align.arguments["audio"].clone(),
+                "driftSeconds": drift, "cues": [],
+            }));
+            let ai = (captions.next)(log.as_slice()).expect("the ai read is asked");
+            log.push(json!({
+                "tool": "detect_ai_voice", "ok": true,
+                "action": "detect_ai_voice",
+                "audio": ai.arguments["audio"].clone(),
+                "aiLikeness": { "score": 5, "band": "likely human" },
+            }));
+            let clean = (captions.next)(log.as_slice()).expect("the clean read is asked");
+            let lines = clean.arguments["lines"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let cues: Vec<Value> = lines
+                .iter()
+                .map(|line| json!({ "start": line["start"], "end": line["end"], "text": line["text"] }))
+                .collect();
+            log.push(json!({
+                "tool": "clean_subtitles", "ok": true,
+                "action": "clean_subtitles",
+                "audio": clean.arguments["audio"].clone(),
+                "cues": cues,
+            }));
+            let edit = (captions.next)(log.as_slice()).expect("the captions are placed");
+            edit.arguments["command"]["commands"][0]["start"]
+                .as_f64()
+                .expect("the caption carries its start")
+        };
+        // The drift measured: the caption lands at the audio's 0.5,
+        // not the words' claimed 0.9 - the 0.4 the recogniser's clock
+        // added is snapped out before the group is cut.
+        assert_eq!(
+            build(Some(0.4)),
+            0.5,
+            "the measured drift moves the caption back to the audio"
+        );
+        // No drift answer: the words' own claim stands, as it always did.
+        assert_eq!(
+            build(None),
+            0.9,
+            "an unmeasured drift leaves the words' own times"
+        );
+    }
+
+    /// Steps the captions stage through its reading phases - the align
+    /// read, the synthetic-voice read, the clean read - feeding each
+    /// door the no-op answer a clean transcript earns, until the
+    /// captions edit itself is asked for. The drift, when a test wants
+    /// one, is fed by the test before the walk: the reply the helper
+    /// pushes never claims a drift the words did not measure.
+    fn captions_edit_after_readings(
+        captions: &mut concat_director::DerivedStep,
+        log: &mut Vec<Value>,
+    ) -> ToolCall {
+        let align = (captions.next)(log).expect("the align read is asked");
+        assert_eq!(align.tool, "sense_captions");
+        assert_eq!(align.arguments["action"], json!("align_captions"));
+        log.push(json!({
+            "tool": "align_captions", "ok": true,
+            "action": "align_captions",
+            "audio": align.arguments["audio"].clone(),
+            "driftSeconds": null, "cues": [],
+        }));
+        let ai = (captions.next)(log).expect("the synthetic-voice read is asked");
+        assert_eq!(ai.tool, "sense_captions");
+        assert_eq!(ai.arguments["action"], json!("detect_ai_voice"));
+        log.push(json!({
+            "tool": "detect_ai_voice", "ok": true,
+            "action": "detect_ai_voice",
+            "audio": ai.arguments["audio"].clone(),
+            "aiLikeness": { "score": 5, "band": "likely human" },
+        }));
+        let clean = (captions.next)(log).expect("the clean read is asked");
+        assert_eq!(clean.tool, "sense_captions");
+        assert_eq!(clean.arguments["action"], json!("clean_subtitles"));
+        let lines = clean.arguments["lines"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let cues: Vec<Value> = lines
+            .iter()
+            .map(|line| json!({ "start": line["start"], "end": line["end"], "text": line["text"] }))
+            .collect();
+        log.push(json!({
+            "tool": "clean_subtitles", "ok": true,
+            "action": "clean_subtitles",
+            "audio": clean.arguments["audio"].clone(),
+            "cues": cues,
+        }));
+        (captions.next)(log).expect("the captions are placed")
     }
 
     /// The caption groups are cut on the delivery's own seams: the
@@ -15230,7 +16527,7 @@ mod tests {
             json!({ "path": take, "output": transcript.to_string() }),
             signals,
         ];
-        let first = (captions.next)(log.as_slice()).expect("the groups are placed");
+        let first = captions_edit_after_readings(captions, &mut log);
         assert_eq!(first.tool, "edit_apply");
         assert_eq!(
             first.arguments["command"]["commands"][0]["style"]["content"], "hello there",
@@ -15310,7 +16607,7 @@ mod tests {
                     ],
                 }],
             });
-            let log = vec![
+            let mut log = vec![
                 view,
                 json!({
                     "path": "/edits/Reel/voiceover/take-000-a.wav",
@@ -15322,7 +16619,7 @@ mod tests {
                                 "loudness": { "relativeLu": relative_lu } }],
                 }),
             ];
-            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            let call = captions_edit_after_readings(captions, &mut log);
             call.arguments["command"]["commands"][0]["style"]["fontWeight"]
                 .as_f64()
                 .expect("the caption carries a weight")
@@ -15862,6 +17159,7 @@ mod tests {
             id: id.to_owned(),
             url: format!("https://x/{id}"),
             caption: format!("caption for {id}"),
+            author: "the shelf's own author".to_owned(),
             local_path: format!("/cache/{id}.mp4"),
             width: 1080.0,
             height: 1920.0,
@@ -17139,7 +18437,7 @@ mod tests {
         }];
         assert_eq!(
             emphasis_peaks(&reads),
-            vec![("/t/a.wav".to_owned(), 2.5, 0.85)]
+            vec![("/t/a.wav".to_owned(), 2.5, 0.85, "launch".to_owned())]
         );
     }
 
@@ -17750,6 +19048,564 @@ mod tests {
             .expect("the replacement must leave the next voiceover peak to be processed");
         assert_eq!(next_peak.tool, "sounds_search");
         assert_eq!(next_peak.arguments["query"], json!("ambience"));
+    }
+
+    /// The ear's one cheap question, and the two ways it answers no: the
+    /// first cached file a search hands back is described once, and a
+    /// machine whose CLAP pair is absent (or a file that will not decode)
+    /// keeps the keyword ladder for the rest of the run - the probe is
+    /// never paid for twice.
+    #[test]
+    fn a_shelf_the_machine_cannot_hear_keeps_the_keyword_ladder() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "timeline": { "clips": [{
+                    "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                    "sourceStart": 0.0, "speed": 1.0,
+                }]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        { "start": 5.0, "end": 9.0, "text": "the danger grew" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 4.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                    { "start": 5.0, "end": 9.0,
+                      "prosody": { "emphasisWords": [{ "word": "danger", "t": 6.0, "strength": 0.9 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    emotion_row(5.0, 9.0, "fear", 0.9, "tension", "cold", "drone"),
+                ],
+            }),
+        ];
+        assert_eq!(
+            (sfx.next)(&log).expect("the first generator is asked").tool,
+            "sense_sound_model"
+        );
+        log.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                         "generated": false }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the shelf is asked").tool,
+            "sounds_search"
+        );
+        // A cached hit: the file is on disk, so the ear's probe is worth
+        // its one question before the ladder spends anything.
+        log.push(json!({ "sounds": [
+            { "id": "hit-1", "duration": 0.8, "syncAt": 0.1,
+              "localPath": "/cache/hit-1.ogg" },
+        ] }));
+        let probe = (sfx.next)(&log).expect("the ear's probe is asked");
+        assert_eq!(probe.tool, "sense_sound_model");
+        assert_eq!(probe.arguments["action"], json!("describe"));
+        assert_eq!(probe.arguments["file"], json!("/cache/hit-1.ogg"));
+        // The model's own word: this machine cannot hear the shelf.
+        log.push(json!({ "tool": "describe", "ok": true,
+                         "sound": { "model": { "state": "absent" } } }));
+        let place = (sfx.next)(&log).expect("the ladder places its own first hit");
+        assert_eq!(place.tool, "sounds_add");
+        assert_eq!(place.arguments["id"], json!("hit-1"));
+        log.push(json!({ "clipId": "clip-1", "file": "/edits/Reel/audio/hit-1.ogg" }));
+        let check = (sfx.next)(&log).expect("the placement is checked");
+        assert_eq!(check.tool, "sense_sound");
+        log.push(json!({ "ok": true, "issues": [], "measured": { "moveBy": 0.0 } }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the accent is gained").tool,
+            "clip_audio_levels_db"
+        );
+        log.push(json!({ "ok": true }));
+        // The second peak's search answers with a cached file too, and the
+        // ear is not asked again: the spent `Some(false)` is the run's own
+        // answer for every later shop.
+        assert_eq!(
+            (sfx.next)(&log).expect("the next peak is shopped").tool,
+            "sounds_search"
+        );
+        log.push(json!({ "sounds": [
+            { "id": "hit-2", "duration": 0.7, "syncAt": 0.1,
+              "localPath": "/cache/hit-2.ogg" },
+        ] }));
+        let direct = (sfx.next)(&log).expect("the ladder answers alone");
+        assert_eq!(direct.tool, "sounds_add");
+        assert_eq!(direct.arguments["id"], json!("hit-2"));
+    }
+
+    /// The ear that can hear: the probe says the pair is ready, the shelf
+    /// is indexed once, and the rank's own order decides which cached hit
+    /// is placed - a rank that loved the ladder's second choice spends
+    /// that one, and the manifest's `syncAt` is honoured exactly as the
+    /// ladder honours it.
+    #[test]
+    fn a_ranking_ear_reorders_the_family_candidates() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "timeline": { "clips": [{
+                    "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                    "sourceStart": 0.0, "speed": 1.0,
+                }]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        { "start": 5.0, "end": 9.0, "text": "the danger grew" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 4.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                    { "start": 5.0, "end": 9.0,
+                      "prosody": { "emphasisWords": [{ "word": "danger", "t": 6.0, "strength": 0.9 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    emotion_row(5.0, 9.0, "fear", 0.9, "tension", "cold", "drone"),
+                ],
+            }),
+        ];
+        assert_eq!(
+            (sfx.next)(&log).expect("the first generator is asked").tool,
+            "sense_sound_model"
+        );
+        log.push(json!({ "tool": "generate", "ok": true, "model": "absent",
+                         "generated": false }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the shelf is asked").tool,
+            "sounds_search"
+        );
+        log.push(json!({ "sounds": [
+            { "id": "hit-1", "duration": 0.8, "syncAt": 0.1,
+              "localPath": "/cache/a.ogg" },
+            { "id": "hit-2", "duration": 0.9, "syncAt": 0.2,
+              "localPath": "/cache/b.ogg" },
+        ] }));
+        let probe = (sfx.next)(&log).expect("the ear's probe is asked");
+        assert_eq!(probe.arguments["action"], json!("describe"));
+        // The pair is on this machine: the shelf is indexed before any
+        // ranking question is asked.
+        log.push(json!({ "tool": "describe", "ok": true,
+                         "sound": { "model": { "state": "ready" } } }));
+        let index = (sfx.next)(&log).expect("the shelf is indexed");
+        assert_eq!(index.tool, "sense_sound_model");
+        assert_eq!(index.arguments["action"], json!("index"));
+        assert_eq!(index.arguments["dir"], json!("/cache"));
+        log.push(json!({ "tool": "index", "ok": true,
+                         "model": { "state": "ready" },
+                         "out": "/cache/sound-model-index.json", "count": 2 }));
+        let rank = (sfx.next)(&log).expect("the ear is asked to rank");
+        assert_eq!(rank.tool, "sense_sound_model");
+        assert_eq!(rank.arguments["action"], json!("rank"));
+        assert_eq!(
+            rank.arguments["index"],
+            json!("/cache/sound-model-index.json")
+        );
+        assert_eq!(rank.arguments["limit"], json!(2));
+        // The rank's own order: b.ogg first, and only rows the search
+        // actually offered can be spent.
+        log.push(json!({ "tool": "rank", "ok": true,
+                         "model": { "state": "ready" },
+                         "candidates": [
+                             { "file": "b.ogg", "fused": 1.4 },
+                             { "file": "a.ogg", "fused": 0.2 },
+                         ] }));
+        let place = (sfx.next)(&log).expect("the ear's own choice is placed");
+        assert_eq!(place.tool, "sounds_add");
+        assert_eq!(place.arguments["id"], json!("hit-2"));
+        // The manifest's syncAt is honoured exactly as the ladder honours
+        // it: the peak meets the moment the emphasis measured.
+        assert_eq!(place.arguments["start"], json!(0.8));
+        log.push(json!({ "clipId": "clip-1", "file": "/edits/Reel/audio/hit-2.ogg" }));
+        let check = (sfx.next)(&log).expect("the placement is checked");
+        assert_eq!(check.tool, "sense_sound");
+        log.push(json!({ "ok": true, "issues": [], "measured": { "moveBy": 0.0 } }));
+        assert_eq!(
+            (sfx.next)(&log).expect("the accent is gained").tool,
+            "clip_audio_levels_db"
+        );
+        log.push(json!({ "ok": true }));
+        // The second peak, on a machine the ear has already measured: the
+        // probe and the index are spent, so the shop goes straight to the
+        // rank - the steady state every later accent lives in.
+        assert_eq!(
+            (sfx.next)(&log).expect("the second peak is shopped").tool,
+            "sounds_search"
+        );
+        log.push(json!({ "sounds": [
+            { "id": "hit-3", "duration": 0.6, "syncAt": 0.0,
+              "localPath": "/cache/c.ogg" },
+        ] }));
+        let rank_again = (sfx.next)(&log).expect("the ear is asked to rank again");
+        assert_eq!(rank_again.tool, "sense_sound_model");
+        assert_eq!(rank_again.arguments["action"], json!("rank"));
+        assert_eq!(
+            rank_again.arguments["index"],
+            json!("/cache/sound-model-index.json")
+        );
+        log.push(json!({ "tool": "rank", "ok": true,
+                         "model": { "state": "ready" },
+                         "candidates": [
+                             { "file": "c.ogg", "fused": 0.9 },
+                         ] }));
+        let place_again = (sfx.next)(&log).expect("the ear's choice is placed again");
+        assert_eq!(place_again.tool, "sounds_add");
+        assert_eq!(place_again.arguments["id"], json!("hit-3"));
+    }
+
+    /// The room the voice-quality door measured outranks the forensic
+    /// ear's estimate: a take the estimate called reverberant keeps its
+    /// accents when the door measured a dry shipped room, and a take the
+    /// door measured reverberant loses them even when the estimate
+    /// dissented. The dedicated instrument decides; the estimate is the
+    /// fallback, never the second opinion.
+    #[test]
+    fn the_doors_tail_outranks_the_estimates() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let base = || {
+            vec![
+                json!({
+                    "timeline": { "clips": [{
+                        "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                        "sourceStart": 0.0, "speed": 1.0,
+                    }]},
+                    "media": [{ "id": "m1", "path": take }],
+                }),
+                json!({
+                    "path": take,
+                    "output": json!({
+                        "segments": [
+                            { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        ],
+                    }).to_string(),
+                }),
+                json!({
+                    "audio": { "path": take },
+                    "lines": [
+                        { "start": 0.0, "end": 4.0,
+                          "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                    ],
+                    // The forensic ear's estimate: a tail the old gate
+                    // retired the peak for. The take-wide readings live
+                    // under the profile's own `wholeTake` block.
+                    "wholeTake": { "forensic": { "reverbTailSec": 0.5 } },
+                }),
+                json!({
+                    "lines": [
+                        emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    ],
+                }),
+            ]
+        };
+        let generator_absent =
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false });
+
+        // The door measured the shipped take at 0.3 s: the estimate's
+        // 0.5 s does not retire the accent, and the peak is shopped.
+        let mut log = base();
+        log.push(json!({ "tool": "measure_reverb", "ok": true,
+                         "action": "measure_reverb", "audio": take, "rt60": 0.3 }));
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        assert_eq!(
+            (sfx.next)(&log).expect("the generator is asked").tool,
+            "sense_sound_model"
+        );
+        log.push(generator_absent);
+        assert!(
+            (sfx.next)(&log).is_some_and(|call| call.tool == "sounds_search"),
+            "a dry door reading keeps the accent the estimate would retire"
+        );
+
+        // The door measured 0.5 s: the peak retires whatever the
+        // estimate said, and the stage has nothing to shop - the first
+        // call is the stage's own end, no generator ask for a peak the
+        // room already retired.
+        let mut log = base();
+        log.push(json!({ "tool": "measure_reverb", "ok": true,
+                         "action": "measure_reverb", "audio": take, "rt60": 0.5 }));
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        assert!(
+            (sfx.next)(&log).is_none(),
+            "a reverberant door reading retires the accent the estimate kept"
+        );
+
+        // No door answer at all: the estimate stands, exactly as before
+        // the door existed - the fallback is the old behaviour, unchanged.
+        let log = base();
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        assert!(
+            (sfx.next)(&log).is_none(),
+            "an estimate with no door answer retires the accent, as it always did"
+        );
+    }
+
+    /// The room and its restarts reach the plan the run validates: the
+    /// verdict and the tail as `mix` decisions, the restart spans as
+    /// `assemble` marks in the timeline's own clock - and each entry
+    /// names a family the vocabulary accepts, with a confidence and a
+    /// note, or the plan's own gate would refuse the plan.
+    #[test]
+    fn the_plan_spends_the_room_and_marks_the_restarts() {
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let log = vec![
+            json!({
+                "timeline": { "clips": [{
+                    "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                    "sourceStart": 0.0, "speed": 1.0,
+                }]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 2.0, "text": "we found the wreck" },
+                        { "start": 3.0, "end": 5.0, "text": "it was not empty" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 2.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                ],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "wordConfidence", "confidence": 0.95 },
+                    { "signal": "pauses", "confidence": 0.75 },
+                    { "signal": "speechRate", "confidence": 0.9 },
+                    { "signal": "loudness", "confidence": 0.9 },
+                    { "signal": "speechRatio", "confidence": 0.9 },
+                    { "signal": "forensic", "confidence": 0.8 },
+                    { "signal": "prosody", "confidence": 0.85 },
+                    { "signal": "sentenceType", "confidence": 0.8 },
+                    { "signal": "motifs", "confidence": 0.7 },
+                    { "signal": "language", "confidence": 0.85 },
+                    { "signal": "speaker", "confidence": 0.7 },
+                    { "signal": "entities", "confidence": 0.8 },
+                    { "signal": "fillers", "confidence": 0.65 },
+                ] },
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 2.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    emotion_row(3.0, 5.0, "calm", 0.6, "reveal", "warm", "warm-pad"),
+                ],
+            }),
+            json!({
+                "tool": "classify_recording_quality", "ok": true,
+                "action": "classify_recording_quality", "audio": take,
+                "verdict": "home",
+                "measures": { "noiseFloorDbfs": -38.0, "snrDb": 18.0 },
+                "bgmDecision": "the floor is audible: BGM at or above the floor masks it",
+            }),
+            json!({
+                "tool": "measure_reverb", "ok": true,
+                "action": "measure_reverb", "audio": take, "rt60": 0.55,
+                "roomClass": "small room",
+            }),
+            json!({
+                "tool": "detect_restarts", "ok": true,
+                "action": "detect_restarts", "audio": take,
+                "restarts": [
+                    { "kind": "stalling_repeat", "cutSafe": true,
+                      "span": { "start": 1.0, "end": 1.6 } },
+                    { "kind": "abandoned_clause", "cutSafe": false,
+                      "span": { "start": 3.0, "end": 4.2 } },
+                ],
+            }),
+        ];
+        let plan = auto_plan(&log, &source.takes, &source)
+            .expect("the plan is written from the measured log");
+        let entries = plan["signalLog"].as_array().expect("a signalLog");
+        let room = entries
+            .iter()
+            .find(|entry| entry["signals"] == json!(["room.verdict"]))
+            .expect("the room verdict is logged");
+        assert_eq!(room["decision"], "mix");
+        assert!(
+            room["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("home")),
+            "the note names the verdict: {:?}",
+            room["note"]
+        );
+        let tail = entries
+            .iter()
+            .find(|entry| entry["signals"] == json!(["room.rt60"]))
+            .expect("the measured tail is logged");
+        assert!(
+            tail["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("0.55")),
+            "the note carries the measurement: {:?}",
+            tail["note"]
+        );
+        let marks: Vec<&Value> = entries
+            .iter()
+            .filter(|entry| entry["decision"] == "assemble")
+            .collect();
+        assert_eq!(marks.len(), 2, "both restart spans are marked: {entries:?}");
+        assert!(
+            marks.iter().any(|mark| mark["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("NOT safe to cut"))),
+            "the abandoned clause's mark says what the door said: {marks:?}"
+        );
+        // Every entry the room and restarts added is one the plan's own
+        // gate accepts: a family from the vocabulary, a confidence the
+        // stamping pass rated, a note that states the basis.
+        for entry in entries {
+            let decision = entry["decision"].as_str().expect("a decision");
+            assert!(
+                matches!(
+                    decision,
+                    "cut"
+                        | "caption"
+                        | "graphic"
+                        | "bgm"
+                        | "transition"
+                        | "pacing"
+                        | "repair"
+                        | "mix"
+                        | "grade"
+                        | "sfx"
+                        | "motion"
+                        | "assemble"
+                ),
+                "the gate accepts {decision:?}: {entry:?}"
+            );
+            for signal in entry["signals"].as_array().expect("signals") {
+                let signal = signal.as_str().expect("a signal name");
+                assert!(
+                    crate::tools::signal_vocabulary_has(signal),
+                    "signal {signal:?} is not one the vocabulary answers"
+                );
+            }
+            let confidence = entry["confidence"].as_f64().expect("a rated confidence");
+            assert!(
+                (0.0..=1.0).contains(&confidence) && confidence > 0.0,
+                "entry {entry:?} carries a usable confidence"
+            );
+        }
     }
 
     /// The plan the run writes is the one it measured, and it says which

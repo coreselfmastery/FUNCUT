@@ -2062,7 +2062,7 @@ mod tests {
 
     #[test]
     fn analysis_wait_is_attributed_to_the_stage_that_owns_the_job() {
-        let preflight = vec![StageRecord::completed(
+        let preflight = [StageRecord::completed(
             Stage::Preflight,
             vec!["analysis_wait".to_owned()],
         )];
@@ -2075,7 +2075,7 @@ mod tests {
             .expect("measurement capability is listed");
         assert!(!measurement.consumed);
 
-        let transcription = vec![StageRecord::completed(
+        let transcription = [StageRecord::completed(
             Stage::Transcribe,
             vec!["analysis_wait".to_owned()],
         )];

@@ -14654,11 +14654,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         let voice = voice_reads(log, &watch_source);
                         let mut peaks = emphasis_peaks(&voice);
                         peaks.sort_by(|left, right| right.2.total_cmp(&left.2));
-                        let view = latest_view(log);
-                        let media = view.map(media_paths);
+                        let Some(view) = latest_view(log) else {
+                            return None;
+                        };
+                        let media = media_paths(view);
                         let candidates: Vec<f64> = peaks
                             .iter()
-                            .filter_map(|(take, at, ..)| timeline_at(view, &media?, take, *at))
+                            .filter_map(|(take, at, ..)| timeline_at(view, &media, take, *at))
                             .take(3)
                             .collect();
                         if candidates.is_empty() {
@@ -14667,11 +14669,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         watch_thumbnails = candidates;
                         phase = 3;
                     }
-                    if let (Some(at), rest) = (
-                        watch_thumbnails.first().copied(),
-                        watch_thumbnails.get(1..).copied().collect::<Vec<_>>(),
-                    ) {
-                        watch_thumbnails = rest;
+                    if let Some(at) = watch_thumbnails.first().copied() {
+                        watch_thumbnails.remove(0);
                         return Some(call(
                             "preview_frame",
                             json!({

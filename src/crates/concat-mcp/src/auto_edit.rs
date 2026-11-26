@@ -121,12 +121,8 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             Arc::new(Toolbox::new()),
             Arc::clone(&lane_cancel),
         );
-        let outcome = runner.run_with_lanes_and_cancellation(
-            &mut program,
-            &mut caller,
-            &lanes,
-            cancelled,
-        );
+        let outcome =
+            runner.run_with_lanes_and_cancellation(&mut program, &mut caller, &lanes, cancelled);
         drop(_run_ends);
         outcome
     });

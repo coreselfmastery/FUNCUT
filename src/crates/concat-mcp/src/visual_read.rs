@@ -141,9 +141,7 @@ impl VisualRead {
             depth: models.and_then(|row| {
                 let said = row.get("depth")?;
                 Some((
-                    said.get("nearShare")
-                        .and_then(Value::as_f64)
-                        .unwrap_or(0.5),
+                    said.get("nearShare").and_then(Value::as_f64).unwrap_or(0.5),
                     said.get("verdict")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
@@ -435,11 +433,7 @@ mod tests {
             "{read:?}"
         );
         assert_eq!(read.depth, Some((0.22, "deep".to_owned())), "{read:?}");
-        assert_eq!(
-            read.action,
-            Some(("running".to_owned(), 0.74)),
-            "{read:?}"
-        );
+        assert_eq!(read.action, Some(("running".to_owned(), 0.74)), "{read:?}");
         assert_eq!(read.aesthetic, Some(0.63));
 
         // The classifier's word outranks the classical three where the

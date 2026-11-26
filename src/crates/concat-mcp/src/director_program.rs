@@ -8150,7 +8150,10 @@ fn whisper_preflight(log: &[Value]) -> Option<ToolCall> {
     // transcriber stage itself gives a lane two waits; preflight keeps
     // the same budget, so a job still running after the second wait
     // fails here rather than polling indefinitely.
-    let waits = log.iter().filter(|reply| reply.get("state").is_some()).count();
+    let waits = log
+        .iter()
+        .filter(|reply| reply.get("state").is_some())
+        .count();
     if let Some(last) = log.iter().rev().find(|reply| reply.get("state").is_some()) {
         if last["state"] != "running" || waits >= 2 {
             return None;
@@ -9980,9 +9983,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 if let Some((near_share, _)) =
                                     read.and_then(|read| read.depth.as_ref())
                                 {
-                                    if near_share < 0.4 {
+                                    if *near_share < 0.4 {
                                         drift += 0.01;
-                                    } else if near_share > 0.6 {
+                                    } else if *near_share > 0.6 {
                                         drift -= 0.01;
                                     }
                                 }
@@ -10120,9 +10123,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // reading across the turn. No turns
                                     // measured and the group goes in as
                                     // it came.
-                                    for mut group in
-                                        split_at_speaker_changes(base, take_read)
-                                    {
+                                    for mut group in split_at_speaker_changes(base, take_read) {
                                         group.take = take.clone();
                                         // The opening bound must land inside a
                                         // surviving piece (a caption whose
@@ -10139,12 +10140,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         // B-roll slot bounds already get.
                                         let (Some(at), Some(to)) = (
                                             timeline_at(view, &media, &take, group.start),
-                                            timeline_at_or_before(
-                                                view,
-                                                &media,
-                                                &take,
-                                                group.end,
-                                            ),
+                                            timeline_at_or_before(view, &media, &take, group.end),
                                         ) else {
                                             continue;
                                         };
@@ -12320,7 +12316,10 @@ mod tests {
             parts.len(),
             2,
             "{:?}",
-            parts.iter().map(|part| part.text.clone()).collect::<Vec<_>>()
+            parts
+                .iter()
+                .map(|part| part.text.clone())
+                .collect::<Vec<_>>()
         );
         assert_eq!(parts[0].text, "right yes");
         assert_eq!(parts[0].start, 1.0);

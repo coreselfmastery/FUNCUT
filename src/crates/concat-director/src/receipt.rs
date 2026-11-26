@@ -1774,7 +1774,10 @@ mod tests {
             evidence.contains("1 of 2 take profile(s) were read without the voice-signals binary"),
             "{evidence}"
         );
-        assert!(evidence.contains("cargo build -p voice-signals"), "{evidence}");
+        assert!(
+            evidence.contains("cargo build -p voice-signals"),
+            "{evidence}"
+        );
         // The same profiles with the degradation gone pass: the check
         // rides on the field the reading itself wrote, never on a guess.
         let healed = json!({

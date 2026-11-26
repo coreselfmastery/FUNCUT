@@ -821,6 +821,10 @@ impl ForgePane {
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
     fn auto_edit_start(&mut self, script: String, orientation: String, studio: &mut Studio) {
+        // The page's pick arrives as a word, the empty word meaning "the
+        // project's own frame": an empty pick is no pick at all.
+        let trimmed = orientation.trim().to_owned();
+        let orientation = (!trimmed.is_empty()).then_some(trimmed);
         if auto_edit_busy(self.auto.running, self.auto.checking) {
             studio.notify(
                 "AUTO EDIT is still running or checking its previous timeline",

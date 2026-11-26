@@ -21052,6 +21052,8 @@ mod tests {
             sheet: "sheet.png".to_owned(),
             stock_provider: "pexels".to_owned(),
             script: None,
+            orientation: None,
+            frame_rate: None,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(understand) = &mut program.steps[5] else {

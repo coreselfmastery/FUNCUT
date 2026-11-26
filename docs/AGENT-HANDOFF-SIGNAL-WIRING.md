@@ -15,7 +15,7 @@ the traps. Read it end to end before touching code.
 - Work on a new branch off `main`. **PR #229**
   (`forge/signal-coverage-ledger-2026-11-26`) already landed the map and
   the measuring instrument; if it is not merged yet, branch from it.
-- The gap, measured, not guessed:
+- Historical baseline (measured 26 November 2026; superseded by §1c below):
 
 ```
 $ python3 scripts/check-signal-coverage.py
@@ -25,13 +25,13 @@ missing: 65
 taught in signal_matrix.md: 75/75
 ```
 
-- Total readings in the product: **145** = 70 voice-profile readings
-  (`voice_signals`) + 75 door readings (8 doors, 83 dispatched actions
-  minus 8 machinery). The button asks 10. **Your job is to take that
-  number to 75/75 with every reading wired to a decision, and to keep the
-  70 voice readings fully spent.**
-- The Director path reads `.claude/skills/funcut-director/prompts/signal_matrix.md`,
-  which now teaches all 145. It is taught, **not enforced**: see Batch 9.
+- At that historical point the product counted **145** readings = 70
+  voice-profile readings (`voice_signals`) + 75 door readings (8 doors,
+  83 dispatched actions minus 8 machinery). The button asked 10. Those
+  are the 26 November baseline, not today's counts; see §1c.
+- The Director path reads `.claude/skills/funcut-director/prompts/signal_matrix.md`.
+  The 26 November snapshot taught 145; the current source inventory is in
+  §1c. The ledger is informational, **not enforced**: see Batch 9.
 
 ## 1b. Where the work stands, measured on 2026-11-26
 
@@ -125,6 +125,33 @@ Verified in the sandbox: `fmt`, `check`, `clippy -D warnings` clean,
 | 9 - enforcement (`--require-button`) | **not started** | `scripts/check-signal-coverage.py --require-button` |
 | 10 - depth tiers | **not started** | - |
 | `visualScore` is parsed and ranked by nothing | **found 2026-11-26**: `VisualRead::visual_score` has no reader; the sort at `GatherPhase::ReadSheet` runs *before* `measure_clips`, so the door score cannot order that sort - a re-rank has to happen at `GatherPhase::ReadVisual` | `director_program.rs` sort site, `visual_read.rs` |
+
+## 1c. Current source count — 27 November 2026
+
+This reconciles the inventory after the 26 November handoff snapshot above.
+Section 1b's branch board and progress counts remain historical; do not
+reinterpret its 19/75 rows as the current main-branch ledger.
+
+- **Current main:** `50171fb6ae117eca124d3660588db2e529c8c302`.
+- **Inventory:** 71 voice-profile readings + 76 sense-door readings = **147**
+  named readings. The 76 door readings are counted from the current door
+  inventory and are the denominator for the AUTO EDIT door-consumption ledger.
+- **AUTO EDIT door consumption:** **67/76 (88%)** are asked by the current
+  program. The nine unasked actions are
+  `sound_sense.describe_sound`, `sound_sense.rank_sounds`,
+  `sound_model.plan`, `captions.evaluate_tts_quality`,
+  `captions.seal_voice`, `audio_repair.analyze_music_structure`,
+  `audio_repair.identify_music`, `audio_repair.normalize_loudness`,
+  and `audio_repair.remove_hiss_hum_rumble`.
+- The 67/76 ledger is reported by
+  [the current-main Format/locales/models job](https://github.com/coreselfmastery/FUNCUT/actions/runs/45873277319/job/140093862274)
+  and summarized in the 27 November exact-main reconciliation proposed by
+  [PR #245](https://github.com/coreselfmastery/FUNCUT/pull/245).
+  `scripts/check-signal-coverage.py --require-button` is **not enabled**;
+  the ledger is informational, not a release gate.
+- The separate 71-entry voice-profile catalogue has matrix/alias consistency
+  checks, but that does not prove every profile reading changes a timeline
+  decision. Do not claim all 147 readings are consumed.
 
 ## 2. Build environment (do this first, it takes ~20 minutes)
 

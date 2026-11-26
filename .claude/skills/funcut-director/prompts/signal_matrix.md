@@ -5,7 +5,7 @@ contains **71 named readings across 14 families**. The eight sense doors dispatc
 76 of which read the material (8 install, index, bench or self-test):
 **35** on the voice side - repair, captions, prosody style, voice
 quality, discourse - **7** sound and **34** picture (12 that need
-nothing installed, 22 behind a door). **146 readings in all**, spent the
+nothing installed, 22 behind a door). **147 readings in all** (71 voice-profile + 76 sense-door readings), spent the
 same way: a reading is spent only when it changes something on the
 timeline. This matrix uses the
 catalogue's exact identifiers, not aliases or guessed field paths. Reading

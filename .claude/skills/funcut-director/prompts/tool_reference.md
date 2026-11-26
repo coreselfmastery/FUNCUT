@@ -239,7 +239,9 @@ output all *answer* — `ok: true`, `model: absent` or `reason: "licence"`,
 sfx-large pad) takes over; never retry, and never treat the answer as a
 failure. The generator sets download headless:
 `models_download {kind: "sound", id: "sfx-small"}` — the ids are
-`sound-models`, `sfx-small`, `sfx-large`, `bgm` · `magick_status/prepare/search/fetch/add` (shelves:
+`sound-models`, `sfx-small`, `sfx-large`, `bgm`. The picture reader's
+first-edit set (TransNetV2, Depth Anything, DINOv2, CLIP) downloads the
+same way: `models_download {kind: "picture", id: "picture-models"}` · `magick_status/prepare/search/fetch/add` (shelves:
 `magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
 `openmoji` 4,565 emoji CC-BY 4.0)
 

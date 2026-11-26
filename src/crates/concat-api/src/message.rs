@@ -1074,6 +1074,11 @@ pub struct ModelsState {
     /// The sound sets: CLAP and YAMNet, and the three generators. The ids
     /// are the ones `models.download` takes with `kind: "sound"`.
     pub sound: Vec<SoundModelStatus>,
+    /// The picture reader's first-edit set, one row the same shape as the
+    /// sound rows: the id is the one `models.download` takes with
+    /// `kind: "picture"`. Absent from nothing - a machine that has not
+    /// fetched it is shown the row missing, never told it is not there.
+    pub visual: Vec<SoundModelStatus>,
 }
 
 /// One downloadable sound set, as `models.list` shows it: a row of the

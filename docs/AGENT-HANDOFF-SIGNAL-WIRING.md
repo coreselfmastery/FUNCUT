@@ -33,10 +33,92 @@ taught in signal_matrix.md: 75/75
 - The Director path reads `.claude/skills/funcut-director/prompts/signal_matrix.md`,
   which now teaches all 145. It is taught, **not enforced**: see Batch 9.
 
+## 1b. Where the work stands, measured on 2026-11-26
+
+Read this before Batch 1: most of it is already done, and two things
+that are not in the batch list are now the real blockers.
+
+### The board
+
+| Branch | PR | What it wires | Ledger |
+|---|---|---|---|
+| `forge/clap-ear` | #230 | the CLAP ear ranks the accents the keyword gate offered | 13/75 |
+| `forge/room-and-restarts` | #231 | room graded before repair, restarts marked, `assemble` family | 16/75 |
+| `forge/captions-that-do-not-drift` | #232 | `align_captions` drift + `clean_subtitles` words | 19/75 |
+| `forge/capability-pass-2026-11-26` | #234 | the capability question, spent on the sheet | 10/75 (enabler) |
+| `ci/runner-disk-headroom-2026-11-26` | #233 | the engine job's disk | - |
+| `forge/signal-consumers-2026-11-26` | #226 | the bed described, duck on the measured curve | 13/75 |
+
+`main` was **10/75** when this file was written; the captions branch is
+**19/75** with the same script. The number moves only when the reply
+changes a decision - the three branches above each pass that test
+(`restarts` -> `assemble`, `cleaned_cues_of` reseats the word offsets,
+the CLAP rank replaces the keyword guess).
+
+### Two blockers that are not on the batch list
+
+1. **`main` is red and every PR is `blocked`.** `Engine tests and lints`
+   dies in `Build the tests` about 1h20m in: the runner loses
+   communication, the step stays `in_progress`, no log uploads. The job's
+   own comment names the cause ("the disk and the linker both at the
+   edge"). **#233** removes the image's unused toolchains and turns
+   `CARGO_INCREMENTAL` off. Do not chase a code failure here: clippy
+   passes before the step, and the step never returns an exit code.
+2. **A branch that is not pushed is not work.** `funcut-gui` carries
+   `funcut-auto-edit-builds-picture` (grade over the runtime, B-roll in
+   the gaps, a titles entrance) based on a `main` from before #164. It
+   has no PR and will conflict. Rebase it or drop it before it is
+   mistaken for landed.
+
+### Batch 1, as it actually shipped (#234)
+
+The `Stage::Preflight` shape below was **not** used: a new `Stage`
+variant means a new locale key in every locale, a `forge.rs` arm and a
+`Stage::ALL` count, and the capability question does not need a stage of
+its own. What shipped instead:
+
+- `sense_visual {action: "models"}` is the **first call of
+  `Stage::HandoffVoiceover`**, before `project_open`;
+- `ready_visual_doors(log)` reads the reply once;
+- `Stage::Gather` spends it: `look_at` 3 -> 5, `samples` 6 -> 8,
+  `maxClips` = `look_at`, `enrichDoors` = the ready count (max 6);
+- zero doors is exactly the program that shipped before.
+
+Verified in the sandbox: `fmt`, `check`, `clippy -D warnings` clean,
+`cargo test -p concat-mcp` 225 passed / 0 failed.
+
+### What is genuinely left
+
+| Batch | State | Anchor |
+|---|---|---|
+| 6 - the 18 voice-side reads (prosody style 6, voice quality 3, discourse 6) | **not started** | `voice_read.rs` parses them; `director_program.rs` never reads the fields |
+| 7 signals - the 30 visual doors reading stock (`shot_boundaries`, `action_class`, embeddings, depth, tracks, aesthetic, gaze) | **not started**; the other branch *builds* the picture, it does not read stock with the doors | `visual_read.rs` (`CONSUMERS`), `sense/visual_sense.py` (`VISUAL_MODELS`) |
+| 8 - per-reading coverage in the receipt | **partly there**: `receipt.rs` already reports 10 capability areas from the stages' call lists. Going finer needs `observed: Vec<(ToolCall, Value)>` passed into `AcceptanceReceipt::new`, because `StageRecord.calls` is `Vec<String>` and drops the `action` | `receipt.rs:242` `CapabilityRecord`, `receipt.rs:577` `new()` |
+| 9 - enforcement (`--require-button`) | **not started** | `scripts/check-signal-coverage.py --require-button` |
+| 10 - depth tiers | **not started** | - |
+| `visualScore` is parsed and ranked by nothing | **found 2026-11-26**: `VisualRead::visual_score` has no reader; the sort at `GatherPhase::ReadSheet` runs *before* `measure_clips`, so the door score cannot order that sort - a re-rank has to happen at `GatherPhase::ReadVisual` | `director_program.rs` sort site, `visual_read.rs` |
+
 ## 2. Build environment (do this first, it takes ~20 minutes)
 
 The box has 4 cores and 15 GB RAM. **Build with `-j2`**; higher
 parallelism OOMs and the container can be restarted mid-build.
+
+**If you are on an InstaBox sandbox, the tree is already warm** and this
+whole section is done for you: `/data/workspace/FUNCUT` carries
+`ffmpeg-dev/`, a `target/` of ~7 GB, and an ONNX Runtime unpacked at
+`onnxruntime-linux-x64-<ver>/`. Two things differ from a fresh clone:
+
+```sh
+# on the funcut-gui machine there is no .ort-shared/; the runtime sits in
+# the unpacked release folder, and ort-sys panics without this path
+export ORT_LIB_LOCATION=/data/workspace/FUNCUT/onnxruntime-linux-x64-1.28.0/lib
+# build a second branch without a second target dir: share the warm one
+export CARGO_TARGET_DIR=/data/workspace/FUNCUT/src/target
+git worktree add /data/work/<name> origin/<branch>
+```
+
+A `cargo check -p concat-mcp` there takes 8 s warm, 1m26s after a branch
+switch, and `cargo test -p concat-mcp` about 15 minutes cold.
 
 ```sh
 # toolchain: exactly the pin in src/rust-toolchain.toml (1.93.1)

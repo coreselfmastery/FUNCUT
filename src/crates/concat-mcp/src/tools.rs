@@ -1952,8 +1952,9 @@ fn canonical_plan_schema() -> Option<Value> {
 }
 
 /// `auto_edit`'s inputs: the project, the optional authoritative script,
-/// the live stock shelf the B-roll plan names, and whether to edit a
-/// sibling copy (the default) or the project itself.
+/// the live stock shelf the B-roll plan names, whether to edit a sibling
+/// copy (the default) or the project itself, and the optional orientation
+/// the edit is built for - absent, the frame the project already has.
 fn auto_edit_schema() -> Value {
     json!({
         "type": "object",
@@ -1962,6 +1963,7 @@ fn auto_edit_schema() -> Value {
             "script": { "type": "string", "description": "Optional authoritative wording." },
             "stockProvider": { "type": "string", "enum": ["pexels", "pixabay"], "default": "pexels" },
             "copy": { "type": "boolean", "default": true, "description": "Edit a sibling copy." },
+            "orientation": { "type": "string", "enum": ["horizontal", "vertical", "square"], "description": "The frame the edit is built for; horizontal maps 1920x1080, vertical 1080x1920, square 1080x1080, keeping the project's own rate. Absent keeps the frame the project already has." },
         },
         "required": ["path"],
         "additionalProperties": false,

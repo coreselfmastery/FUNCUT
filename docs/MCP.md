@@ -741,10 +741,18 @@ and score it.
     "path": "/home/me/Videos/MyReel",
     "script": "optional authoritative wording",
     "stockProvider": "pexels",
-    "copy": true
+    "copy": true,
+    "orientation": "vertical"
   }
 }
 ```
+
+`orientation` picks the frame the edit is built for: `horizontal` maps
+1920x1080, `vertical` 1080x1920, `square` 1080x1080, keeping the project's
+own rate - everything downstream (the stock orientation, the caption band,
+the motion canvas, the plan's aspect) follows the one early frame-set.
+Absent (or a frame the project already has) keeps the frame the project
+came with.
 
 The reply carries `project` (the folder to open next), `copy`, `outcome`
 (`completed`, `completed-with-warnings`, `failed` or `cancelled`) and the

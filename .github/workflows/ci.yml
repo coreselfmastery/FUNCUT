@@ -206,10 +206,31 @@ jobs:
       # door to full debug information for a session that wants it.
       CARGO_PROFILE_TEST_DEBUG: "0"
       CARGO_PROFILE_DOCTEST_DEBUG: "0"
+      # Incremental artifacts are a second copy of everything the test
+      # build emits, and nothing here rebuilds twice: the run below finds
+      # what this step built. Off, the disk pays for one copy.
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+      # The runner's disk, before the test build asks for it. The image
+      # ships toolchains this job never runs - the Android SDK, .NET,
+      # GHC, CodeQL's databases, Boost - and they hold most of what the
+      # runner has to spare. The test build is the workspace's largest
+      # artifact set: one binary per crate, the window crate's linking
+      # Slint and wgpu whole. It has died an hour in, twice, with the
+      # disk at the edge, and GitHub reports that as the runner losing
+      # communication rather than as a failed step - so the step below
+      # pays for the space it needs instead of discovering the ceiling.
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          echo "== disk before =="; df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo apt-get clean || true
+          echo "== disk after =="; df -h /
       # The toolchain src/rust-toolchain.toml pins, installed by name: every
       # cargo command below runs from src/, where the pin applies, so a
       # stable installed here would only be fetched and left.

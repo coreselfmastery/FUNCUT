@@ -61,7 +61,7 @@ reaches it.
   thesis, hook, pacing, footage, motion, captions, sound, grade and timeline
   acceptance. Use the moves the story earns; record the ones you leave out.
 - `prompts/signal_matrix.md` names the decision every `voice_signals`
-  reading informs (14 families, 70 named readings). Spend the readings, not just
+  reading informs (14 families, 71 named readings). Spend the readings, not just
   the family names; a reading that is absent is named unmeasured.
 - `prompts/signal_recipes.md` turns those readings into a cut score, a cut
   density, a cut type and a confidence fallback. Read it at the plan phase.
@@ -264,7 +264,7 @@ discourse). The Rust ears (prosody, forensics, speakers, NER) need the
 `voice-signals` binary built (`cargo build -p voice-signals`); without it
 the Python signals still answer and the reply says which ear was absent —
 never guess the missing ones. **Spend every reading, not just the family:**
-`prompts/signal_matrix.md` maps all 14 families and 70 named readings
+`prompts/signal_matrix.md` maps all 14 families and 71 named readings
 to the decision each one informs — the catalogue in `voice_signals.py` is
 the authority behind those two numbers. Every family and every reading you spend must
 appear in the plan's `signalLog` with its confidence and one-sentence basis;
@@ -1096,7 +1096,7 @@ timeline) rather than rebuilding it. Export only if the user asks.
 | `prompts/ai_media.md` | generative stills/video/3D/audio when a real generator is installed, and the honest fallback when none is |
 | `prompts/quality_loop.md` | watch_render -> craft_critique -> revise, and how to read the scores |
 | `prompts/power_moves.md` | the 100 concrete moves across the 25 phases, and where each belongs |
-| `prompts/signal_matrix.md` | all 14 signal families and 70 named readings, and the decision each informs |
+| `prompts/signal_matrix.md` | all 14 signal families and 71 named readings, and the decision each informs |
 | `prompts/signal_recipes.md` | cut score, cut density, cut type and confidence fallback from the readings |
 | `prompts/evidence_store.md` | the project's `director/` store: one record shape for every reader's evidence, cited by the plan, re-read by the critic |
 | `prompts/emotion_to_edit.md` | the seven emotion labels as pace/cut/sound/grade/motion/duck recipes |

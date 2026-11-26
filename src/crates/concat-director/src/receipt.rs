@@ -194,7 +194,6 @@ impl Capability {
     pub fn of_tool(tool: &str) -> Option<Capability> {
         Some(match tool {
             "transcribe"
-            | "analysis_wait"
             | "voice_signals"
             | "emotion"
             | "sense_audio_repair"
@@ -594,9 +593,12 @@ impl AcceptanceReceipt {
                     // custom edit_apply batch for per-group styles and
                     // word accents instead of captions_add. Its stage is
                     // the reliable capability identity for that call.
-                    let stage_capability = record.stage == Stage::Captions
+                    let stage_capability = (record.stage == Stage::Captions
                         && tool == "edit_apply"
-                        && capability == Capability::Captions;
+                        && capability == Capability::Captions)
+                        || (record.stage == Stage::Transcribe
+                            && tool == "analysis_wait"
+                            && capability == Capability::Measurement);
                     if (named_capability || stage_capability) && !tools.contains(tool) {
                         tools.push(tool.clone());
                     }
@@ -1039,6 +1041,39 @@ fn signal_evidence_gate(
 
     let mut claimed = std::collections::BTreeSet::new();
     let mut failures = Vec::new();
+    // The Rust ears: a reading taken without the voice-signals binary
+    // says so in its own `degradations` - the same field the reply's
+    // `VoiceRead` parses and the runner's warning list carries - and
+    // the run lost more than half its readings: every accent, the
+    // duck's deepening, the tighten guards, the entity cards, while
+    // the Python half still answered. The packaged app ships the
+    // binary; a from-source build that lacks it still edits, but the
+    // edit is a warned one, not an accepted one, and the gate names
+    // the half that was read.
+    let earless = profiles
+        .iter()
+        .filter(|profile| {
+            profile.get("ok").and_then(Value::as_bool) == Some(true)
+                && profile
+                    .get("degradations")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|degradation| {
+                        degradation
+                            .as_str()
+                            .is_some_and(|said| said.contains("voice-signals binary absent"))
+                    })
+        })
+        .count();
+    if earless > 0 {
+        failures.push(format!(
+            "{earless} of {} take profile(s) were read without the voice-signals binary - \
+             prosody, forensics, speakers and NER entities were absent from the reading; \
+             build it with `cargo build -p voice-signals`",
+            profiles.len()
+        ));
+    }
     for (index, entry) in entries.iter().enumerate() {
         let confidence = entry.get("confidence").and_then(Value::as_f64);
         for signal in entry
@@ -1703,6 +1738,68 @@ mod tests {
         assert!(evidence.contains("above measured pauses confidence"));
     }
 
+    /// A reading taken without the voice-signals binary answers with the
+    /// Python half and a note saying so: the receipt must not accept an
+    /// edit whose accents, duck deepening, tighten guards and entity
+    /// cards were silently absent, and the sentence names the fix.
+    #[test]
+    fn a_profile_read_without_the_rust_ears_is_a_rejected_signal_gate() {
+        let plan = json!({
+            "signalLog": [
+                {"signals":["pause.class=dead_air","words"],"confidence":0.7}
+            ]
+        });
+        let earless = json!({
+            "ok": true,
+            "status": "degraded",
+            "degradations": [
+                "voice-signals binary absent: prosody/forensics/speakers/NER missing"
+            ],
+            "notes": [],
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"wordConfidence","confidence":0.75}
+                ]
+            }
+        });
+        // One halved reading among two whole ones is still a halved run.
+        let whole = json!({
+            "ok": true,
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"prosody","confidence":0.7}
+                ]
+            }
+        });
+        let (status, evidence) = signal_evidence_gate(&plan, &[earless, whole.clone()], None);
+        assert_eq!(status, GateStatus::Fail);
+        assert!(
+            evidence.contains("1 of 2 take profile(s) were read without the voice-signals binary"),
+            "{evidence}"
+        );
+        assert!(
+            evidence.contains("cargo build -p voice-signals"),
+            "{evidence}"
+        );
+        // The same profiles with the degradation gone pass: the check
+        // rides on the field the reading itself wrote, never on a guess.
+        let healed = json!({
+            "ok": true,
+            "status": "ok",
+            "degradations": [],
+            "signalConfidence": {
+                "perSignal": [
+                    {"signal":"pauses","confidence":0.8},
+                    {"signal":"wordConfidence","confidence":0.75}
+                ]
+            }
+        });
+        let (status, _) = signal_evidence_gate(&plan, &[healed, whole], None);
+        assert_eq!(status, GateStatus::Pass);
+    }
+
     #[test]
     fn arc_signal_requires_the_independent_emotion_extract() {
         let plan = json!({
@@ -1966,6 +2063,41 @@ mod tests {
                 Capability::Delivery,
             ]
         );
+    }
+
+    #[test]
+    fn analysis_wait_is_attributed_to_the_stage_that_owns_the_job() {
+        let preflight = [StageRecord::completed(
+            Stage::Preflight,
+            vec!["analysis_wait".to_owned()],
+        )];
+        let receipt =
+            AcceptanceReceipt::new("/p", "timeline", preflight.to_vec(), Vec::new(), Vec::new());
+        let measurement = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Measurement)
+            .expect("measurement capability is listed");
+        assert!(!measurement.consumed);
+
+        let transcription = [StageRecord::completed(
+            Stage::Transcribe,
+            vec!["analysis_wait".to_owned()],
+        )];
+        let receipt = AcceptanceReceipt::new(
+            "/p",
+            "timeline",
+            transcription.to_vec(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let measurement = receipt
+            .capabilities
+            .iter()
+            .find(|record| record.capability == Capability::Measurement)
+            .expect("measurement capability is listed");
+        assert!(measurement.consumed);
+        assert_eq!(measurement.tools, vec!["analysis_wait".to_owned()]);
     }
 
     #[test]

@@ -5,7 +5,7 @@ Pure Python standard library, same contract as the other sense scripts:
 `voice_signals.py <extract|catalog|selftest> --spec -` reads one JSON spec
 from stdin (or argv) and prints one JSON object on stdout.
 
-`catalog` answers the signal catalogue: the seventy named readings, grouped
+`catalog` answers the signal catalogue: the seventy-one named readings, grouped
 by family, each with what it measures and why the edit wants it - the
 table a UI's per-signal buttons are built from. `extract` accepts a
 `signals: [name...]` filter (the catalogue's own names): a manual
@@ -145,7 +145,7 @@ def _decision_policy_out():
 
 
 # ---------------------------------------------------------------------------
-# The signal catalogue: the seventy named readings, one button each
+# The signal catalogue: the seventy-one named readings, one button each
 # ---------------------------------------------------------------------------
 
 # Every reading the profile answers, named, grouped by family, and held
@@ -187,6 +187,15 @@ SIGNAL_CATALOGUE = [
      "reads": "Each line's level against the take's integrated level, in LU.",
      "why": "The measured lift behind the caption's weight-800 arm.",
      "where": ("line", "loudness.relativeLu"), "rust": False, "new": False},
+    {"name": "loudness.momentaryLufs", "family": "Loudness",
+     "label": "Momentary curve",
+     "reads": "The ebur128 momentary-loudness curve, at most 256 [t, LUFS] "
+              "points, times in file seconds.",
+     "why": "The bed's volume ride keys itself on the measured envelope: "
+            "the duck follows the voice's own rise and fall, not a span "
+            "average (decision: the bed's volume keys).",
+     "where": ("take", "wholeTake.loudness.momentaryLufs"), "rust": False,
+     "new": False},
     # The pause family, one silencedetect pass.
     {"name": "pauses.classes", "family": "Pauses",
      "label": "Classified pauses",
@@ -1157,6 +1166,25 @@ def _line_loudness(series, start, end):
         "maxTpDbfs": round(max(peaks), 2) if peaks else None,
         "samples": len(values),
     }
+
+
+def _decimated_momentary(series, most=256):
+    """The momentary curve itself, decimated to at most `most` points:
+    [[t, LUFS], ...], unmeasured readings dropped, times ascending,
+    values rounded for the wire. The per-line fold answers 'how loud was
+    this line'; this is the shape the fold flattened away - the envelope
+    a bed's volume ride keys itself on, so the duck follows the voice's
+    measured rise instead of a span average."""
+    points = [(t, m) for t, m, _ in series if m is not None]
+    if not points:
+        return None
+    if len(points) <= most:
+        picked = points
+    else:
+        step = len(points) / most
+        last = len(points) - 1
+        picked = [points[min(last, int(i * step))] for i in range(most)]
+    return [[round(t, 3), round(m, 1)] for t, m in picked]
 
 
 def _classify_pauses(spans, lines):
@@ -2688,7 +2716,10 @@ def extract(spec):
         "wholeTake": {
             "loudness": {"integratedLufs": integrated,
                          "loudnessRangeLu": lra,
-                         "truePeakDbfs": true_peak},
+                         "truePeakDbfs": true_peak,
+                         # The curve the per-line fold flattens away:
+                         # the bed's volume ride keys itself on this.
+                         "momentaryLufs": _decimated_momentary(series)},
             "prosody": (rust or {}).get("prosody", {}).get("rhythmLayers"),
             "dominantPeriodSec": (rust or {}).get("prosody", {}).get("dominantPeriodSec"),
             "phrases": (rust or {}).get("prosody", {}).get("phrases"),
@@ -3015,12 +3046,12 @@ def selftest():
             entry = policy.get(decision)
             if not entry or not entry.get("signals") or not entry.get("rule"):
                 failures.append(f"no decision policy for {decision}: {entry}")
-        # The catalogue: seventy named readings, thirty-four of them the
-        # two catalogue passes added, every name unique, every family
+        # The catalogue: seventy-one named readings, thirty-four of them
+        # the two catalogue passes added, every name unique, every family
         # named, every entry held to a why and a where.
         catalog = _catalog_out()
-        if catalog["count"] != 70:
-            failures.append(f"catalogue carries {catalog['count']} signals, not 70")
+        if catalog["count"] != 71:
+            failures.append(f"catalogue carries {catalog['count']} signals, not 71")
         if catalog["new"] != 34:
             failures.append(f"catalogue marks {catalog['new']} new signals, not 34")
         names = [entry["name"] for entry in catalog["signals"]]

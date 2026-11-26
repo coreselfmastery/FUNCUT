@@ -406,6 +406,7 @@
   "forge.stageMotion": "Motion",
   "forge.stageMusic": "배경 음악",
   "forge.stagePlan": "Plan",
+  "forge.stagePreflight": "모델 사전 점검",
   "forge.stagePreview": "Preview",
   "forge.stageRevise": "Revise",
   "forge.stageSfx": "사운드 강조",

@@ -3917,6 +3917,7 @@ fn run_auto_edit(
 /// locale inventory reads them.
 fn stage_label(stage: &Stage) -> String {
     match stage {
+        Stage::Preflight => t("forge.stagePreflight"),
         Stage::HandoffVoiceover => t("forge.stageHandoffVoiceover"),
         Stage::Transcribe => t("forge.stageTranscribe"),
         Stage::AudioRepair => t("forge.stageAudioRepair"),

@@ -23,6 +23,13 @@ use crate::error::ToolCall;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage {
+    /// The run's own means are checked before anything is spent on them:
+    /// the transcriber the words stage cannot proceed without is asked
+    /// for headlessly - a download that ends at once when the model is
+    /// already on disk - and waited on, so a cold machine fails fast
+    /// with the model named instead of paying the repair stage's
+    /// minutes and dying at the transcription.
+    Preflight,
     /// The voiceover lands in the project: found in the bin or imported,
     /// placed on its own lane, the plan's speed applied (the watcher's
     /// ninth step).
@@ -96,7 +103,8 @@ impl Stage {
     /// register, read left to right. [`Runner::completed`](crate::Runner::completed)
     /// reports a resumed run in this order, so it must be the program's
     /// order and not the enum's.
-    pub const ALL: [Stage; 18] = [
+    pub const ALL: [Stage; 19] = [
+        Stage::Preflight,
         Stage::HandoffVoiceover,
         Stage::AudioRepair,
         Stage::Transcribe,
@@ -121,6 +129,7 @@ impl Stage {
     /// a log line or a warning list shows.
     pub fn label(self) -> &'static str {
         match self {
+            Stage::Preflight => "preflight",
             Stage::HandoffVoiceover => "handoff-voiceover",
             Stage::Transcribe => "transcribe",
             Stage::AudioRepair => "audio-repair",
@@ -567,20 +576,21 @@ mod tests {
 
     #[test]
     fn the_register_holds_all_possible_stages_and_the_first_and_last_say_so() {
-        assert_eq!(Stage::ALL.len(), 18);
-        assert_eq!(Stage::ALL.first(), Some(&Stage::HandoffVoiceover));
+        assert_eq!(Stage::ALL.len(), 19);
+        assert_eq!(Stage::ALL.first(), Some(&Stage::Preflight));
         // The watch is last: it scores the final timeline preview (or an
         // explicitly requested render) after the revise has corrected it.
         assert_eq!(Stage::ALL.last(), Some(&Stage::Watch));
-        assert_eq!(Stage::ALL[12], Stage::Preview);
-        assert_eq!(Stage::ALL[13], Stage::Revise);
-        assert_eq!(Stage::ALL[14], Stage::TimelineReady);
-        assert_eq!(Stage::ALL[15], Stage::Export);
-        assert_eq!(Stage::ALL[16], Stage::Verify);
+        assert_eq!(Stage::ALL[13], Stage::Preview);
+        assert_eq!(Stage::ALL[14], Stage::Revise);
+        assert_eq!(Stage::ALL[15], Stage::TimelineReady);
+        assert_eq!(Stage::ALL[16], Stage::Export);
+        assert_eq!(Stage::ALL[17], Stage::Verify);
     }
 
     #[test]
     fn a_label_is_the_word_the_json_carries() {
+        assert_eq!(Stage::Preflight.label(), "preflight");
         assert_eq!(Stage::HandoffVoiceover.label(), "handoff-voiceover");
         assert_eq!(Stage::AudioRepair.label(), "audio-repair");
         assert_eq!(Stage::VoiceSignals.label(), "voice-signals");

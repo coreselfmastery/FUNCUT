@@ -1543,10 +1543,54 @@ fn seam_transition(
     // one of the two is always a move the last shot did not wear.
     let alternate = alternate_transition(&mood);
     if last == Some(alternate) {
-        transition_for_emotion(&mood)
-    } else {
-        alternate
+        // Both of the mood's own moves are spent on the last two seams:
+        // the wider pool, rotated by the seam's own place in the take, is
+        // the third move - the catalogue ships a hundred and twenty-two
+        // transitions and the edit was re-wearing the same thirteen.
+        return variety_transition(&mood, (slot.from.max(0.0) * 10.0) as usize);
     }
+    alternate
+}
+
+/// The wider variety pool, for the seam that already wore both the mood's
+/// own moves: the catalogue ships a hundred and twenty-two transitions
+/// and the edit was re-wearing the same thirteen. These are the
+/// neighbours - a wipe for a turn, a whip for a jump, a bleed for a mood
+/// - each id the catalogue's own, none of them the mood's first two.
+fn variety_transition(emotion: &str, turn: usize) -> &'static str {
+    let pool: &[&str] = match emotion {
+        "joy" => &[
+            "concat.clock-wipe",
+            "concat.pendulum-swipe",
+            "concat.heartbeat-zoom",
+        ],
+        "surprise" => &[
+            "concat.portal-spin",
+            "concat.hyper-zoom",
+            "concat.crash-zoom",
+        ],
+        "anger" => &[
+            "concat.glitch-blocks",
+            "concat.color-bleed",
+            "concat.lurch-whip",
+        ],
+        "fear" => &[
+            "concat.conveyor-push",
+            "concat.linear-wipe",
+            "concat.ink-bleed",
+        ],
+        "sadness" => &[
+            "concat.dream-dissolve",
+            "concat.ember-dissolve",
+            "concat.daydream",
+        ],
+        _ => &[
+            "concat.conveyor-push",
+            "concat.clock-wipe",
+            "concat.slice-social",
+        ],
+    };
+    pool[turn % pool.len()]
 }
 
 /// The timeline's extent over the narration's own clips - the number a
@@ -3453,7 +3497,12 @@ fn comp_for_entity(entity: &Entity) -> Option<(&'static str, String)> {
         _ => match entity.kind.as_str() {
             // A kind the profile's card field did not map: the entity
             // vocabulary's own reading of what a viewer needs to see.
-            "MONEY" | "PERCENT" | "PER" | "CARDINAL" | "QUANTITY" => "funcut.social.stat",
+            // A number the narration leans on earns the card that makes
+            // a number land - a counting ticker for the money and the
+            // percentage, a bar for the quantity - because a stat card
+            // only states what a ticker makes the viewer FEEL count.
+            "MONEY" | "PERCENT" | "PER" => "funcut.ticker.count",
+            "CARDINAL" | "QUANTITY" => "funcut.chart.bars",
             "DATE" | "TIME" => "funcut.timeline.horizontal",
             "ORG" | "PERSON" | "GPE" | "LOC" | "FAC" => "funcut.lower-third.minimal",
             _ => return None,
@@ -3596,6 +3645,13 @@ fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
     Some(match line.act.as_str() {
         "hook" => match line.emotion.as_str() {
             "surprise" | "fear" => "funcut.chapter.chip",
+            // A hook that lands with joy or at full intensity is the
+            // piece's own showcase moment, and the engine ships one: the
+            // native CPU 3D scene - five geometries, three lights, the
+            // camera's own flight path. The card the library carried
+            // before was glass; the showcase is the hook a faceless
+            // channel opens with.
+            "joy" if line.intensity >= 0.75 => "funcut.scene3d.showcase",
             _ => "funcut.lower-third.glass",
         },
         "reveal" | "turn" => "funcut.sting.wordmark",
@@ -4663,6 +4719,19 @@ fn entrance_keys(clip_id: &str, duration: f64, placed: f64, ease: &[f64]) -> Vec
     let span = (0.35 / duration).clamp(0.05, 0.6);
     let ease = json!(ease);
     vec![
+        // The entrance fades in as it settles: opacity 0 to 1 over the
+        // same span the scale rides, so a bright B-roll or a caption
+        // never pops onto the screen - it arrives. The fade is the one
+        // move every cut can afford, and the one the catalogue's own
+        // preview always wore.
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "opacity",
+            "at": 0.0, "value": 0.0, "ease": ease,
+        }),
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "opacity",
+            "at": round3(span), "value": 1.0, "ease": ease,
+        }),
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "scale",
             "at": 0.0, "value": 0.94, "ease": ease,
@@ -4680,6 +4749,20 @@ fn entrance_keys(clip_id: &str, duration: f64, placed: f64, ease: &[f64]) -> Vec
             "at": round3(span), "value": round3(placed), "ease": ease,
         }),
     ]
+}
+
+/// The texture the look asks for beside it: a warm film look wants the
+/// grain a film actually carries, a cold night wants the vignette the
+/// edges of the frame already imply, a dream wants the haze the grade
+/// only begins. `None` for a look the catalogue has no honest texture
+/// for - a second layer nobody measured the fit of is noise, not craft.
+fn texture_for_look(look: &str) -> Option<&'static str> {
+    match look {
+        "concat.warm" | "concat.golden-hour" | "concat.vintage" => Some("concat.film-grain"),
+        "concat.cool" | "concat.cool-blue" => Some("concat.vignette"),
+        "concat.teal-orange" => Some("concat.bloom-haze"),
+        _ => None,
+    }
 }
 
 /// The grade package's own intensity parameter, as the plan's `grade`
@@ -9895,18 +9978,38 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     let look = grade_decision(log, &grade_source).look;
                     graded = true;
+                    // The texture rides under the grade: a second layer
+                    // the mood asks for - grain for a warm film look, a
+                    // vignette for a cold night, a haze for a dream. The
+                    // catalogue ships 123 effect packages and the grade
+                    // was the only one the edit ever wore; this is the
+                    // second, at its own default intensity - no keys, so
+                    // a package whose parameter names differ from the
+                    // grade's still lands whole.
+                    let texture = texture_for_look(&look);
+                    let mut commands: Vec<Value> = vec![json!({
+                        "op": "addLayerClip",
+                        "trackId": null,
+                        "start": 0.0,
+                        "duration": round3(runtime),
+                        "effectId": look,
+                        "name": "The look",
+                    })];
+                    if let Some(texture) = texture {
+                        commands.push(json!({
+                            "op": "addLayerClip",
+                            "trackId": null,
+                            "start": 0.0,
+                            "duration": round3(runtime),
+                            "effectId": texture,
+                            "name": "The texture",
+                        }));
+                    }
                     Some(call(
                         "edit_apply",
                         json!({
                             "path": grade_project,
-                            "command": {
-                                "op": "addLayerClip",
-                                "trackId": null,
-                                "start": 0.0,
-                                "duration": round3(runtime),
-                                "effectId": look,
-                                "name": "The look",
-                            },
+                            "command": { "op": "batch", "commands": commands },
                         }),
                     ))
                 }
@@ -14484,6 +14587,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     the critic scores that sheet against the measured brief.
     let watch_project = source.project.clone();
     let watch_sheet = source.sheet.clone();
+    let watch_source = source.takes.clone();
     steps.push(
         DerivedStep::react(
             Stage::Watch,
@@ -14491,6 +14595,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let watch_project = watch_project.clone();
                 let watch_sheet = watch_sheet.clone();
                 let mut phase = 0u8;
+                // The thumbnail candidates left to render, strongest
+                // measured moments first.
+                let mut watch_thumbnails: Vec<f64> = Vec::new();
+                let watch_source = watch_source.clone();
                 move |log| {
                     if phase == 0 {
                         phase = 1;
@@ -14528,6 +14636,47 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "project": watch_project,
                                 "brief": signal_brief(log),
                                 "autoSetup": true,
+                            }),
+                        ));
+                    }
+                    // The thumbnail candidates, rendered as PNGs beside
+                    // the edit: the plan names its concepts with
+                    // frameAt positions and no stage ever painted them.
+                    // The three strongest measured moments the plan's
+                    // own concepts point at are rendered here - the
+                    // frames a channel can actually pick a thumbnail
+                    // from, rather than the plan's sentence about them.
+                    if phase == 2 {
+                        // The strongest measured moments, mapped from the
+                        // take's own seconds onto the timeline the preview
+                        // reads - a frame the channel can pick a thumbnail
+                        // from, at the moment the voice leaned on hardest.
+                        let voice = voice_reads(log, &watch_source);
+                        let mut peaks = emphasis_peaks(&voice);
+                        peaks.sort_by(|left, right| right.2.total_cmp(&left.2));
+                        let view = latest_view(log);
+                        let media = view.map(media_paths);
+                        let candidates: Vec<f64> = peaks
+                            .iter()
+                            .filter_map(|(take, at, ..)| timeline_at(view, &media?, take, *at))
+                            .take(3)
+                            .collect();
+                        if candidates.is_empty() {
+                            return None;
+                        }
+                        watch_thumbnails = candidates;
+                        phase = 3;
+                    }
+                    if let (Some(at), rest) = (
+                        watch_thumbnails.first().copied(),
+                        watch_thumbnails.get(1..).copied().collect::<Vec<_>>(),
+                    ) {
+                        watch_thumbnails = rest;
+                        return Some(call(
+                            "preview_frame",
+                            json!({
+                                "path": watch_project,
+                                "time": round3(at),
                             }),
                         ));
                     }

@@ -822,7 +822,17 @@ fn bed_query_chain(log: &[Value], takes: &[TakePaths]) -> Vec<Option<String>> {
 /// whose duration the census could not measure is never guessed at -
 /// `None`, and the caller keeps the shelf's own first answer.
 fn best_bed(tracks: &[Value], runtime: f64) -> Option<Value> {
-    let measured: Vec<(f64, &Value)> = tracks
+    bed_order(tracks, runtime).into_iter().next()
+}
+
+/// The shelf's candidates in the order a run should hear them: the ones
+/// that cover the cut first, shortest of those first (the least waste),
+/// then the longest of the rest (the most cover). A track whose duration
+/// the census could not measure goes last - never guessed at. The first
+/// entry is the bed [`best_bed`] always chose; the rest are the swaps a
+/// listen that refuses the first bed has standing by.
+fn bed_order(tracks: &[Value], runtime: f64) -> Vec<Value> {
+    let mut measured: Vec<(f64, &Value)> = tracks
         .iter()
         .filter_map(|track| {
             let seconds = track["seconds"].as_f64()?;
@@ -830,24 +840,24 @@ fn best_bed(tracks: &[Value], runtime: f64) -> Option<Value> {
         })
         .collect();
     if measured.is_empty() {
-        return None;
+        return Vec::new();
     }
-    let covers: Vec<&(f64, &Value)> = measured
-        .iter()
-        .filter(|(seconds, _)| *seconds >= runtime)
-        .collect();
-    let chosen: &(f64, &Value) = if covers.is_empty() {
-        // Nothing covers: the longest covers the most.
-        measured
-            .iter()
-            .max_by(|left, right| left.0.total_cmp(&right.0))?
-    } else {
-        // Something covers: the shortest of those wastes the least.
-        covers
-            .iter()
-            .min_by(|left, right| left.0.total_cmp(&right.0))?
-    };
-    Some((*chosen.1).clone())
+    measured.sort_by(|left, right| {
+        let covers = |entry: &(f64, &Value)| entry.0 >= runtime;
+        // Covers beat non-covers; among covers the shortest wins, among
+        // the rest the longest does - the same choice best_bed made,
+        // written as one ordering.
+        match (covers(left), covers(right)) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (true, true) => left.0.total_cmp(&right.0),
+            (false, false) => right.0.total_cmp(&left.0),
+        }
+    });
+    measured
+        .into_iter()
+        .map(|(_, track)| (*track).clone())
+        .collect()
 }
 
 /// The shelf hits a slot will actually be looked at through: the ones
@@ -11080,6 +11090,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // a bed longer than the cut is trimmed to it, or the
                 // export gains a black, scored tail.
                 let mut bed_runtime: Option<f64> = None;
+                // The candidates the shelf answered, in duration-fit
+                // order: the bed is listened to before it is kept, and a
+                // bed that is not music - or not the mood the read asked
+                // for - gives the next candidate its turn.
+                let mut bed_candidates: Vec<String> = Vec::new();
+                // Which candidate is imported right now.
+                let mut bed_try = 0usize;
+                // The most the run will listen to: three beds is two
+                // swaps on a bad page, and more is a shelf problem, not
+                // a listening problem.
+                const BED_TRIES: usize = 3;
+                // A describe reply is in flight for the imported bed.
+                let mut listening = false;
+                // The imported bed's listen has resolved: the trim and
+                // the duck may proceed.
+                let mut listened = false;
+                // The describe door refused once - models absent, file
+                // unreadable - so the run keeps the duration-best bed
+                // and never asks again: the honest floor, not a loop.
+                let mut describe_absent = false;
+                // The bed clip the listen is holding: what a swap
+                // removes before the next candidate imports.
+                let mut bed_clip: Option<String> = None;
+                // The next candidate a swap is importing, once the
+                // refused bed's clip is off the lane.
+                let mut pending_import: Option<String> = None;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever. The reading's own forensic
@@ -11545,13 +11581,26 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             return Some(call("bgm_search", arguments));
                         }
                         bed_runtime = Some(runtime);
-                        let id = best_bed(&tracks, runtime)
-                            .and_then(|track| track["id"].as_str().map(str::to_owned))
-                            .or_else(|| {
-                                last.pointer("/tracks/0/id")
-                                    .and_then(|id| id.as_str())
-                                    .map(str::to_owned)
-                            });
+                        // The candidates in the order a listen should
+                        // hear them: the duration-fit first, then the
+                        // swaps a refused bed has standing by. The
+                        // shelf's own first answer is the floor the
+                        // ordering is built on when no duration was
+                        // measured at all.
+                        let ordered = bed_order(&tracks, runtime);
+                        bed_candidates = ordered
+                            .iter()
+                            .filter_map(|track| track["id"].as_str().map(str::to_owned))
+                            .collect();
+                        if bed_candidates.is_empty() {
+                            bed_candidates = last
+                                .pointer("/tracks/0/id")
+                                .and_then(|id| id.as_str())
+                                .map(str::to_owned)
+                                .into_iter()
+                                .collect();
+                        }
+                        let id = bed_candidates.first().cloned();
                         return id.map(|id| {
                             call(
                                 "bgm_import",
@@ -11568,6 +11617,81 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // The import's own reply (`{mediaIds, view}`): read
                         // the timeline back for the bed's clip id.
                         return Some(call("timeline_read", json!({ "path": music_project })));
+                    }
+                    // The listen's verdict, once the describe door answered
+                    // for the imported bed: keep it, or give the next
+                    // candidate its turn. The reply carries its own
+                    // `action: "describe"` stamp and the sound record,
+                    // so no other reply shape can walk in here.
+                    if listening
+                        && last.get("action") == Some(&json!("describe"))
+                        && last.get("sound").is_some()
+                    {
+                        listening = false;
+                        let ready = last.pointer("/sound/model/state").and_then(Value::as_str)
+                            == Some("ready");
+                        if !ready {
+                            // The models are absent: the run cannot
+                            // listen, and the duration-best bed stands -
+                            // asked once, never again.
+                            describe_absent = true;
+                            listened = true;
+                        } else {
+                            let is_music = last.pointer("/sound/kind").and_then(Value::as_str)
+                                == Some("music");
+                            let mood = last
+                                .pointer("/sound/clap/moodSimilarity")
+                                .and_then(Value::as_f64);
+                            // The mood floor is low on purpose: CLAP
+                            // audio-text cosines sit close together, and
+                            // the swap is for a bed that measures as
+                            // ANOTHER mood's music, not one that merely
+                            // missed the phrase bank's best word. No
+                            // mood reading at all is not a refusal.
+                            let mood_ok = mood.is_none_or(|score| score >= 0.12);
+                            if is_music && mood_ok {
+                                listened = true;
+                            } else if bed_try + 1 < bed_candidates.len() && bed_try + 1 < BED_TRIES
+                            {
+                                bed_try += 1;
+                                listened = false;
+                                pending_import = bed_candidates.get(bed_try).cloned();
+                                if let Some(clip) = bed_clip.clone() {
+                                    // The refused bed comes off the lane
+                                    // before the next candidate imports:
+                                    // two beds stacked is a mix neither
+                                    // listen chose.
+                                    return Some(call(
+                                        "clips_remove",
+                                        json!({
+                                            "path": music_project,
+                                            "clipIds": [clip],
+                                            "ripple": false,
+                                        }),
+                                    ));
+                                }
+                            } else {
+                                // The candidates are spent: the floor is
+                                // the bed the duration fit chose, the
+                                // same bed this stage always kept.
+                                listened = true;
+                            }
+                        }
+                        return Some(call("timeline_read", json!({ "path": music_project })));
+                    }
+                    // A swap's remove answered: the next candidate
+                    // imports now. Checked before the timeline branch
+                    // because the remove's own reply is a view.
+                    if let Some(next) = pending_import.take() {
+                        return Some(call(
+                            "bgm_import",
+                            json!({
+                                "path": music_project,
+                                "ids": [next],
+                                "start": 0.0,
+                                "monetized": true,
+                            }),
+                        ));
                     }
                     if last.pointer("/timeline/clips").is_some() {
                         // The timeline read after the import: the bed is
@@ -11586,6 +11710,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .unwrap_or(false)
                             });
                         let bed = bed?;
+                        // The bed is listened to before it is kept: a
+                        // bed that is not music, or not the mood the
+                        // read asked for, gives the next candidate its
+                        // turn - the shelf's title and duration said
+                        // one thing, the file itself says another. The
+                        // file's path is the media the clip plays.
+                        if !listened && !describe_absent {
+                            let mood = dominant(&emotion_lines(log, &music_source))
+                                .map(|line| line.bgm_words.join(" "))
+                                .unwrap_or_default();
+                            let file = bed["media"]
+                                .as_str()
+                                .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                                .map(|(_, path)| path.to_owned())
+                                .unwrap_or_default();
+                            listening = true;
+                            bed_clip = bed["id"].as_str().map(str::to_owned);
+                            return Some(call(
+                                "sense_sound_model",
+                                json!({
+                                    "action": "describe",
+                                    "file": file,
+                                    "mood": mood,
+                                }),
+                            ));
+                        }
                         // A bed longer than the cut is trimmed to it: the
                         // export's length is the longest clip's end, so a
                         // three-minute bed under a thirty-second cut would
@@ -15257,6 +15407,138 @@ mod tests {
         assert_eq!(duck_for(None), Some(read_duck));
     }
 
+    /// The bed is listened to before it is kept: a candidate the YAMNet
+    /// door measures as something other than music comes off the lane and
+    /// the next candidate imports - the shelf's title and duration said
+    /// one thing, the file itself said another. A bed that IS music and
+    /// carries the asked-for mood stays.
+    #[test]
+    fn a_bed_that_is_not_music_gives_the_next_candidate_its_turn() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "music")
+            .expect("the program has a music stage")
+        else {
+            panic!("the music stage is derived");
+        };
+        let mut log = vec![json!({
+            "project": { "name": "Reel" },
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        })];
+        // The generator is absent; the shelf serves two candidates, both
+        // long enough: the shorter covers with the least waste.
+        let _ = (music.next)(&log).expect("the bed is asked for");
+        log.push(
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }),
+        );
+        let _ = (music.next)(&log).expect("the shelf's state");
+        log.push(json!({ "freepd": "missing", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is prepared");
+        log.push(json!({ "freepd": "ready", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is searched");
+        log.push(json!({
+            "tracks": [
+                { "id": "freepd-one", "seconds": 3.0 },
+                { "id": "freepd-two", "seconds": 4.0 },
+            ]
+        }));
+        let import = (music.next)(&log).expect("the first candidate imports");
+        assert_eq!(import.tool, "bgm_import");
+        assert_eq!(import.arguments["ids"], json!(["freepd-one"]));
+        log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
+        let _ = (music.next)(&log).expect("the timeline is read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 3.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-one.mp3" }],
+        }));
+        // The listen: the file measures as something other than music.
+        let listen = (music.next)(&log).expect("the bed is listened to");
+        assert_eq!(listen.tool, "sense_sound_model");
+        assert_eq!(listen.arguments["action"], json!("describe"));
+        assert_eq!(
+            listen.arguments["file"],
+            json!("/edits/Reel/bgm/track-one.mp3")
+        );
+        log.push(json!({
+            "tool": "describe", "ok": true, "action": "describe",
+            "sound": {
+                "model": { "state": "ready" },
+                "kind": "sfx",
+                "soundSense": { "silent": false },
+            },
+        }));
+        // The refused bed comes off the lane and the next candidate
+        // imports - in that order, so two beds are never stacked.
+        let remove = (music.next)(&log).expect("the refused bed comes off");
+        assert_eq!(remove.tool, "clips_remove");
+        assert_eq!(remove.arguments["clipIds"], json!(["bed1"]));
+        log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
+        let swap = (music.next)(&log).expect("the next candidate imports");
+        assert_eq!(swap.tool, "bgm_import");
+        assert_eq!(swap.arguments["ids"], json!(["freepd-two"]));
+        log.push(json!({ "mediaIds": ["m10"], "view": { "project": {} } }));
+        let _ = (music.next)(&log).expect("the timeline is read again");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed2", "media": "m10", "start": 0.0, "duration": 4.0 }
+            ]},
+            "media": [{ "id": "m10", "path": "/edits/Reel/bgm/track-two.mp3" }],
+        }));
+        // The second listen: this one measures as music, in the mood the
+        // read asked for - and it stays.
+        let listen = (music.next)(&log).expect("the second bed is listened to");
+        assert_eq!(
+            listen.arguments["file"],
+            json!("/edits/Reel/bgm/track-two.mp3")
+        );
+        log.push(json!({
+            "tool": "describe", "ok": true, "action": "describe",
+            "sound": {
+                "model": { "state": "ready" },
+                "kind": "music",
+                "soundSense": { "silent": false },
+                "clap": { "moodSimilarity": 0.27 },
+            },
+        }));
+        let read = (music.next)(&log).expect("the kept bed is read back");
+        assert_eq!(read.tool, "timeline_read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed2", "media": "m10", "start": 0.0, "duration": 4.0 }
+            ]},
+            "media": [{ "id": "m10", "path": "/edits/Reel/bgm/track-two.mp3" }],
+        }));
+        // The kept bed is trimmed (4 s over a 2 s cut) and ducked: the
+        // stage treats it exactly as the one it would have kept blind.
+        let trim = (music.next)(&log).expect("the kept bed is trimmed");
+        assert_eq!(trim.tool, "edit_apply");
+        assert_eq!(trim.arguments["command"]["op"], "trimClip");
+        assert_eq!(trim.arguments["command"]["clipId"], "bed2");
+    }
+
     /// The music stage reads only its own replies: the captions stage
     /// leaves a timeline view behind, and reading it as the stage's own
     /// made the run duck a bed that was never shopped - the bed was
@@ -15342,9 +15624,26 @@ mod tests {
             Some("timeline_read")
         );
         // The timeline read now carries the bed in the project's bgm
-        // folder - and the bed (8 s) is longer than the cut (2 s): it is
-        // trimmed to the cut before anything else, or the export would
-        // ship a black, scored tail behind the last word.
+        // folder - and the bed is listened to before it is kept: this
+        // machine's sound models are absent, so the duration-best bed
+        // stands and the stage never asks again.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
+        }));
+        let listen = (music.next)(log.as_slice()).expect("the bed is listened to");
+        assert_eq!(listen.tool, "sense_sound_model");
+        assert_eq!(listen.arguments["action"], json!("describe"));
+        log.push(json!({
+            "tool": "describe", "ok": true, "action": "describe",
+            "sound": { "model": { "state": "absent" }, "soundSense": {} },
+        }));
+        let _ = (music.next)(log.as_slice()).expect("the bed is read back after the listen");
+        // The bed (8 s) is longer than the cut (2 s): it is trimmed to
+        // the cut before anything else, or the export would ship a
+        // black, scored tail behind the last word.
         log.push(json!({
             "timeline": { "id": "t1", "clips": [
                 { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 }
@@ -15444,6 +15743,27 @@ mod tests {
         let _ = (music.next)(&log).expect("the bed is imported");
         log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
         let _ = (music.next)(&log).expect("the timeline is read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        // The bed is listened to before it is kept: the models are
+        // absent on this machine, so the duration-best bed stands.
+        let listen = (music.next)(&log).expect("the bed is listened to");
+        assert_eq!(listen.tool, "sense_sound_model");
+        assert_eq!(listen.arguments["action"], json!("describe"));
+        log.push(json!({
+            "tool": "describe", "ok": true, "action": "describe",
+            "sound": { "model": { "state": "absent" }, "soundSense": {} },
+        }));
+        let _ = (music.next)(&log).expect("the bed is read back after the listen");
         log.push(json!({
             "timeline": { "id": "t1", "clips": [
                 { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 },
@@ -15555,6 +15875,27 @@ mod tests {
         let _ = (music.next)(&log).expect("the bed is imported");
         log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
         let _ = (music.next)(&log).expect("the timeline is read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 },
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [
+                { "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" },
+                { "id": "m1", "path": take },
+            ],
+        }));
+        // The bed is listened to before it is kept: the models are
+        // absent on this machine, so the duration-best bed stands.
+        let listen = (music.next)(&log).expect("the bed is listened to");
+        assert_eq!(listen.tool, "sense_sound_model");
+        assert_eq!(listen.arguments["action"], json!("describe"));
+        log.push(json!({
+            "tool": "describe", "ok": true, "action": "describe",
+            "sound": { "model": { "state": "absent" }, "soundSense": {} },
+        }));
+        let _ = (music.next)(&log).expect("the bed is read back after the listen");
         log.push(json!({
             "timeline": { "id": "t1", "clips": [
                 { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 },

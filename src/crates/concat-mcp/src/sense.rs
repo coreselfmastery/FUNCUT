@@ -2204,7 +2204,7 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
         tool: "describe",
         cmd: "soundmodel",
         base: 90,
-        fields: &["file", "models"],
+        fields: &["file", "models", "mood"],
     },
     SenseFamilyTool {
         tool: "index",
@@ -3339,6 +3339,10 @@ pub(crate) fn sense_family_schema(name: &str) -> Value {
         props.insert(
             "file".to_owned(),
             string("describe: the sound file to identify and measure."),
+        );
+        props.insert(
+            "mood".to_owned(),
+            string("describe: the words the caller asked the sound to carry - the bed's mood. The reply's clap.moodSimilarity is the cosine between the file the CLAP pair heard and these words."),
         );
         props.insert(
             "dir".to_owned(),

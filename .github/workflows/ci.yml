@@ -100,6 +100,12 @@ jobs:
       # or stale family counts can reach a creative run.
       - run: python3 scripts/check-signal-matrix.py
         if: ${{ !cancelled() }}
+      # The coverage ledger: every sense reading is taught in the matrix,
+      # and the button's own coverage is measured rather than asserted.
+      # It prints asked/missing per door and fails only on documentation
+      # drift - the wiring gap is reported, not hidden.
+      - run: python3 scripts/check-signal-coverage.py
+        if: ${{ !cancelled() }}
       - run: python3 scripts/ci/check-release-gates.py
         if: ${{ !cancelled() }}
       # The voice-signal reader's own selftest: the catalogue's measured

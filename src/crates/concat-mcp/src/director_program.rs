@@ -20139,18 +20139,33 @@ mod tests {
         );
         // Every new ask names the take it reads, so the reply can be
         // attributed to the take that produced it no matter the fan's
-        // landing order.
-        for tool in [
-            "sense_prosody_style",
-            "sense_voice_quality",
-            "sense_discourse",
+        // landing order (the discourse reads that predate this change
+        // name their lines only - they are not keyed, and this test does
+        // not reach for them).
+        for action in [
+            "score_emphasis_type",
+            "detect_speaking_style",
+            "detect_accent",
+            "measure_vocal_tract",
+            "measure_rhythm_meter",
+            "classify_voice_quality",
+            "detect_vocal_events",
+            "classify_filler_type",
+            "classify_speech_acts",
+            "score_readability",
+            "score_script_quality",
+            "detect_sarcasm",
+            "detect_code_switching",
+            "detect_cross_lingual_emotion",
         ] {
-            for call in asked.iter().filter(|c| c.tool == tool) {
-                assert_eq!(
-                    call.arguments["audio"], "/edits/Reel/voiceover/a.wav",
-                    "every {tool} ask names the take it reads"
-                );
-            }
+            let ask = asked
+                .iter()
+                .find(|c| c.arguments["action"] == json!(action))
+                .unwrap_or_else(|| panic!("the {action} ask is queued"));
+            assert_eq!(
+                ask.arguments["audio"], "/edits/Reel/voiceover/a.wav",
+                "the {action} ask names the take it reads"
+            );
         }
         // Seven timed words is under the tempo read's floor: a take this
         // short has one tempo by definition, and the read is not asked.

@@ -1,11 +1,11 @@
 # The signal matrix — spend every reading
 
 The runtime `voice_signals` catalogue is the source of truth: it currently
-contains **71 named readings across 14 families**. The eight sense doors dispatch 83 actions,
-75 of which read the material (8 install, index, bench or self-test):
+contains **71 named readings across 14 families**. The eight sense doors dispatch 84 actions,
+76 of which read the material (8 install, index, bench or self-test):
 **35** on the voice side - repair, captions, prosody style, voice
-quality, discourse - **7** sound and **33** picture (12 that need
-nothing installed, 21 behind a door). **145 readings in all**, spent the
+quality, discourse - **7** sound and **34** picture (12 that need
+nothing installed, 22 behind a door). **146 readings in all**, spent the
 same way: a reading is spent only when it changes something on the
 timeline. This matrix uses the
 catalogue's exact identifiers, not aliases or guessed field paths. Reading
@@ -195,6 +195,7 @@ the same matrix.
 | `lip_sync` | syncnet | lip-sync score | assemble (talking head) and export verify |
 | `action_quality` | aqa-transformer | how well the action was performed | select: the better take of the same shot |
 | `describe_scene` | smolvlm2-500m · florence-2-base · uform-gen2 · smolvlm2-256m | the frame in words | select by meaning, and the critic's evidence |
+| `rank_frames` | the clip/siglip pair `analysis/rerank.py` already ships | how well a fetched candidate answers the slot's query | the stock choice: it re-orders the fetched candidates and the best one survives |
 
 ### Two reads, one question — never two answers
 

@@ -237,6 +237,38 @@ jobs:
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           sudo apt-get clean || true
           echo "== disk after =="; df -h /
+      # The disk cure above was not the constraint that was binding. The
+      # engine lane's deaths continued past it - exit 143 mid-compile in
+      # `Build the tests`, the log stopping mid-line, the runner reported
+      # as losing communication - the same signature the aarch64 app lane
+      # left in its own record when one fat-LTO rustc did not fit the
+      # machine: a killed agent, not a failed build. `--build-jobs 1`
+      # bounds the aggregate, not the one `ld` that links the window
+      # crate's test binary - Slint, wgpu, whisper and all - whole, and
+      # the image ships ~3 GB of swap against a peak that has outgrown
+      # the remaining 13. The nix lane met the same wall and paid for the
+      # room: sixteen gigabytes of swap beside the build, so the one
+      # process that does not fit RAM fits the machine. The same cure,
+      # same runner, same lane class.
+      - name: Room for the build
+        run: |
+          set -euo pipefail
+          echo "== memory =="; free -h
+          echo "== swap before =="; swapon --show || true
+          swap_kib() { awk 'NR>1 { sum += $3 } END { print sum + 0 }' /proc/swaps; }
+          had_kib=$(swap_kib)
+          if [ "$had_kib" -lt 16777216 ]; then
+            for where in /mnt /; do
+              if sudo fallocate -l 16G "$where/swapfile" 2>/dev/null; then
+                sudo chmod 600 "$where/swapfile"
+                sudo mkswap "$where/swapfile"
+                sudo swapon "$where/swapfile"
+                echo "swap on at $where/swapfile, beside the ${had_kib} KiB already there"
+                break
+              fi
+            done
+          fi
+          echo "== swap after =="; swapon --show || true
       # The toolchain src/rust-toolchain.toml pins, installed by name: every
       # cargo command below runs from src/, where the pin applies, so a
       # stable installed here would only be fetched and left.
@@ -365,7 +397,34 @@ jobs:
       - name: Build the tests
         timeout-minutes: 90
         working-directory: src
-        run: cargo nextest run --workspace --no-run --build-jobs 1
+        run: |
+          # A sampler beside the build, for the same reason the nix lane
+          # carries one: a run that dies in this step has left nothing
+          # but a log cut mid-line and a conclusion that names neither
+          # the constraint that bound it nor the process that crossed
+          # it. One line a minute puts the memory and swap on the record
+          # for as long as the machine survives, and a build that dies
+          # says what the machine held when it did - the kernel's own
+          # record of the kill included - so the next cure targets the
+          # constraint that was binding, not the one that was last time.
+          (
+            while :; do
+              sleep 60
+              printf '== memory %s ==\n' "$(date -u +%H:%M:%S)"
+              free -m | sed -n '2,3p'
+            done
+          ) &
+          sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+          if cargo nextest run --workspace --no-run --build-jobs 1; then
+            exit 0
+          fi
+          echo "== the machine at the failure =="; free -h
+          swapon --show || true
+          df -h / /mnt || true
+          sudo dmesg | tail -n 40 || true
+          exit 1
+
       # CONCAT_REQUIRE_GPU: the GPU tests fail rather than skip when no
       # adapter is usable, so the parity suite is known to have run. The
       # report and the log are kept when it fails (the last step).

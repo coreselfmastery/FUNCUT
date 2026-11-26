@@ -36,7 +36,7 @@ pub use commands::{
 };
 pub use doc::{DOCUMENT_VERSION, DocumentSettings, document_version, from_document, to_document};
 pub use editor::{Editor, RetiredFields};
-pub use model::{MediaKind, Project};
+pub use model::{MediaKind, Project, StockSource};
 
 #[cfg(test)]
 mod tests {
@@ -206,6 +206,7 @@ mod tests {
                 audio_tracks: Vec::new(),
                 origin: None,
                 color_space: Default::default(),
+                stock: None,
             },
         }
     }
@@ -1757,6 +1758,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         };
         editor
             .apply(Command::FreezeFrame {
@@ -2347,6 +2349,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         };
         let outcome = editor
             .apply(Command::ReplaceClipMedia {
@@ -2381,6 +2384,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         };
         let outcome = editor
             .apply(Command::ReplaceClipMedia {
@@ -2455,6 +2459,7 @@ mod tests {
                 audio_tracks: Vec::new(),
                 origin: None,
                 color_space: Default::default(),
+                stock: None,
             }
         };
         assert!(
@@ -2501,6 +2506,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         };
         let freeze_id = editor
             .apply(Command::FreezeFrame {
@@ -2582,6 +2588,7 @@ mod tests {
                     audio_tracks: Vec::new(),
                     origin: None,
                     color_space: Default::default(),
+                    stock: None,
                 }),
             })
             .expect("freezes")
@@ -4421,6 +4428,7 @@ mod tests {
                     audio_tracks: Vec::new(),
                     origin: None,
                     color_space: Default::default(),
+                    stock: None,
                 },
             })
             .expect("fills");
@@ -4481,6 +4489,7 @@ mod tests {
                     audio_tracks: Vec::new(),
                     origin: None,
                     color_space: Default::default(),
+                    stock: None,
                 },
             })
             .expect("fills");
@@ -4537,6 +4546,7 @@ mod tests {
                 audio_tracks: Vec::new(),
                 origin: None,
                 color_space: Default::default(),
+                stock: None,
             },
         });
         assert!(
@@ -6084,6 +6094,7 @@ mod tests {
             color_range: None,
             color_space: Default::default(),
             origin: None,
+            stock: None,
             extra: Default::default(),
         });
 
@@ -6123,6 +6134,7 @@ mod tests {
             color_range: None,
             color_space: Default::default(),
             origin: None,
+            stock: None,
             extra: Default::default(),
         });
 
@@ -6288,6 +6300,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         };
         let mut editor = Editor::new();
         editor

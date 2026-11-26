@@ -3663,6 +3663,7 @@ mod tests {
             audio_tracks: Vec::new(),
             origin: None,
             color_space: Default::default(),
+            stock: None,
         }
     }
 

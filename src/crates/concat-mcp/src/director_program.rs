@@ -1511,6 +1511,28 @@ fn beats_in_take_clock(beats: &Value, source: &AutoEditProgramSource, take: &str
     Value::Array(translated)
 }
 
+/// The bed's downbeats, when a beat grid was measured at all: the
+/// analysis's own `downbeatsMs`, read from the wait's reply and carried
+/// in seconds. The clock is the analyzed file's own - the bed's
+/// timeline clock, or a musical take's file clock - and the caller is
+/// the one who knows which.
+fn latest_downbeats(log: &[Value]) -> Option<Vec<f64>> {
+    log.iter().rev().find_map(|reply| {
+        let output = reply.get("output")?.as_str()?;
+        let parsed: Value = serde_json::from_str(output).ok()?;
+        parsed["downbeatsMs"]
+            .as_array()
+            .map(|beats| {
+                beats
+                    .iter()
+                    .filter_map(|ms| ms.as_f64())
+                    .map(|ms| ms / 1000.0)
+                    .collect::<Vec<f64>>()
+            })
+            .filter(|beats| !beats.is_empty())
+    })
+}
+
 /// The take whose own audio already carries music, if any. The music
 /// read echoes the path it was asked about, so a reply that carries
 /// `musicPresent` names its take directly - a call that failed leaves
@@ -1760,6 +1782,13 @@ struct SnapBounds {
     emphasis: Vec<f64>,
     /// Spectral-flux onsets, in file seconds.
     onsets: Vec<f64>,
+    /// The music's downbeats, in this take's file seconds, sorted: the
+    /// bed's grid translated through the pieces the timeline plays, or
+    /// a musical take's own beats as the analysis measured them. The
+    /// LAST bound a cut lands on - the voice's own moments are spent
+    /// first, and a beat behind them is still a measured moment, not an
+    /// arbitrary frame.
+    downbeats: Vec<f64>,
 }
 
 impl SnapBounds {
@@ -1767,9 +1796,10 @@ impl SnapBounds {
     /// `floor` (the earliest bound a tile of honest length allows): a
     /// speaker change inside the breath window first, then a phrase
     /// boundary, then a stressed word, then a pause, then an onset inside
-    /// the tighter transient window. `None` when no measured moment is
-    /// near enough - the bound then stays where the cadence put it, which
-    /// is an arbitrary frame but an honest one.
+    /// the tighter transient window, and the music's downbeat behind
+    /// them all. `None` when no measured moment is near enough - the
+    /// bound then stays where the cadence put it, which is an arbitrary
+    /// frame but an honest one.
     fn snap(&self, target: f64, floor: f64, window: f64, onset_window: f64) -> Option<f64> {
         let nearest = |moments: &[f64], win: f64| {
             moments
@@ -1794,6 +1824,12 @@ impl SnapBounds {
             // The transient: a cut that lands on an attack reads as
             // intentional in a way a cut twenty frames later never does.
             .or_else(|| nearest(&self.onsets, onset_window))
+            // The music's downbeat, behind every moment the voice
+            // offered: a cut on the bed's own grid reads as the edit
+            // hearing the music, and it is the last bound because the
+            // voice stays first - a spoken moment near the target is
+            // always the truer seam.
+            .or_else(|| nearest(&self.downbeats, window))
     }
 }
 
@@ -1838,6 +1874,32 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     // who changed, then where the speaker breathed, then the nearest
     // attack - an arbitrary frame is the last resort, never the choice.
     let voice = voice_reads(log, takes);
+    // The music's own grid, when one was measured: a musical take's
+    // downbeats are already in its file clock, and a bed's are in the
+    // timeline's - translated into each take's file seconds through the
+    // pieces the timeline plays, the same translation the planner's
+    // beats ride. A take the grid does not cover keeps none.
+    let grid = latest_downbeats(log);
+    let musical = musical_take(log, takes);
+    let downbeats_of = |take: &str| -> Vec<f64> {
+        let Some(grid) = grid.as_ref() else {
+            return Vec::new();
+        };
+        if musical.as_deref() == Some(take) {
+            return grid.clone();
+        }
+        let mut in_take: Vec<f64> = Vec::new();
+        for (source_in, source_out, speed, start) in take_pieces(view, &media, take) {
+            let duration = (source_out - source_in) / speed;
+            for at in grid {
+                if (start..start + duration).contains(at) {
+                    in_take.push(source_in + (at - start) * speed);
+                }
+            }
+        }
+        in_take.sort_by(|left, right| left.total_cmp(right));
+        in_take
+    };
     let pauses: Vec<(String, SnapBounds)> = voice
         .iter()
         .map(|voice| {
@@ -1870,6 +1932,7 @@ fn coverage_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
                     .flat_map(|line| line.emphasis.iter().map(|word| word.at))
                     .collect(),
                 onsets: voice.take_wide.flux_onsets.clone(),
+                downbeats: downbeats_of(&voice.take),
             };
             bounds.pauses.sort_by(|left, right| left.total_cmp(right));
             bounds
@@ -17937,6 +18000,92 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(bounds.snap(3.1, 0.0, 0.8, 0.3), Some(3.0));
+    }
+
+    /// A coverage bound snaps to the music's downbeat when the voice
+    /// offered no moment of its own near the target - and never over a
+    /// spoken moment that is near: the voice stays first, the bed's grid
+    /// is the last bound that is still a measured moment.
+    #[test]
+    fn a_coverage_bound_snaps_to_the_bed_s_downbeat_behind_the_voice() {
+        let bounds = SnapBounds {
+            downbeats: vec![3.0],
+            ..Default::default()
+        };
+        assert_eq!(
+            bounds.snap(3.1, 0.0, 0.8, 0.3),
+            Some(3.0),
+            "the bed's grid answers where the voice offered nothing"
+        );
+        // A stressed word near the target outranks the beat: the voice's
+        // own lean is the truer seam.
+        let bounds = SnapBounds {
+            emphasis: vec![3.2],
+            downbeats: vec![3.0],
+            ..Default::default()
+        };
+        assert_eq!(bounds.snap(3.1, 0.0, 0.8, 0.3), Some(3.2));
+        // A bound before the floor keeps looking: the beat behind it
+        // cannot shorten a tile past honesty.
+        let bounds = SnapBounds {
+            downbeats: vec![2.0],
+            ..Default::default()
+        };
+        assert_eq!(bounds.snap(3.1, 2.5, 0.8, 0.3), None);
+    }
+
+    /// The coverage floor cuts on the bed's downbeat: the grid the beat
+    /// analysis measured, translated into the take's own file seconds,
+    /// takes the bound the cadence put at an arbitrary frame and moves it
+    /// onto the music - behind every moment the voice itself offered.
+    #[test]
+    fn the_coverage_floor_cuts_on_the_bed_s_downbeat() {
+        let take = "/takes/a.wav";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+            aroll: None,
+        }];
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "voice", "media": "m1", "start": 0.0, "duration": 7.0,
+                "sourceStart": 0.0, "speed": 1.0
+            }]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 5.0, "end": 7.0, "text": "crowds crossing the bridge at night" },
+            ],
+        });
+        // The wait's reply for the bed's beat analysis: a downbeat at
+        // 3.2 s, near the cadence's own first bound and far from any
+        // moment the voice measured (it measured none).
+        let wait = json!({
+            "output": serde_json::to_string(&json!({
+                "bpm": 120.0,
+                "beatsMs": [500, 1000, 1500, 2000, 2500, 3000, 3500],
+                "downbeatsMs": [200, 3200],
+            }))
+            .expect("the analysis serialises"),
+        });
+        let log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+            wait,
+        ];
+        let slots = coverage_slots(&log, &takes);
+        assert!(slots.len() >= 2, "a seven-second take tiles into shots");
+        assert!(
+            (slots[0].to - 3.2).abs() < 0.02,
+            "the first cut lands on the bed's downbeat, not the cadence's \
+             arbitrary frame: {:?}",
+            slots
+                .iter()
+                .map(|slot| (slot.from, slot.to))
+                .collect::<Vec<_>>()
+        );
     }
 
     /// A card opens on the delivery's stressed word, not a fixed offset

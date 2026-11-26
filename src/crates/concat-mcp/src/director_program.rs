@@ -2458,12 +2458,7 @@ fn emphasis_peaks(reads: &[VoiceRead]) -> Vec<(String, f64, f64, String)> {
                     // nominal start: when the flux ear measured one
                     // nearby, the hit moves to it.
                     let at = read.onset_near(word.at, 0.12).unwrap_or(word.at);
-                    (
-                        read.take.clone(),
-                        at,
-                        word.strength,
-                        word.word.clone(),
-                    )
+                    (read.take.clone(), at, word.strength, word.word.clone())
                 })
             })
         })
@@ -12176,14 +12171,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         continue;
                                     };
                                     let Some(hit) = hits.iter().find(|hit| {
-                                        hit["localPath"]
-                                            .as_str()
-                                            .and_then(|local| {
-                                                std::path::Path::new(local)
-                                                    .file_name()
-                                                    .and_then(|name| name.to_str())
-                                            })
-                                            == Some(file)
+                                        hit["localPath"].as_str().and_then(|local| {
+                                            std::path::Path::new(local)
+                                                .file_name()
+                                                .and_then(|name| name.to_str())
+                                        }) == Some(file)
                                     }) else {
                                         continue;
                                     };
@@ -12193,10 +12185,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     if used.iter().any(|spent| spent == id) {
                                         continue;
                                     }
-                                    if !hit["duration"]
-                                        .as_f64()
-                                        .is_none_or(|secs| secs <= 3.0)
-                                    {
+                                    if !hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0) {
                                         continue;
                                     }
                                     // The hit the ear chose: placed exactly
@@ -18583,7 +18572,10 @@ mod tests {
         let rank = (sfx.next)(&log).expect("the ear is asked to rank");
         assert_eq!(rank.tool, "sense_sound_model");
         assert_eq!(rank.arguments["action"], json!("rank"));
-        assert_eq!(rank.arguments["index"], json!("/cache/sound-model-index.json"));
+        assert_eq!(
+            rank.arguments["index"],
+            json!("/cache/sound-model-index.json")
+        );
         assert_eq!(rank.arguments["limit"], json!(2));
         // The rank's own order: b.ogg first, and only rows the search
         // actually offered can be spent.
@@ -18622,7 +18614,10 @@ mod tests {
         let rank_again = (sfx.next)(&log).expect("the ear is asked to rank again");
         assert_eq!(rank_again.tool, "sense_sound_model");
         assert_eq!(rank_again.arguments["action"], json!("rank"));
-        assert_eq!(rank_again.arguments["index"], json!("/cache/sound-model-index.json"));
+        assert_eq!(
+            rank_again.arguments["index"],
+            json!("/cache/sound-model-index.json")
+        );
         log.push(json!({ "tool": "rank", "ok": true,
                          "model": { "state": "ready" },
                          "candidates": [

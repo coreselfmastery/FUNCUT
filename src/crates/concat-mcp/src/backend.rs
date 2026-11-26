@@ -309,8 +309,8 @@ impl Backend for Headless {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use concat_api::{Api, AppDirs, Request};
+    use serde_json::json;
 
     /// A finished run's hand-off, over a real server: the session an
     /// agent opened is closed by the release, a second release of the

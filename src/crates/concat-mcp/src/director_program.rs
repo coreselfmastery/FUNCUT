@@ -9979,15 +9979,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // establishes and has room to travel, a
                             // shallow one isolates and a push on it
                             // crowds what it isolated.
-                            if drift_enabled {
-                                if let Some((near_share, _)) =
+                            if drift_enabled
+                                && let Some((near_share, _)) =
                                     read.and_then(|read| read.depth.as_ref())
-                                {
-                                    if *near_share < 0.4 {
-                                        drift += 0.01;
-                                    } else if *near_share > 0.6 {
-                                        drift -= 0.01;
-                                    }
+                            {
+                                if *near_share < 0.4 {
+                                    drift += 0.01;
+                                } else if *near_share > 0.6 {
+                                    drift -= 0.01;
                                 }
                             }
                             let drift = round3(drift);

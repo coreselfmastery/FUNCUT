@@ -2482,6 +2482,48 @@ fn voice_read_of<'a>(reads: &'a [VoiceRead], take: &str) -> Option<&'a VoiceRead
     reads.iter().find(|read| read.take == take)
 }
 
+/// The take's room verdict, when the voice-quality door read it: the
+/// family reply that names the member it ran and the take it read. The
+/// fan lands its lanes in completion order, so the reply's own `audio`
+/// - echoed by the family dispatch - is the only attribution a consumer
+/// may lean on.
+fn classify_of<'a>(log: &'a [Value], take: &str) -> Option<&'a Value> {
+    log.iter().rev().find(|reply| {
+        reply.get("action") == Some(&json!("classify_recording_quality"))
+            && reply.get("audio").and_then(Value::as_str) == Some(take)
+    })
+}
+
+/// The take's measured tail, in seconds, when the voice-quality door
+/// read the room the shipped take sits in. `None` when the door never
+/// answered for this take - unmeasured is not the same answer as dry.
+fn room_rt60_of(log: &[Value], take: &str) -> Option<f64> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("measure_reverb"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("rt60"))
+        .and_then(Value::as_f64)
+}
+
+/// The restart spans the voice-quality door found in one take's words:
+/// false starts, repeated phrases, held words and abandoned fragments,
+/// each with the door's own word on whether the span is safe to cut.
+fn restart_rows_of<'a>(log: &'a [Value], take: &str) -> Vec<&'a Value> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("detect_restarts"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("restarts"))
+        .and_then(Value::as_array)
+        .map(|rows| rows.iter().collect())
+        .unwrap_or_default()
+}
+
 /// A topic boundary the discourse tiling found: where one chapter ends and
 /// the next begins, in the take's own seconds, with the words that name
 /// the new chapter.
@@ -6580,6 +6622,79 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             "note": note,
         }));
     }
+    // The room the voice-quality door graded, per take: the verdict with
+    // its floor, its SNR and the bed hint it earns. The repair chain
+    // itself is the diagnosis's own call - measured, not guessed - so the
+    // verdict's decision is `mix`: it is the floor the bed must sit on,
+    // and the note says which chain the room names for a human to check
+    // the repair against.
+    for take in takes {
+        let Some(reply) = classify_of(log, &take.take) else {
+            continue;
+        };
+        let verdict = reply.pointer("/verdict").and_then(Value::as_str);
+        let floor = reply.pointer("/measures/noiseFloorDbfs").and_then(Value::as_f64);
+        let snr = reply.pointer("/measures/snrDb").and_then(Value::as_f64);
+        let bed = reply.pointer("/bgmDecision").and_then(Value::as_str);
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "mix",
+            "signals": ["room.verdict"],
+            "note": format!(
+                "the room graded {}: floor {} dBFS, SNR {} dB - {}",
+                verdict.unwrap_or("unmeasured"),
+                floor.map(|db| format!("{db:.0}")).unwrap_or_else(|| "n/a".to_owned()),
+                snr.map(|db| format!("{db:.0}")).unwrap_or_else(|| "n/a".to_owned()),
+                bed.unwrap_or("no bed hint"),
+            ),
+        }));
+    }
+    // The room's tail, where the door could measure one: the answer the
+    // accent gate and the duck depth read, logged as `mix` because it is
+    // the same decision's other half - how much room the voice leaves
+    // for anything under it.
+    for take in takes {
+        let Some(rt60) = room_rt60_of(log, &take.take) else {
+            continue;
+        };
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "mix",
+            "signals": ["room.rt60"],
+            "note": format!(
+                "the shipped take's tail measures {rt60:.2} s: accents {} and the bed ducks {}",
+                if rt60 > 0.4 { "retire under it" } else { "hold their timing" },
+                if rt60 >= 0.4 { "deeper" } else { "as planned" },
+            ),
+        }));
+    }
+    // The restarts, marked: which attempt survives is a cut decision the
+    // plan records and the tighten does not make on its own - the door's
+    // own cutSafe word is the honesty here, and a not-cut-safe span is a
+    // human's rewrite, not an automatic edit. The span is marked in the
+    // TIMELINE's clock, the clock every other entry's `at` speaks: a
+    // multi-take cut plays several file clocks at once, and a take-file
+    // second means nothing to the plan that reads it.
+    for take in takes {
+        for restart in restart_rows_of(log, &take.take) {
+            let at = restart
+                .pointer("/span/start")
+                .and_then(Value::as_f64)
+                .and_then(|moment| timeline_at(view, &media, &take.take, moment));
+            let kind = restart.get("kind").and_then(Value::as_str).unwrap_or("restart");
+            let cut_safe = restart.get("cutSafe") == Some(&json!(true));
+            signal_log.push(json!({
+                "at": round3(at.unwrap_or(0.0)),
+                "decision": "assemble",
+                "signals": ["restarts.span"],
+                "note": format!(
+                    "a {kind} is marked{}",
+                    if cut_safe { " - the door calls it safe to punch out" }
+                    else { " - the door calls it NOT safe to cut: a human decides" },
+                ),
+            }));
+        }
+    }
     // The grade: emotion names the temperature, the forensic tone breaks
     // a neutral tie, and the arc decides whether the look lifts at the
     // end. This is the decision the colour stage spends, so it is logged
@@ -6923,6 +7038,14 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 // A pivot is a marker the lexicon matched; the profile
                 // rates the marker family at 0.65, like the fillers.
                 "discourseMarkers" => 0.65,
+                // The voice-quality door's own families: deterministic
+                // window statistics and a lexical scan, the same class
+                // of instrument the marker lexicon is. A fixed rating
+                // says what the instrument is, not what it measured -
+                // and 0 would say the run never asked, which is the one
+                // thing it did do.
+                "room" => 0.7,
+                "restarts" => 0.65,
                 // `words` is the transcript's own text; the profile rates
                 // the gate that produced them as `wordConfidence`.
                 "words" => reads
@@ -7371,6 +7494,12 @@ fn decision_for(family: &str) -> &'static [&'static str] {
         "visualQuality" => &["cut", "motion"],
         "saliency" => &["cut", "caption", "motion"],
         "scene" => &["cut", "transition"],
+        // The voice-quality door's own families: the room verdict and the
+        // tail are the floor the bed sits on and the accents the tail
+        // retires - both `mix` - and a restart span is marked as the
+        // `assemble` decision that names which attempt survives.
+        "room" => &["mix"],
+        "restarts" => &["assemble"],
         _ => &[],
     }
 }
@@ -8191,6 +8320,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .iter()
         .map(|take| {
             vec![
+                // The room before anything measures it: the verdict -
+                // broadcast, clean, home, rough - with the floor, the
+                // SNR and the hum tones, is the reading every later
+                // repair answer is read against, and the bed hint it
+                // carries is the Music stage's own floor decision. It
+                // writes nothing: a reading, never a repair.
+                call(
+                    "sense_voice_quality",
+                    json!({
+                        "action": "classify_recording_quality",
+                        "audio": take.take,
+                    }),
+                ),
                 // The measurement is a call of its own so the reply - the
                 // hum frequency, the DC offset, the flatness, the rolloff
                 // - sits in the log where the critic and the signal brief
@@ -8227,6 +8369,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // 60 Hz door and nothing else, the diagnosis's
                         // own word that the take is cleaner than the cure.
                         "force": true,
+                    }),
+                ),
+                // The room the mix actually sits in: the tail of the
+                // take the timeline will play, measured after the repair
+                // so the answer is the shipped room and not the recorded
+                // one. The Sfx stage's reverb gate and the Music stage's
+                // duck depth read this before they fall back to the
+                // profile's own estimate. It writes nothing.
+                call(
+                    "sense_voice_quality",
+                    json!({
+                        "action": "measure_reverb",
+                        "audio": take.take,
                     }),
                 ),
             ]
@@ -8355,6 +8510,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             calls.push(call(
                                 "sense_discourse",
                                 json!({ "action": "extract_claim_graph", "lines": lines.clone() }),
+                            ));
+                            // The false starts and repeated phrases, read
+                            // from the words this take actually spoke: a
+                            // restart span is MARKED in the plan, because
+                            // which attempt survives is a cut decision
+                            // the tighten does not make on its own - the
+                            // door itself calls an abandoned clause not
+                            // cut-safe, and that honesty is the reading's
+                            // value. It needs the transcript, so it lives
+                            // here and not in the repair fan, which runs
+                            // before any words exist.
+                            calls.push(call(
+                                "sense_voice_quality",
+                                json!({
+                                    "action": "detect_restarts",
+                                    "audio": take.take,
+                                    "lines": lines.clone(),
+                                }),
                             ));
                             calls.push(call(
                                 "emotion",
@@ -11270,12 +11443,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // band a bed's own brightness occupies - each
                         // deepens the duck a little, measured, not
                         // guessed. A take with neither reading keeps
-                        // the act-and-density level alone.
-                        let room_db = if voice_reads(log, &music_source)
-                            .iter()
-                            .filter_map(|read| read.take_wide.reverb_tail_sec)
-                            .any(|tail| tail >= 0.4)
-                        {
+                        // the act-and-density level alone. The tail the
+                        // voice-quality door measured on the shipped
+                        // take outranks the profile's estimate: the door
+                        // is the dedicated instrument, and the estimate
+                        // the fallback.
+                        let room_db = if voice_reads(log, &music_source).iter().any(|read| {
+                            room_rt60_of(log, &read.take)
+                                .or(read.take_wide.reverb_tail_sec)
+                                .is_some_and(|tail| tail >= 0.4)
+                        }) {
                             -3.0
                         } else {
                             0.0
@@ -11741,16 +11918,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .is_none_or(|clean| clean)
                         });
                         // A reverberant take smears anything tight-synced to
-                        // a word: the forensic ear's own tail estimate over
-                        // 0.4 s retires the peak, because an accent timed
-                        // to the sample under a room's tail is a smear, not
-                        // a hit - the accent the ear cannot hold is an
-                        // accent the mix must not place. A take with no
-                        // tail reading keeps its peaks: unmeasured is not
-                        // the same answer as reverberant.
+                        // a word: the room's tail over 0.4 s retires the
+                        // peak, because an accent timed to the sample
+                        // under a tail is a smear, not a hit - the accent
+                        // the ear cannot hold is an accent the mix must
+                        // not place. The tail the voice-quality door
+                        // measured on the shipped take outranks the
+                        // forensic ear's estimate, and a take with
+                        // neither reading keeps its peaks: unmeasured is
+                        // not the same answer as reverberant.
                         found.retain(|(take, _, _, _)| {
-                            voice_read_of(&voice, take)
-                                .and_then(|voice_read| voice_read.take_wide.reverb_tail_sec)
+                            room_rt60_of(log, take)
+                                .or_else(|| {
+                                    voice_read_of(&voice, take)
+                                        .and_then(|voice_read| voice_read.take_wide.reverb_tail_sec)
+                                })
                                 .is_none_or(|tail| tail <= 0.4)
                         });
                         // The strongest six, earliest first: the run's
@@ -13058,37 +13240,54 @@ mod tests {
         // The repair is fanned, one lane per take, and its chain lands on
         // the take the timeline plays: the export ships the repaired
         // sound, the watcher's own promise. The lane measures before it
-        // repairs: diagnose_take first (its reply sits in the log where
-        // the critic reads what the repair was chosen on), the
-        // enhancement second, and only then the repair the diagnosis
-        // ordered - a hum gets its notch, a DC offset its blocker, a
-        // muffled take a presence lift instead of the denoise that
-        // would deepen it.
+        // repairs: the room first (the voice-quality door's verdict is
+        // the reading every repair answer is read against), diagnose_take
+        // second (its reply sits in the log where the critic reads what
+        // the repair was chosen on), the enhancement third, the repair
+        // the diagnosis ordered fourth - a hum gets its notch, a DC
+        // offset its blocker, a muffled take a presence lift instead of
+        // the denoise that would deepen it - and the room's tail last,
+        // measured on the take the timeline will actually play.
         let ProgramStep::Fanned(repair) = &program.steps[1] else {
             panic!("the repair is fanned");
         };
         assert_eq!(repair.groups.len(), 2, "one lane per take");
-        assert_eq!(repair.groups[0][0].tool, "sense_audio_repair");
-        assert_eq!(repair.groups[0][0].arguments["action"], "diagnose_take");
+        assert_eq!(repair.groups[0][0].tool, "sense_voice_quality");
+        assert_eq!(
+            repair.groups[0][0].arguments["action"],
+            "classify_recording_quality"
+        );
         assert_eq!(
             repair.groups[0][0].arguments["audio"],
             source.takes[0].take.as_str()
         );
-        assert_eq!(repair.groups[0][1].arguments["action"], "enhance_speech");
+        assert_eq!(repair.groups[0][1].tool, "sense_audio_repair");
+        assert_eq!(repair.groups[0][1].arguments["action"], "diagnose_take");
         assert_eq!(
-            repair.groups[0][1].arguments["out"],
+            repair.groups[0][1].arguments["audio"],
+            source.takes[0].take.as_str()
+        );
+        assert_eq!(repair.groups[0][2].arguments["action"], "enhance_speech");
+        assert_eq!(
+            repair.groups[0][2].arguments["out"],
             source.takes[0].enhanced.as_str()
         );
         assert_eq!(
-            repair.groups[0][2].arguments["action"],
+            repair.groups[0][3].arguments["action"],
             "repair_by_diagnosis"
         );
         assert_eq!(
-            repair.groups[0][2].arguments["audio"],
+            repair.groups[0][3].arguments["audio"],
             source.takes[0].enhanced.as_str()
         );
         assert_eq!(
-            repair.groups[0][2].arguments["out"],
+            repair.groups[0][3].arguments["out"],
+            source.takes[0].take.as_str()
+        );
+        assert_eq!(repair.groups[0][4].tool, "sense_voice_quality");
+        assert_eq!(repair.groups[0][4].arguments["action"], "measure_reverb");
+        assert_eq!(
+            repair.groups[0][4].arguments["audio"],
             source.takes[0].take.as_str()
         );
 
@@ -13900,6 +14099,11 @@ mod tests {
             "visualQuality",
             "saliency",
             "scene",
+            // The voice-quality door's families: the room verdict and tail
+            // the mix decisions read, the restart spans the assemble
+            // decision marks.
+            "room",
+            "restarts",
         ];
         // Families the vocabulary names but this program deliberately does
         // not spend, and why. Each is a real reading the profile makes; the
@@ -14479,6 +14683,7 @@ mod tests {
                             | "grade"
                             | "sfx"
                             | "motion"
+                            | "assemble"
                     ),
                     "{family} claims {decision:?}, which is not a logged decision"
                 );
@@ -18626,6 +18831,279 @@ mod tests {
         let place_again = (sfx.next)(&log).expect("the ear's choice is placed again");
         assert_eq!(place_again.tool, "sounds_add");
         assert_eq!(place_again.arguments["id"], json!("hit-3"));
+    }
+
+    /// The room the voice-quality door measured outranks the forensic
+    /// ear's estimate: a take the estimate called reverberant keeps its
+    /// accents when the door measured a dry shipped room, and a take the
+    /// door measured reverberant loses them even when the estimate
+    /// dissented. The dedicated instrument decides; the estimate is the
+    /// fallback, never the second opinion.
+    #[test]
+    fn the_doors_tail_outranks_the_estimates() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let base = || {
+            vec![
+                json!({
+                    "timeline": { "clips": [{
+                        "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                        "sourceStart": 0.0, "speed": 1.0,
+                    }]},
+                    "media": [{ "id": "m1", "path": take }],
+                }),
+                json!({
+                    "path": take,
+                    "output": json!({
+                        "segments": [
+                            { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        ],
+                    }).to_string(),
+                }),
+                json!({
+                    "audio": { "path": take },
+                    "lines": [
+                        { "start": 0.0, "end": 4.0,
+                          "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                    ],
+                    // The forensic ear's estimate: a tail the old gate
+                    // retired the peak for.
+                    "forensic": { "reverbTailSec": 0.5 },
+                }),
+                json!({
+                    "lines": [
+                        emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    ],
+                }),
+            ]
+        };
+        let generator_absent =
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false });
+
+        // The door measured the shipped take at 0.3 s: the estimate's
+        // 0.5 s does not retire the accent, and the peak is shopped.
+        let mut log = base();
+        log.push(json!({ "tool": "measure_reverb", "ok": true,
+                         "action": "measure_reverb", "audio": take, "rt60": 0.3 }));
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        assert_eq!(
+            (sfx.next)(&log).expect("the generator is asked").tool,
+            "sense_sound_model"
+        );
+        log.push(generator_absent);
+        assert!(
+            (sfx.next)(&log).is_some_and(|call| call.tool == "sounds_search"),
+            "a dry door reading keeps the accent the estimate would retire"
+        );
+
+        // The door measured 0.5 s: the peak retires whatever the
+        // estimate said, and the stage has nothing to shop - the first
+        // call is the stage's own end, no generator ask for a peak the
+        // room already retired.
+        let mut log = base();
+        log.push(json!({ "tool": "measure_reverb", "ok": true,
+                         "action": "measure_reverb", "audio": take, "rt60": 0.5 }));
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        assert!(
+            (sfx.next)(&log).is_none(),
+            "a reverberant door reading retires the accent the estimate kept"
+        );
+
+        // No door answer at all: the estimate stands, exactly as before
+        // the door existed - the fallback is the old behaviour, unchanged.
+        let log = base();
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        assert!(
+            (sfx.next)(&log).is_none(),
+            "an estimate with no door answer retires the accent, as it always did"
+        );
+    }
+
+    /// The room and its restarts reach the plan the run validates: the
+    /// verdict and the tail as `mix` decisions, the restart spans as
+    /// `assemble` marks in the timeline's own clock - and each entry
+    /// names a family the vocabulary accepts, with a confidence and a
+    /// note, or the plan's own gate would refuse the plan.
+    #[test]
+    fn the_plan_spends_the_room_and_marks_the_restarts() {
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let log = vec![
+            json!({
+                "timeline": { "clips": [{
+                    "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                    "sourceStart": 0.0, "speed": 1.0,
+                }]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 2.0, "text": "we found the wreck" },
+                        { "start": 3.0, "end": 5.0, "text": "it was not empty" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 2.0,
+                      "prosody": { "emphasisWords": [{ "word": "found", "t": 1.0, "strength": 0.9 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 2.0, "anger", 0.9, "tension", "hot", "impact-heavy"),
+                    emotion_row(3.0, 5.0, "calm", 0.6, "reveal", "warm", "warm-pad"),
+                ],
+            }),
+            json!({
+                "tool": "classify_recording_quality", "ok": true,
+                "action": "classify_recording_quality", "audio": take,
+                "verdict": "home",
+                "measures": { "noiseFloorDbfs": -38.0, "snrDb": 18.0 },
+                "bgmDecision": "the floor is audible: BGM at or above the floor masks it",
+            }),
+            json!({
+                "tool": "measure_reverb", "ok": true,
+                "action": "measure_reverb", "audio": take, "rt60": 0.55,
+                "roomClass": "small room",
+            }),
+            json!({
+                "tool": "detect_restarts", "ok": true,
+                "action": "detect_restarts", "audio": take,
+                "restarts": [
+                    { "kind": "stalling_repeat", "cutSafe": true,
+                      "span": { "start": 1.0, "end": 1.6 } },
+                    { "kind": "abandoned_clause", "cutSafe": false,
+                      "span": { "start": 3.0, "end": 4.2 } },
+                ],
+            }),
+        ];
+        let plan = auto_plan(&log, &source.takes, &source)
+            .expect("the plan is written from the measured log");
+        let entries = plan["signalLog"].as_array().expect("a signalLog");
+        let room = entries
+            .iter()
+            .find(|entry| entry["signals"] == json!(["room.verdict"]))
+            .expect("the room verdict is logged");
+        assert_eq!(room["decision"], "mix");
+        assert!(
+            room["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("home")),
+            "the note names the verdict: {:?}",
+            room["note"]
+        );
+        let tail = entries
+            .iter()
+            .find(|entry| entry["signals"] == json!(["room.rt60"]))
+            .expect("the measured tail is logged");
+        assert!(
+            tail["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("0.55")),
+            "the note carries the measurement: {:?}",
+            tail["note"]
+        );
+        let marks: Vec<&Value> = entries
+            .iter()
+            .filter(|entry| entry["decision"] == "assemble")
+            .collect();
+        assert_eq!(marks.len(), 2, "both restart spans are marked: {entries:?}");
+        assert!(
+            marks.iter().any(|mark| mark["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("NOT safe to cut"))),
+            "the abandoned clause's mark says what the door said: {marks:?}"
+        );
+        // Every entry the room and restarts added is one the plan's own
+        // gate accepts: a family from the vocabulary, a confidence the
+        // stamping pass rated, a note that states the basis.
+        for entry in entries {
+            let decision = entry["decision"].as_str().expect("a decision");
+            assert!(
+                matches!(
+                    decision,
+                    "cut"
+                        | "caption"
+                        | "graphic"
+                        | "bgm"
+                        | "transition"
+                        | "pacing"
+                        | "repair"
+                        | "mix"
+                        | "grade"
+                        | "sfx"
+                        | "motion"
+                        | "assemble"
+                ),
+                "the gate accepts {decision:?}: {entry:?}"
+            );
+            for signal in entry["signals"].as_array().expect("signals") {
+                let signal = signal.as_str().expect("a signal name");
+                assert!(
+                    crate::tools::signal_vocabulary_has(signal),
+                    "signal {signal:?} is not one the vocabulary answers"
+                );
+            }
+            let confidence = entry["confidence"].as_f64().expect("a rated confidence");
+            assert!(
+                (0.0..=1.0).contains(&confidence) && confidence > 0.0,
+                "entry {entry:?} carries a usable confidence"
+            );
+        }
     }
 
     /// The plan the run writes is the one it measured, and it says which

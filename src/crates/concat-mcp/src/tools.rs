@@ -3788,6 +3788,15 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "visualQuality",
     "saliency",
     "scene",
+    // The voice-quality door's own families, measured by
+    // `sense_voice_quality` rather than the voice profile: the room the
+    // take was recorded in (its verdict and its tail) and the false
+    // starts the spoken words contain. The room verdict and the tail are
+    // spent by `mix` decisions - the floor the bed sits on, the accents
+    // the tail retires - and the restart spans by `assemble`, the
+    // decision that marks which attempt survives.
+    "room",
+    "restarts",
 ];
 
 /// Every family the profile answers, in the profile's own names. Exposed
@@ -3853,9 +3862,10 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
                 | "grade"
                 | "sfx"
                 | "motion"
+                | "assemble"
         ) {
             problems.push(format!(
-                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing, repair, mix, grade, sfx, motion"
+                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing, repair, mix, grade, sfx, motion, assemble"
             ));
             continue;
         }

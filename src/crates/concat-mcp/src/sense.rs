@@ -3479,6 +3479,15 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
         )));
     }
     let selftest = fields.get("selftest").and_then(Value::as_bool) == Some(true);
+    // The take the reading is about, when the member reads one: echoed
+    // into the reply so a run's log can attribute a family reading to
+    // the take that produced it - the fan lands its lanes in completion
+    // order, so the call order is not an attribution the consumer may
+    // lean on, and the Python reply names the reading, not its subject.
+    let audio = fields
+        .get("audio")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     // The selftest boolean becomes the member's own action; without it
     // the sidecar's contract defaults to "extract".
     let mut fields = fields;
@@ -3492,6 +3501,9 @@ pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, Ap
         // result reads the same as the reading it ran.
         if let Some(structured) = outcome.structured.as_mut() {
             structured["action"] = json!(member);
+            if let Some(audio) = &audio {
+                structured["audio"] = json!(audio);
+            }
         }
         outcome
     })

@@ -1559,10 +1559,54 @@ fn seam_transition(
     // one of the two is always a move the last shot did not wear.
     let alternate = alternate_transition(&mood);
     if last == Some(alternate) {
-        transition_for_emotion(&mood)
-    } else {
-        alternate
+        // Both of the mood's own moves are spent on the last two seams:
+        // the wider pool, rotated by the seam's own place in the take, is
+        // the third move - the catalogue ships a hundred and twenty-two
+        // transitions and the edit was re-wearing the same thirteen.
+        return variety_transition(&mood, (slot.from.max(0.0) * 10.0) as usize);
     }
+    alternate
+}
+
+/// The wider variety pool, for the seam that already wore both the mood's
+/// own moves: the catalogue ships a hundred and twenty-two transitions
+/// and the edit was re-wearing the same thirteen. These are the
+/// neighbours - a wipe for a turn, a whip for a jump, a bleed for a mood
+/// - each id the catalogue's own, none of them the mood's first two.
+fn variety_transition(emotion: &str, turn: usize) -> &'static str {
+    let pool: &[&str] = match emotion {
+        "joy" => &[
+            "concat.clock-wipe",
+            "concat.pendulum-swipe",
+            "concat.heartbeat-zoom",
+        ],
+        "surprise" => &[
+            "concat.portal-spin",
+            "concat.crash-zoom",
+            "concat.lurch-whip",
+        ],
+        "anger" => &[
+            "concat.glitch-social",
+            "concat.lurch-whip",
+            "concat.flash-social",
+        ],
+        "fear" => &[
+            "concat.conveyor-push",
+            "concat.linear-wipe",
+            "concat.ink-bleed",
+        ],
+        "sadness" => &[
+            "concat.dream-dissolve",
+            "concat.ember-dissolve",
+            "concat.ink-bleed",
+        ],
+        _ => &[
+            "concat.conveyor-push",
+            "concat.clock-wipe",
+            "concat.slice-social",
+        ],
+    };
+    pool[turn % pool.len()]
 }
 
 /// The timeline's extent over the narration's own clips - the number a
@@ -2797,6 +2841,34 @@ fn family_reply_of<'a>(log: &'a [Value], action: &str, take: &str) -> Option<&'a
     })
 }
 
+/// The strongest measured emphasis moments that the current timeline
+/// actually plays, mapped from each take's file clock onto the timeline
+/// clock. Peaks in trimmed-away material are ignored; a missing view
+/// means there are no honest frame candidates to render.
+fn thumbnail_candidates(reads: &[VoiceRead], view: Option<&Value>) -> Vec<f64> {
+    let Some(view) = view else {
+        return Vec::new();
+    };
+    let media = media_paths(view);
+    let mut peaks = emphasis_peaks(reads);
+    peaks.sort_by(|left, right| right.2.total_cmp(&left.2));
+    peaks
+        .iter()
+        .filter_map(|(take, at, ..)| timeline_at(view, &media, take, *at))
+        .take(3)
+        .collect()
+}
+
+/// Save a rendered emphasis frame inside the project's AUTO EDIT artifacts.
+fn thumbnail_output_path(project: &str, index: usize) -> String {
+    PathBuf::from(project)
+        .join("auto-edit")
+        .join("thumbnails")
+        .join(format!("emphasis-{:02}.png", index + 1))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// The visual doors the machine reported ready: the handoff's
 /// `sense_visual {action: "models"}` reply, read once. No reply, no
 /// numpy, no runtime or no checkpoint is zero - and zero keeps the
@@ -3563,13 +3635,22 @@ fn entity_stock_query(entity: &Entity) -> Option<String> {
 fn comp_for_entity(entity: &Entity) -> Option<(&'static str, String)> {
     let card = entity.card.to_ascii_lowercase();
     let preset = match card.as_str() {
-        "stat" => "funcut.social.stat",
+        "stat" => match entity.kind.as_str() {
+            "MONEY" | "PERCENT" | "PER" => "funcut.ticker.count",
+            "CARDINAL" | "QUANTITY" => "funcut.chart.bars",
+            _ => "funcut.social.stat",
+        },
         "timeline" => "funcut.timeline.horizontal",
         "lower-third" => "funcut.lower-third.minimal",
         _ => match entity.kind.as_str() {
             // A kind the profile's card field did not map: the entity
             // vocabulary's own reading of what a viewer needs to see.
-            "MONEY" | "PERCENT" | "PER" | "CARDINAL" | "QUANTITY" => "funcut.social.stat",
+            // A number the narration leans on earns the card that makes
+            // a number land - a counting ticker for the money and the
+            // percentage, a bar for the quantity - because a stat card
+            // only states what a ticker makes the viewer FEEL count.
+            "MONEY" | "PERCENT" | "PER" => "funcut.ticker.count",
+            "CARDINAL" | "QUANTITY" => "funcut.chart.bars",
             "DATE" | "TIME" => "funcut.timeline.horizontal",
             "ORG" | "PERSON" | "GPE" | "LOC" | "FAC" => "funcut.lower-third.minimal",
             _ => return None,
@@ -3712,6 +3793,13 @@ fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
     Some(match line.act.as_str() {
         "hook" => match line.emotion.as_str() {
             "surprise" | "fear" => "funcut.chapter.chip",
+            // A hook that lands with joy or at full intensity is the
+            // piece's own showcase moment, and the engine ships one: the
+            // native CPU 3D scene - five geometries, three lights, the
+            // camera's own flight path. The card the library carried
+            // before was glass; the showcase is the hook a faceless
+            // channel opens with.
+            "joy" if line.intensity >= 0.75 => "funcut.scene3d.showcase",
             _ => "funcut.lower-third.glass",
         },
         "reveal" | "turn" => "funcut.sting.wordmark",
@@ -4779,6 +4867,19 @@ fn entrance_keys(clip_id: &str, duration: f64, placed: f64, ease: &[f64]) -> Vec
     let span = (0.35 / duration).clamp(0.05, 0.6);
     let ease = json!(ease);
     vec![
+        // The entrance fades in as it settles: opacity 0 to 1 over the
+        // same span the scale rides, so a bright B-roll or a caption
+        // never pops onto the screen - it arrives. The fade is the one
+        // move every cut can afford, and the one the catalogue's own
+        // preview always wore.
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "opacity",
+            "at": 0.0, "value": 0.0, "ease": ease,
+        }),
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "opacity",
+            "at": round3(span), "value": 1.0, "ease": ease,
+        }),
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "scale",
             "at": 0.0, "value": 0.94, "ease": ease,
@@ -4796,6 +4897,38 @@ fn entrance_keys(clip_id: &str, duration: f64, placed: f64, ease: &[f64]) -> Vec
             "at": round3(span), "value": round3(placed), "ease": ease,
         }),
     ]
+}
+
+/// The texture the look asks for beside it: a warm film look wants the
+/// grain a film actually carries, a cold night wants the vignette the
+/// edges of the frame already imply, a dream wants the haze the grade
+/// only begins. `None` for a look the catalogue has no honest texture
+/// for - a second layer nobody measured the fit of is noise, not craft.
+fn texture_for_look(look: &str) -> Option<&'static str> {
+    match look {
+        "concat.warm" | "concat.golden-hour" | "concat.vintage" => Some("concat.film-grain"),
+        "concat.cool" | "concat.cool-blue" => Some("concat.vignette"),
+        "concat.teal-orange" => Some("concat.bloom-haze"),
+        _ => None,
+    }
+}
+
+#[test]
+fn grade_textures_are_only_added_for_their_supported_looks() {
+    assert_eq!(texture_for_look("concat.warm"), Some("concat.film-grain"));
+    assert_eq!(
+        texture_for_look("concat.golden-hour"),
+        Some("concat.film-grain")
+    );
+    assert_eq!(
+        texture_for_look("concat.cool-blue"),
+        Some("concat.vignette")
+    );
+    assert_eq!(
+        texture_for_look("concat.teal-orange"),
+        Some("concat.bloom-haze")
+    );
+    assert_eq!(texture_for_look("unknown-look"), None);
 }
 
 /// The grade package's own intensity parameter, as the plan's `grade`
@@ -10622,18 +10755,38 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     let look = grade_decision(log, &grade_source).look;
                     graded = true;
+                    // The texture rides under the grade: a second layer
+                    // the mood asks for - grain for a warm film look, a
+                    // vignette for a cold night, a haze for a dream. The
+                    // catalogue ships 123 effect packages and the grade
+                    // was the only one the edit ever wore; this is the
+                    // second, at its own default intensity - no keys, so
+                    // a package whose parameter names differ from the
+                    // grade's still lands whole.
+                    let texture = texture_for_look(look);
+                    let mut commands: Vec<Value> = vec![json!({
+                        "op": "addLayerClip",
+                        "trackId": null,
+                        "start": 0.0,
+                        "duration": round3(runtime),
+                        "effectId": look,
+                        "name": "The look",
+                    })];
+                    if let Some(texture) = texture {
+                        commands.push(json!({
+                            "op": "addLayerClip",
+                            "trackId": null,
+                            "start": 0.0,
+                            "duration": round3(runtime),
+                            "effectId": texture,
+                            "name": "The texture",
+                        }));
+                    }
                     Some(call(
                         "edit_apply",
                         json!({
                             "path": grade_project,
-                            "command": {
-                                "op": "addLayerClip",
-                                "trackId": null,
-                                "start": 0.0,
-                                "duration": round3(runtime),
-                                "effectId": look,
-                                "name": "The look",
-                            },
+                            "command": { "op": "batch", "commands": commands },
                         }),
                     ))
                 }
@@ -15256,6 +15409,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     the critic scores that sheet against the measured brief.
     let watch_project = source.project.clone();
     let watch_sheet = source.sheet.clone();
+    let watch_source = source.takes.clone();
     steps.push(
         DerivedStep::react(
             Stage::Watch,
@@ -15263,6 +15417,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let watch_project = watch_project.clone();
                 let watch_sheet = watch_sheet.clone();
                 let mut phase = 0u8;
+                // The thumbnail candidates left to render, strongest
+                // measured moments first.
+                let mut watch_thumbnails: Vec<f64> = Vec::new();
+                let mut watch_thumbnail_index = 0usize;
+                let watch_source = watch_source.clone();
                 move |log| {
                     if phase == 0 {
                         phase = 1;
@@ -15300,6 +15459,36 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "project": watch_project,
                                 "brief": signal_brief(log),
                                 "autoSetup": true,
+                            }),
+                        ));
+                    }
+                    // The three strongest measured moments are saved as
+                    // PNGs under auto-edit/thumbnails. Use preview_frame's
+                    // output path: BackendToolCaller keeps structured
+                    // replies and discards inline MCP image content.
+                    if phase == 2 {
+                        // The strongest measured moments, mapped from the
+                        // take's own seconds onto the timeline the preview
+                        // reads - a frame the channel can pick a thumbnail
+                        // from, at the moment the voice leaned on hardest.
+                        let voice = voice_reads(log, &watch_source);
+                        let candidates = thumbnail_candidates(&voice, latest_view(log));
+                        if candidates.is_empty() {
+                            return None;
+                        }
+                        watch_thumbnails = candidates;
+                        phase = 3;
+                    }
+                    if let Some(at) = watch_thumbnails.first().copied() {
+                        watch_thumbnails.remove(0);
+                        let output = thumbnail_output_path(&watch_project, watch_thumbnail_index);
+                        watch_thumbnail_index += 1;
+                        return Some(call(
+                            "preview_frame",
+                            json!({
+                                "path": watch_project,
+                                "time": round3(at),
+                                "output": output,
                             }),
                         ));
                     }
@@ -20759,20 +20948,26 @@ mod tests {
         // Two seconds of title: the entrance settles within the first
         // 0.35 s, a fraction of the title's own span.
         let keys = entrance_keys("t1", 2.0, 0.0, &default_ease());
-        assert_eq!(keys.len(), 4);
-        assert_eq!(keys[0]["property"], "scale");
+        assert_eq!(keys.len(), 6);
+        assert_eq!(keys[0]["property"], "opacity");
         assert_eq!(keys[0]["at"], 0.0);
-        assert_eq!(keys[0]["value"], 0.94);
+        assert_eq!(keys[0]["value"], 0.0);
+        assert_eq!(keys[1]["property"], "opacity");
         assert_eq!(keys[1]["at"], 0.175);
         assert_eq!(keys[1]["value"], 1.0);
-        assert_eq!(keys[2]["property"], "offsetY");
-        assert_eq!(keys[3]["value"], 0.0);
+        assert_eq!(keys[2]["property"], "scale");
+        assert_eq!(keys[2]["at"], 0.0);
+        assert_eq!(keys[2]["value"], 0.94);
+        assert_eq!(keys[3]["at"], 0.175);
+        assert_eq!(keys[3]["value"], 1.0);
+        assert_eq!(keys[4]["property"], "offsetY");
+        assert_eq!(keys[5]["value"], 0.0);
 
         // A placed caption rises around its own placement, not around
         // zero: a lower-third stays a lower-third while it settles.
         let placed = entrance_keys("t1", 2.0, 0.22, &default_ease());
-        assert_eq!(placed[2]["value"], 0.27);
-        assert_eq!(placed[3]["value"], 0.22);
+        assert_eq!(placed[4]["value"], 0.27);
+        assert_eq!(placed[5]["value"], 0.22);
 
         // A very short title still settles inside its span, not past it.
         let keys = entrance_keys("t", 0.5, 0.0, &default_ease());
@@ -20795,6 +20990,72 @@ mod tests {
             timeline_at(&view, &media, "/takes/a.wav", 2.0),
             Some(3.0),
             "the title is skipped and the file moment still maps"
+        );
+    }
+
+    /// Thumbnail frames use the strongest emphasis that survives the
+    /// current timeline's trims and map through clip speed to timeline
+    /// seconds. A peak at the exclusive end of a source span is not played.
+    #[test]
+    fn thumbnail_output_paths_are_numbered_inside_the_project() {
+        assert_eq!(
+            PathBuf::from(thumbnail_output_path("/tmp/Cut", 1)),
+            PathBuf::from("/tmp/Cut/auto-edit/thumbnails/emphasis-02.png")
+        );
+    }
+
+    #[test]
+    fn thumbnail_candidates_map_played_emphasis_to_timeline_time() {
+        use crate::voice_read::Emphasis;
+
+        let reads = vec![VoiceRead {
+            take: "/takes/a.wav".to_owned(),
+            lines: vec![LineRead {
+                emphasis: vec![
+                    Emphasis {
+                        word: "peak".into(),
+                        at: 4.0,
+                        strength: 1.0,
+                    },
+                    Emphasis {
+                        word: "trimmed".into(),
+                        at: 12.0,
+                        strength: 0.99,
+                    },
+                    Emphasis {
+                        word: "strong".into(),
+                        at: 6.0,
+                        strength: 0.9,
+                    },
+                    Emphasis {
+                        word: "next".into(),
+                        at: 7.0,
+                        strength: 0.8,
+                    },
+                    Emphasis {
+                        word: "fourth".into(),
+                        at: 8.0,
+                        strength: 0.7,
+                    },
+                ],
+                ..LineRead::default()
+            }],
+            ..VoiceRead::default()
+        }];
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "voice", "media": "m1", "start": 2.0, "duration": 4.0,
+                "sourceStart": 4.0, "speed": 2.0,
+            }]},
+            "media": [{ "id": "m1", "path": "/takes/a.wav" }],
+        });
+        assert_eq!(
+            thumbnail_candidates(&reads, Some(&view)),
+            vec![2.0, 3.0, 3.5]
+        );
+        assert!(
+            thumbnail_candidates(&reads, None).is_empty(),
+            "no timeline means no honest thumbnail frame"
         );
     }
 
@@ -21556,6 +21817,43 @@ mod tests {
         }
     }
 
+    /// Every third-tier move is a real transition package, and it is
+    /// distinct from the mood's primary and alternate moves. A catalogue
+    /// id that resolves as a filter/effect would silently become a plain
+    /// cut at export, so this test pins the package kind and section.
+    #[test]
+    fn variety_transitions_are_shipped_and_distinct_from_the_mood_pair() {
+        let catalogue =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../concat-effects/packages");
+        for mood in [
+            "joy", "surprise", "anger", "fear", "sadness", "disgust", "neutral",
+        ] {
+            for turn in 0..3 {
+                let id = variety_transition(mood, turn);
+                assert_ne!(
+                    id,
+                    transition_for_emotion(mood),
+                    "{mood} repeats its primary"
+                );
+                assert_ne!(
+                    id,
+                    alternate_transition(mood),
+                    "{mood} repeats its alternate"
+                );
+                let manifest = std::fs::read_to_string(catalogue.join(id).join("effect.toml"))
+                    .unwrap_or_else(|error| panic!("the transition {id} is not shipped: {error}"));
+                assert!(
+                    manifest.contains("kind = \"transition\""),
+                    "{id} is not a transition package"
+                );
+                assert!(
+                    manifest.contains("[transition]"),
+                    "{id} has no transition section"
+                );
+            }
+        }
+    }
+
     /// The no-repeat rule holds against the *seam* moves too, not only
     /// the mood's: a chapter opening's whip-pan is the mood's own
     /// alternate on a neutral read, so the old fallback wore whip-pan
@@ -21579,7 +21877,7 @@ mod tests {
         assert_eq!(first, "concat.whip-pan");
         let second = seam_transition(&[], &[chapter], &[], &[], &slot, Some(first));
         assert_ne!(second, first, "a chapter seam repeated its own move");
-        assert_eq!(second, "concat.blur-dissolve");
+        assert_eq!(second, "concat.slice-social");
     }
 
     /// The seam spends the pause class and the sentence shape, not only
@@ -21645,16 +21943,35 @@ mod tests {
             value,
             unit: unit.map(str::to_owned),
         };
-        let money = comp_for_entity(&entity("$10,450", Some(10450.0), Some("USD")));
-        assert_eq!(money.expect("a stat card").1, "$10,450");
-        let percent = comp_for_entity(&entity("45%", Some(45.0), Some("percent")));
-        assert_eq!(percent.expect("a stat card").1, "45%");
+        let money =
+            comp_for_entity(&entity("$10,450", Some(10450.0), Some("USD"))).expect("a money card");
+        assert_eq!(money.0, "funcut.ticker.count");
+        assert_eq!(money.1, "$10,450");
+        let percent = comp_for_entity(&entity("45%", Some(45.0), Some("percent")))
+            .expect("a percentage card");
+        assert_eq!(percent.0, "funcut.ticker.count");
+        assert_eq!(percent.1, "45%");
         let year = comp_for_entity(&entity("2026", Some(2026.0), Some("year")));
         assert_eq!(year.expect("a stat card").1, "2026");
         let count = comp_for_entity(&entity("1,500", Some(1500.0), Some("count")));
         assert_eq!(count.expect("a stat card").1, "1,500");
         let raw = comp_for_entity(&entity("a great many", None, None));
         assert_eq!(raw.expect("a stat card").1, "a great many");
+        let quantity = Entity {
+            take: "take.wav".into(),
+            kind: "QUANTITY".into(),
+            text: "1,500 devices".into(),
+            card: "stat".into(),
+            at: Some(2.0),
+            approximate: false,
+            confidence: Some(0.9),
+            value: Some(1500.0),
+            unit: Some("count".into()),
+        };
+        assert_eq!(
+            comp_for_entity(&quantity).expect("a quantity card").0,
+            "funcut.chart.bars"
+        );
     }
 
     /// The accents are shopped by the read's own register: a line the

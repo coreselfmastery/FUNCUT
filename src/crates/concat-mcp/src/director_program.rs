@@ -8172,7 +8172,8 @@ fn signal_brief(log: &[Value]) -> Value {
         brief.insert(
             "irony".to_owned(),
             json!(format!(
-                "{} sarcastic line(s) flagged - never read them straight (first: \"{first}\")"
+                "{} sarcastic line(s) flagged - never read them straight (first: \"{first}\")",
+                flagged.len()
             )),
         );
     }

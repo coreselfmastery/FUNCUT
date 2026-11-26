@@ -2256,6 +2256,10 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
             "transcript",
             "lines",
             "script",
+            // The audio is not read by the cleaner - it is the take the
+            // cues came from, echoed into the reply so a run's log can
+            // attribute the cleaned cues to the take that spoke them.
+            "audio",
             "stripFillers",
             "maxCharsPerLine",
             "maxCharsPerSecond",

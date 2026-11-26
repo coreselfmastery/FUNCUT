@@ -655,6 +655,89 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
     found
 }
 
+/// The drift the captions door measured between one take's word times
+/// and the audio they claim to time: the median offset from each word
+/// start to the nearest onset, the same number the door's own cue
+/// builder snaps out. `None` when the door never answered for this take
+/// - unmeasured is not the same answer as aligned.
+fn align_drift_of(log: &[Value], take: &str) -> Option<f64> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("align_captions"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("driftSeconds"))
+        .and_then(Value::as_f64)
+        .filter(|drift| drift.is_finite())
+}
+
+/// The transcripts with every take's measured drift snapped out: a word
+/// that claims second 4.4 while the audio says 4.0 is a caption that
+/// flashes 0.4 s late, and the whole drift correction is this one
+/// subtraction, applied to the words and the segment bounds alike. The
+/// original transcript stays in the log untouched - the evidence the
+/// correction was made against.
+fn drifted_transcripts(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>)> {
+    transcripts_of(log, takes)
+        .into_iter()
+        .map(|(take, mut segments)| {
+            let drift = align_drift_of(log, &take).unwrap_or(0.0);
+            if drift == 0.0 {
+                return (take, segments);
+            }
+            for segment in &mut segments {
+                let shift = |moment: Option<f64>| moment.map(|at| (at - drift).max(0.0));
+                if let Some(at) = shift(segment.get("start").and_then(Value::as_f64)) {
+                    segment["start"] = json!(round3(at));
+                }
+                if let Some(to) = shift(segment.get("end").and_then(Value::as_f64)) {
+                    segment["end"] = json!(round3(to));
+                }
+                let Some(words) = segment.get_mut("words").and_then(Value::as_array_mut) else {
+                    continue;
+                };
+                for word in words {
+                    if let Some(at) = shift(word.get("start").and_then(Value::as_f64)) {
+                        word["start"] = json!(round3(at));
+                    }
+                    if let Some(to) = shift(word.get("end").and_then(Value::as_f64)) {
+                        word["end"] = json!(round3(to));
+                    }
+                }
+            }
+            (take, segments)
+        })
+        .collect()
+}
+
+/// The cleaned cues the captions door returned for one take: the group
+/// texts sent for cleaning, with the punctuation, casing and filler
+/// repairs the door made. Matched back to the groups by span, the same
+/// clock the groups were built in.
+fn cleaned_cues_of(log: &[Value], take: &str) -> Vec<(f64, f64, String)> {
+    log.iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("clean_subtitles"))
+                && reply.get("audio").and_then(Value::as_str) == Some(take)
+        })
+        .and_then(|reply| reply.get("cues"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|cue| {
+                    Some((
+                        cue["start"].as_f64()?,
+                        cue["end"].as_f64()?,
+                        cue["text"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// One B-roll slot: a stretch of the narration with no words in it, the
 /// take it was read from, and the words that describe what the picture
 /// should show there.
@@ -10128,23 +10211,83 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // reply is a timeline view carrying the titles just
                 // placed, and re-deriving from it would place every
                 // caption a second time.
+                //
+                // The readings come first, because a caption built on
+                // drifted word times is wrong in a way no styling fixes:
+                // the align door measures the drift between the words
+                // and the audio (phase 0), the groups are built from the
+                // corrected times (phase 1), the cleaned texts ride back
+                // (phase 1's asks), and the edit lands with the words
+                // where the audio actually says them (phase 2).
                 let mut phase = 0u8;
+                // The phase-0 asks: the align read and the synthetic-voice
+                // read, one pair per take that has a transcript. The ai
+                // read is recorded, never a gate - the door's own band is
+                // the honest word, and the reply stays in the log the
+                // receipt and the critic read.
+                let mut asks: Vec<ToolCall> = Vec::new();
+                let mut asked = false;
+                // The phase-1 asks: the groups' texts, one clean call per
+                // take, the punctuation and casing repairs the door
+                // makes before the viewer ever sees the words.
+                let mut clean_asks: Vec<ToolCall> = Vec::new();
+                // The groups phase 2 spends, with their spans in the
+                // timeline's clock and their text still the words' own.
+                let mut kept_groups: Option<Vec<(f64, f64, CaptionGroup)>> = None;
                 // The groups the batch placed, kept for the accent pass:
                 // each carries the timeline span it landed at and the
                 // character ranges of its own words.
                 let mut placed_groups: Vec<(f64, CaptionGroup)> = Vec::new();
                 move |log| {
-                    if phase == 2 {
+                    if phase == 4 {
                         return None;
                     }
                     let view = latest_view(log)?;
                     let aspect = aspect_of(view).to_owned();
                     let portrait = matches!(aspect.as_str(), "9:16" | "4:5" | "1:1");
                     let media = media_paths(view);
+                    // Phase 0: the readings that must land before the words
+                    // are grouped - the drift the grouping will snap out,
+                    // and the synthetic-voice read the run records.
                     if phase == 0 {
-                        let voice = voice_reads(log, &caption_source);
-                        let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
-                        for (take, segments) in transcripts_of(log, &caption_source) {
+                        if !asked {
+                            asked = true;
+                            for (take, segments) in transcripts_of(log, &caption_source) {
+                                // The synthetic-voice read is queued first
+                                // so the align read - the one the grouping
+                                // waits on - is the ask that pops first.
+                                asks.push(call(
+                                    "sense_captions",
+                                    json!({
+                                        "action": "detect_ai_voice",
+                                        "audio": take,
+                                    }),
+                                ));
+                                asks.push(call(
+                                    "sense_captions",
+                                    json!({
+                                        "action": "align_captions",
+                                        "audio": take,
+                                        "transcript": { "segments": segments },
+                                    }),
+                                ));
+                            }
+                        }
+                        if let Some(next) = asks.pop() {
+                            return Some(next);
+                        }
+                        phase = 1;
+                    }
+                    if phase == 1 {
+                        if kept_groups.is_none() {
+                            // The groups are built ONCE, from the
+                            // drift-corrected transcripts: the align
+                            // door's reply is already in the log, and the
+                            // correction it measured is the whole point
+                            // of asking before grouping.
+                            let voice = voice_reads(log, &caption_source);
+                            let mut groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                            for (take, segments) in drifted_transcripts(log, &caption_source) {
                             let take_read = voice_read_of(&voice, &take);
                             for segment in segments {
                                 // The safe-remove fillers the profile timed
@@ -10194,7 +10337,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                         }
                         if groups.is_empty() {
-                            phase = 2;
+                            phase = 4;
                             return None;
                         }
                         // Overlaps cannot happen on a clean transcript, but a
@@ -10217,6 +10360,84 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             kept.push((at, to, group));
                         }
                         kept.truncate(240);
+                        // The clean asks, one per take: the groups' own
+                        // texts, in the take's file clock the groups were
+                        // built in, so the door's punctuation and casing
+                        // repairs come back matched to the words that
+                        // spoke them. The original text stays in the
+                        // transcript the log already holds - the evidence
+                        // the cleaning was made against. The profile's
+                        // own filler timing already took the um/uh out, so
+                        // the cleaner is asked to leave fillers be and do
+                        // the work only it can see: the sentence shapes.
+                        let mut by_take: Vec<(String, Vec<Value>)> = Vec::new();
+                        for (_, _, group) in &kept {
+                            let row = json!({
+                                "start": group.start, "end": group.end,
+                                "text": group.text,
+                            });
+                            match by_take.iter_mut().find(|(take, _)| *take == group.take) {
+                                Some((_, lines)) => lines.push(row),
+                                None => by_take.push((group.take.clone(), vec![row])),
+                            }
+                        }
+                        for (take, lines) in by_take {
+                            clean_asks.push(call(
+                                "sense_captions",
+                                json!({
+                                    "action": "clean_subtitles",
+                                    "audio": take,
+                                    "lines": lines,
+                                    "stripFillers": false,
+                                }),
+                            ));
+                        }
+                        kept_groups = Some(kept);
+                        }
+                        if let Some(next) = clean_asks.pop() {
+                            return Some(next);
+                        }
+                        phase = 2;
+                    }
+                    if phase == 2 {
+                        let Some(mut kept) = kept_groups.take() else {
+                            phase = 4;
+                            return None;
+                        };
+                        let voice = voice_reads(log, &caption_source);
+                        // The cleaned texts, spent where the door's cue
+                        // covers the group's span: the word offsets are
+                        // reseated against the cleaned text so the accent
+                        // pass still styles the word it measured, and a
+                        // cue that does not cover the group - or whose
+                        // text no longer holds the group's words - changes
+                        // nothing, and the words' own text stands.
+                        for (_, _, group) in kept.iter_mut() {
+                            let Some(cleaned) = cleaned_cues_of(log, &group.take)
+                                .iter()
+                                .find(|(start, end, _)| {
+                                    *start <= group.start + 0.05 && *end >= group.end - 0.05
+                                })
+                            else {
+                                continue;
+                            };
+                            let words_still_fit = group
+                                .words
+                                .iter()
+                                .all(|word| cleaned.2.contains(word.text.trim()));
+                            if !words_still_fit {
+                                continue;
+                            }
+                            group.text = cleaned.2.clone();
+                            let mut cursor = 0usize;
+                            for word in group.words.iter_mut() {
+                                let bare = word.text.trim();
+                                if let Some(found) = group.text[cursor..].find(bare) {
+                                    word.at = group.text[..cursor + found].chars().count();
+                                    cursor = cursor + found + bare.len();
+                                }
+                            }
+                        }
                         // The script's own font: the profile's language read
                         // names the family a non-Latin script needs, and the
                         // house face is only the fallback when the read did
@@ -10429,10 +10650,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             placed_groups.push((at, group));
                         }
                         if commands.is_empty() {
-                            phase = 2;
+                            phase = 4;
                             return None;
                         }
-                        phase = 1;
+                        // The captions are placed: the accent pass reads
+                        // the batch's own reply, the view carrying the
+                        // titles in order, and phases itself after it.
+                        phase = 3;
                         return Some(ToolCall {
                             tool: "edit_apply".to_owned(),
                             arguments: json!({
@@ -10441,14 +10665,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }),
                         });
                     }
-                    // The accent pass: the batch's own reply is a view
-                    // carrying the titles just placed, in order. The words
-                    // the delivery actually stressed - or, on a hot line
-                    // with no stressed word, the group's own longest word -
-                    // take the accent colour and a touch of scale, one
-                    // patch per word, through the title's own range
+                    // Phase 3, the accent pass: the batch's own reply is a
+                    // view carrying the titles just placed, in order. The
+                    // words the delivery actually stressed - or, on a hot
+                    // line with no stressed word, the group's own longest
+                    // word - take the accent colour and a touch of scale,
+                    // one patch per word, through the title's own range
                     // styling.
-                    let view = latest_view(log)?;
+                    if phase == 3 {
                     let mut titles: Vec<(f64, String)> = view["timeline"]["clips"]
                         .as_array()
                         .into_iter()
@@ -10537,7 +10761,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }));
                         }
                     }
-                    phase = 2;
+                    phase = 4;
                     if commands.is_empty() {
                         return None;
                     }
@@ -15029,7 +15253,7 @@ mod tests {
             if let Some(range) = range {
                 prosody = json!({ "pitchRangeSemitones": range });
             }
-            let log = vec![
+            let mut log = vec![
                 view,
                 json!({
                     "path": "/edits/Reel/voiceover/take-000-a.wav",
@@ -15040,7 +15264,7 @@ mod tests {
                     "lines": [{ "start": 0.5, "end": 1.5, "prosody": prosody }],
                 }),
             ];
-            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            let call = captions_edit_after_readings(&mut captions, &mut log);
             let style = &call.arguments["command"]["commands"][0]["style"];
             (
                 style["fontWeight"].as_f64().expect("a weight"),
@@ -15939,7 +16163,7 @@ mod tests {
             view,
             json!({ "path": "/edits/Reel/voiceover/take-000-a.wav", "output": transcript.to_string() }),
         ];
-        let first = (captions.next)(log.as_slice()).expect("the captions are placed");
+        let first = captions_edit_after_readings(&mut captions, &mut log);
         assert_eq!(first.tool, "edit_apply");
         // The edit's own reply: another view. The stage is done.
         log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
@@ -15948,6 +16172,162 @@ mod tests {
             None,
             "the captions are issued once"
         );
+    }
+
+    /// The handoff's own acceptance test: a transcript whose every word
+    /// time is shifted +0.4 s past the audio, an align door that
+    /// measured the drift, and captions that land where the audio
+    /// actually says the words - not where the recogniser's clock
+    /// claimed. The same walk with no drift answer keeps the words' own
+    /// claim, which is the old behaviour, unchanged.
+    #[test]
+    fn the_captions_follow_the_measured_drift_not_the_words_claim() {
+        use concat_director::ProgramStep;
+
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+        };
+        let view = json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        // Every word time sits 0.4 s late: the recogniser's clock
+        // drifted, the way a four-minute take's does.
+        let drifted = json!({
+            "segments": [{
+                "start": 0.9, "end": 1.9, "text": "hello there",
+                "words": [
+                    { "text": "hello", "start": 0.9, "end": 1.3 },
+                    { "text": "there", "start": 1.35, "end": 1.9 },
+                ],
+            }],
+        });
+        let build = |drift: Option<f64>| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(captions) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "captions")
+                .expect("the program has a captions stage")
+            else {
+                panic!("the captions stage is derived");
+            };
+            let mut log = vec![
+                view.clone(),
+                json!({ "path": take, "output": drifted.to_string() }),
+            ];
+            // The align read is asked, and answers with the drift the
+            // audio measured - or with no drift at all.
+            let align = (captions.next)(log.as_slice()).expect("the align read is asked");
+            assert_eq!(align.tool, "sense_captions");
+            log.push(json!({
+                "tool": "align_captions", "ok": true,
+                "action": "align_captions",
+                "audio": align.arguments["audio"].clone(),
+                "driftSeconds": drift, "cues": [],
+            }));
+            let ai = (captions.next)(log.as_slice()).expect("the ai read is asked");
+            log.push(json!({
+                "tool": "detect_ai_voice", "ok": true,
+                "action": "detect_ai_voice",
+                "audio": ai.arguments["audio"].clone(),
+                "aiLikeness": { "score": 5, "band": "likely human" },
+            }));
+            let clean = (captions.next)(log.as_slice()).expect("the clean read is asked");
+            let lines = clean.arguments["lines"].as_array().cloned().unwrap_or_default();
+            let cues: Vec<Value> = lines
+                .iter()
+                .map(|line| json!({ "start": line["start"], "end": line["end"], "text": line["text"] }))
+                .collect();
+            log.push(json!({
+                "tool": "clean_subtitles", "ok": true,
+                "action": "clean_subtitles",
+                "audio": clean.arguments["audio"].clone(),
+                "cues": cues,
+            }));
+            let edit = (captions.next)(log.as_slice()).expect("the captions are placed");
+            edit.arguments["command"]["commands"][0]["start"]
+                .as_f64()
+                .expect("the caption carries its start")
+        };
+        // The drift measured: the caption lands at the audio's 0.5,
+        // not the words' claimed 0.9 - the 0.4 the recogniser's clock
+        // added is snapped out before the group is cut.
+        assert_eq!(
+            build(Some(0.4)),
+            0.5,
+            "the measured drift moves the caption back to the audio"
+        );
+        // No drift answer: the words' own claim stands, as it always did.
+        assert_eq!(
+            build(None),
+            0.9,
+            "an unmeasured drift leaves the words' own times"
+        );
+    }
+
+    /// Steps the captions stage through its reading phases - the align
+    /// read, the synthetic-voice read, the clean read - feeding each
+    /// door the no-op answer a clean transcript earns, until the
+    /// captions edit itself is asked for. The drift, when a test wants
+    /// one, is fed by the test before the walk: the reply the helper
+    /// pushes never claims a drift the words did not measure.
+    fn captions_edit_after_readings(
+        captions: &mut concat_director::DerivedStep,
+        log: &mut Vec<Value>,
+    ) -> ToolCall {
+        let align = (captions.next)(log).expect("the align read is asked");
+        assert_eq!(align.tool, "sense_captions");
+        assert_eq!(align.arguments["action"], json!("align_captions"));
+        log.push(json!({
+            "tool": "align_captions", "ok": true,
+            "action": "align_captions",
+            "audio": align.arguments["audio"].clone(),
+            "driftSeconds": null, "cues": [],
+        }));
+        let ai = (captions.next)(log).expect("the synthetic-voice read is asked");
+        assert_eq!(ai.tool, "sense_captions");
+        assert_eq!(ai.arguments["action"], json!("detect_ai_voice"));
+        log.push(json!({
+            "tool": "detect_ai_voice", "ok": true,
+            "action": "detect_ai_voice",
+            "audio": ai.arguments["audio"].clone(),
+            "aiLikeness": { "score": 5, "band": "likely human" },
+        }));
+        let clean = (captions.next)(log).expect("the clean read is asked");
+        assert_eq!(clean.tool, "sense_captions");
+        assert_eq!(clean.arguments["action"], json!("clean_subtitles"));
+        let lines = clean.arguments["lines"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let cues: Vec<Value> = lines
+            .iter()
+            .map(|line| {
+                json!({ "start": line["start"], "end": line["end"], "text": line["text"] })
+            })
+            .collect();
+        log.push(json!({
+            "tool": "clean_subtitles", "ok": true,
+            "action": "clean_subtitles",
+            "audio": clean.arguments["audio"].clone(),
+            "cues": cues,
+        }));
+        (captions.next)(log).expect("the captions are placed")
     }
 
     /// The caption groups are cut on the delivery's own seams: the
@@ -16047,7 +16427,7 @@ mod tests {
             json!({ "path": take, "output": transcript.to_string() }),
             signals,
         ];
-        let first = (captions.next)(log.as_slice()).expect("the groups are placed");
+        let first = captions_edit_after_readings(&mut captions, &mut log);
         assert_eq!(first.tool, "edit_apply");
         assert_eq!(
             first.arguments["command"]["commands"][0]["style"]["content"], "hello there",
@@ -16127,7 +16507,7 @@ mod tests {
                     ],
                 }],
             });
-            let log = vec![
+            let mut log = vec![
                 view,
                 json!({
                     "path": "/edits/Reel/voiceover/take-000-a.wav",
@@ -16139,7 +16519,7 @@ mod tests {
                                 "loudness": { "relativeLu": relative_lu } }],
                 }),
             ];
-            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            let call = captions_edit_after_readings(&mut captions, &mut log);
             call.arguments["command"]["commands"][0]["style"]["fontWeight"]
                 .as_f64()
                 .expect("the caption carries a weight")

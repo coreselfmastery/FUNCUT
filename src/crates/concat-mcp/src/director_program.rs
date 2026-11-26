@@ -1202,6 +1202,14 @@ enum GatherPhase {
     /// The rerank reply is in: the semantic order and the near-duplicate
     /// evidence land, then the emotion gate weighs the register.
     ReadRerank,
+    /// About to ask the installed picture doors about the top-ranked
+    /// candidate: the boundary its cut can sit on, the verb it shows,
+    /// the face it carries - each door one ask, only the doors the
+    /// machine reported ready, only the one candidate the budget spends.
+    Doors,
+    /// The door replies are in: recorded for the critic and the cut,
+    /// then the emotion gate weighs the register.
+    ReadDoors,
     /// The sheet's choice is ranked: the emotion gate weighs the
     /// register before the choice is spent.
     Gate,
@@ -2748,6 +2756,285 @@ fn ready_visual_doors(log: &[Value]) -> usize {
                 .count()
         })
         .unwrap_or(0)
+}
+
+/// Whether the models reply names one checkpoint ready, by its registry
+/// id: the door's own readiness question, read from the handoff's own
+/// capability answer. No reply, no rows, or a row that is not ready is
+/// not ready - a door whose model is absent is never asked.
+fn model_ready(log: &[Value], id: &str) -> bool {
+    log.iter()
+        .rev()
+        .find(|reply| reply.get("action") == Some(&json!("models")))
+        .and_then(|reply| reply.get("models"))
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.get("id").and_then(Value::as_str) == Some(id)
+                    && row.get("ready") == Some(&json!(true))
+            })
+        })
+}
+
+/// The picture's own doors for one candidate, the budget's whole
+/// subject: one ask per door, only the doors the machine can answer.
+/// The whole pass stands behind the capability question - a machine
+/// that reported no ready model skips every door, so a bare machine's
+/// run is the run it always was - and a door that is asked is asked
+/// with its own literal, so the ledger can see which doors the button
+/// reaches. Every reply is spent: the critic's brief reads the
+/// verdicts, and the cut's own in-point reads the boundary the shot
+/// door measured.
+#[allow(clippy::too_many_lines)]
+fn door_calls(log: &[Value], subject: &str) -> Vec<ToolCall> {
+    let mut calls: Vec<ToolCall> = Vec::new();
+    if ready_visual_doors(log) == 0 {
+        return calls;
+    }
+    // The classical doors read the frames and need no checkpoint - they
+    // ride the same pass so their verdicts reach the critic too.
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "measure_motion", "path": subject, "samples": 8, "width": 64 }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "camera_motion", "path": subject, "samples": 8 }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "shot_scale", "path": subject }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "visual_quality", "path": subject }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "palette", "path": subject }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "saliency", "path": subject }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "composition", "path": subject }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "motion_blur", "path": subject }),
+    ));
+    calls.push(call(
+        "sense_visual",
+        json!({ "action": "scene_cuts", "path": subject, "width": 32 }),
+    ));
+    // The sound-sight agreement: the voice's own flux onsets, when a
+    // reading carries them, are the audio half the sync door needs.
+    let onsets: Vec<Value> = log
+        .iter()
+        .find_map(VoiceRead::of)
+        .map(|read| {
+            read.take_wide
+                .flux_onsets
+                .iter()
+                .map(|at| json!(round3(*at)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !onsets.is_empty() {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "visual_sync", "audioOnsets": onsets, "toleranceMs": 80 }),
+        ));
+    }
+    // The model doors: one ask per ready checkpoint, the registry's own
+    // id deciding which doors this machine can open.
+    if model_ready(log, "transnetv2") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "shot_boundaries", "path": subject, "samples": 8, "width": 48 }),
+        ));
+    }
+    if model_ready(log, "movinet-a0") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "action_class", "path": subject, "samples": 8 }),
+        ));
+    }
+    if model_ready(log, "vjepa2-vitl") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "video_embedding", "path": subject, "samples": 8 }),
+        ));
+    }
+    if model_ready(log, "dinov2-small")
+        || model_ready(log, "clip-vit-b32")
+        || model_ready(log, "siglip2-base")
+    {
+        let model_id = if model_ready(log, "siglip2-base") {
+            "siglip2-base"
+        } else if model_ready(log, "clip-vit-b32") {
+            "clip-vit-b32"
+        } else {
+            "dinov2-small"
+        };
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "visual_embedding", "path": subject, "modelId": model_id }),
+        ));
+    }
+    if model_ready(log, "depth-anything-v2-small") || model_ready(log, "midas-v21-small") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "depth_map", "path": subject }),
+        ));
+    }
+    if model_ready(log, "fastsam-s") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "subject_mask", "path": subject }),
+        ));
+    }
+    if model_ready(log, "dover-mobile") || model_ready(log, "laion-aesthetic") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "aesthetic", "path": subject }),
+        ));
+    }
+    if model_ready(log, "microexpnet") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "face_emotion", "path": subject }),
+        ));
+    }
+    if model_ready(log, "eyegaze") || model_ready(log, "mobilegaze") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "gaze", "path": subject }),
+        ));
+    }
+    if model_ready(log, "movenet-pose") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "pose", "path": subject }),
+        ));
+    }
+    if model_ready(log, "mediapipe-hands") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "hands", "path": subject }),
+        ));
+    }
+    if model_ready(log, "syncnet") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "lip_sync", "path": subject }),
+        ));
+    }
+    if model_ready(log, "aqa-transformer") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "action_quality", "path": subject, "samples": 8 }),
+        ));
+    }
+    if model_ready(log, "smblurdetect") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "blur_mask", "path": subject }),
+        ));
+    }
+    if model_ready(log, "raft-small") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "optical_flow", "path": subject }),
+        ));
+    }
+    if model_ready(log, "vinet-s") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "video_saliency", "path": subject, "samples": 8 }),
+        ));
+    }
+    if model_ready(log, "segformer-b0") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "semantic_segments", "path": subject }),
+        ));
+    }
+    if model_ready(log, "bytetrack-yolo") || model_ready(log, "grounding-dino-tiny") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "detect_objects", "path": subject }),
+        ));
+    }
+    if model_ready(log, "film-shot-classifier") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "film_shot_type", "path": subject }),
+        ));
+    }
+    // The VLM doors: asked only when the registry row is present, which
+    // for a language-backed row means the checkpoint is on disk.
+    if model_ready(log, "smolvlm2-500m")
+        || model_ready(log, "florence-2-base")
+        || model_ready(log, "uform-gen2")
+        || model_ready(log, "smolvlm2-256m")
+    {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "describe_scene", "path": subject, "prompt": "one sentence: what does this clip show?" }),
+        ));
+    }
+    if model_ready(log, "scenegraph-vlm") {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "scene_graph", "path": subject }),
+        ));
+    }
+    // The tracker needs boxes another door measured: it is asked only
+    // when the objects door left its boxes in the log, and it reads them
+    // back from the reply that carries them.
+    let boxes = log
+        .iter()
+        .rev()
+        .find(|reply| {
+            reply.get("action") == Some(&json!("detect_objects"))
+                && reply.get("ok") == Some(&json!(true))
+        })
+        .and_then(|reply| reply.get("outputs").cloned())
+        .filter(|outputs| outputs.as_array().is_some_and(|rows| !rows.is_empty()));
+    if let Some(boxes) = boxes {
+        calls.push(call(
+            "sense_visual",
+            json!({ "action": "tracks", "boxes": boxes, "frames": 8 }),
+        ));
+    }
+    calls
+}
+
+/// The boundary the shot door measured for the top candidate, as a
+/// fraction of the clip's own span: the seam a cut can sit on, when the
+/// shot itself cuts inside. `None` when the door never answered - the
+/// entrance keeps the motion peak the read already measured.
+fn shot_boundary_of(log: &[Value]) -> Option<f64> {
+    let row = log
+        .iter()
+        .rev()
+        .find(|reply| reply.get("action") == Some(&json!("shot_boundaries")))?;
+    if row.get("ok").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    row.get("boundaries")
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(Value::as_f64)
+        .filter(|fraction| fraction.is_finite() && (0.0..=1.0).contains(fraction))
+        .or_else(|| {
+            row.get("peakAt")
+                .and_then(Value::as_f64)
+                .filter(|at| at.is_finite() && (0.0..=1.0).contains(at))
+        })
 }
 
 /// The take's measured rhythm: the syllable period in seconds and the
@@ -8016,6 +8303,84 @@ fn signal_brief(log: &[Value]) -> Value {
             }),
         );
     }
+    // The picture's own doors, as the critic's evidence: every door the
+    // gather opened on the slot's top candidate, with the one verdict
+    // each answered. A door that refused is recorded by its refusal,
+    // and a door that never opened is not in the list at all - the
+    // critic sees exactly what the machine could read.
+    {
+        let mut doors: Vec<String> = Vec::new();
+        for reply in log {
+            let Some(action) = reply.get("action").and_then(Value::as_str) else {
+                continue;
+            };
+            if !matches!(
+                action,
+                "measure_motion"
+                    | "camera_motion"
+                    | "shot_scale"
+                    | "visual_quality"
+                    | "palette"
+                    | "saliency"
+                    | "composition"
+                    | "motion_blur"
+                    | "scene_cuts"
+                    | "visual_sync"
+                    | "shot_boundaries"
+                    | "action_class"
+                    | "video_embedding"
+                    | "visual_embedding"
+                    | "depth_map"
+                    | "subject_mask"
+                    | "aesthetic"
+                    | "face_emotion"
+                    | "gaze"
+                    | "pose"
+                    | "hands"
+                    | "lip_sync"
+                    | "action_quality"
+                    | "blur_mask"
+                    | "optical_flow"
+                    | "video_saliency"
+                    | "semantic_segments"
+                    | "detect_objects"
+                    | "describe_scene"
+                    | "scene_graph"
+                    | "film_shot_type"
+                    | "tracks"
+            ) {
+                continue;
+            }
+            let ok = reply.get("ok").and_then(Value::as_bool) == Some(true);
+            let verdict = ["label", "verdict", "family", "style"]
+                .iter()
+                .find_map(|key| {
+                    reply
+                        .get(*key)
+                        .and_then(Value::as_str)
+                        .map(|word| word.to_owned())
+                })
+                .or_else(|| {
+                    reply
+                        .get("score")
+                        .and_then(Value::as_f64)
+                        .map(|score| format!("{score:.1}"))
+                })
+                .unwrap_or_else(|| "answered".to_owned());
+            doors.push(if ok {
+                format!("{action}: {verdict}")
+            } else {
+                format!("{action}: refused")
+            });
+        }
+        if !doors.is_empty() {
+            brief.insert(
+                "pictureDoors".to_owned(),
+                json!(doors.into_iter().take(12).collect::<Vec<_>>().join("; ")),
+            );
+        }
+    }
+
     Value::Object(brief)
 }
 
@@ -9629,6 +9994,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The delivery's regularity, from the same rhythm read:
                 // a metronomic take snaps its seam tighter.
                 let mut pending_meter: Option<String> = None;
+                // The picture doors' own ask queue, one candidate at a
+                // time: built when the doors phase opens, drained one
+                // ask per turn, dropped whole when the gate moves on.
+                let mut door_asks: Option<Vec<ToolCall>> = None;
                 let mut pending_transition: Option<&'static str> = None;
                 // The gap's own timeline position, held across the lane
                 // minting call: the placement that follows the lane's
@@ -9957,7 +10326,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if rerank_absent || pending_gate.is_empty() {
                                 semantic = vec![None; pending_gate.len()];
                                 look_vectors = vec![None; pending_gate.len()];
-                                phase = GatherPhase::Gate;
+                                phase = GatherPhase::Doors;
                             } else {
                                 phase = GatherPhase::Rerank;
                             }
@@ -10041,8 +10410,46 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 semantic = vec![None; pending_gate.len()];
                                 look_vectors = vec![None; pending_gate.len()];
                             }
-                            phase = GatherPhase::Gate;
+                            phase = GatherPhase::Doors;
                             continue;
+                        }
+                        GatherPhase::Doors => {
+                            // The picture's own doors: one ask per
+                            // installed door, for the top-ranked
+                            // surviving candidate only - the budget's
+                            // subject. A machine with no doors skips
+                            // the whole pass, and a slot with no
+                            // candidate has nothing to ask about.
+                            door_asks = if pending_gate.is_empty() {
+                                None
+                            } else {
+                                Some(door_calls(log, &pending_gate[0].local_path))
+                            };
+                            phase = GatherPhase::ReadDoors;
+                            continue;
+                        }
+                        GatherPhase::ReadDoors => {
+                            // One ask at a time, so each door's reply
+                            // is read from the log's tail while it is
+                            // still the tail; the doors' own verdicts
+                            // are spent by the critic's brief and the
+                            // cut's in-point, and a door that refused
+                            // is simply skipped - an absent model must
+                            // never fail a run.
+                            match door_asks.as_mut().and_then(|asks| {
+                                if asks.is_empty() {
+                                    None
+                                } else {
+                                    Some(asks.remove(0))
+                                }
+                            }) {
+                                Some(next) => return Some(next),
+                                None => {
+                                    door_asks = None;
+                                    phase = GatherPhase::Gate;
+                                    continue;
+                                }
+                            }
                         }
                         GatherPhase::Gate => {
                             let slot = &slots[shopping];
@@ -10604,10 +11011,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // The shot's entrance lands on the movement the
                             // read found, not on its first frame: the clip
                             // opens a quarter second before its motion peak,
-                            // inside the media it can still play.
+                            // inside the media it can still play. The shot
+                            // door's own boundary outranks the peak when it
+                            // measured one: a cut that lands on the seam the
+                            // clip itself cuts on is invisible in a way no
+                            // motion peak is - and a door that never answered
+                            // leaves the peak the read already measured.
                             if let Some(read) = read {
                                 let limit = (current - pending_len).max(0.0);
-                                let lead = round3(read.in_point(limit));
+                                let lead = match shot_boundary_of(log) {
+                                    Some(fraction) if pending_len > 0.0 => round3(
+                                        (fraction * pending_len - 0.25).clamp(0.0, limit.max(0.0)),
+                                    ),
+                                    _ => round3(read.in_point(limit)),
+                                };
                                 if lead > 0.05 {
                                     commands.push(json!({
                                         "op": "setClipSource",
@@ -21923,5 +22340,75 @@ mod tests {
             .find(|(tool, _)| *tool == "motion_probe")
             .expect("the probe is asked");
         assert_eq!(probe.1["path"], source.export);
+    }
+    /// The picture's own doors: a machine that reported no ready model
+    /// opens none - the gather's call sequence is the one it always
+    /// was - and a machine with models opens every door its checkpoints
+    /// can answer, one ask per door, for the top candidate only.
+    #[test]
+    fn the_picture_doors_open_only_for_the_ready() {
+        assert!(door_calls(&[], "/cache/top.mp4").is_empty());
+        let bare = vec![json!({
+            "action": "models", "ok": true,
+            "models": [ { "id": "transnetv2", "present": false, "ready": false } ],
+        })];
+        assert!(door_calls(&bare, "/cache/top.mp4").is_empty());
+        let rich = vec![json!({
+            "action": "models", "ok": true,
+            "models": [
+                { "id": "transnetv2", "present": true, "ready": true },
+                { "id": "dinov2-small", "present": true, "ready": true },
+                { "id": "dover-mobile", "present": true, "ready": false },
+            ],
+        })];
+        let calls = door_calls(&rich, "/cache/top.mp4");
+        let actions: Vec<&str> = calls
+            .iter()
+            .filter_map(|call| call.arguments["action"].as_str())
+            .collect();
+        // The classical doors ride the pass; the ready doors open; the
+        // absent ones (aesthetic's dover-mobile) never do.
+        assert!(actions.contains(&"measure_motion"));
+        assert!(actions.contains(&"scene_cuts"));
+        assert!(actions.contains(&"shot_boundaries"));
+        assert!(actions.contains(&"visual_embedding"));
+        assert!(!actions.contains(&"aesthetic"));
+        assert!(!actions.contains(&"depth_map"));
+        // Every ask names the subject it reads.
+        for call in &calls {
+            if call.arguments.get("path").is_some() {
+                assert_eq!(call.arguments["path"], "/cache/top.mp4");
+            }
+        }
+    }
+
+    /// The shot door's boundary outranks the motion peak for the
+    /// entrance, and a door that refused leaves the peak the read
+    /// already measured.
+    #[test]
+    fn the_shot_door_s_boundary_moves_the_entrance() {
+        let none: Vec<Value> = vec![json!({
+            "action": "shot_boundaries", "ok": true, "boundaries": [],
+        })];
+        assert!(shot_boundary_of(&none).is_none());
+        let refused = vec![json!({
+            "action": "shot_boundaries", "ok": false,
+        })];
+        assert!(shot_boundary_of(&refused).is_none());
+        let measured = vec![json!({
+            "action": "shot_boundaries", "ok": true,
+            "boundaries": [0.5, 0.8],
+        })];
+        assert_eq!(shot_boundary_of(&measured), Some(0.5));
+        // The peakAt fallback, as a fraction.
+        let peak = vec![json!({
+            "action": "shot_boundaries", "ok": true, "peakAt": 0.25,
+        })];
+        assert_eq!(shot_boundary_of(&peak), Some(0.25));
+        // A boundary outside the clip's own span is no boundary at all.
+        let outside = vec![json!({
+            "action": "shot_boundaries", "ok": true, "boundaries": [1.4],
+        })];
+        assert!(shot_boundary_of(&outside).is_none());
     }
 }

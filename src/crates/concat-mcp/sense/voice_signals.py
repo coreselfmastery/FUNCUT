@@ -5,7 +5,7 @@ Pure Python standard library, same contract as the other sense scripts:
 `voice_signals.py <extract|catalog|selftest> --spec -` reads one JSON spec
 from stdin (or argv) and prints one JSON object on stdout.
 
-`catalog` answers the signal catalogue: the seventy named readings, grouped
+`catalog` answers the signal catalogue: the seventy-one named readings, grouped
 by family, each with what it measures and why the edit wants it - the
 table a UI's per-signal buttons are built from. `extract` accepts a
 `signals: [name...]` filter (the catalogue's own names): a manual
@@ -145,7 +145,7 @@ def _decision_policy_out():
 
 
 # ---------------------------------------------------------------------------
-# The signal catalogue: the seventy named readings, one button each
+# The signal catalogue: the seventy-one named readings, one button each
 # ---------------------------------------------------------------------------
 
 # Every reading the profile answers, named, grouped by family, and held
@@ -3046,12 +3046,12 @@ def selftest():
             entry = policy.get(decision)
             if not entry or not entry.get("signals") or not entry.get("rule"):
                 failures.append(f"no decision policy for {decision}: {entry}")
-        # The catalogue: seventy named readings, thirty-four of them the
-        # two catalogue passes added, every name unique, every family
+        # The catalogue: seventy-one named readings, thirty-four of them
+        # the two catalogue passes added, every name unique, every family
         # named, every entry held to a why and a where.
         catalog = _catalog_out()
-        if catalog["count"] != 70:
-            failures.append(f"catalogue carries {catalog['count']} signals, not 70")
+        if catalog["count"] != 71:
+            failures.append(f"catalogue carries {catalog['count']} signals, not 71")
         if catalog["new"] != 34:
             failures.append(f"catalogue marks {catalog['new']} new signals, not 34")
         names = [entry["name"] for entry in catalog["signals"]]

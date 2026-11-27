@@ -1515,6 +1515,37 @@ def selftest(spec=None):
               "the gate is the brief's, not a blanket (the model may still be "
               "absent, which is a different answer)")
 
+    # The memory branch of the same contract: a take that will not fit is
+    # refused as an ANSWER too - ok: true, generated: false, reason
+    # "memory" - so a warn-policy stage reads the reply from the run log
+    # and falls back instead of recording a spurious tool failure. The
+    # machine's free memory, the model's footprint and the model files
+    # are patched to a take that cannot fit, so the branch answers on
+    # any machine, whatever is installed.
+    real_np, real_ort, real_tok = np, ort, Tokenizer
+    real_available, real_set, real_file = _available_bytes, _set_bytes, _model_file
+    try:
+        globals()["np"] = np if np is not None else object()
+        globals()["ort"] = ort if ort is not None else object()
+        globals()["Tokenizer"] = Tokenizer if Tokenizer is not None else object()
+        globals()["_available_bytes"] = lambda: 64 * 1024 * 1024
+        globals()["_set_bytes"] = lambda spec, row: 2 * 1024 * 1024 * 1024
+        globals()["_model_file"] = lambda spec, name: Path("/dev/null")
+        tight, tight_why = _generator({"kind": "sfx-small"})
+        check("an over-memory generator answers ok with no path",
+              tight is None and tight_why.get("ok") is True
+              and tight_why.get("generated") is False
+              and tight_why.get("reason") == "memory"
+              and "path" not in tight_why and "error" not in tight_why,
+              str(tight_why.get("detail") or tight_why))
+    finally:
+        globals()["np"] = real_np
+        globals()["ort"] = real_ort
+        globals()["Tokenizer"] = real_tok
+        globals()["_available_bytes"] = real_available
+        globals()["_set_bytes"] = real_set
+        globals()["_model_file"] = real_file
+
     models = Models(spec)
     check("models are absent without files or present with them",
           models.state in ("ready", "absent"), models.state or models.reason or "")
@@ -1815,12 +1846,19 @@ def _generator(spec):
     needed = _set_bytes(spec, row)
     available = _available_bytes()
     if available is not None and needed and needed * 1.35 > available:
+        # An ANSWER, not an error: every refusal in this generator's own
+        # contract is a reply the Director's stages can read from the run
+        # log - an ok:false tool failure never reaches that log, and a
+        # stage that never sees the refusal ends warned with no bed and
+        # no accents.
         return None, {
             "tool": "generate",
-            "ok": False,
+            "ok": True,
             "model": row["model"],
+            "kind": kind,
+            "generated": False,
             "reason": "memory",
-            "error": f"the {kind} model needs about {needed * 1.35 / 1e9:.2f} GB and "
+            "detail": f"the {kind} model needs about {needed * 1.35 / 1e9:.2f} GB and "
             f"{available / 1e9:.2f} GB is free: close what you can, or use a smaller "
             "kind (`sfx-small` is 0.35 GB)",
         }

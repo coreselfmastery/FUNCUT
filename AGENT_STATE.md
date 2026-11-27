@@ -1,5 +1,26 @@
 # AGENT_STATE.md — the mission's running state
 
+## Addendum — 2026-11-27, main at `da544297`, PR #246 open
+
+The 20-agent all-signals audit pass: branch
+`audit/all-signals-2026-11-27` (PR #246), one unit per commit, nine
+units (ci docs-only skip + Geneva swap; the runner's fan double-log,
+warn-tools plan gate, lane failures and lane-named progress; every
+Director landing releases the session + the bounded probe + the
+headless close guard + the reserved sibling; the setup-first preflight
+queue + `models_download` kind all + Settings Download-all; the
+visual_sync/modelId/emphasis-typing/imperatives/monetized wiring; the
+accents and bed lanes; the stock stills aisle (kind photo end to
+end); the orientation tier/words/prompt; the Watch honesty pass). The
+units and the named-open gaps are in IMPLEMENTATION_LEDGER.md's
+2026-11-27 addendum; the Python gates all pass locally (selftests,
+models/locales/signal checks, the harness self-test), the Rust suites
+are CI's. PR #245's head is cherry-picked onto the branch (its counts
+held); #228 is closed pointing at it — its status table called #226
+unmerged and main has it. The two "Engine tests and lints" failures
+on the docs-only PRs' reruns are the runner-death class the ci.yml
+`changes` job in this branch retires.
+
 ## Addendum — 2026-11-25, main at `4c204d0a`
 
 Main has moved past the `.15` snapshot below: PRs #211–#216 landed

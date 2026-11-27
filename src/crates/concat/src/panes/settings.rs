@@ -1279,6 +1279,11 @@ impl SettingsPane {
         if self.all_downloading {
             return;
         }
+        // A cancelled row leaves its shared flag set. A new whole-shelf
+        // attempt is a new intent and must clear both flags before the
+        // worker starts, or every remaining sound/picture set refuses
+        // immediately instead of being retried.
+        reset_model_download_cancellation(&self.sound_cancel, &self.visual_cancel);
         self.all_downloading = true;
         let dirs = studio.host.dirs.clone();
         let whisper = Arc::clone(&studio.host.transcriber);
@@ -1565,9 +1570,28 @@ pub fn new_token() -> String {
     format!("{:016x}{:016x}", word(1), word(2))
 }
 
+
+/// Clears stale row-cancellation state before a new whole-shelf download.
+/// The individual sound and picture rows share these flags with Download-all.
+fn reset_model_download_cancellation(sound: &AtomicBool, visual: &AtomicBool) {
+    sound.store(false, Ordering::Relaxed);
+    visual.store(false, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_all_clears_cancellation_left_by_a_previous_attempt() {
+        let sound = AtomicBool::new(true);
+        let visual = AtomicBool::new(true);
+
+        reset_model_download_cancellation(&sound, &visual);
+
+        assert!(!sound.load(Ordering::Relaxed));
+        assert!(!visual.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn a_token_is_thirty_two_hex_digits_and_never_the_same_twice() {

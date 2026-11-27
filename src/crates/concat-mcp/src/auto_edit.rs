@@ -61,6 +61,17 @@ fn keep_recorded_takes(project: &Path, source: &AutoEditProgramSource) {
     }
 }
 
+
+/// The headless tool has no channel metadata to inspect. Default to the
+/// restrictive licensing path; personal/research use must be an explicit
+/// opt-out rather than an accidental omission by an unattended caller.
+fn monetized_argument(arguments: &Value) -> bool {
+    arguments
+        .get("monetized")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
 /// Run the fixed AUTO EDIT spine over `path`, or over a sibling copy of
 /// it. The terminal state is returned whether the run completed, warned,
 /// failed or was cancelled; a failed or cancelled run is marked as an
@@ -104,15 +115,10 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         .map(|word| word.trim().to_owned())
         .filter(|word| matches!(word.as_str(), "horizontal" | "vertical" | "square"));
     // Whether the edit is monetized, threaded into the brief and the bed
-    // calls: a monetized run is refused the non-commercial beds (the
-    // music model's, MobyGratis), exactly as `bgm.import`'s own `true`
-    // refuses them. The default is `bgm.import`'s documented honest
-    // default: false - a run that does not say is not read as monetized,
-    // and a non-monetized run may shop the music model's bed.
-    let monetized = arguments
-        .get("monetized")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    // calls. The unattended default is the licence-safe side: non-commercial
+    // beds and the research-only OpenVid shelf stay refused unless a caller
+    // explicitly opts into a personal/research edit with `monetized: false`.
+    let monetized = monetized_argument(&arguments);
     // The author's own creative intent, when the caller carries one: the
     // same `creative-brief.json` every later turn reads, merged field by
     // field over whatever the project already persisted so a second run
@@ -719,6 +725,17 @@ mod tests {
         });
         assert!(!lanes.load(Ordering::Relaxed));
         assert!(!runner.cancelled());
+    }
+
+    #[test]
+    fn an_omitted_monetized_flag_defaults_to_the_licence_safe_path() {
+        assert!(monetized_argument(&json!({})));
+        assert!(monetized_argument(&json!({"monetized": true})));
+        assert!(!monetized_argument(&json!({"monetized": false})));
+        assert!(
+            monetized_argument(&json!({"monetized": "false"})),
+            "a malformed flag must not loosen the licensing gate"
+        );
     }
 
     #[test]

@@ -73,6 +73,16 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         .and_then(Value::as_str)
         .map(|word| word.trim().to_owned())
         .filter(|word| matches!(word.as_str(), "horizontal" | "vertical" | "square"));
+    // Whether the edit is monetized, threaded into the brief and the bed
+    // calls: a monetized run is refused the non-commercial beds (the
+    // music model's, MobyGratis), exactly as `bgm.import`'s own `true`
+    // refuses them. The default is `bgm.import`'s documented honest
+    // default: false - a run that does not say is not read as monetized,
+    // and a non-monetized run may shop the music model's bed.
+    let monetized = arguments
+        .get("monetized")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     let project = if copy {
         copy_project(&source)?
@@ -112,15 +122,20 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             return Err(error);
         }
     };
-    let program_source =
-        match auto_edit_source_from_view(&project_path, &view, script, stock_provider, orientation)
-        {
-            Ok(source) => source,
-            Err(error) => {
-                let _ = close_project(toolbox, backend, cancelled, &project_path);
-                return Err(ApiError::invalid(error));
-            }
-        };
+    let program_source = match auto_edit_source_from_view(
+        &project_path,
+        &view,
+        script,
+        stock_provider,
+        orientation,
+        monetized,
+    ) {
+        Ok(source) => source,
+        Err(error) => {
+            let _ = close_project(toolbox, backend, cancelled, &project_path);
+            return Err(ApiError::invalid(error));
+        }
+    };
     let mut program = auto_edit_program(&program_source);
     // The runner's event receiver is dropped on purpose: a headless call
     // has no watcher to read it, and a receiver held and never drained

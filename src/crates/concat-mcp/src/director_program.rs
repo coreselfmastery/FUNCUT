@@ -82,6 +82,12 @@ pub struct AutoEditProgramSource {
     /// `None` when no script was given: the transcript then stands as it
     /// was transcribed, exactly as it always did.
     pub script: Option<String>,
+    /// Whether the edit is monetized - the brief's own word, threaded
+    /// from the run's caller. A monetized run is refused the non-
+    /// commercial beds (the music model's, MobyGratis) and its stock
+    /// shopping is told so; a run that does not say gets the honest
+    /// default the bgm.import request documents: false.
+    pub monetized: bool,
     /// The orientation the edit is built for, when the caller picked one
     /// the project's own frame is not: "horizontal" (1920x1080),
     /// "vertical" (1080x1920) or "square" (1080x1080). Everything
@@ -2785,6 +2791,56 @@ fn pace_from_wpm(wpm: f64) -> &'static str {
 /// caption stage spends. Empty when no reply measured any, which is the
 /// honest answer for a take read without prosody - the stage then falls
 /// back to its own evidence rather than inventing a stress.
+/// The words the emphasis-typing door typed beyond the written word,
+/// take by take: a contrastive pivot, a piece of new information, a list
+/// head or an intensity hit is a word the delivery itself called out -
+/// and the door's own hint says a contrastive emphasis is the cut
+/// point. The reply carries the audio path it read, so the words land on
+/// the take they were typed for; an older reply that names no audio is
+/// a door that cannot be attributed and is stepped over, not guessed
+/// for. This was a call the whole spine made and no reader ever read.
+fn typed_emphasis(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<String>)> {
+    let mut words: Vec<(String, Vec<String>)> = Vec::new();
+    for reply in log
+        .iter()
+        .filter(|reply| reply.get("tool").and_then(Value::as_str) == Some("score_emphasis_type"))
+    {
+        let Some(audio) = reply.get("audio").and_then(Value::as_str) else {
+            continue;
+        };
+        if !takes.iter().any(|asked| asked.take == audio) {
+            continue;
+        }
+        let index = match words.iter().position(|(take, _)| take == audio) {
+            Some(index) => index,
+            None => {
+                words.push((audio.to_owned(), Vec::new()));
+                words.len() - 1
+            }
+        };
+        for word in reply["emphasisWords"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|typed| {
+                matches!(
+                    typed["type"].as_str(),
+                    Some("contrastive" | "new information" | "list" | "intensity")
+                )
+            })
+            .filter_map(|typed| typed["word"].as_str())
+        {
+            let bare = word
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase();
+            if !bare.is_empty() && !words[index].1.contains(&bare) {
+                words[index].1.push(bare);
+            }
+        }
+    }
+    words
+}
+
 fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<String>)> {
     voice_reads(log, takes)
         .into_iter()
@@ -2964,7 +3020,15 @@ fn door_calls(
         json!({ "action": "scene_cuts", "path": subject, "width": 32 }),
     ));
     // The sound-sight agreement: the voice's own flux onsets, when a
-    // reading carries them, are the audio half the sync door needs.
+    // reading carries them, are the audio half the sync door needs, and
+    // the picture half is the movement the sheet already measured for
+    // THIS candidate - the row the measure pass left under the
+    // candidate's own path. The row's onsets ride the ask as
+    // `motionOnsets` (a re-measure the door no longer pays for); without
+    // them the door still gets the candidate's own `path`, so the sync
+    // measures its own half when the sheet's reading is not in the log.
+    // An ask with neither was a door that could only refuse: it had the
+    // audio times and nothing to load a frame from.
     let onsets: Vec<Value> = log
         .iter()
         .find_map(VoiceRead::of)
@@ -2977,10 +3041,24 @@ fn door_calls(
         })
         .unwrap_or_default();
     if !onsets.is_empty() {
-        calls.push(call(
-            "sense_visual",
-            json!({ "action": "visual_sync", "audioOnsets": onsets, "toleranceMs": 80 }),
-        ));
+        let measured: Vec<Value> = log
+            .iter()
+            .filter(|reply| reply.get("rows").is_some())
+            .flat_map(|reply| reply["rows"].as_array().into_iter().flatten())
+            .filter(|row| row["path"].as_str() == Some(subject))
+            .filter_map(|row| row["motion"]["onsets"].as_array().cloned())
+            .flatten()
+            .collect();
+        let mut ask = json!({
+            "action": "visual_sync",
+            "path": subject,
+            "audioOnsets": onsets,
+            "toleranceMs": 80
+        });
+        if !measured.is_empty() {
+            ask["motionOnsets"] = json!(measured);
+        }
+        calls.push(call("sense_visual", ask));
     }
     // The model doors: one ask per ready checkpoint, the registry's own
     // id deciding which doors this machine can open.
@@ -3019,9 +3097,19 @@ fn door_calls(
         ));
     }
     if model_ready(log, "depth-anything-v2-small") || model_ready(log, "midas-v21-small") {
+        // Either depth model reads the door, but the door's own default
+        // is the first of the pair: name whichever is ready, the way the
+        // embedding door names its own, or a machine with only the
+        // second installed asks a door that refuses for want of a model
+        // it could have read.
+        let model_id = if model_ready(log, "depth-anything-v2-small") {
+            "depth-anything-v2-small"
+        } else {
+            "midas-v21-small"
+        };
         calls.push(call(
             "sense_visual",
-            json!({ "action": "depth_map", "path": subject }),
+            json!({ "action": "depth_map", "path": subject, "modelId": model_id }),
         ));
     }
     if model_ready(log, "fastsam-s") {
@@ -3031,9 +3119,14 @@ fn door_calls(
         ));
     }
     if model_ready(log, "dover-mobile") || model_ready(log, "laion-aesthetic") {
+        let model_id = if model_ready(log, "dover-mobile") {
+            "dover-mobile"
+        } else {
+            "laion-aesthetic"
+        };
         calls.push(call(
             "sense_visual",
-            json!({ "action": "aesthetic", "path": subject }),
+            json!({ "action": "aesthetic", "path": subject, "modelId": model_id }),
         ));
     }
     if model_ready(log, "microexpnet") {
@@ -3043,9 +3136,14 @@ fn door_calls(
         ));
     }
     if model_ready(log, "eyegaze") || model_ready(log, "mobilegaze") {
+        let model_id = if model_ready(log, "eyegaze") {
+            "eyegaze"
+        } else {
+            "mobilegaze"
+        };
         calls.push(call(
             "sense_visual",
-            json!({ "action": "gaze", "path": subject }),
+            json!({ "action": "gaze", "path": subject, "modelId": model_id }),
         ));
     }
     if model_ready(log, "movenet-pose") {
@@ -3097,9 +3195,14 @@ fn door_calls(
         ));
     }
     if model_ready(log, "bytetrack-yolo") || model_ready(log, "grounding-dino-tiny") {
+        let model_id = if model_ready(log, "bytetrack-yolo") {
+            "bytetrack-yolo"
+        } else {
+            "grounding-dino-tiny"
+        };
         calls.push(call(
             "sense_visual",
-            json!({ "action": "detect_objects", "path": subject }),
+            json!({ "action": "detect_objects", "path": subject, "modelId": model_id }),
         ));
     }
     if model_ready(log, "film-shot-classifier") {
@@ -3115,9 +3218,27 @@ fn door_calls(
         || model_ready(log, "uform-gen2")
         || model_ready(log, "smolvlm2-256m")
     {
+        // The door's default is the first of the four; name whichever is
+        // ready, the way the embedding door names its own, or a machine
+        // with only a later reader installed asks a door that refuses
+        // for want of a model it could have read.
+        let model_id = if model_ready(log, "smolvlm2-500m") {
+            "smolvlm2-500m"
+        } else if model_ready(log, "florence-2-base") {
+            "florence-2-base"
+        } else if model_ready(log, "uform-gen2") {
+            "uform-gen2"
+        } else {
+            "smolvlm2-256m"
+        };
         calls.push(call(
             "sense_visual",
-            json!({ "action": "describe_scene", "path": subject, "prompt": "one sentence: what does this clip show?" }),
+            json!({
+                "action": "describe_scene",
+                "path": subject,
+                "prompt": "one sentence: what does this clip show?",
+                "modelId": model_id
+            }),
         ));
     }
     if model_ready(log, "scenegraph-vlm") {
@@ -3492,9 +3613,14 @@ fn question_acts(log: &[Value], takes: &[TakePaths]) -> Vec<ScriptLine> {
         .zip(discourse_replies(log, "detect_speech_acts"))
     {
         for line in reply["perLine"].as_array().into_iter().flatten() {
+            // A question asks the viewer something; an imperative addresses
+            // them - both are the acts that earn the card a mood alone
+            // cannot justify, exactly as the Understand stage's own
+            // comment promises. An imperative that matches nothing was a
+            // card the code described and never dealt.
             if !matches!(
                 line["primary"].as_str(),
-                Some("question" | "rhetorical_question")
+                Some("question" | "rhetorical_question" | "imperative")
             ) {
                 continue;
             }
@@ -6978,7 +7104,12 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             "youtube"
         }),
     );
-    brief.insert("monetized".to_owned(), json!(true));
+    // The run's own word, threaded from its caller: a monetized edit is
+    // refused the non-commercial beds, and the plan that says so is the
+    // one the stage below obeys. A constant `true` here was a brief that
+    // never asked - every run read as monetized, and the music model's
+    // bed was a door no run could open.
+    brief.insert("monetized".to_owned(), json!(source.monetized));
     // The evidence: one entry per decision, naming the signals from the
     // voice_signals vocabulary that actually drove it. The names are the
     // ones this run read - a plan that cites `pause` for a boundary no
@@ -9451,6 +9582,7 @@ pub fn auto_edit_source_from_view(
     script: Option<String>,
     stock_provider: String,
     orientation: Option<String>,
+    monetized: bool,
 ) -> Result<AutoEditProgramSource, String> {
     let media = media_paths(view);
     let clips = view["timeline"]["clips"]
@@ -9537,6 +9669,7 @@ pub fn auto_edit_source_from_view(
         script: script.filter(|script| !script.trim().is_empty()),
         orientation,
         frame_rate,
+        monetized,
     })
 }
 
@@ -10327,6 +10460,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut query_cursor = 0usize;
                 let mut shelf_polls = 0usize;
                 let mut bed_path: Option<String> = None;
+                // The lane the bed rides, minted before the import that
+                // lays it: a dedicated lane the timeline can read as the
+                // music, the way the B-roll shots ride their own lane -
+                // not the first lane with room, which is whichever lane
+                // the footage happened to leave a gap in.
+                let mut bed_lane: Option<String> = None;
+                let mut bed_lane_asked = false;
+                let mut bed_lane_pending = false;
                 move |log| {
                     if phase == 0 {
                         phase = 1;
@@ -10426,13 +10567,42 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         match chosen {
                             Some(id) => {
                                 phase = 11;
+                                // The lane before the import: minted once,
+                                // before the very first placement - the
+                                // phase stays at 11, so the next ask
+                                // re-enters this branch with the mint
+                                // answered and lays the bed on its lane.
+                                if bed_lane.is_none() {
+                                    if !bed_lane_asked {
+                                        bed_lane_asked = true;
+                                        bed_lane_pending = true;
+                                        return Some(call(
+                                            "edit_apply",
+                                            json!({
+                                                "path": plan_project,
+                                                "command": { "op": "addTrack" },
+                                            }),
+                                        ));
+                                    }
+                                    if bed_lane_pending {
+                                        bed_lane_pending = false;
+                                        if let Some(lane) = log
+                                            .last()
+                                            .and_then(|reply| reply.get("createdId"))
+                                            .and_then(Value::as_str)
+                                        {
+                                            bed_lane = Some(lane.to_owned());
+                                        }
+                                    }
+                                }
                                 return Some(call(
                                     "bgm_import",
                                     json!({
                                         "path": plan_project,
                                         "ids": [id],
                                         "start": 0.0,
-                                        "monetized": true,
+                                        "monetized": plan_settings.monetized,
+                                        "track": bed_lane.clone(),
                                     }),
                                 ));
                             }
@@ -12737,6 +12907,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .collect();
                         titles.sort_by(|left, right| left.0.total_cmp(&right.0));
                         let emphasis = stressed_words(log, &caption_source);
+                        let typed = typed_emphasis(log, &caption_source);
                         let read = emotion_lines(log, &caption_emotion);
                         let voice = voice_reads(log, &caption_source);
                         let mut commands: Vec<Value> = Vec::new();
@@ -12773,6 +12944,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .iter()
                                 .find(|(take, _)| *take == group.take)
                                 .map(|(_, words)| words);
+                            // The words the typing door typed for this
+                            // take are accents the delivery itself
+                            // called out - a contrastive pivot, a piece
+                            // of new information - and they earn the
+                            // accent beside the profile's own stressed
+                            // words, never instead of them.
+                            let take_typed = typed
+                                .iter()
+                                .find(|(take, _)| *take == group.take)
+                                .map(|(_, words)| words);
                             let mut accents: Vec<&CaptionWord> = group
                                 .words
                                 .iter()
@@ -12782,7 +12963,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .trim_matches(|c: char| !c.is_alphanumeric())
                                         .to_lowercase();
                                     !bare.is_empty()
-                                        && take_emphasis.is_some_and(|words| words.contains(&bare))
+                                        && (take_emphasis
+                                            .is_some_and(|words| words.contains(&bare))
+                                            || take_typed
+                                                .is_some_and(|words| words.contains(&bare)))
                                 })
                                 .collect();
                             // A hot line with no stressed word still earns its
@@ -13153,6 +13337,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //    ships the non-commercial one.
     let music_project = project.clone();
     let music_source = takes.clone();
+    // The stage's own settings, captured for the one word the bed calls
+    // carry: the run's monetized word, threaded from its caller. A
+    // constant `true` here was a brief that never asked - every run read
+    // as monetized, and the music model's bed was a door no run could
+    // open however it was licensed.
+    let music_settings = source.clone();
     steps.push(
         DerivedStep::react(
             Stage::Music,
@@ -13220,6 +13410,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The bed clip the listen is holding: what a swap
                 // removes before the next candidate imports.
                 let mut bed_clip: Option<String> = None;
+                // The lane the bed rides, read from the bed clip the
+                // timeline carries: a swap's re-import lands on the lane
+                // the bed it replaced rode, not the first lane with room
+                // - the music stays where the timeline was reading it.
+                let mut bed_track: Option<String> = None;
                 // The next candidate a swap is importing, once the
                 // refused bed's clip is off the lane.
                 let mut pending_import: Option<String> = None;
@@ -13496,7 +13691,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // the music model answers with the
                                     // licence instead of a file, and the
                                     // pad below is written instead.
-                                    "monetized": true,
+                                    "monetized": music_settings.monetized,
                                 }),
                             ));
                         }
@@ -13707,6 +13902,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .collect();
                         }
                         let id = bed_candidates.first().cloned();
+                        let track = bed_track.clone();
                         return id.map(|id| {
                             call(
                                 "bgm_import",
@@ -13714,7 +13910,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "path": music_project,
                                     "ids": [id],
                                     "start": 0.0,
-                                    "monetized": true,
+                                    "monetized": music_settings.monetized,
+                                    "track": track,
                                 }),
                             )
                         });
@@ -13795,7 +13992,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "path": music_project,
                                 "ids": [next],
                                 "start": 0.0,
-                                "monetized": true,
+                                "monetized": music_settings.monetized,
+                                "track": bed_track.clone(),
                             }),
                         ));
                     }
@@ -13833,6 +14031,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .unwrap_or_default();
                             listening = true;
                             bed_clip = bed["id"].as_str().map(str::to_owned);
+                            bed_track = bed["track"]
+                                .as_str()
+                                .or_else(|| bed["trackId"].as_str())
+                                .map(str::to_owned);
                             return Some(call(
                                 "sense_sound_model",
                                 json!({
@@ -14210,6 +14412,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         used: &[String],
         rotation: usize,
         shop: AccentShop<'_>,
+        lane: Option<&str>,
     ) -> SfxLadder {
         let AccentShop {
             at,
@@ -14268,6 +14471,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         "path": project,
                         "id": id,
                         "start": start,
+                        "track": lane,
                     }),
                 },
             );
@@ -14306,6 +14510,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Stage::Sfx,
             Box::new({
                 let mut peaks: Option<Vec<(String, f64, f64, String)>> = None;
+                // The lane the accents ride, minted once before the first
+                // placement and shared by every hit this run lays: a
+                // dedicated lane the timeline reads as the accents, the
+                // way the B-roll shots and the bed ride their own - not
+                // the first lane with room, which is whichever lane the
+                // footage happened to leave a gap in.
+                let mut accent_lane: Option<String> = None;
+                let mut accent_lane_asked = false;
+                let mut accent_lane_pending = false;
                 // The per-take accent attenuation, resolved once with the
                 // peaks: a take whose SNR sits under 15 dB is a take whose
                 // floor lives close under the voice, and an accent at its
@@ -14446,6 +14659,35 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         accent_attenuation.get_or_insert(penalties);
                         found
                     });
+                    // The lane, minted before the first placement and only
+                    // when there is one to make: the derive returns to this
+                    // ask with the mint's own reply in the log's last seat,
+                    // the pending state below preserved through both.
+                    if peaks.as_ref().is_some_and(|found| !found.is_empty())
+                        && accent_lane.is_none()
+                    {
+                        if !accent_lane_asked {
+                            accent_lane_asked = true;
+                            accent_lane_pending = true;
+                            return Some(call(
+                                "edit_apply",
+                                json!({
+                                    "path": sfx_project,
+                                    "command": { "op": "addTrack" },
+                                }),
+                            ));
+                        }
+                        if accent_lane_pending {
+                            accent_lane_pending = false;
+                            if let Some(lane) = log
+                                .last()
+                                .and_then(|reply| reply.get("createdId"))
+                                .and_then(Value::as_str)
+                            {
+                                accent_lane = Some(lane.to_owned());
+                            }
+                        }
+                    }
                     // A reply is waiting to be read: the pending state says
                     // which one, and each state reads only its own reply.
                     match pending.take() {
@@ -14496,6 +14738,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         "path": sfx_project,
                                         "file": path,
                                         "start": start,
+                                        "track": accent_lane.clone(),
                                     }),
                                 ));
                             }
@@ -14632,6 +14875,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     query,
                                     context: &context,
                                 },
+                                accent_lane.as_deref(),
                             ) {
                                 SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
                                     pending = Some(next);
@@ -14712,6 +14956,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     query,
                                     context: &context,
                                 },
+                                accent_lane.as_deref(),
                             ) {
                                 SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
                                     pending = Some(next);
@@ -14795,6 +15040,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     query,
                                     context: &context,
                                 },
+                                accent_lane.as_deref(),
                             ) {
                                 SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
                                     pending = Some(next);
@@ -14887,6 +15133,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                             "path": sfx_project,
                                             "id": id,
                                             "start": start,
+                                            "track": accent_lane.clone(),
                                         }),
                                     ));
                                 }
@@ -14904,6 +15151,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     query,
                                     context: &context,
                                 },
+                                accent_lane.as_deref(),
                             ) {
                                 SfxLadder::Place(next, call) | SfxLadder::Next(next, call) => {
                                     pending = Some(next);
@@ -15613,6 +15861,7 @@ mod tests {
             Some("  ".to_owned()),
             "pixabay".to_owned(),
             None,
+            true,
         )
         .expect("the view is a narration timeline");
         assert_eq!(source.takes.len(), 2);
@@ -15637,6 +15886,7 @@ mod tests {
             None,
             "pexels".to_owned(),
             None,
+            true,
         ) {
             Ok(_) => panic!("no narration is a refusal"),
             Err(refused) => refused,
@@ -15683,6 +15933,7 @@ mod tests {
             None,
             "pexels".to_owned(),
             Some("vertical".to_owned()),
+            true,
         )
         .expect("the view is a narration timeline");
         assert_eq!(turned.orientation.as_deref(), Some("vertical"));
@@ -15707,6 +15958,7 @@ mod tests {
             None,
             "pexels".to_owned(),
             None,
+            true,
         )
         .expect("the view is a narration timeline");
         assert_eq!(as_is.orientation, None);
@@ -15738,6 +15990,7 @@ mod tests {
                 None,
                 "pexels".to_owned(),
                 Some(word.to_owned()),
+                true,
             )
             .expect("the view is a narration timeline");
             assert_eq!(kept.orientation, None, "a {word} pick sets nothing");
@@ -22419,6 +22672,10 @@ mod tests {
         ];
         // The loud peak is inside the first three seconds: the hook asks
         // the heavier generator for its accent.
+        let mint = (sfx.next)(&log).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        log.push(json!({ "createdId": "t-sfx" }));
         let first = (sfx.next)(&log).expect("the loud peak is generated");
         assert_eq!(first.tool, "sense_sound_model");
         assert_eq!(first.arguments["kind"], json!("sfx-large"));
@@ -22537,8 +22794,8 @@ mod tests {
 
         // The hit carries a `syncAt` the manifest believes: the placement
         // lays the file by it, and the check then catches the drift. Every
-        // walk asks the generator first, hears it answer absent, and only
-        // then shops the shelf.
+        // walk mints the accents' lane first, asks the generator next,
+        // hears it answer absent, and only then shops the shelf.
         let mut drift = log.clone();
         let mut drift_program = auto_edit_program(&source);
         let ProgramStep::Derived(drift_sfx) = drift_program
@@ -22549,6 +22806,10 @@ mod tests {
         else {
             panic!("the sfx stage is derived");
         };
+        let mint = (drift_sfx.next)(&drift).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        drift.push(json!({ "createdId": "t-sfx" }));
         let asked = (drift_sfx.next)(&drift).expect("the generator is asked first");
         assert_eq!(asked.tool, "sense_sound_model");
         drift = shelf.clone();
@@ -22595,6 +22856,10 @@ mod tests {
         else {
             panic!("the sfx stage is derived");
         };
+        let mint = (wrong_sfx.next)(&wrong).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        wrong.push(json!({ "createdId": "t-sfx" }));
         (wrong_sfx.next)(&wrong).expect("the generator is asked first");
         wrong = shelf.clone();
         (wrong_sfx.next)(&wrong).expect("the shelf is asked");
@@ -22635,6 +22900,10 @@ mod tests {
         else {
             panic!("the sfx stage is derived");
         };
+        let mint = (blind_sfx.next)(&blind).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        blind.push(json!({ "createdId": "t-sfx" }));
         (blind_sfx.next)(&blind).expect("the generator is asked first");
         blind = shelf.clone();
         (blind_sfx.next)(&blind).expect("the shelf is asked");
@@ -23131,6 +23400,10 @@ mod tests {
         else {
             panic!("the sfx stage is derived");
         };
+        let mint = (sfx.next)(&log).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        log.push(json!({ "createdId": "t-sfx" }));
         assert_eq!(
             (sfx.next)(&log).expect("the generator is asked").tool,
             "sense_sound_model"
@@ -23558,10 +23831,18 @@ mod tests {
                 { "id": "warm-piano", "title": "Warm Piano Nocturne", "seconds": 200.0 }
             ],
         }));
+        // The bed's own lane is minted before the import lays it: the
+        // music rides a dedicated lane the timeline can read as the bed,
+        // not whichever lane the footage left a gap in.
+        let minted = (plan.next)(&log).expect("the bed's lane is minted");
+        assert_eq!(minted.tool, "edit_apply");
+        assert_eq!(minted.arguments["command"]["op"], json!("addTrack"));
+        log.push(json!({ "createdId": "t-bed" }));
         let import = (plan.next)(&log).expect("the bed is imported");
         assert_eq!(import.tool, "bgm_import");
         assert_eq!(import.arguments["ids"], json!(["warm-piano"]));
         assert_eq!(import.arguments["monetized"], json!(true));
+        assert_eq!(import.arguments["track"], json!("t-bed"));
         log.push(json!({ "mediaIds": ["m-bed"] }));
 
         // The timeline is read back for the placed bed.

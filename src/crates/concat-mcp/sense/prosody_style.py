@@ -201,6 +201,11 @@ def _score_emphasis_type(spec):
         counts={k: sum(1 for f in flat if f["type"] == k)
                 for k in {f["type"] for f in flat}},
         source=emphasis_source,
+        # The audio's own path, echoed: the auto-edit asks this door once
+        # per take, and a reply that does not name the take it read cannot
+        # be spent by a take-keyed reader - this was a reply the whole
+        # spine called for and no consumer could attribute.
+        audio=audio,
         note=rust_note,
         directorHints=[
             "a contrastive emphasis is the cut point: the word before it ends one world, the word after opens another",

@@ -336,7 +336,8 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "auto_edit",
             title: "Auto Edit a narration timeline",
-            description: "Run the one-click AUTO EDIT spine on narration audio. `copy` defaults true; no export.",
+            description: "Run the one-click AUTO EDIT spine on narration audio. `copy` defaults true; `monetized` \
+             defaults false (true refuses the non-commercial music beds); no export.",
             read_only: false,
             destructive: true,
             idempotent: false,

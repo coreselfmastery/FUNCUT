@@ -345,7 +345,7 @@ pub fn catalogue() -> Vec<Tool> {
             name: "auto_edit",
             title: "Auto Edit a narration timeline",
             description: "Run the one-click AUTO EDIT spine on narration audio. `copy` defaults true; `monetized` \
-             defaults false (true refuses the non-commercial music beds); no export.",
+             defaults true (set false only for personal/research use, to permit non-commercial beds and OpenVid); no export.",
             read_only: false,
             destructive: true,
             idempotent: false,
@@ -2028,7 +2028,7 @@ fn auto_edit_schema() -> Value {
             "stockProvider": { "type": "string", "enum": ["pexels", "pixabay"], "default": "pexels" },
             "copy": { "type": "boolean", "default": true, "description": "Edit a sibling copy." },
             "orientation": { "type": "string", "enum": ["horizontal", "vertical", "square"], "description": "The frame the edit is built for; horizontal maps 1920x1080, vertical 1080x1920, square 1080x1080, keeping the project's own rate. Absent keeps the frame the project already has." },
-            "monetized": { "type": "boolean", "default": false, "description": "True when the edit ships on a monetised channel or as client work: the non-commercial beds (the music model's, MobyGratis) are refused and the stock gate is told. Absent is the documented honest default, false." },
+            "monetized": { "type": "boolean", "default": true, "description": "True by default: refuses non-commercial beds and the research-only OpenVid shelf. Set false explicitly only for personal/research use." },
             "brief": {
                 "type": "object",
                 "description": "The author's creative intent, merged into the project's creative-brief.json before the run: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid, monetized. The fields the author states outrank the ones the run derives from the transcript; fields left out keep the derived reading.",
@@ -8214,4 +8214,14 @@ mod tests {
             "the active list and the paste-ready comment must agree"
         );
     }
+    #[test]
+    fn auto_edit_schema_defaults_to_the_licence_safe_path() {
+        let schema = auto_edit_schema();
+        assert_eq!(schema["properties"]["monetized"]["default"], true);
+        let description = schema["properties"]["monetized"]["description"]
+            .as_str()
+            .expect("the monetization policy is described");
+        assert!(description.contains("personal/research use"));
+    }
+
 }

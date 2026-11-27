@@ -1546,6 +1546,71 @@ def selftest(spec=None):
         globals()["_set_bytes"] = real_set
         globals()["_model_file"] = real_file
 
+    # The generate reply measures the file it wrote: `syncOffset` is where
+    # the loudest peak sits, in seconds, so a placement can back the
+    # lead-up out and land the accent's transient on the measured moment
+    # instead of the file's first byte. The reader is proven on synthetic
+    # WAVs (mono, and a peak that lives in one channel of an interleaved
+    # stereo pair), and the reply itself on an end-to-end generation with
+    # the gates and the model stubbed: a swell that peaks half a second in
+    # must answer 0.5.
+    import wave as _wave
+
+    def _pcm(samples):
+        return b"".join(
+            max(-32768, min(32767, int(s * 32767.0))).to_bytes(2, "little", signed=True)
+            for s in samples)
+
+    with tempfile.TemporaryDirectory() as folder:
+        mono = [0.0] * 1000
+        mono[400] = 0.8  # the peak, 0.4 s into a 1 s file
+        with _wave.open(str(Path(folder) / "mono.wav"), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(1000)
+            handle.writeframes(_pcm(mono))
+        check("the peak reader finds the peak's place in a mono file",
+              _peak_offset_sec(Path(folder) / "mono.wav") == 0.4,
+              str(_peak_offset_sec(Path(folder) / "mono.wav")))
+        stereo = [0.0] * 2000
+        stereo[2 * 600 + 1] = 0.9  # the right channel alone, 0.6 s in
+        with _wave.open(str(Path(folder) / "stereo.wav"), "wb") as handle:
+            handle.setnchannels(2)
+            handle.setsampwidth(2)
+            handle.setframerate(1000)
+            handle.writeframes(_pcm(stereo))
+        check("the peak reader reads across the interleaved channels",
+              _peak_offset_sec(Path(folder) / "stereo.wav") == 0.6,
+              str(_peak_offset_sec(Path(folder) / "stereo.wav")))
+        if np is not None:
+
+            def _stub_gen(_spec, _prompt, _seconds, _seed, _threads, _steps):
+                rate = 1000
+                samples = np.zeros(rate, dtype=np.float32)
+                samples[500] = 0.7  # the swell peaks half a second in
+                return samples, rate
+
+            real_generator, real_tiny = _generator, _gen_tiny
+            try:
+                globals()["_generator"] = lambda spec: (
+                    ("sfx-small", dict(GEN_KINDS["sfx-small"])), None)
+                globals()["_gen_tiny"] = _stub_gen
+                wrote = generate_sound({"kind": "sfx-small", "prompt": "a swell",
+                                         "project": folder, "seconds": 1.0})
+            finally:
+                globals()["_generator"] = real_generator
+                globals()["_gen_tiny"] = real_tiny
+            check("the generate reply carries the peak's place as syncOffset",
+                  wrote.get("ok") is True
+                  and isinstance(wrote.get("syncOffset"), (int, float))
+                  and not isinstance(wrote.get("syncOffset"), bool)
+                  and wrote.get("syncOffset") >= 0.0
+                  and abs(wrote.get("syncOffset", -1.0) - 0.5) < 0.002,
+                  str(wrote.get("syncOffset")))
+        else:
+            check("syncOffset reply check skipped (no numpy)", True,
+                  "the peak reader is proven above; writing the reply needs numpy")
+
     models = Models(spec)
     check("models are absent without files or present with them",
           models.state in ("ready", "absent"), models.state or models.reason or "")
@@ -1949,6 +2014,52 @@ def _write_float_wav(path, audio, rate):
     return channels, len(inter) // channels
 
 
+def _peak_offset_sec(path):
+    """Where the loudest sample sits in the written file, in seconds.
+
+    The generator's own reply measured the file it wrote: a generated
+    accent often spends its first moments swelling, and `syncOffset` is
+    where the peak sits, so the placement backs that lead-up out and the
+    accent's own transient meets the moment the emphasis measured, not
+    the file's first byte. numpy when it is importable, pure Python over
+    the PCM otherwise; 0.0 only when the file cannot be read back at all.
+    """
+    import wave
+
+    try:
+        with wave.open(str(path), "rb") as handle:
+            rate = int(handle.getframerate() or 0)
+            channels = int(handle.getnchannels() or 1)
+            width = int(handle.getsampwidth() or 0)
+            pcm = handle.readframes(handle.getnframes())
+    except (OSError, ValueError, EOFError):
+        return 0.0
+    if rate <= 0 or channels <= 0 or width <= 0 or not pcm:
+        return 0.0
+    count = len(pcm) // width
+    if np is not None:
+        dtypes = {1: np.uint8, 2: np.int16, 4: np.int32}
+        dtype = dtypes.get(width)
+        if dtype is None:
+            return 0.0
+        samples = np.frombuffer(pcm[:count * width], dtype=dtype)
+        if width == 1:  # unsigned 8-bit PCM centres at 128, not 0
+            samples = samples.astype(np.int16) - 128
+        loudest = int(np.argmax(np.abs(samples))) if samples.size else 0
+    else:
+        loudest, best = 0, -1
+        for index in range(count):
+            value = int.from_bytes(pcm[index * width:(index + 1) * width],
+                                   "little", signed=width != 1)
+            if width == 1:
+                value -= 128
+            if abs(value) > best:
+                best, loudest = abs(value), index
+    # The frames interleave the channels; the peak is wherever the loudest
+    # sample of ANY channel sits, so its frame is the index over channels.
+    return round((loudest // channels) / rate, 3)
+
+
 def _gen_tiny(spec, prompt, seconds, seed, threads, steps):
     pipeline = json.loads(_model_file(spec, "sfx-small-pipeline.json").read_text())
     rate = int(pipeline.get("audio_sample_rate") or 44100)
@@ -2207,6 +2318,10 @@ def generate_sound(spec):
         except ValueError:
             return {"ok": False, "error": "`out` must stay inside `project`"}
     channels, frames = _write_float_wav(path, audio, rate)
+    # The reply measures the file it wrote: the peak's own place in it,
+    # in seconds, so a placement can back the lead-up out and land the
+    # accent's transient on the moment the emphasis measured.
+    sync_offset = _peak_offset_sec(path)
     reply = {
         "ok": True,
         "tool": "generate",
@@ -2217,6 +2332,7 @@ def generate_sound(spec):
         "prompt": prompt,
         "path": str(path),
         "seconds": _r(frames / rate, 3),
+        "syncOffset": sync_offset,
         "rate": rate,
         "channels": channels,
         "peak": _r(float(np.abs(audio).max()) if audio.size else 0.0, 3),

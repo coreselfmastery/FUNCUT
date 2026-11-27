@@ -5862,8 +5862,8 @@ mod tests {
         assert!(tool.destructive, "it writes the timeline");
         assert_eq!(
             tool.timeout_secs(),
-            1200,
-            "transcription and stock are slow"
+            3600,
+            "the unattended spine includes cold model downloads and full renders"
         );
         assert_eq!(schema["properties"]["copy"]["default"], json!(true));
         assert!(

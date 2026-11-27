@@ -168,7 +168,7 @@ one of these tracks in monetized or client work, and credit
 "Moby (MobyGratis)" where one is used. The third source refuses
 itself: `sense_sound_model {action: "generate", kind: "bgm"}`
 (TinyMusician) ships no licence file upstream, and the action answers
-`model: "refused"` on a monetized brief — a monetized project never
+`ok: true, generated: false, reason: "licence", model: "tinymusician"` on a monetized brief — a monetized project never
 carries a generated bed, and the run shops FreePD instead. The refusal
 is the tool's, not yours to override. A bed that does come back, on a
 non-monetized cut, is placed by `bgm_import {file}` like any shelf

@@ -58,8 +58,12 @@ fn preserve_recorded_take(project: &Path, index: usize, path: &Path) -> Result<(
         return Ok(());
     }
     let folder = project.join("auto-edit");
-    let metadata = std::fs::symlink_metadata(&folder)
-        .map_err(|error| format!("could not inspect the recorded-takes folder {}: {error}", folder.display()))?;
+    let metadata = std::fs::symlink_metadata(&folder).map_err(|error| {
+        format!(
+            "could not inspect the recorded-takes folder {}: {error}",
+            folder.display()
+        )
+    })?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(format!(
             "the recorded-takes folder {} is not a real directory",

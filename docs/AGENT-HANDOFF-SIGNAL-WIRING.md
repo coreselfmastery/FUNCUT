@@ -64,6 +64,25 @@ branch above passes that test (`restarts` -> `assemble`,
 keyword guess, the room verdict sets the bed's floor, the rhythm meter
 sizes and tightens a seam's blend).
 
+### Corrected on 2026-11-27: measure against the script, not this file
+
+§1 and the board above are the day they were measured, kept as the
+record - "75 door readings / 145 total / the button asks 10, then 19 of
+75" was true then and is not now. Re-read on `main` (2026-11-27):
+
+```
+$ python3 scripts/check-signal-coverage.py
+sense readings: 76
+asked by AUTO EDIT: 67  (88%)
+missing: 9
+```
+
+**76** door readings (8 doors, 84 dispatched actions minus 8 machinery),
+**147** total = 71 voice-profile readings + 76 door readings, and the
+button asks **67 of 76**. The per-door board above is superseded by the
+script's own per-door ledger; re-run it before quoting any number from
+this file.
+
 ### Two blockers that are not on the batch list
 
 1. **`main` is red and every PR is `blocked`.** `Engine tests and lints`

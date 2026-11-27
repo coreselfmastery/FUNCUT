@@ -36,7 +36,7 @@
 |---|---|
 | **Editor** | Multi-track, multi-timeline cutting, 55 commands, keyframes with curves, 327 effects/filters/transitions/audio packages, titles, captions, masks, stabilize, enhance, HDR/4K export |
 | **3D** | Native CPU 3D scenes: box, plane, sphere, cylinder, torus; ambient/directional/point lights; camera flight path; per-pixel Phong; no GPU and no browser |
-| **Motion** | 33 presets and 30 authoring ops: lower thirds, kinetic captions, charts, counters, code, devices, maps, social cards, 3D showcase |
+| **Motion** | 33 presets and 31 authoring ops: lower thirds, kinetic captions, charts, counters, code, devices, maps, social cards, 3D showcase |
 | **AUTO EDIT** | One click or one MCP call: voice repair, transcription, voice signals, emotion, plan, picture, B-roll, captions, motion, music, SFX, preview, revise, save, verify |
 | **Local AI** | Whisper transcription, Kokoro/Pocket/Chatterbox TTS, voice cloning, MediaPipe/RVM/IS-Net/SlimSAM cutout, Real-ESRGAN enhance |
 | **Agent stack** | 117 MCP tools (109 served to a director by default), 25-phase director skill, maestro and clip-skills judgment shelves, Forge harness |
@@ -61,7 +61,7 @@ A comp can carry `NodeKind::Scene3D`:
 - **Renderer:** CPU z-buffer, per-pixel Phong, near-plane clipping, point lights, specular from the real eye.
 - **No GPU path. No browser. No JavaScript runtime.**
 
-Two authoring ops open it: `add-scene3d` and `set-scene3d`. The preset shelf grew to **33** with `funcut.scene3d.showcase`; the authoring vocabulary grew to **30** ops.
+Two authoring ops open it: `add-scene3d` and `set-scene3d`. The preset shelf grew to **33** with `funcut.scene3d.showcase`; the authoring vocabulary grew to **31** ops.
 
 Measured on the reference CPU-only box: **~0.7 seconds per 1920×1080 frame** for the four-object showcase. An 8-second, 30 fps scene is roughly **2.8 minutes**; `samples: 2` costs about **4×** that. Keep scenes to a few dozen objects at 1080p.
 
@@ -200,7 +200,7 @@ Every cache sizes itself to installed RAM. Seven caches are retuned for ≤6 GB:
 ## The motion engine and 3D
 
 - **33 presets**: lower thirds, kinetic captions, stat cards, wordmark sting, chapters, pull quote, CTA, code terminal, code diff, bar/progress/line/donut/area charts, before/after, counting number, mesh backdrop, bar race, comparison table, social quote/stat, headline flash, phone/tablet/laptop frames, pin route map, horizontal timeline, flowchart, and `funcut.scene3d.showcase`.
-- **30 authoring ops**: slots, text, words, markup, move, retime, tracks, track points, remap, track colours/size/noise, fade, slide, pop, groups, rects, text, charts, counters, particles, 3D scene add/set, delete, blend, opacity, duration, background, camera, ink.
+- **31 authoring ops**: slots, text, words, markup, move, retime, tracks, track points, remap, track colours/size/noise, fade, slide, pop, groups, rects, text, charts, counters, particles, 3D scene add/set, delete, blend, opacity, duration, background, camera, ink.
 - **3D**: five geometries, three light types, camera path, per-pixel Phong, CPU z-buffer.
 - **Routing**: native for 3D-only comps; Geneva for markup; a warning when Geneva cannot draw the scene.
 - **Tools**: `motion_presets`, `motion_inspect`, `scene_analysis`, `motion_frame`, `motion_preview`, `motion_bake`, `motion_reel`, `motion_probe`, `motion_overlay`, `motion_import`, `motion_farm_progress`, `motion_farm_cloud`.
@@ -217,7 +217,7 @@ Full manual: [`docs/MOTION.md`](docs/MOTION.md).
 
 | Area | Tools |
 |---|---:|
-| Projects, timeline and planning | 12 |
+| Projects, timeline and planning | 13 |
 | AUTO EDIT | 1 |
 | Media | 2 |
 | OpenVid stock and footage planning | 10 |
@@ -239,9 +239,9 @@ Full manual: [`docs/MOTION.md`](docs/MOTION.md).
 
 ### AUTO EDIT
 
-The Forge page starts a whole faceless video with one click. The fixed spine is 18 stages:
+The Forge page starts a whole faceless video with one click. The fixed spine is 19 stages:
 
-`HandoffVoiceover`, `AudioRepair`, `Transcribe`, `VoiceSignals`, `Understand`, `Plan`, `Timeline`, `Gather`, `Captions`, `Motion`, `Music`, `Sfx`, `Preview`, `Revise`, `TimelineReady`, `Export` (optional), `Verify`, `Watch`.
+`Preflight`, `HandoffVoiceover`, `AudioRepair`, `Transcribe`, `VoiceSignals`, `Understand`, `Plan`, `Timeline`, `Gather`, `Captions`, `Motion`, `Music`, `Sfx`, `Preview`, `Revise`, `TimelineReady`, `Export` (optional), `Verify`, `Watch`.
 
 It copies the project to a sibling by default, writes a stage receipt and report, and leaves an editable timeline. It does not export by default; call `export_start` for the file.
 
@@ -254,11 +254,11 @@ It copies the project to a sibling by default, writes a stage receipt and report
 
 ### What the picture reader measures, and who spends it
 
-`sense_visual` is the picture's door: **38 actions** behind one tool - **11
+`sense_visual` is the picture's door: **39 actions** behind one tool - **12
 measure with nothing installed** (no model, no download, no `onnxruntime`, just
-the standard library and an ffmpeg), **21 are model doors**, and 6 are the
-machinery that makes them usable (the batch sheet, the bench, the shelf
-listing, the two Hub actions and the download). The shelf is **30 ONNX
+the standard library and an ffmpeg), **22 are model doors**, and 5 are the
+machinery that makes them usable (the bench, the shelf listing, the two Hub
+actions and the download). The shelf is **30 ONNX
 checkpoints**, each a registry row with its file, size, licence, decoder and
 consumer ([VISUAL-MODELS.md](docs/VISUAL-MODELS.md)).
 

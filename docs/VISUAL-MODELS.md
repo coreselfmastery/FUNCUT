@@ -7,7 +7,7 @@ file and `numpy` + `onnxruntime` are present, and refuses with the reason when
 they are not. No door is required for an edit to finish, and no door is
 silently skipped.
 
-**38 actions, 11 of them model-free, 30 rows on the shelf.**
+**39 actions, 12 of them model-free, 30 rows on the shelf.**
 
 ## Installing a door
 

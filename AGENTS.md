@@ -20,7 +20,7 @@ tuned for small low-memory Linux laptops and extended with:
 - **maestro** and **clip-skills** (`.claude/skills/{maestro,clip-skills}/`):
   read-only judgment shelves the director reads phase by phase;
 - the **Geneva** motion engine (`src/crates/concat-motion` + an external
-  sidecar binary): JSON comps, 18 presets, kinetic typography, reels.
+  sidecar binary): JSON comps, 33 presets, kinetic typography, reels.
 
 ## Routing: which skill to use
 
@@ -86,8 +86,8 @@ consumer fails the selftest, not a reviewer's memory.
 
 ## The picture's shelf (read before touching `sense_visual`)
 
-`sense_visual` is 38 actions: 11 measure with nothing installed, 21 are ONNX
-doors, 6 are machinery. The doors are registry rows in
+`sense_visual` is 39 actions: 12 measure with nothing installed, 22 are ONNX
+doors, 5 are machinery. The doors are registry rows in
 `sense/visual_sense.py` (`VISUAL_MODELS`), driven by one generic runner and
 ten decoders - so pointing a door at a better checkpoint is a one-line swap,
 and `docs/VISUAL-MODELS.md` is generated from that registry. A door installs

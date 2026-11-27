@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The coverage ledger: which of the sense readings anyone actually asks.
 
-The eight sense doors dispatch 83 actions; 75 of them read the material and
+The eight sense doors dispatch 84 actions; 76 of them read the material and
 8 install, index, bench or self-test. This script holds three layers:
 
 1. The catalogue is the code. Every reading is read out of the door
@@ -14,7 +14,7 @@ The eight sense doors dispatch 83 actions; 75 of them read the material and
    `director_program.rs` is matched to the action it asks, and the ledger
    prints asked / missing per door.
 
-Layer 3 prints and does not fail: the spine asks 10 of the 75 today, and a
+Layer 3 prints and does not fail: the spine asks 67 of the 76 today, and a
 check that fails on a known gap is a check that gets deleted. It becomes a
 gate the day the wiring lands, by adding `--require-button` to the CI step.
 """

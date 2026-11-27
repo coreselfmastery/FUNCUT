@@ -150,7 +150,8 @@ button.
 ## 3. The voice: 70 readings, and the four families that vanish quietly
 
 The voice is the half that works. 70 catalogue entries in 12 families
-(`voice_signals.py:159`), parsed into `LineRead`/`TakeRead`
+(`voice_signals.py:159`) [14 families today; corrected 2026-11-27],
+parsed into `LineRead`/`TakeRead`
 (`voice_read.rs:33`, `:187`), and held to a consumer by three Rust
 guards that pass on this tree:
 

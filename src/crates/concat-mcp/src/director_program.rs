@@ -16147,9 +16147,12 @@ mod tests {
         .expect("the view is a narration timeline");
         assert_eq!(source.takes.len(), 2);
         assert_eq!(source.takes[0].take, "/edits/Reel/voice/a.wav");
+        // The enhanced intermediate is a SIBLING of the take: the repair
+        // chain only writes inside the folder of the audio it reads, so
+        // beside the take is the one place the chain can land.
         assert_eq!(
             source.takes[0].enhanced,
-            "/edits/Reel edit/auto-edit/enhanced-000-a.wav"
+            "/edits/Reel/voice/enhanced-000-a.wav"
         );
         assert_eq!(source.takes[1].take, "/edits/Reel/voice/b.wav");
         assert_eq!(source.placements.len(), 3);

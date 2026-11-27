@@ -52,7 +52,9 @@ fn keep_recorded_takes(project: &Path, source: &AutoEditProgramSource) {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("take.wav");
-        let kept = project.join("auto-edit").join(format!("recorded-{index:03}-{name}"));
+        let kept = project
+            .join("auto-edit")
+            .join(format!("recorded-{index:03}-{name}"));
         if !kept.is_file() {
             let _ = std::fs::copy(path, &kept);
         }

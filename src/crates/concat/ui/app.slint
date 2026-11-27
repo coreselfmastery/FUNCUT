@@ -314,6 +314,7 @@ export component App inherits Window {
     callback settings-shortcut-reset-all();
     callback model-activated(id: string);
     callback model-download(id: string);
+    callback model-download-all();
     callback model-cancel(id: string);
     callback model-remove(id: string);
     callback model-open-link(id: string);
@@ -947,6 +948,7 @@ export component App inherits Window {
         install-cancel => { root.settings-install-cancel(); }
         model-activated(id) => { root.model-activated(id); }
         model-download(id) => { root.model-download(id); }
+        download-all() => { root.model-download-all(); }
         model-cancel(id) => { root.model-cancel(id); }
         model-remove(id) => { root.model-remove(id); }
         model-open-link(id) => { root.model-open-link(id); }

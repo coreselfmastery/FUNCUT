@@ -717,7 +717,10 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     let refused = reply.get("result").cloned().expect("a result");
     assert_eq!(refused["isError"], true, "{refused}");
     let said = refused["content"][0]["text"].as_str().expect("the refusal");
-    assert!(said.contains("tts, whisper, sound or picture"), "{said}");
+    assert!(
+        said.contains("tts, whisper, sound, picture or all"),
+        "{said}"
+    );
 
     // The picture kind takes its id from the row the sheet shows: any other
     // id under that kind is named as unknown, the ids being in models.list.

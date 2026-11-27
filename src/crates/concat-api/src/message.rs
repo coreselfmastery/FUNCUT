@@ -912,9 +912,13 @@ pub enum Request {
     /// model already on disk is a no-op that ends at once.
     #[serde(rename = "models.download")]
     ModelsDownload {
-        /// Which family: "tts", "whisper" or "sound".
+        /// Which family: "tts", "whisper", "sound", "picture" - or "all",
+        /// the whole shelf in one job: every missing model, walked in the
+        /// settings sheet's own order, with the already-present rows
+        /// passed by and each refusal named in the job's answer.
         kind: String,
-        /// The model's id, from `models.list`.
+        /// The model's id, from `models.list` - the word "all" when the
+        /// kind is "all".
         id: String,
     },
 

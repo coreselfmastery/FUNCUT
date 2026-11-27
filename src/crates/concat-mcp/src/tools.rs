@@ -874,8 +874,9 @@ pub fn catalogue() -> Vec<Tool> {
             "models_download",
             "Download an AI model",
             "Download a missing voice (tts), transcriber (whisper), sound set \
-             (sound-models|sfx-small|sfx-large|bgm), or picture set (picture-models); \
-             poll models_list for job status.",
+             (sound-models|sfx-small|sfx-large|bgm), or picture set (picture-models) - \
+             or every missing model at once (kind: all, id: all); poll models_list or \
+             analysis_wait for job status.",
             "models.download",
             Raw,
         ),

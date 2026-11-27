@@ -9614,51 +9614,112 @@ fn gcd(a: i64, b: i64) -> i64 {
 /// was needed. The download is idempotent - a model already on disk
 /// ends at once - so a warm machine pays two quick calls and nothing
 /// else, and a cold one pays the download where the run can name it.
-fn whisper_preflight(log: &[Value]) -> Option<ToolCall> {
+/// The setup every AUTO EDIT run does before anything else is paid for
+/// it: the models its own spine spends, downloaded and waited for FIRST,
+/// so the edit starts with its material on disk instead of degrading
+/// mid-run - the words' transcriber, the ears' sound set (CLAP and
+/// YAMNet), the visual doors' picture set, the accents' SFX set, and
+/// last the critic's own eye, the local VLM, whose failure is a warning
+/// the run ships (the critique falls back to its heuristic tier) rather
+/// than a run-stopper - which is why it stands last in the queue: a
+/// stage whose tool failed ends warned, and a warned stage must not
+/// stand between a set and its download.
+///
+/// The sets the run does not preflight are the ones its spine never
+/// spends: the bed's music model (a monetized run is refused it by
+/// licence), the large SFX set (a pad a non-monetized short bed falls
+/// back to, shopped lazily when it is), the narration and voiceover
+/// voices (the voiceover path's, not the button's), the bigger
+/// transcribers the run never asks for by name. A `models_download`
+/// call with `kind: "all"` downloads the whole shelf for whoever wants
+/// everything at once.
+fn preflight(log: &[Value]) -> Option<ToolCall> {
     let call = |tool: &str, arguments: Value| ToolCall {
         tool: tool.to_owned(),
         arguments,
     };
-    // The wait's own replies, newest first: the wait is a poll of one
-    // job, and the last poll's word is the job's word. A job that
-    // settled - done, failed, cancelled - is the gate's to judge. The
-    // transcriber stage itself gives a lane two waits; preflight keeps
-    // the same budget, so a job still running after the second wait
-    // fails here rather than polling indefinitely.
-    let waits = log
+    let queue: Vec<(&str, Value)> = vec![
+        (
+            "models_download",
+            json!({ "kind": "whisper", "id": "base" }),
+        ),
+        (
+            "models_download",
+            json!({ "kind": "sound", "id": "sound-models" }),
+        ),
+        (
+            "models_download",
+            json!({ "kind": "picture", "id": "picture-models" }),
+        ),
+        (
+            "models_download",
+            json!({ "kind": "sound", "id": "sfx-small" }),
+        ),
+        ("local_vlm", json!({ "action": "setup", "profile": "mini" })),
+    ];
+    // The download items, in queue order - the VLM starts no job.
+    let download_items: Vec<usize> = queue
         .iter()
-        .filter(|reply| reply.get("state").is_some())
-        .count();
-    if let Some(last) = log.iter().rev().find(|reply| reply.get("state").is_some()) {
-        if last["state"] != "running" || waits >= 2 {
+        .enumerate()
+        .filter(|(_, (tool, _))| *tool == "models_download")
+        .map(|(at, _)| at)
+        .collect();
+    // The jobs the queue started, in order: a Started reply names its
+    // job and carries no state. Each started job belongs to the
+    // download item of its own position - the queue walks one item at a
+    // time, so the second Started cannot precede the first job's word.
+    let started: Vec<&str> = log
+        .iter()
+        .filter(|reply| reply.get("job").is_some() && reply.get("state").is_none())
+        .filter_map(|started| started["job"].as_str())
+        .collect();
+    for (job_at, &item) in download_items.iter().enumerate() {
+        let Some(&job) = started.get(job_at) else {
+            // Not started yet: this is where the queue stands.
+            let (tool, arguments) = &queue[item];
+            return Some(call(tool, arguments.clone()));
+        };
+        // This job's own wait replies, in order: the last one's word is
+        // the job's word, and two waits are the budget. A job still
+        // running after the second wait ends the stage with the gate's
+        // refusal rather than polling indefinitely; a job that settled
+        // - done, failed, cancelled - hands the stage to the gate and
+        // the queue moves on.
+        let waits: Vec<&Value> = log
+            .iter()
+            .filter(|reply| {
+                reply.get("state").is_some()
+                    && reply.get("job").and_then(Value::as_str) == Some(job)
+            })
+            .collect();
+        let Some(last) = waits.last() else {
+            return Some(call(
+                "analysis_wait",
+                json!({ "job": job, "timeoutSeconds": 590 }),
+            ));
+        };
+        if last["state"] == "running" && waits.len() < 2 {
+            return Some(call(
+                "analysis_wait",
+                json!({ "job": job, "timeoutSeconds": 590 }),
+            ));
+        }
+        if last["state"] == "running" {
+            // The budget is spent and the job still runs: the gate
+            // reads the last wait's word and refuses the stage. The
+            // download goes on where it runs - a retry of the run
+            // finds it on disk and walks past it.
             return None;
         }
-        let job = last["job"].as_str()?;
-        return Some(call(
-            "analysis_wait",
-            json!({ "job": job, "timeoutSeconds": 590 }),
-        ));
+        // Settled: the next item in the queue.
     }
-    // The download's own reply: a Started names the job a headless
-    // caller waits on.
-    if let Some(job) = log
-        .iter()
-        .rev()
-        .find(|reply| reply.get("job").is_some() && reply.get("state").is_none())
-        .and_then(|started| started["job"].as_str())
-    {
-        return Some(call(
-            "analysis_wait",
-            json!({ "job": job, "timeoutSeconds": 590 }),
-        ));
+    // Every download item settled: the VLM's own setup, if it has not
+    // answered yet - its reply carries `setup`, jobless.
+    if !log.iter().any(|reply| reply.get("setup").is_some()) {
+        let (tool, arguments) = &queue[queue.len() - 1];
+        return Some(call(tool, arguments.clone()));
     }
-    // Nothing asked yet: the model itself - the multilingual base,
-    // the model every transcribe call in this program resolves to when
-    // the caller names none.
-    Some(call(
-        "models_download",
-        json!({ "kind": "whisper", "id": "base" }),
-    ))
+    None
 }
 
 /// The AUTO EDIT's whole program: every stage the unattended run can run
@@ -9697,18 +9758,28 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .clone()
         .filter(|script| !script.trim().is_empty());
     let mut steps: Vec<ProgramStep> = Vec::new();
-    // 1. The preflight: the one model the run cannot proceed without -
-    //    the transcriber - is asked for before anything is spent on it.
-    //    The download ends at once when the model is on disk, and the
-    //    gate holds the stage until the model has landed, so a cold
-    //    machine fails fast with the model named instead of dying at
-    //    the third stage.
+    // 1. The preflight: the setup stage. The models the run's own
+    //    spine spends - the transcriber's words, the ears' sound set,
+    //    the visual doors' picture set, the accents' SFX set, and the
+    //    critic's own eye last - are downloaded and waited for before
+    //    anything else is paid for them, so the edit starts with its
+    //    material on disk instead of degrading mid-run. Each download
+    //    ends at once when its model is already there, and the gate
+    //    holds the stage until each has landed, so a cold machine fails
+    //    fast with the model named instead of dying at a later stage -
+    //    and a warm one walks the whole queue in a breath.
     steps.push(
-        DerivedStep::react(Stage::Preflight, Box::new(whisper_preflight))
+        DerivedStep::react(Stage::Preflight, Box::new(preflight))
+            // Warn-tools, for the critic's eye alone: a local VLM whose
+            // setup refuses (no network for its half-gigabyte, a binary
+            // the platform will not run) is a warning the run ships -
+            // the critique falls back to its measured heuristic tier -
+            // while the model sets' own arrival stays the gate below.
+            .warn_tools()
             .gate(ReplyGate::Word {
                 field: "state",
                 equals: "done",
-                what: "the whisper base model the words stage needs did not arrive",
+                what: "a model the run's preflight waited for did not arrive",
             })
             .into(),
     );
@@ -15701,42 +15772,83 @@ mod tests {
         );
     }
 
-    /// The preflight asks for the transcriber before anything else is
-    /// spent: the download on an empty log, the wait on the job the
-    /// download named, one more wait while the job still runs, and the
-    /// gate's judgement once the job has settled - done or failed, the
-    /// stage's own proving is over and the gate reads the last word.
+    /// The preflight is a setup queue: every model the run's spine
+    /// spends is downloaded and waited for, one item at a time, before
+    /// the queue moves on - the transcriber first, then the sound set,
+    /// the picture set and the SFX set, the critic's eye last - and the
+    /// gate reads every job's last word.
     #[test]
-    fn the_preflight_shops_the_transcriber_before_anything_is_spent() {
-        use super::whisper_preflight;
+    fn the_preflight_shops_its_whole_setup_queue_before_the_run_spends() {
+        use super::preflight;
 
-        // Nothing asked yet: the model itself, headlessly.
-        let ask = whisper_preflight(&[]).expect("the first call");
+        // Nothing asked yet: the transcriber itself, headlessly.
+        let ask = preflight(&[]).expect("the first call");
         assert_eq!(ask.tool, "models_download");
         assert_eq!(ask.arguments["kind"], json!("whisper"));
         assert_eq!(ask.arguments["id"], json!("base"));
 
         // The download's Started names the job a caller waits on.
         let started = json!({ "job": "j1", "path": "base.bin", "output": "" });
-        let ask = whisper_preflight(std::slice::from_ref(&started)).expect("the wait");
+        let ask = preflight(std::slice::from_ref(&started)).expect("the wait");
         assert_eq!(ask.tool, "analysis_wait");
         assert_eq!(ask.arguments["job"], json!("j1"));
 
         // A job still running gets one more wait on the same job; a
-        // settled job - done or failed - is the gate's to judge, and
-        // the derive answers nothing more.
+        // second running wait exhausts the budget and hands the stage
+        // to the gate.
         let running = json!({ "job": "j1", "path": "base.bin", "state": "running" });
-        let ask = whisper_preflight(&[started.clone(), running.clone()]).expect("another wait");
+        let ask = preflight(&[started.clone(), running.clone()]).expect("another wait");
         assert_eq!(ask.tool, "analysis_wait");
         assert_eq!(ask.arguments["job"], json!("j1"));
         assert!(
-            whisper_preflight(&[started.clone(), running.clone(), running]).is_none(),
+            preflight(&[started.clone(), running.clone(), running.clone()]).is_none(),
             "two running waits exhaust the preflight budget"
         );
-        for settled in ["done", "failed", "cancelled"] {
+
+        // A job that settled moves the queue: after the transcriber's
+        // done wait the sound set is next, and after the sound set's
+        // job lands the picture set, the SFX set, and the critic's eye.
+        let done = json!({ "job": "j1", "path": "base.bin", "state": "done" });
+        let ask = preflight(&[started.clone(), done.clone()]).expect("the next item");
+        assert_eq!(ask.tool, "models_download");
+        assert_eq!(ask.arguments["kind"], json!("sound"));
+        assert_eq!(ask.arguments["id"], json!("sound-models"));
+
+        let sound_started = json!({ "job": "j2", "path": "set", "output": "" });
+        let sound_done = json!({ "job": "j2", "path": "set", "state": "done" });
+        let log = vec![started.clone(), done.clone(), sound_started, sound_done];
+        let ask = preflight(&log).expect("the picture set");
+        assert_eq!(ask.arguments["kind"], json!("picture"));
+        let picture_started = json!({ "job": "j3", "path": "vision", "output": "" });
+        let picture_done = json!({ "job": "j3", "path": "vision", "state": "done" });
+        let log = [log, vec![picture_started, picture_done]].concat();
+        let ask = preflight(&log).expect("the SFX set");
+        assert_eq!(ask.arguments["kind"], json!("sound"));
+        assert_eq!(ask.arguments["id"], json!("sfx-small"));
+
+        // All four sets settled: the critic's own eye, asked for once.
+        let sfx_started = json!({ "job": "j4", "path": "sfx", "output": "" });
+        let sfx_done = json!({ "job": "j4", "path": "sfx", "state": "done" });
+        let log = [log, vec![sfx_started, sfx_done]].concat();
+        let ask = preflight(&log).expect("the critic's eye");
+        assert_eq!(ask.tool, "local_vlm");
+        assert_eq!(ask.arguments["action"], json!("setup"));
+
+        // The eye's own reply - jobless, carrying `setup` - ends the
+        // queue: the setup is whole and the run may spend.
+        let eye = json!({ "ok": true, "setup": true, "reused": true });
+        let log = [log, vec![eye]].concat();
+        assert!(
+            preflight(&log).is_none(),
+            "the whole setup queue answered: the run may spend"
+        );
+
+        // A settled-but-failed job is the gate's to judge, never a
+        // third wait: the queue does not pretend a refusal is a poll.
+        for settled in ["failed", "cancelled"] {
             let word = json!({ "job": "j1", "path": "base.bin", "state": settled });
             assert!(
-                whisper_preflight(&[started.clone(), word]).is_none(),
+                preflight(&[started.clone(), word]).is_none(),
                 "a settled job ({settled}) is the gate's, not another wait"
             );
         }

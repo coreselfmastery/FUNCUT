@@ -106,6 +106,10 @@ pub enum SettingsMsg {
         id: String,
         result: Result<(), String>,
     },
+    /// The Download-all button: the whole shelf, one row at a time.
+    ModelsDownloadAll,
+    /// The whole-shelf walk is over, however its rows ended.
+    ModelsAllFinished,
     /// The Version page asks GitHub for the releases.
     CheckUpdates,
     /// The releases, newest first, or why they could not be had.
@@ -253,6 +257,39 @@ fn sound_set(id: &str) -> Option<&'static [concat_vision::models::ModelId]> {
     concat_host::soundmodel::set_by_id(id)
 }
 
+/// One model download for the whole-shelf walk: the same call the row's
+/// own button makes, with the same progress messages, so a row the walk
+/// fetches updates exactly as a row the user fetches.
+fn download_one(
+    whisper: &Arc<concat_speech::Transcriber>,
+    kokoro: &Arc<concat_speech::Speech>,
+    dirs: &concat_host::AppDirs,
+    transcriber: bool,
+    id: &str,
+) {
+    let result = {
+        let id = id.to_owned();
+        let report = |progress: concat_speech::DownloadProgress| {
+            let msg = SettingsMsg::ModelProgress {
+                id: progress.id,
+                fetched: progress.received as f32 / 1_000_000.0,
+                total: (progress.total > 0).then(|| progress.total as f32 / 1_000_000.0),
+                unpacking: progress.unpacking,
+            };
+            on_ui(move |studio, _, _| studio.handle(Msg::Settings(msg)));
+        };
+        if transcriber {
+            whisper.download_model(dirs, &id, report)
+        } else {
+            kokoro.download_model(dirs, &id, report)
+        }
+    };
+    let id = id.to_owned();
+    on_ui(move |studio, _, _| {
+        studio.handle(Msg::Settings(SettingsMsg::ModelFinished { id, result }));
+    });
+}
+
 /// The settings sheet's state.
 #[derive(Default)]
 pub struct SettingsPane {
@@ -282,6 +319,9 @@ pub struct SettingsPane {
     /// The picture reader's models - a shot boundary, depth, a visual
     /// embedding and CLIP's vision tower - as one row.
     pub visuals: Vec<ModelState>,
+    /// The whole-shelf download is walking: one worker, every missing
+    /// model, one row at a time - the button hides while it runs.
+    pub all_downloading: bool,
     /// The cancel flag of a sound-model download in flight.
     sound_cancel: Arc<AtomicBool>,
     /// The cancel flag of a picture-model download in flight.
@@ -512,6 +552,11 @@ impl SettingsPane {
                 self.refresh(studio);
             }
             SettingsMsg::ModelDownload(id) => self.download(&id, studio),
+            SettingsMsg::ModelsDownloadAll => self.download_all(studio),
+            SettingsMsg::ModelsAllFinished => {
+                self.all_downloading = false;
+                self.refresh(studio);
+            }
             SettingsMsg::ModelOpenLink(id) => {
                 if let Some(url) = model_sources(&id).and_then(|(_, urls)| urls.into_iter().next())
                     && let Err(error) = platform::open_link(&url)
@@ -1110,6 +1155,13 @@ impl SettingsPane {
 
     /// Starts a download on a worker. Its reports come back as messages.
     fn download(&mut self, id: &str, studio: &Studio) {
+        // The whole-shelf walk owns the sheet while it runs: a row the
+        // walk is on its way to would be fetched twice - once by the
+        // row's own worker and once by the walk - so a row asked for
+        // by hand waits for the walk the way it waits for itself.
+        if self.all_downloading {
+            return;
+        }
         if let Some(set) = sound_set(id) {
             let Some(model) = self.model_mut(id) else {
                 return;
@@ -1214,6 +1266,109 @@ impl SettingsPane {
         );
     }
 
+    /// The whole shelf, one row at a time: every missing model, in the
+    /// sheet's own order - the sound sets, the picture set, every
+    /// missing transcriber, every missing voice - on one worker, so the
+    /// button is one click for the whole setup and the disk pays for
+    /// one model at a time. Rows already on disk are walked past; each
+    /// row's own progress and finish arrive through the same messages
+    /// its own button sends, so the rows update themselves as the walk
+    /// moves; and the walk's end resets the button, however its rows
+    /// ended.
+    fn download_all(&mut self, studio: &Studio) {
+        if self.all_downloading {
+            return;
+        }
+        self.all_downloading = true;
+        let dirs = studio.host.dirs.clone();
+        let whisper = Arc::clone(&studio.host.transcriber);
+        let kokoro = Arc::clone(&studio.host.speech);
+        let sound_cancel = Arc::clone(&self.sound_cancel);
+        let visual_cancel = Arc::clone(&self.visual_cancel);
+        spawn(
+            move || {
+                // The sound sets: CLAP and YAMNet, and the three
+                // generators - the whole sound table, whatever the
+                // machine holds today.
+                for set_id in concat_host::soundmodel::SETS {
+                    let Some(set) = concat_host::soundmodel::set_by_id(set_id) else {
+                        continue;
+                    };
+                    if concat_host::soundmodel::set_missing_bytes(&dirs.data, set) == 0 {
+                        continue;
+                    }
+                    let row = set_id.to_owned();
+                    let cancel = Arc::clone(&sound_cancel);
+                    let mut report = |received: u64, total: u64| {
+                        let msg = SettingsMsg::ModelProgress {
+                            id: row.clone(),
+                            fetched: received as f32 / 1_000_000.0,
+                            total: (total > 0).then(|| total as f32 / 1_000_000.0),
+                            unpacking: false,
+                        };
+                        on_ui(move |studio, _, _| studio.handle(Msg::Settings(msg)));
+                    };
+                    let result = concat_host::soundmodel::set_download(
+                        &dirs.data,
+                        set,
+                        &cancel,
+                        &mut report,
+                    );
+                    on_ui(move |studio, _, _| {
+                        studio.handle(Msg::Settings(SettingsMsg::ModelFinished {
+                            id: row,
+                            result,
+                        }));
+                    });
+                }
+                // The picture set, the same four files the row fetches.
+                if concat_host::visualmodel::missing_bytes(&dirs.data) > 0 {
+                    let mut report = |received: u64, total: u64| {
+                        let msg = SettingsMsg::ModelProgress {
+                            id: PICTURE_MODELS_ID.to_owned(),
+                            fetched: received as f32 / 1_000_000.0,
+                            total: (total > 0).then(|| total as f32 / 1_000_000.0),
+                            unpacking: false,
+                        };
+                        on_ui(move |studio, _, _| studio.handle(Msg::Settings(msg)));
+                    };
+                    let result =
+                        concat_host::visualmodel::download(&dirs.data, &visual_cancel, &mut report);
+                    on_ui(move |studio, _, _| {
+                        studio.handle(Msg::Settings(SettingsMsg::ModelFinished {
+                            id: PICTURE_MODELS_ID.to_owned(),
+                            result,
+                        }));
+                    });
+                }
+                // The transcribers, then the voices: the same downloads
+                // the rows' own buttons run, one model at a time.
+                for transcriber in [true, false] {
+                    if transcriber {
+                        if let Ok(standing) = concat_speech::Transcriber::status(&dirs) {
+                            for model in standing.models {
+                                if model.downloaded {
+                                    continue;
+                                }
+                                download_one(&whisper, &kokoro, &dirs, transcriber, &model.id);
+                            }
+                        }
+                    } else if let Ok(standing) = concat_speech::Speech::status(&dirs) {
+                        for model in standing.models {
+                            if model.downloaded {
+                                continue;
+                            }
+                            download_one(&whisper, &kokoro, &dirs, transcriber, &model.id);
+                        }
+                    }
+                }
+            },
+            |studio, _, _, ()| {
+                studio.handle(Msg::Settings(SettingsMsg::ModelsAllFinished));
+            },
+        );
+    }
+
     /// The transcriber list's rows.
     pub fn transcriber_rows(&self) -> Vec<ModelData> {
         self.transcribers.iter().map(ModelState::row).collect()
@@ -1239,6 +1394,14 @@ impl SettingsPane {
         SettingsData {
             open: self.open,
             tab: self.tab,
+            models_all: self.all_downloading,
+            models_busy: self
+                .transcribers
+                .iter()
+                .chain(self.voices.iter())
+                .chain(self.sounds.iter())
+                .chain(self.visuals.iter())
+                .any(|model| model.fetched.is_some()),
             // The keymap's rows as the page draws them: the chord each
             // action is on now, and whether that moved from the one it
             // ships on — which is the row's cue to offer its reset.

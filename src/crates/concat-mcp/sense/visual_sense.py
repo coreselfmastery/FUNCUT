@@ -1094,17 +1094,23 @@ def _resize_square(rgb, w, h, size, height=None):
     return bytes(out)
 
 
+def _sample_indices(count, time=None):
+    """The frames `_tensor` keeps: one index per chosen frame. A temporal
+    door keeps `time` of them, spread evenly (the tail repeats the last
+    frame when the take is shorter than the window); a still door keeps
+    the middle one. The selection lives here alone, so a decoder can
+    name the moment each sample stands for."""
+    if time:
+        if count >= time:
+            step = count / time
+            return [int(i * step) for i in range(time)]
+        return list(range(count)) + [count - 1] * (time - count)
+    return [count // 2] if count else []
+
+
 def _tensor(frames, size, time=None, mean=0.0, std=255.0, height=None):
     """A float32 NCHW (or NTCHW) tensor from the sampled frames."""
-    chosen = frames
-    if time:
-        if len(chosen) >= time:
-            step = len(chosen) / time
-            chosen = [chosen[int(i * step)] for i in range(time)]
-        else:
-            chosen = chosen + [chosen[-1]] * (time - len(chosen))
-    else:
-        chosen = [chosen[len(chosen) // 2]]
+    chosen = [frames[i] for i in _sample_indices(len(frames), time)]
     out_h = height or size
     planes = []
     for _, rgb, w, h in chosen:
@@ -2359,6 +2365,16 @@ def _decode_logits(raw, labels=None, top=3):
 
 
 def _decode_prob(raw, times=None, floor=0.5):
+    """A curve over the clip's own span, answered as FRACTIONS.
+
+    The consumer (the auto-edit's shot seam) multiplies `boundaries` and
+    `peakAt` by the clip's own length, so every value is a 0..=1 fraction
+    of the clip - never a raw frame index into the tensor, which a clip
+    longer than the tensor's window would reject outright. The fractions
+    come from the sampled times when the door hands them in (one time per
+    sample, the frames the tensor actually kept), and fall back to the
+    sample positions themselves when it does not.
+    """
     a = _np().asarray(raw, dtype=_np().float32)
     if a.ndim >= 3 and a.shape[0] == 1:
         a = a[0]
@@ -2368,16 +2384,29 @@ def _decode_prob(raw, times=None, floor=0.5):
     if a.max() > 1.0 or a.min() < 0.0:
         a = 1.0 / (1.0 + _np().exp(-a))
     peak_index = int(_np().argmax(a))
-    boundaries = [int(i) for i in _np().nonzero(a >= floor)[0]]
-    span = float(times[-1] - times[0]) if times and len(times) > 1 else 1.0
-    per = span / max(1, a.size - 1) if times else None
+    over = [int(i) for i in _np().nonzero(a >= floor)[0]]
+    count = int(a.size)
+    moments = None
+    if times and len(times) == count and count > 1:
+        moments = [float(t) for t in times]
+        span = moments[-1] - moments[0]
+        if span <= 0.0:
+            moments = None
+    if moments is not None:
+        # A moment's fraction is its own place in the clip's sampled span
+        # - anchored at the span's own start, so a clip read from `from:`
+        # still reports its own fraction and not an offset from the file.
+        def fraction(index):
+            return _r(min(1.0, max(0.0, (moments[index] - moments[0]) / span)))
+    else:
+        def fraction(index):
+            return _r(index / max(1, count - 1)) if count > 1 else 0.0
     return {
-        "frames": int(a.size),
+        "frames": count,
         "peak": _r(float(a[peak_index])),
-        "peakAt": _r((times[0] + peak_index * per) if times and per else
-                     peak_index / max(1, a.size - 1)),
-        "boundaries": [int(i) for i in boundaries[:32]],
-        "boundaryCount": len(boundaries),
+        "peakAt": fraction(peak_index),
+        "boundaries": [fraction(i) for i in over[:32]],
+        "boundaryCount": len(over),
     }
 
 
@@ -2593,6 +2622,14 @@ def _generic_door(spec, model_id, frames=None):
         kwargs = {}
         if door.get("decoder") in ("logits", "boxes", "segments"):
             kwargs["labels"] = _labels(spec) or door.get("labels") or None
+        if door.get("decoder") == "prob":
+            # A prob curve reads TIME, not tensor slots: a shot boundary
+            # is a moment in the clip, so the decoder gets the times of
+            # the frames the tensor actually kept - the same selection,
+            # sample for sample - and answers fractions of the clip's own
+            # span, the shape its consumer multiplies by the clip length.
+            kwargs["times"] = [frames[i][0] for i in
+                               _sample_indices(len(frames), time)]
         decoded = decoder(raw[0], **kwargs) if raw else {}
         return {
             "ok": True,
@@ -3526,9 +3563,33 @@ def selftest(only=None):
               and top["top"][0]["p"] > 0.5, top["top"][0])
         curve = _decode_prob(np.array([0.0, 0.1, 0.9, 0.05], dtype=np.float32),
                              times=[0.0, 0.5, 1.0, 1.5])
-        check("a boundary curve names the frame it peaks on",
-              curve["boundaryCount"] == 1 and abs(curve["peakAt"] - 1.0) < 1e-6,
+        # The fraction contract: the consumer multiplies `boundaries` and
+        # `peakAt` by the clip's own length, so a boundary at 1.0 s of a
+        # 1.5 s sampled span answers 2/3 of the clip, never the raw
+        # tensor index the old reader emitted.
+        check("a boundary curve answers fractions of the clip",
+              curve["boundaryCount"] == 1
+              and abs(curve["peakAt"] - 1.0 / 1.5) < 1e-3
+              and abs(curve["boundaries"][0] - 1.0 / 1.5) < 1e-3,
               curve)
+        # A boundary at half the samples sits at half the clip, whatever
+        # the take's own start or length: the shot seam the auto-edit
+        # reads lands mid-clip, not at tensor slot 2.
+        half = _decode_prob(np.array([0.05, 0.05, 0.9, 0.05, 0.05],
+                                    dtype=np.float32),
+                            times=[20.0, 20.5, 21.0, 21.5, 22.0])
+        check("a boundary at half the samples is half the clip",
+              half["boundaryCount"] == 1
+              and abs(half["boundaries"][0] - 0.5) < 1e-6
+              and abs(half["peakAt"] - 0.5) < 1e-6,
+              half)
+        # Without times the sample positions stand for themselves - still
+        # fractions, never indices.
+        bare = _decode_prob(np.array([0.0, 0.0, 0.9, 0.0, 0.0], dtype=np.float32))
+        check("without times the sample positions are the fractions",
+              abs(bare["peakAt"] - 0.5) < 1e-6
+              and abs(bare["boundaries"][0] - 0.5) < 1e-6,
+              bare)
         mask = _decode_masks(np.pad(np.ones((4, 4), dtype=np.float32), 2))
         check("a mask reports the area it covers",
               0.1 < mask["areaShare"] < 0.9 and mask["present"], mask["areaShare"])
@@ -3670,6 +3731,42 @@ def selftest(only=None):
                 globals()["_onnx_session"] = original
             if not said.get("ok") or not said.get("decoded"):
                 failures.append(f"{row['id']}: {said.get('error', 'no reading')}")
+        # The shot door's own path, through the real runner: a temporal
+        # graph whose boundary curve fires on the middle sample of nine,
+        # over nine caller frames spread evenly over the clip. The door
+        # hands the decoder the sampled times, so the seam lands at half
+        # the clip - where the auto-edit's fraction consumer puts it -
+        # and not at tensor slot 4, the raw index the old reader emitted.
+        class _TemporalStub:
+            def __init__(self, curve):
+                self.curve = curve
+
+            def get_inputs(self):
+                span = self.curve.shape[1] if self.curve.ndim == 3 else 8
+                return [type("In", (), {"name": "x", "shape": [1, span, 3, 32, 32]})()]
+
+            def get_outputs(self):
+                return [type("Out", (), {"name": "y",
+                                         "shape": list(self.curve.shape)})()]
+
+            def run(self, _names, _feeds):
+                return [self.curve]
+
+        nine = np.array([0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1],
+                        dtype=np.float32).reshape(1, 9, 1)
+        _SESSIONS.clear()
+        globals()["_onnx_session"] = lambda _path: _TemporalStub(nine)
+        try:
+            said = _generic_door({"model": handle.name, "size": 32, "time": 9},
+                                 "transnetv2",
+                                 frames=[(i / 9.0, pattern, w, h) for i in range(9)])
+        finally:
+            globals()["_onnx_session"] = original
+        shot = said.get("decoded") or {}
+        check("the shot door lands its seam at half the clip",
+              said.get("ok") and abs((shot.get("peakAt") or -1.0) - 0.5) < 1e-6
+              and abs((shot.get("boundaries") or [-1.0])[0] - 0.5) < 1e-6,
+              shot)
         os.unlink(handle.name)
         check("every door on the shelf runs its own row end to end", not failures,
               failures)

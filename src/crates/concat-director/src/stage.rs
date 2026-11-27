@@ -88,10 +88,15 @@ pub enum Stage {
     /// It runs before the saved timeline is certified, so the user opens the corrected cut.
     Revise,
     /// The saved project is written and read back as the editable
-    /// deliverable; no encoded video is produced by the default AUTO EDIT.
+    /// deliverable; the export step that follows the watch renders the
+    /// run's own MP4 beside it.
     TimelineReady,
-    /// Optional explicit render requested by the user. The default AUTO EDIT
-    /// does not schedule this stage.
+    /// The run's own render: the timeline the run certified and scored is
+    /// encoded to the export path the program fixed before it began,
+    /// waited to a terminal state, and proven - the file opened by the
+    /// media reader, the mix measured, the words it carries compared with
+    /// the ones the edit placed. A failed render fails the run: the
+    /// export is the one-click promise, not an extra.
     Export,
     /// The final saved timeline and its rendered preview are independently
     /// checked before the run is accepted.
@@ -102,7 +107,10 @@ impl Stage {
     /// Every stage, in the order the AUTO EDIT program runs them: the
     /// register, read left to right. [`Runner::completed`](crate::Runner::completed)
     /// reports a resumed run in this order, so it must be the program's
-    /// order and not the enum's.
+    /// order and not the enum's - save the export, which the register
+    /// lists before the verify and the watch it follows in the program:
+    /// the run scores the open timeline before it pays for the encode, so
+    /// the render lands last while its report keeps the register's place.
     pub const ALL: [Stage; 19] = [
         Stage::Preflight,
         Stage::HandoffVoiceover,

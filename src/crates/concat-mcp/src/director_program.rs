@@ -64,7 +64,11 @@ pub struct AutoEditProgramSource {
     /// One row per voiceover clip, in first-play order: the placement
     /// the verify's expected transcript falls back to (F-04).
     pub placements: Vec<TakePlacement>,
-    /// Suggested export destination for a later explicit render; AUTO EDIT itself leaves the timeline unrendered.
+    /// The run's own export destination: the MP4 the export stage renders
+    /// from the timeline the run certified, beside the editable project it
+    /// also leaves behind. The one-click promise is the finished file at a
+    /// path fixed before the run began, never a render the user must still
+    /// ask for.
     pub export: String,
     /// The contact sheet's name, relative to the project: the window's
     /// server refuses absolute write paths, and the sheet is written
@@ -310,6 +314,34 @@ fn uncovered_spans(covered: &[(f64, f64)], floor: f64, ceiling: f64) -> Vec<(f64
     open.into_iter()
         .filter(|(start, end)| end - start > 0.3)
         .collect()
+}
+
+/// Whether the timeline already carries captions a viewer can read: the
+/// static titles the captions stage placed, or the kinetic caption reel
+/// it landed in their place - a video clip whose media is the caption
+/// engine's own output under the project's motion/. The question card's
+/// collision veto reads both, because two caption systems on one screen
+/// collide whichever of them drew the words: a reel that replaced every
+/// title must keep the veto the titles held.
+fn captions_on_screen(view: &Value) -> bool {
+    if view["timeline"]["clips"]
+        .as_array()
+        .is_some_and(|clips| clips.iter().any(|clip| clip["kind"] == json!("text")))
+    {
+        return true;
+    }
+    let media = media_paths(view);
+    view["timeline"]["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|clip| clip["media"].as_str())
+        .any(|id| {
+            media
+                .iter()
+                .find(|(mid, _)| mid == id)
+                .is_some_and(|(_, path)| path.contains("/motion/captions-"))
+        })
 }
 
 /// The dead-air cuts the measured pauses ask for, as one `edit_apply`
@@ -598,6 +630,16 @@ fn next_played_peak(
 /// The transcript each take's wait left behind: the take file and the
 /// segments its words timed. A wait that never landed is not here.
 ///
+/// One transcript a path: the NEWEST the log carries for it stands, and
+/// a path that was transcribed twice - the words stage re-hears a take
+/// the base model detected as non-English on the small model, a better
+/// read that lands as the analysis for the same path - answers once.
+/// A collector that kept both would hand every reader the words twice:
+/// doubled captions, doubled slots, an emotion read over a take that
+/// says everything twice. The first reply fixes the take's place in the
+/// order; a later one overwrites it in place, so the order the takes
+/// first answered in is the order every consumer walks.
+///
 /// The voice reading's own lines, when the stage ran, take precedence
 /// over the raw transcript: a run handed a script aligns the two inside
 /// `voice_signals` - misheard words corrected to the spelling the author
@@ -626,7 +668,14 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
         let Some(segments) = transcript["segments"].as_array() else {
             continue;
         };
-        found.push((path.to_owned(), segments.clone()));
+        // The newest transcript a path carries is the one that stands: a
+        // re-transcription replaces the analysis for its path, so a
+        // later reply overwrites in place rather than stacking a second
+        // copy of the same take's words under the first.
+        match found.iter_mut().find(|(seen, _)| seen == path) {
+            Some((_, standing)) => *standing = segments.clone(),
+            None => found.push((path.to_owned(), segments.clone())),
+        }
     }
     // The overlay pass: the newest voice reading per take wins, because
     // a reply can only be newer than the transcript it was read from -
@@ -1196,6 +1245,166 @@ fn split_at_speaker_changes(group: CaptionGroup, read: Option<&VoiceRead>) -> Ve
         from = split;
     }
     parts
+}
+
+/// The kinetic caption ask's own plan: the span the reel owns on the
+/// timeline, the word-timed transcript it is baked from, and the static
+/// titles it retires once it lands. Held by the captions stage from the
+/// ask to the landing - the file and duration rows fill in as the
+/// caption engine answers.
+struct KineticCaptions {
+    /// Where the reel's own clock zero sits on the timeline: the piece's
+    /// start less its in-point. The reel's video time IS the take's file
+    /// time, so placing its zero there keeps every word on the second
+    /// the audio says it.
+    at: f64,
+    /// Where the piece the reel plays ends on the timeline: the reel is
+    /// trimmed to it, so its tail never runs over whatever follows.
+    to: f64,
+    /// The words the reel is timed on, `[text, start, end]` triples in
+    /// the take's own file clock - the same measured, cleaned words the
+    /// static titles show.
+    words: Vec<Value>,
+    /// The static titles inside the span, by clip id: the reel is the
+    /// caption there, and two caption systems on one screen collide.
+    statics: Vec<String>,
+    /// The reading budget the statics were cut with - three words when
+    /// the accent read asked for more reading time, four otherwise -
+    /// spent again here so the reel's own lines read at the same pace.
+    budget: usize,
+    /// The reel the caption engine drew, and the duration it reported,
+    /// spent by the landing phases.
+    file: Option<String>,
+    duration: Option<f64>,
+}
+
+/// The one span a kinetic caption reel may own: the first placed caption
+/// group (in play order) whose take plays its words inside a single
+/// uncut piece at unity rate, where the reel's whole timeline span - its
+/// own clock zero through the piece's end - is a stretch the edit shows
+/// no picture over and holds no other caption inside.
+///
+/// The reel `captions_animate` draws is an opaque video, so it may only
+/// cover a stretch the edit was going to show as background - never a
+/// shot - and it may only be timed where the timeline plays the take's
+/// own clock unbroken: a cut inside the span would put every word after
+/// it late, and a piece played at any rate but unity stretches them all.
+/// A span the picture covers, or a caption the reel would bury, answers
+/// `None`, which keeps the static titles - the answer everywhere else.
+fn kinetic_caption_span(
+    log: &[Value],
+    view: &Value,
+    placed: &[(f64, f64, CaptionGroup)],
+    titles: &[(f64, String)],
+) -> Option<KineticCaptions> {
+    let media = media_paths(view);
+    // The picture the edit actually shows under the words: footage,
+    // stills, motion cards and shapes. The static titles are left out on
+    // purpose - they are the thing the reel would replace, and counting
+    // them would make every span "covered" by its own caption.
+    let picture: Vec<(f64, f64)> = view["timeline"]["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|clip| {
+            matches!(
+                clip["kind"].as_str(),
+                Some("video" | "image" | "motion" | "shape")
+            )
+        })
+        .filter_map(|clip| {
+            let start = clip["start"].as_f64()?;
+            let duration = clip["duration"].as_f64()?;
+            Some((start, start + duration))
+        })
+        .collect();
+    for (_, _, group) in placed {
+        // The piece that plays this group's words whole: a group the
+        // tighten split across pieces cannot be timed by one reel.
+        let Some((source_in, source_out, speed, start)) = take_pieces(view, &media, &group.take)
+            .into_iter()
+            .find(|(from, to, _, _)| *from <= group.start && group.end <= *to)
+        else {
+            continue;
+        };
+        let zero = start - source_in;
+        let end = start + (source_out - source_in) / speed;
+        // The reel's own clock zero must sit on the timeline (a piece
+        // whose file zero falls before the timeline's start cannot place
+        // its clock), and it must play at unity.
+        if (speed - 1.0).abs() > 1e-3 || zero < 0.0 {
+            continue;
+        }
+        // Nothing may show picture over the span the reel would cover,
+        // and no other caption may share it: a group the reel would bury
+        // is a group whose words the edit then hides, so the span the
+        // reel owns must be the chosen piece's groups alone.
+        let inside = |other: &CaptionGroup| {
+            other.take == group.take && source_in <= other.start && other.end <= source_out
+        };
+        if picture.iter().any(|(from, to)| *from < end && zero < *to)
+            || placed
+                .iter()
+                .any(|(at, to, other)| !inside(other) && *at < end && zero < *to)
+        {
+            continue;
+        }
+        let mut words: Vec<Value> = Vec::new();
+        let mut statics: Vec<String> = Vec::new();
+        for (at, _, same) in placed {
+            if !inside(same) {
+                continue;
+            }
+            // The words the reel is timed on: the group's own shown text
+            // sliced per word - the cleaned text's punctuation rides the
+            // word it follows, exactly the words the static titles show -
+            // at the recogniser's own measured times, which are the
+            // reel's clock.
+            for (index, word) in same.words.iter().enumerate() {
+                let from = word.at;
+                let to = same
+                    .words
+                    .get(index + 1)
+                    .map(|next| next.at)
+                    .unwrap_or_else(|| same.text.chars().count());
+                let mut said: String = same
+                    .text
+                    .chars()
+                    .skip(from)
+                    .take(to.saturating_sub(from))
+                    .collect();
+                if said.trim().is_empty() {
+                    said = word.text.clone();
+                }
+                words.push(json!([said.trim(), round3(word.start), round3(word.end)]));
+            }
+            if let Some((_, id)) = titles
+                .iter()
+                .find(|(title_at, _)| (title_at - at).abs() < 0.1)
+            {
+                statics.push(id.clone());
+            }
+        }
+        if words.is_empty() {
+            continue;
+        }
+        // The reading budget the statics were cut with: the same measured
+        // pacing, spent on the reel's own lines.
+        let budget = match accent_caption_pacing(log, &group.take) {
+            Some(pacing) if pacing <= 12.0 => 3,
+            _ => 4,
+        };
+        return Some(KineticCaptions {
+            at: round3(zero),
+            to: round3(end),
+            words,
+            statics,
+            budget,
+            file: None,
+            duration: None,
+        });
+    }
+    None
 }
 
 /// Where the shopping of one B-roll slot stands. The stage shops every
@@ -2609,6 +2818,47 @@ fn worded_lines(log: &[Value], take: &str) -> Vec<Value> {
         .collect()
 }
 
+/// The language a take's transcript detected, as the newest transcript
+/// the log carries for the path says it: the re-transcription the words
+/// stage lands for a non-English take supersedes the base read it
+/// replaces, so the newest answer is the one that stands. `None` when no
+/// transcript landed for the path, or the recogniser named no language -
+/// unmeasured is not "English", and a take that answered nothing is a
+/// take the upgrade leaves on the words it already has.
+fn detected_language_of(log: &[Value], take: &str) -> Option<String> {
+    log.iter()
+        .rev()
+        .filter(|reply| reply.get("path").and_then(Value::as_str) == Some(take))
+        .find_map(|reply| {
+            let output = reply.get("output").and_then(Value::as_str)?;
+            let transcript: Value = serde_json::from_str(output).ok()?;
+            transcript
+                .get("languageDetected")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|language| !language.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+/// Whether a detected language is one the default base model hears worse
+/// than the small model does: a primary subtag that is neither empty nor
+/// English. The API's own `resolve_transcriber` makes the same read of a
+/// caller's hint (speech.rs) - it answers the multilingual small model
+/// for a non-English language - and this is the program's own word for
+/// the same question, whispered here because the API's is private: a
+/// take the base read itself says is not English is the take that better
+/// ear exists for.
+fn non_english(language: &str) -> bool {
+    let primary = language
+        .trim()
+        .split(['-', '_'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    !primary.is_empty() && primary != "en"
+}
+
 /// One line of the emotional read, keyed by the take it was read from.
 #[derive(Clone)]
 struct EmotionLine {
@@ -4013,6 +4263,51 @@ fn card_confident(confidence: Option<f64>) -> bool {
     confidence.is_none_or(|confidence| confidence >= CARD_FLOOR)
 }
 
+/// How many alternate presets the proof may walk before the card is
+/// skipped: two is a genuine second and third opinion without turning a
+/// refused card into a tour of the library. The alternates are spent on
+/// PROOFS, not bakes - each one is inspected the same way the plan's
+/// own choice was.
+const PROOF_ALTERNATES: u8 = 2;
+
+/// The card a preset becomes when the proof refused it: one rung down
+/// the library's own family, never a promotion, and the chain ENDS - a
+/// bounded walk cannot cycle, and the last rung's refusal is the card's
+/// own verdict. The words a card carries survive the move; the slot
+/// fills re-match by label, and a label the new preset does not carry
+/// is simply blank - the BLANK rule holds whichever card draws it.
+fn alternate_card(preset: &str) -> Option<&'static str> {
+    Some(match preset {
+        // The 3D showcase falls back to the editorial lower third it
+        // replaced: the hook still gets its card, drawn flat.
+        "funcut.scene3d.showcase" => "funcut.lower-third.glass",
+        // The lower thirds walk from glass to minimal to a chapter chip -
+        // plainer each step, never fancier.
+        "funcut.lower-third.glass" => "funcut.lower-third.minimal",
+        "funcut.lower-third.minimal" => "funcut.chapter.chip",
+        // The chapter and sting cards walk toward the quote family,
+        // which is where a full-frame text card lands when its own
+        // family is refused.
+        "funcut.chapter.chip" => "funcut.sting.wordmark",
+        "funcut.chapter.numbered" => "funcut.chapter.chip",
+        "funcut.sting.wordmark" => "funcut.quote.pull",
+        "funcut.quote.pull" => "funcut.social.quote",
+        // The number cards walk toward plainer numbers: a stat becomes a
+        // social stat becomes a counter becomes a chart.
+        "funcut.stats.triptych" => "funcut.social.stat",
+        "funcut.social.stat" => "funcut.ticker.count",
+        "funcut.ticker.count" => "funcut.chart.bars",
+        "funcut.chart.bars" => "funcut.chart.progress",
+        "funcut.chart.line" => "funcut.chart.bars",
+        "funcut.timeline.horizontal" => "funcut.chart.bars",
+        // The CTA falls back to the wordmark; the kinetic caption falls
+        // back to the lower third that shows words over footage.
+        "funcut.cta.subscribe" => "funcut.sting.wordmark",
+        "funcut.caption.kinetic" => "funcut.lower-third.glass",
+        _ => return None,
+    })
+}
+
 /// The motion the run will bake, one row per line that earned a card, in
 /// play order: the take and file second the line opens on (the stage maps
 /// it through the timeline), the preset, and the words the card sets.
@@ -4450,6 +4745,62 @@ fn card_words(text: &str) -> String {
         Some(at) if at > MOST / 2 => cut[..at].to_owned(),
         _ => cut,
     }
+}
+
+/// The arguments both the proof and the bake spend on one card: the
+/// preset the plan named, its text slot filled with the line's own
+/// words, at the project's own frame (no width or height, so a vertical
+/// reel bakes vertical). A preset with no text slot bakes as itself.
+/// The proof (`motion_inspect`) takes exactly the fields the bake does,
+/// so the comp the oven would draw is the comp the proof read - ops
+/// included, because the words are part of what makes a card legible.
+fn motion_bake_arguments(
+    project: &str,
+    spec: &MotionSpec,
+    labels: Option<&[MotionPresetShape]>,
+) -> Value {
+    let mut arguments = json!({
+        "project": project,
+        "preset": spec.preset,
+    });
+    // A card that names its own slot uses it; the rest take the preset's
+    // first text slot, which is what the library's own labels say.
+    let shape = labels.and_then(|labels| labels.iter().find(|(id, ..)| id == spec.preset));
+    let chosen = spec
+        .slot
+        .map(str::to_owned)
+        .or_else(|| shape.map(|(_, slot, ..)| slot.clone()));
+    if let Some((_, _, all, _)) = shape {
+        // One op per slot the preset carries: the extra fills (a
+        // chapter's Number), the words in their own slot, and a BLANK
+        // everywhere else - the sample text never ships as a fact the
+        // video never said.
+        let ops: Vec<Value> = all
+            .iter()
+            .map(|label| {
+                let value = spec
+                    .slots
+                    .iter()
+                    .find(|(fill, _)| fill == label)
+                    .map(|(_, value)| value.clone())
+                    .or_else(|| {
+                        (chosen.as_deref() == Some(label.as_str())).then(|| spec.words.clone())
+                    })
+                    .unwrap_or_default();
+                json!({
+                    "op": "set-slot",
+                    "slot": label,
+                    "value": value,
+                })
+            })
+            .collect();
+        arguments["ops"] = json!(ops);
+    } else if let Some(slot) = chosen {
+        arguments["ops"] = json!([{
+            "op": "set-slot", "slot": slot, "value": spec.words,
+        }]);
+    }
+    arguments
 }
 
 /// The transition an emotion earns on the cut into a B-roll shot: a
@@ -9836,19 +10187,22 @@ fn gcd(a: i64, b: i64) -> i64 {
 /// stand between a set and its download.
 ///
 /// The sets the run does not preflight are the ones its spine never
-/// spends: the bed's music model (a monetized run is refused it by
-/// licence), the large SFX set (a pad a non-monetized short bed falls
-/// back to, shopped lazily when it is), the narration and voiceover
-/// voices (the voiceover path's, not the button's), the bigger
-/// transcribers the run never asks for by name. A `models_download`
+/// asks for by name: the narration and voiceover voices (the voiceover
+/// path's, not the button's), and the bigger transcribers - the words
+/// stage downloads the small model itself, once, when a take's own
+/// first read says it was heard in a language the base model hears
+/// worse, so a run of English takes never pays for it. The bed's music
+/// model is preflighted only on the runs that can spend it: a monetized
+/// edit is refused that generator's bed by licence, and a download that
+/// can never be read is disk spent for nothing. A `models_download`
 /// call with `kind: "all"` downloads the whole shelf for whoever wants
 /// everything at once.
-fn preflight(log: &[Value]) -> Option<ToolCall> {
+fn preflight(log: &[Value], monetized: bool) -> Option<ToolCall> {
     let call = |tool: &str, arguments: Value| ToolCall {
         tool: tool.to_owned(),
         arguments,
     };
-    let queue: Vec<(&str, Value)> = vec![
+    let mut queue: Vec<(&str, Value)> = vec![
         (
             "models_download",
             json!({ "kind": "whisper", "id": "base" }),
@@ -9875,9 +10229,22 @@ fn preflight(log: &[Value]) -> Option<ToolCall> {
             "models_download",
             json!({ "kind": "sound", "id": "sfx-large" }),
         ),
-        ("models_download", json!({ "kind": "sound", "id": "bgm" })),
         ("local_vlm", json!({ "action": "setup", "profile": "mini" })),
     ];
+    // The bed's own generator set, only where the run can spend it: a
+    // monetized edit is refused the music model's bed by licence - the
+    // Music stage's own generate call carries the run's monetized word
+    // and is answered with the licence, not a file - so the set's
+    // 426 MiB would land on a disk no call this run makes would ever
+    // read, the audit's downloaded-but-never-usable. A non-monetized
+    // run keeps it: the short-bed generator is the floor under the
+    // shelves it shops.
+    if !monetized {
+        queue.insert(
+            queue.len() - 1,
+            ("models_download", json!({ "kind": "sound", "id": "bgm" })),
+        );
+    }
     // The download items, in queue order - the VLM starts no job.
     let download_items: Vec<usize> = queue
         .iter()
@@ -9992,6 +10359,255 @@ fn look_with_brand(brand: &Option<Value>, decided: &'static str) -> String {
     }
 }
 
+/// How far one picture clip's edge may be stretched to cover a narration
+/// span no picture plays over: the reach the coverage repair trusts. A
+/// hole that needs more of one shot than this is not a repair, it is a
+/// different edit - the shot would drag, or the file it plays would run
+/// dry - so the span is left to the receipt's coverage gate to name out
+/// loud instead of papered over with a stretched frame.
+const COVERAGE_REACH: f64 = 2.0;
+
+/// One picture clip as the coverage repair reads it: where it sits on the
+/// timeline, and how much of the file it plays is left to stretch into.
+struct CoveragePicture {
+    /// The clip's id - the `trimClip` command's own target.
+    id: String,
+    /// Where the clip starts on the timeline.
+    start: f64,
+    /// Where it ends: start + duration.
+    end: f64,
+    /// The clip's in-point in its file.
+    source_start: f64,
+    /// How fast the clip plays its file.
+    speed: f64,
+    /// The lane it sits on, for the room a stretched edge has.
+    track: String,
+    /// The file's whole length, when the bin's row names one: the bound a
+    /// stretched edge cannot pass. A still or a shape the bin carries no
+    /// length for has nothing to run out of.
+    file_end: Option<f64>,
+}
+
+/// The picture clips the coverage check counts, in timeline order: every
+/// clip whose kind puts pixels on screen - footage, a still, a motion
+/// card, a shape - with the span it covers and the file it plays. Titles
+/// are left out on purpose, exactly as the captions stage's kinetic span
+/// finder leaves them out: a caption is words, not picture, and counting
+/// them would make every span "covered" by its own caption.
+fn coverage_pictures(view: &Value) -> Vec<CoveragePicture> {
+    // The bin's own lengths, keyed by media id: the bound a stretched
+    // edge cannot pass. A row with no length leaves its clip unbounded.
+    let mut lengths: BTreeMap<String, f64> = BTreeMap::new();
+    for item in view["media"].as_array().into_iter().flatten() {
+        if let (Some(id), Some(duration)) = (
+            item["id"].as_str(),
+            item["duration"]
+                .as_f64()
+                .filter(|seconds| seconds.is_finite() && *seconds > 0.0),
+        ) {
+            lengths.insert(id.to_owned(), duration);
+        }
+    }
+    let mut pictures: Vec<CoveragePicture> = view["timeline"]["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|clip| {
+            matches!(
+                clip["kind"].as_str(),
+                Some("video" | "image" | "motion" | "shape")
+            )
+        })
+        .filter_map(|clip| {
+            let id = clip["id"].as_str()?.to_owned();
+            let start = clip["start"].as_f64()?;
+            let duration = clip["duration"].as_f64()?;
+            let media = clip["media"].as_str();
+            Some(CoveragePicture {
+                file_end: media.and_then(|id| lengths.get(id).copied()),
+                source_start: clip["sourceStart"].as_f64().unwrap_or(0.0),
+                speed: clip["speed"].as_f64().unwrap_or(1.0).max(1e-6),
+                // The timeline view names the lane "track"; "trackId" is
+                // the request side's spelling, never the reply's.
+                track: clip["track"]
+                    .as_str()
+                    .or_else(|| clip["trackId"].as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                end: start + duration,
+                start,
+                id,
+            })
+        })
+        .collect();
+    pictures.sort_by(|left, right| left.start.total_cmp(&right.start));
+    pictures
+}
+
+/// The coverage repair: the `trimClip` commands that hand each narration
+/// span no picture plays over to the nearest picture clip, stretching
+/// that clip's edge across the hole instead of leaving a voiceover
+/// playing over black. Bounded and honest: an edge stretches at most
+/// [`COVERAGE_REACH`], never past the file it plays, never over a
+/// neighbour on its own lane, and never with ripple - the voiceover and
+/// every other clip stay exactly where the edit put them. A span no
+/// picture clip can reach is left alone here and named by the receipt's
+/// coverage gate instead: no media is invented, and a hole the edit
+/// cannot honestly fill is a flaw the record says out loud.
+///
+/// The timeline's own background is not the floor it might read as:
+/// `timeline_background` paints behind a picture clip - the bars round a
+/// shot that does not fill the frame - and a span no picture clip plays
+/// has no clip to paint behind, so a background set for the whole
+/// timeline still leaves the hole black. The floor for an unreachable
+/// span is the receipt's naming of it, not a background the renderer
+/// would not draw.
+fn coverage_repair(log: &[Value], takes: &[TakePaths]) -> Vec<Value> {
+    let Some(view) = latest_view(log) else {
+        return Vec::new();
+    };
+    let media = media_paths(view);
+    let pictures = coverage_pictures(view);
+    if pictures.is_empty() {
+        return Vec::new();
+    }
+    // Every lane's clips, for the room a stretched edge has: a plain trim
+    // stops at the next clip on its own lane, so a stretch that would run
+    // into one is not issued - the trim would clamp it short of the hole
+    // and the repair would claim more than it landed.
+    let mut lanes: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
+    for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
+        let (Some(track), Some(start), Some(duration)) = (
+            clip["track"].as_str().or_else(|| clip["trackId"].as_str()),
+            clip["start"].as_f64(),
+            clip["duration"].as_f64(),
+        ) else {
+            continue;
+        };
+        lanes
+            .entry(track.to_owned())
+            .or_default()
+            .push((start, start + duration));
+    }
+    let covered: Vec<(f64, f64)> = pictures.iter().map(|clip| (clip.start, clip.end)).collect();
+    // The stretch each clip is asked for, keyed by id: how far past its
+    // own end the tail must reach, and how far back the head. A clip that
+    // serves two holes takes the farther reach.
+    let mut tails: BTreeMap<String, f64> = BTreeMap::new();
+    let mut heads: BTreeMap<String, f64> = BTreeMap::new();
+    for take in takes {
+        for (source_in, source_out, speed, start) in take_pieces(view, &media, &take.take) {
+            let end = start + (source_out - source_in) / speed;
+            for (from, to) in uncovered_spans(&covered, start, end) {
+                // The nearest picture clip the hole could be handed to:
+                // one that ends at or before the hole, or starts at or
+                // after it - the shortest stretch wins, and a tie prefers
+                // the earlier clip, so the outgoing shot is the one that
+                // lingers rather than the incoming one arriving early.
+                let stretch_of = |picture: &CoveragePicture| {
+                    if picture.end <= from {
+                        to - picture.end
+                    } else {
+                        picture.start - from
+                    }
+                };
+                let Some(picture) = pictures
+                    .iter()
+                    .filter(|picture| picture.end <= from + 1e-6 || picture.start >= to - 1e-6)
+                    .min_by(|left, right| {
+                        stretch_of(left)
+                            .total_cmp(&stretch_of(right))
+                            .then_with(|| left.start.total_cmp(&right.start))
+                    })
+                else {
+                    continue;
+                };
+                // The lane the stretch would cross must be clear: the
+                // trim stops at a neighbour, and a command issued into
+                // one would land short of the hole it was for.
+                let clear = |from: f64, to: f64| {
+                    lanes.get(&picture.track).is_none_or(|clips| {
+                        clips
+                            .iter()
+                            .all(|(start, end)| *end <= from + 1e-6 || *start >= to - 1e-6)
+                    })
+                };
+                if picture.end <= from {
+                    // Stretch the tail over the hole: within reach, over
+                    // a clear lane, and inside the file it plays.
+                    let stretch = to - picture.end;
+                    let played =
+                        picture.source_start + (picture.end - picture.start) * picture.speed;
+                    if stretch > COVERAGE_REACH
+                        || !clear(picture.end, to)
+                        || picture.file_end.is_some_and(|file_end| {
+                            played + stretch * picture.speed > file_end + 1e-6
+                        })
+                    {
+                        continue;
+                    }
+                    let asked = tails.entry(picture.id.clone()).or_insert(0.0);
+                    *asked = asked.max(stretch);
+                } else {
+                    // Stretch the head back over the hole: the same three
+                    // bounds, read against the file's beginning.
+                    let stretch = picture.start - from;
+                    if stretch > COVERAGE_REACH
+                        || !clear(from, picture.start)
+                        || picture.source_start < stretch * picture.speed - 1e-6
+                    {
+                        continue;
+                    }
+                    let asked = heads.entry(picture.id.clone()).or_insert(0.0);
+                    *asked = asked.min(-stretch);
+                }
+            }
+        }
+    }
+    let mut commands: Vec<Value> = Vec::new();
+    for (clip_id, delta) in tails {
+        commands.push(json!({
+            "op": "trimClip", "clipId": clip_id, "edge": "end",
+            "delta": round3(delta), "ripple": false,
+        }));
+    }
+    for (clip_id, delta) in heads {
+        commands.push(json!({
+            "op": "trimClip", "clipId": clip_id, "edge": "start",
+            "delta": round3(delta), "ripple": false,
+        }));
+    }
+    commands
+}
+
+/// The narration clips of the final timeline, as the words-verify's
+/// `expectedTakes` rows: one row per voiceover piece the edit plays,
+/// mapped through the clip that plays it - the take file, where the
+/// timeline starts it, the span of the file it plays and its rate - so
+/// the comparison is against the edit's own coordinates and not the
+/// source project's. A timeline whose takes read back as no pieces
+/// answers none, and the verify is skipped rather than compared against
+/// nothing.
+fn verify_expected_takes(log: &[Value], takes: &[TakePaths]) -> Vec<Value> {
+    let Some(view) = latest_view(log) else {
+        return Vec::new();
+    };
+    let media = media_paths(view);
+    let mut rows: Vec<Value> = Vec::new();
+    for take in takes {
+        for (source_in, source_out, speed, start) in take_pieces(view, &media, &take.take) {
+            rows.push(json!({
+                "path": take.take.clone(),
+                "start": start,
+                "sourceIn": source_in,
+                "sourceOut": source_out,
+                "speed": speed,
+            }));
+        }
+    }
+    rows
+}
+
 /// The AUTO EDIT's whole program: every stage the unattended run can run
 /// without a creative brain, each standing on what the run itself
 /// measured. The static spine repairs, transcribes, reads the voice and
@@ -10003,15 +10619,19 @@ fn look_with_brand(brand: &Option<Value>, decided: &'static str) -> String {
 /// emphasis peaks - and the verify reads the timeline as it ended up,
 /// not as it was planned.
 ///
-/// The picture is built on the timeline, not merely exported: a one-click
-/// run now leaves an editable cut, B-roll, a look and moving titles
-/// included, for the window to tweak. And the cut is *looked at before it
-/// is paid for*: the preview samples the open timeline (not the export,
-/// which has not been rendered yet) and scores it, the export and the
-/// verify follow, the watch scores the file that landed, and the revise
-/// answers the critic's measured faults with targeted edits and looks
-/// again - so the run's own craft journal carries a before and an after
-/// instead of one score nobody acted on.
+/// The picture is built on the timeline, and the timeline is what ships
+/// twice: a one-click run leaves an editable cut, B-roll, a look and
+/// moving titles included, for the window to tweak - and then renders its
+/// own MP4 of the same cut, so the file is there without a manual export.
+/// The cut is *looked at before the encode is paid for*: the preview
+/// samples the open timeline and scores it, the revise answers the
+/// critic's measured faults with targeted edits and looks again, the
+/// verify certifies the saved lanes and repairs the narration spans no
+/// picture covers, the watch scores the corrected open timeline - and
+/// only then does the export stage render, and prove the file it wrote -
+/// so the run's craft journal carries a before and an after instead of
+/// one score nobody acted on, and the file that ships is the cut that
+/// was scored.
 ///
 /// The judgement stages that still need a brain - the plan's creative
 /// brief, the stock chosen by eye, the baked motion comps - stay the
@@ -10036,27 +10656,38 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 1. The preflight: the setup stage. The models the run's own
     //    spine spends - the transcriber's words, the ears' sound set,
     //    the visual doors' picture set, the accents' two SFX sets, the
-    //    written bed's set, and the critic's own eye last - are downloaded and waited for before
-    //    anything else is paid for them, so the edit starts with its
-    //    material on disk instead of degrading mid-run. Each download
-    //    ends at once when its model is already there, and the gate
-    //    holds the stage until each has landed, so a cold machine fails
-    //    fast with the model named instead of dying at a later stage -
-    //    and a warm one walks the whole queue in a breath.
+    //    written bed's set (on the runs its licence lets spend it), and
+    //    the critic's own eye last - are downloaded and waited for
+    //    before anything else is paid for them, so the edit starts with
+    //    its material on disk instead of degrading mid-run. Each
+    //    download ends at once when its model is already there, and the
+    //    gate holds the stage until each has landed, so a cold machine
+    //    fails fast with the model named instead of dying at a later
+    //    stage - and a warm one walks the whole queue in a breath.
+    //
+    //    The queue is the run's own: the monetized word is captured here
+    //    because the one item it moves - the bed generator's set - is
+    //    the one a monetized run is refused by licence before it could
+    //    ever be read, and the setup stage is where that refusal saves
+    //    the download instead of the disk paying for it.
+    let preflight_monetized = source.monetized;
     steps.push(
-        DerivedStep::react(Stage::Preflight, Box::new(preflight))
-            // Warn-tools, for the critic's eye alone: a local VLM whose
-            // setup refuses (no network for its half-gigabyte, a binary
-            // the platform will not run) is a warning the run ships -
-            // the critique falls back to its measured heuristic tier -
-            // while the model sets' own arrival stays the gate below.
-            .warn_tools()
-            .gate(ReplyGate::Word {
-                field: "state",
-                equals: "done",
-                what: "a model the run's preflight waited for did not arrive",
-            })
-            .into(),
+        DerivedStep::react(
+            Stage::Preflight,
+            Box::new(move |log| preflight(log, preflight_monetized)),
+        )
+        // Warn-tools, for the critic's eye alone: a local VLM whose
+        // setup refuses (no network for its half-gigabyte, a binary
+        // the platform will not run) is a warning the run ships -
+        // the critique falls back to its measured heuristic tier -
+        // while the model sets' own arrival stays the gate below.
+        .warn_tools()
+        .gate(ReplyGate::Word {
+            field: "state",
+            equals: "done",
+            what: "a model the run's preflight waited for did not arrive",
+        })
+        .into(),
     );
     // 2. The handoff, read back: the sibling is opened on the window's
     //    server - the same register a forge run's edit sits in - and the
@@ -10212,6 +10843,219 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 what: "a take's transcription was still running when its waits ran out",
             })
             .into(),
+    );
+    // 4b. The words, heard again where the first read heard a language
+    //     the default model hears worse than the library can: the fan
+    //     transcribes every take with `path` alone, so the API's own
+    //     resolve_transcriber answers its default - the multilingual
+    //     base - and the small model, the best quality the library
+    //     offers and the one the API would have picked for a known
+    //     non-English language, is unreachable from AUTO EDIT. The
+    //     first reply names the language it detected; a take detected
+    //     in anything but English is re-heard on the small model with
+    //     that language as the hint, so the words the whole edit is
+    //     built from - the captions' text and timing, the B-roll slots,
+    //     the plan's spoken lines, the emotion read - are the best the
+    //     library can measure, not the first draft a default could
+    //     afford. The re-transcribe lands as THE analysis for its path:
+    //     the store keys the newest job for a path, so the waits read
+    //     the new read exactly the way the fan's read the old one, and
+    //     `transcripts_of` keeps only the newest transcript a path
+    //     carries - the better words replace the base ones everywhere
+    //     downstream, they never stack under them.
+    //
+    //     The step is a second step of the transcribe stage, and the
+    //     runner walks both: its resume skip reads the snapshot taken
+    //     at the run's start, not the live record (runner.rs), so the
+    //     fan is never skipped for the upgrade's sake. The upgrade
+    //     itself is bounded and best-effort: the small model is
+    //     downloaded once, before the first re-transcription, on the
+    //     preflight's own call-and-wait pattern; one attempt a
+    //     non-English take; and a download or re-transcription that
+    //     refuses or outlasts its two waits is a warning the run ships
+    //     while the edit goes on on the base words the fan already
+    //     paid for - which is why this step stands on the warn policy
+    //     where the fan's gate was the run's own, and why its first
+    //     calls re-read every take's final analysis once: the stage's
+    //     own evidence - the replies a resumed run replays, the ones
+    //     the gate judges - carries the words that stand, whether or
+    //     not any take was worth hearing again.
+    let upgrade_source = takes.clone();
+    steps.push(
+        DerivedStep::react(
+            Stage::Transcribe,
+            Box::new({
+                // The takes this step may upgrade, with the language
+                // each one's own first transcript detected: read once
+                // from the transcripts the fan landed, never re-read -
+                // a re-transcription's reply would name the same
+                // language and ask for itself again.
+                let mut plan: Option<Vec<(String, String)>> = None;
+                // Where the sweep stands: one re-read a take, in the
+                // run's own order.
+                let mut swept = 0usize;
+                // The small model's download: one ask a run, the job it
+                // started, and whether it settled done.
+                let mut small_asked = false;
+                let mut small_job: Option<String> = None;
+                let mut small_ready = false;
+                // The take whose re-transcription is in flight, with
+                // the language it asked for, and the waits its own
+                // budget has drawn.
+                let mut pending: Option<(String, String)> = None;
+                let mut pending_waits = 0u32;
+                move |log| {
+                    let plan = plan.get_or_insert_with(|| {
+                        upgrade_source
+                            .iter()
+                            .filter_map(|take| {
+                                let language = detected_language_of(log, &take.take)?;
+                                non_english(&language)
+                                    .then(|| (take.take.clone(), language))
+                            })
+                            .collect()
+                    });
+                    // The sweep first: every take's final analysis
+                    // re-read once, in the run's own order. The fan's
+                    // waits already landed each transcript; this re-read
+                    // is the one quick round trip a finished job costs,
+                    // and it is what makes the stage's evidence carry
+                    // the words that stand even on a run with nothing to
+                    // upgrade - the gate below is answered by it, and a
+                    // resumed run replays it as the stage's own record.
+                    if swept < upgrade_source.len() {
+                        let take = upgrade_source[swept].take.clone();
+                        swept += 1;
+                        return Some(call(
+                            "analysis_wait",
+                            json!({ "path": take, "timeoutSeconds": 590 }),
+                        ));
+                    }
+                    // The model the upgrades spend, downloaded before
+                    // the first of them: the preflight downloads only
+                    // the base, and a re-transcription on a model that
+                    // is not on disk refuses - the mid-run death the
+                    // preflight exists to prevent, paid here only when
+                    // a take was heard in a language that needs the
+                    // better ear.
+                    if !plan.is_empty() && !small_ready {
+                        if !small_asked {
+                            small_asked = true;
+                            return Some(call(
+                                "models_download",
+                                json!({ "kind": "whisper", "id": "small" }),
+                            ));
+                        }
+                        let job = small_job.get_or_insert_with(|| {
+                            log.last()
+                                .and_then(|reply| reply.get("job").and_then(Value::as_str))
+                                .unwrap_or_default()
+                                .to_owned()
+                        });
+                        if job.is_empty() {
+                            // The download's own reply named no job:
+                            // nothing to wait on, and the upgrades stand
+                            // down on the base words.
+                            return None;
+                        }
+                        let job = job.clone();
+                        // This job's own wait replies, in order: the
+                        // last one's word is the job's word, and two
+                        // waits are the budget - the preflight's own
+                        // pattern.
+                        let waits: Vec<&Value> = log
+                            .iter()
+                            .filter(|reply| {
+                                reply.get("state").is_some()
+                                    && reply.get("job").and_then(Value::as_str)
+                                        == Some(job.as_str())
+                            })
+                            .collect();
+                        let running =
+                            waits.last().is_some_and(|last| last["state"] == "running");
+                        if waits.is_empty() || (running && waits.len() < 2) {
+                            return Some(call(
+                                "analysis_wait",
+                                json!({ "job": job, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                        if running {
+                            // The budget is spent and the download still
+                            // runs: the upgrades stand down - a
+                            // re-transcription on a model that is not
+                            // there yet would refuse - and the gate
+                            // reads the last wait's word as this step's
+                            // warning. The download goes on where it
+                            // runs; a retry of the run finds it on disk
+                            // and hears the better words.
+                            return None;
+                        }
+                        if waits.last().is_some_and(|last| last["state"] != "done") {
+                            // Settled short of done: the wait's own
+                            // refusal has already warned the run, and
+                            // nothing here adds to it.
+                            return None;
+                        }
+                        small_ready = true;
+                    }
+                    // The take whose re-transcription is in flight: its
+                    // waits read the newest job the path keys, which is
+                    // the re-transcription - the same key the fan's
+                    // waits spent, answered by the better read.
+                    if let Some((take, _)) = pending.clone() {
+                        if pending_waits == 0 {
+                            pending_waits = 1;
+                            return Some(call(
+                                "analysis_wait",
+                                json!({ "path": take, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                        let last = log.last()?;
+                        if last["state"] == "running" && pending_waits < 2 {
+                            pending_waits += 1;
+                            return Some(call(
+                                "analysis_wait",
+                                json!({ "path": take, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                        // The attempt is over - the better words landed,
+                        // or the budget did: the take's words are what
+                        // the log now holds, the small model's read
+                        // where it landed and the base one where it did
+                        // not, and the next take (if any) is heard. A
+                        // re-transcription that outlasted its budget is
+                        // the warning the gate below ships, never a run
+                        // it fails.
+                        pending = None;
+                    }
+                    // The next take worth hearing again, one at a time:
+                    // the language the take's own first read detected is
+                    // the hint the second one starts from, and the small
+                    // model is the ear it starts on.
+                    if let Some((take, language)) = plan.first().cloned() {
+                        plan.remove(0);
+                        pending = Some((take.clone(), language.clone()));
+                        pending_waits = 0;
+                        return Some(call(
+                            "transcribe",
+                            json!({ "path": take, "model": "small", "language": language }),
+                        ));
+                    }
+                    // Every take heard again that could be: the words the
+                    // edit is built from are the best the library offers
+                    // where it offers better, and the base read
+                    // everywhere else.
+                    None
+                }
+            }),
+        )
+        .warn()
+        .gate(ReplyGate::Word {
+            field: "state",
+            equals: "done",
+            what: "a take's small-model re-transcription, or the model it needs, was still running when its waits ran out",
+        })
+        .into(),
     );
     // 5. The delivery: pauses, emphasis, the read itself - one lane per
     //    take, each reply carrying its own audio path so the fan's
@@ -10644,6 +11488,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // has to wait somewhere the next entry into this phase
                 // can find it.
                 let mut bed_chosen: Option<String> = None;
+                // The non-commercial shelf's own door, on the runs the
+                // licence lets spend it: whether the same status reply
+                // said the Lo-Fi shelf is ready, the freepd page a door
+                // holds while the Lo-Fi one is drawn, and whether that
+                // second ask is in flight. The plan never warms a shelf
+                // (the music stage owns the preparation), so only a
+                // shelf the status already called ready is shopped - a
+                // search naming one that is not is refused, and the
+                // refusal would end the stage.
+                let mut lofi_ready = false;
+                let mut lofi_asked = false;
+                let mut freepd_page: Option<Vec<Value>> = None;
                 move |log| {
                     if phase == 0 {
                         phase = 1;
@@ -10679,6 +11535,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         match state.as_deref() {
                             Some("ready") => {
                                 phase = 10;
+                                // The non-commercial shelf's own word, read
+                                // from the same status reply: a non-monetized
+                                // run may spend the Lo-Fi shelf beside the
+                                // CC0 one, so the door opens for it below -
+                                // the plan asks both shelves while it is
+                                // here, and the bed the duration fit picks
+                                // may come from either. A monetized run
+                                // keeps the CC0 shelf alone: MobyGratis is
+                                // non-commercial only, and a run must not
+                                // plan a bed its own import would refuse.
+                                lofi_ready = !plan_settings.monetized
+                                    && log.last().and_then(|reply| {
+                                        reply.get("lofi").and_then(Value::as_str)
+                                    }) == Some("ready");
                                 let query = bed_query_chain(log, &plan_source)
                                     .get(query_cursor)
                                     .cloned()
@@ -10740,12 +11610,47 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 ));
                             }
                         }
+                        // The non-commercial shelf's own door, on the
+                        // runs the licence lets spend it: the same
+                        // question is asked of the Lo-Fi shelf before
+                        // the door is judged, and the two pages are
+                        // heard as one candidate list - the bed the
+                        // duration fit picks may come from either shelf.
+                        // The freepd page is held while the Lo-Fi one is
+                        // drawn because two search replies are the same
+                        // shape; only the order they were asked in tells
+                        // them apart.
+                        if lofi_ready
+                            && !lofi_asked
+                            && let Some(page) = log
+                                .last()
+                                .and_then(|reply| reply["tracks"].as_array().cloned())
+                        {
+                            freepd_page = Some(page);
+                            lofi_asked = true;
+                            let query = bed_query_chain(log, &plan_source)
+                                .get(query_cursor)
+                                .cloned()
+                                .flatten();
+                            let mut arguments = json!({
+                                "source": "lofi",
+                                "limit": 5,
+                                "sort": "relevance",
+                            });
+                            if let Some(query) = query {
+                                arguments["query"] = json!(query);
+                            }
+                            return Some(call("bgm_search", arguments));
+                        }
                         // The search's answer: the bed is the track that
                         // fits the cut. An empty page walks the chain's
                         // next door; a chain with no doors left leaves the
                         // plan without a grid, and the music stage shops
-                        // for itself later.
-                        let tracks = match log
+                        // for itself later. On a run that asked both
+                        // shelves, the answer is the two pages merged -
+                        // the CC0 shelf's own answers first, the
+                        // non-commercial one's beside them.
+                        let mut tracks = match log
                             .last()
                             .and_then(|reply| reply["tracks"].as_array().cloned())
                         {
@@ -10762,6 +11667,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 Vec::new()
                             }
                         };
+                        if let Some(held) = freepd_page.take() {
+                            let mut merged = held;
+                            merged.extend(tracks);
+                            tracks = merged;
+                            // The door's two asks are spent: a next door,
+                            // if the chain walks one, asks both shelves
+                            // again.
+                            lofi_asked = false;
+                        }
                         let runtime = narration_runtime(log);
                         let chosen = best_bed(&tracks, runtime)
                             .or_else(|| tracks.first().cloned())
@@ -12636,7 +13550,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // and the audio (phase 0), the groups are built from the
                 // corrected times (phase 1), the cleaned texts ride back
                 // (phase 1's asks), and the edit lands with the words
-                // where the audio actually says them (phase 2).
+                // where the audio actually says them (phase 2). Where
+                // the timeline shows no picture under the words at all,
+                // the static titles then hand their span to one
+                // word-timed kinetic reel (phases 4 through 7): the
+                // caption engine's own output becomes the picture a
+                // voiceover-only stretch was never going to show any
+                // other way.
                 let mut phase = 0u8;
                 // The phase-0 asks: the align read and the synthetic-voice
                 // read, one pair per take that has a transcript. The ai
@@ -12652,12 +13572,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The groups phase 2 spends, with their spans in the
                 // timeline's clock and their text still the words' own.
                 let mut kept_groups: Option<Vec<(f64, f64, CaptionGroup)>> = None;
-                // The groups the batch placed, kept for the accent pass:
-                // each carries the timeline span it landed at and the
-                // character ranges of its own words.
-                let mut placed_groups: Vec<(f64, CaptionGroup)> = Vec::new();
+                // The groups the batch placed, kept for the accent pass
+                // and the kinetic pass after it: each carries the
+                // timeline span it landed at and the character ranges of
+                // its own words.
+                let mut placed_groups: Vec<(f64, f64, CaptionGroup)> = Vec::new();
+                // The titles the batch placed, one row per group that
+                // found its clip: the timeline start and the id the
+                // accent pass styles through - and the id the kinetic
+                // pass retires when the reel takes the span over.
+                let mut static_titles: Vec<(f64, String)> = Vec::new();
+                // The kinetic caption ask, held from its ask to its
+                // landing: the span the reel owns, the words it is timed
+                // on, and the statics it retires.
+                let mut kinetic: Option<KineticCaptions> = None;
                 move |log| {
-                    if phase == 4 {
+                    if phase == 8 {
                         return None;
                     }
                     let view = latest_view(log)?;
@@ -12793,7 +13723,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 }
                             }
                             if groups.is_empty() {
-                                phase = 4;
+                                phase = 8;
                                 return None;
                             }
                             // Overlaps cannot happen on a clean transcript, but a
@@ -12857,7 +13787,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     if phase == 2 {
                         let Some(mut kept) = kept_groups.take() else {
-                            phase = 4;
+                            phase = 8;
                             return None;
                         };
                         let voice = voice_reads(log, &caption_source);
@@ -13101,10 +14031,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 },
                                 "offsetY": offset_y,
                             }));
-                            placed_groups.push((at, group));
+                            placed_groups.push((at, to, group));
                         }
                         if commands.is_empty() {
-                            phase = 4;
+                            phase = 8;
                             return None;
                         }
                         // The captions are placed: the accent pass reads
@@ -13142,12 +14072,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         let read = emotion_lines(log, &caption_emotion);
                         let voice = voice_reads(log, &caption_source);
                         let mut commands: Vec<Value> = Vec::new();
-                        for (at, group) in &placed_groups {
+                        for (at, _, group) in &placed_groups {
                             let Some((_, clip_id)) =
                                 titles.iter().find(|(start, _)| (start - at).abs() < 0.1)
                             else {
                                 continue;
                             };
+                            // The title the batch minted for this group,
+                            // kept for the kinetic pass: the id it retires
+                            // when the reel takes the span over.
+                            static_titles.push((*at, clip_id.clone()));
                             let line = emotion_at(&read, &group.take, group.start);
                             let take_read = voice_read_of(&voice, &group.take);
                             let unsure_share = take_read
@@ -13239,6 +14173,168 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                         }
                         phase = 4;
+                        if !commands.is_empty() {
+                            return Some(ToolCall {
+                                tool: "edit_apply".to_owned(),
+                                arguments: json!({
+                                    "path": caption_project,
+                                    "command": { "op": "batch", "commands": commands },
+                                }),
+                            });
+                        }
+                        // No word earned an accent: the pass falls
+                        // straight through to the kinetic ask, which
+                        // decides whether the statics are the last word
+                        // this span gets.
+                    }
+                    // Phase 4, the kinetic ask: where the timeline shows
+                    // no picture under the words at all - a stretch the
+                    // stock gate could not fill, or a run whose every
+                    // shot was refused - the static titles are the only
+                    // thing on screen, and the caption engine can do
+                    // better than static: one word-timed kinetic reel,
+                    // baked from the same measured words, becomes the
+                    // picture for exactly that span. The ask is bounded
+                    // to the spans where it is honest, because a reel
+                    // the engine draws is an opaque video: it may only
+                    // cover a stretch the edit was going to show as
+                    // background, never a shot, and it may only be timed
+                    // where the timeline plays the take's own clock
+                    // unbroken. A span with picture beneath keeps its
+                    // static titles, which sit over the footage the way
+                    // a full-frame reel cannot.
+                    if phase == 4 {
+                        phase = 8;
+                        let view = latest_view(log)?;
+                        let plan = kinetic_caption_span(log, view, &placed_groups, &static_titles)?;
+                        // The reel runs at the project's own rate: the
+                        // words are timed in seconds either way, and the
+                        // engine quantises them to the frame the edit
+                        // itself runs at.
+                        let (rate_num, rate_den) = rate_of(view);
+                        let words = plan.words.clone();
+                        let budget = plan.budget;
+                        kinetic = Some(plan);
+                        phase = 5;
+                        return Some(call(
+                            "captions_animate",
+                            json!({
+                                "project": caption_project,
+                                "words": words,
+                                "wordsPerLine": budget,
+                                "maxLineSeconds": 3.5,
+                                "curtain": false,
+                                "kinetic": true,
+                                "fps": round3(rate_num as f64 / rate_den.max(1) as f64),
+                            }),
+                        ));
+                    }
+                    // Phase 5: the caption engine's reply carries the
+                    // reel it drew. The file goes to the bin first, so a
+                    // failure after this point cannot leave the span
+                    // captionless: the statics are still on the lane, and
+                    // the reel that would retire them has not landed
+                    // above them yet. A reply that drew nothing is the
+                    // warn policy's own business - the statics simply
+                    // stand.
+                    if phase == 5 {
+                        phase = 8;
+                        let reply = log.last().cloned().unwrap_or_default();
+                        let file = reply["file"]
+                            .as_str()
+                            .filter(|file| !file.trim().is_empty())
+                            .map(str::to_owned)?;
+                        if let Some(plan) = kinetic.as_mut() {
+                            plan.file = Some(file.clone());
+                            plan.duration = reply["duration"].as_f64();
+                        }
+                        phase = 6;
+                        return Some(call(
+                            "media_import",
+                            json!({
+                                "path": caption_project,
+                                "file": file,
+                            }),
+                        ));
+                    }
+                    // Phase 6: the bin's reply carries the media id - by
+                    // the id it minted, or by the row the file already
+                    // had, because a re-run's import is a no-op that
+                    // mints nothing. The reel then lands on the lane
+                    // above the picture, the walk every title takes, at
+                    // the piece's own zero - the offset that keeps each
+                    // word's video second on the second the audio says
+                    // it.
+                    if phase == 6 {
+                        phase = 8;
+                        let plan = kinetic.as_ref()?;
+                        let media_id = log.last().and_then(|reply| {
+                            reply["createdId"].as_str().map(str::to_owned).or_else(|| {
+                                let file = plan.file.as_deref()?;
+                                media_paths(reply)
+                                    .into_iter()
+                                    .find(|(_, path)| path.as_str() == file)
+                                    .map(|(id, _)| id)
+                            })
+                        })?;
+                        let at = plan.at;
+                        phase = 7;
+                        return Some(call(
+                            "edit_apply",
+                            json!({
+                                "path": caption_project,
+                                "command": {
+                                    "op": "addClipAtFirstFree",
+                                    "mediaId": media_id,
+                                    "start": at,
+                                    "above": true,
+                                },
+                            }),
+                        ));
+                    }
+                    // Phase 7: the reel is on its lane. Two edits close
+                    // the pass, as one batch: the reel is trimmed to the
+                    // piece it plays - a tail that runs past the piece
+                    // would sit over whatever follows - and the static
+                    // titles inside the span are retired, because the
+                    // reel is the caption there now and two caption
+                    // systems on one screen is a collision. The batch
+                    // lands last on purpose: a failure before it leaves
+                    // the statics standing under a reel that already
+                    // covers them, which reads as one caption, never as
+                    // none.
+                    if phase == 7 {
+                        phase = 8;
+                        let plan = kinetic.as_ref()?;
+                        let placed = log.last().cloned().unwrap_or_default();
+                        let duration = placed["timeline"]["clips"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|clip| clip["id"] == placed["createdId"])
+                            .and_then(|clip| clip["duration"].as_f64())
+                            .or_else(|| plan.duration.filter(|duration| *duration > 0.0));
+                        let mut commands: Vec<Value> = Vec::new();
+                        if let Some(duration) = duration {
+                            let spill = plan.at + duration - plan.to;
+                            if spill > 0.05 {
+                                commands.push(json!({
+                                    "op": "trimClip",
+                                    "clipId": placed["createdId"],
+                                    "edge": "end",
+                                    "delta": round3(-spill),
+                                }));
+                            }
+                        }
+                        if !plan.statics.is_empty() {
+                            let retired: Vec<Value> =
+                                plan.statics.iter().map(|id| json!(id)).collect();
+                            commands.push(json!({
+                                "op": "removeClips",
+                                "clipIds": retired,
+                                "ripple": false,
+                            }));
+                        }
                         if commands.is_empty() {
                             return None;
                         }
@@ -13250,8 +14346,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }),
                         });
                     }
-                    // No phase falls through to here: 0 through 3 all
-                    // return, and 4 answers at the top. The word is the
+                    // No phase falls through to here: 0 through 7 all
+                    // return, and 8 answers at the top. The word is the
                     // closure's own answer for a stage that is done.
                     None
                 }
@@ -13269,11 +14365,30 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //
     //    The cards are the ones the plan named - the read's own act and
     //    emotion chose each preset, and the line's own words are what the
-    //    card says. A bake that fails skips its card and the run goes on:
-    //    a missing graphic is a smaller loss than an abandoned edit. This
-    //    is the stage that was the Director's alone; it now runs on the
-    //    read, which is what makes the button's motion evidence-driven
-    //    rather than decorative.
+    //    card says. Each card is PROVED before it is baked: motion_inspect
+    //    reads the comp the oven would draw - the same preset, the same
+    //    slot fills - and a reply that marks it broken (validation
+    //    problems, or a route that cannot render it) walks a bounded
+    //    ladder to the next preset instead of paying the bake to find
+    //    out, and a card the whole ladder refuses is skipped. A bake that
+    //    fails skips its card and the run goes on: a missing graphic is a
+    //    smaller loss than an abandoned edit. This is the stage that was
+    //    the Director's alone; it now runs on the read, which is what
+    //    makes the button's motion evidence-driven rather than
+    //    decorative.
+    //
+    //    motion_overlay is deliberately not wired here. The tool's own
+    //    reply says what it draws: an OPAQUE H.264 - the RGBA bake
+    //    composited over one plate - and never transparent overlay media,
+    //    so there is no overlay clip for addClip to land above the
+    //    picture. What it can do - burn the card into the shot beneath -
+    //    is what the alpha-honoring addMotionClip path already does live
+    //    (the export reads the bake's PNG sequence and the card sits ON
+    //    the footage instead of covering it), without replacing licensed
+    //    stock with a re-encoded derivative or swapping the shot's clip
+    //    out from under its transitions. Forcing the call would trade a
+    //    live, editable card for a worse copy of the same picture, so the
+    //    spine does not.
     let motion_project = project.clone();
     let motion_source = takes.clone();
     steps.push(
@@ -13292,10 +14407,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // frame).
                 let mut labels: Option<Vec<MotionPresetShape>> = None;
                 // Where the stage is: which card, and which of its calls
-                // (the library, the bake, then the placement) is next.
+                // (the library, the proof, the bake, then the placement)
+                // is next.
                 let mut at = 0usize;
                 let mut phase = 0u8;
                 let mut entrances = false;
+                // How many alternate presets the proof has already walked
+                // for the card in hand: bounded by PROOF_ALTERNATES, and
+                // reset the moment a card is placed or skipped so the
+                // next card starts its own proof from its own preset.
+                let mut proof_tries = 0u8;
                 move |log| loop {
                     // The captions' entrance keys land FIRST: under the
                     // warn policy one failed bake used to abort the whole
@@ -13335,13 +14456,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             &question_acts(log, &motion_source),
                             &uncovered_claims(log, &motion_source),
                             // Captions land before motion does: a timeline
-                            // that already carries text clips answers the
+                            // that already carries captions the viewer can
+                            // read - the static titles, or the kinetic reel
+                            // that replaced them - answers the
                             // question-card collision by not asking it.
-                            latest_view(log).is_some_and(|view| {
-                                view["timeline"]["clips"].as_array().is_some_and(|clips| {
-                                    clips.iter().any(|clip| clip["kind"] == json!("text"))
-                                })
-                            }),
+                            latest_view(log).is_some_and(captions_on_screen),
                         )
                     });
                     if at >= specs.len() {
@@ -13349,10 +14468,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // before the first bake: the stage is done.
                         return None;
                     }
-                    let spec = &specs[at];
                     match phase {
                         0 => {
-                            // The library once, before the first bake: each
+                            // The library once, before the first proof: each
                             // preset's own text slot, so the words land in
                             // the field the preset actually has.
                             if labels.is_none() {
@@ -13360,58 +14478,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 return Some(call("motion_presets", json!({})));
                             }
                             phase = 2;
-                            // The bake: the preset the plan named, its
-                            // text slot filled with the line's own words,
-                            // at the project's own frame (no width or
-                            // height, so a vertical reel bakes vertical).
-                            // A preset with no text slot bakes as itself.
-                            let mut arguments = json!({
-                                "project": motion_project,
-                                "preset": spec.preset,
-                            });
-                            // A card that names its own slot uses it; the
-                            // rest take the preset's first text slot, which
-                            // is what the library's own labels say.
-                            let shape = labels.as_ref().and_then(|labels| {
-                                labels.iter().find(|(id, ..)| id == spec.preset)
-                            });
-                            let chosen = spec
-                                .slot
-                                .map(str::to_owned)
-                                .or_else(|| shape.map(|(_, slot, ..)| slot.clone()));
-                            if let Some((_, _, all, _)) = shape {
-                                // One op per slot the preset carries: the
-                                // extra fills (a chapter's Number), the
-                                // words in their own slot, and a BLANK
-                                // everywhere else - the sample text never
-                                // ships as a fact the video never said.
-                                let ops: Vec<Value> = all
-                                    .iter()
-                                    .map(|label| {
-                                        let value = spec
-                                            .slots
-                                            .iter()
-                                            .find(|(fill, _)| fill == label)
-                                            .map(|(_, value)| value.clone())
-                                            .or_else(|| {
-                                                (chosen.as_deref() == Some(label.as_str()))
-                                                    .then(|| spec.words.clone())
-                                            })
-                                            .unwrap_or_default();
-                                        json!({
-                                            "op": "set-slot",
-                                            "slot": label,
-                                            "value": value,
-                                        })
-                                    })
-                                    .collect();
-                                arguments["ops"] = json!(ops);
-                            } else if let Some(slot) = chosen {
-                                arguments["ops"] = json!([{
-                                    "op": "set-slot", "slot": slot, "value": spec.words,
-                                }]);
-                            }
-                            return Some(call("motion_bake", arguments));
                         }
                         1 => {
                             // The library's reply, read once and kept: the
@@ -13453,11 +14519,89 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             phase = 0;
                         }
                         2 => {
+                            // The proof, before the oven pays for it: the
+                            // comp the bake would draw, read as a document
+                            // - the same preset, the same slot fills, the
+                            // same words - so a card that does not
+                            // validate, or one the route cannot render,
+                            // is refused here for the price of a metadata
+                            // read instead of a full bake's. The reply's
+                            // own marks decide: `comp.problems` (the
+                            // validation findings) and `route.renderer`
+                            // (the lottie engine is an importer, not a
+                            // renderer - a bake would refuse it).
+                            let spec = &specs[at];
+                            phase = 3;
+                            return Some(call(
+                                "motion_inspect",
+                                motion_bake_arguments(&motion_project, spec, labels.as_deref()),
+                            ));
+                        }
+                        3 => {
+                            // The proof's reply: a comp that passed is the
+                            // comp the bake draws next. A comp that was
+                            // marked broken walks the ladder to the next
+                            // preset - its slot fills re-match by label,
+                            // and the words land in whatever text slot the
+                            // new card actually has - and the alternates
+                            // are bounded, so a library that refuses
+                            // everything skips the card rather than
+                            // touring itself. Skipping is the same mercy a
+                            // failed bake already gets: no card, next
+                            // beat, the run goes on.
+                            let reply = log.last().cloned().unwrap_or_default();
+                            let broken = reply
+                                .pointer("/comp/problems")
+                                .and_then(Value::as_array)
+                                .is_some_and(|problems| !problems.is_empty())
+                                || reply.pointer("/route/renderer").and_then(Value::as_str)
+                                    == Some("lottie");
+                            if !broken {
+                                phase = 4;
+                            } else {
+                                match (proof_tries < PROOF_ALTERNATES)
+                                    .then(|| alternate_card(specs[at].preset))
+                                    .flatten()
+                                {
+                                    Some(next) => {
+                                        specs[at].preset = next;
+                                        // The alternate's own text slot
+                                        // takes the words: the plan's slot
+                                        // named the refused preset's field,
+                                        // and the library's own labels say
+                                        // what this one calls it.
+                                        specs[at].slot = None;
+                                        proof_tries += 1;
+                                        phase = 2;
+                                    }
+                                    None => {
+                                        at += 1;
+                                        proof_tries = 0;
+                                        phase = 0;
+                                    }
+                                }
+                            }
+                        }
+                        4 => {
+                            // The bake: the preset the proof passed, its
+                            // text slot filled with the line's own words,
+                            // at the project's own frame (no width or
+                            // height, so a vertical reel bakes vertical).
+                            // A preset with no text slot bakes as itself.
+                            let spec = &specs[at];
+                            phase = 5;
+                            return Some(call(
+                                "motion_bake",
+                                motion_bake_arguments(&motion_project, spec, labels.as_deref()),
+                            ));
+                        }
+                        5 => {
                             // The bake's reply carries the comp's hash -
                             // the key the export resolves the frames by,
                             // and the comp file is named after it. Place
                             // the card where the line it was read from now
                             // plays, which the tighten may have moved.
+                            let spec = &specs[at];
                             let baked = log.last().cloned().unwrap_or_default();
                             let hash = baked["hash"].as_str().map(str::to_owned);
                             let at_timeline = latest_view(log).and_then(|view| {
@@ -13469,7 +14613,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     if hash.len() == 16
                                         && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
                                 {
-                                    phase = 3;
+                                    phase = 6;
                                     // The comp reference is the file name
                                     // under the project's comps/, which
                                     // the bake named after the hash; the
@@ -13504,11 +14648,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 // tighten cut away: no card, next beat.
                                 _ => {
                                     at += 1;
+                                    proof_tries = 0;
                                     phase = 0;
                                 }
                             }
                         }
-                        3 => {
+                        6 => {
                             // The card lands at the editorial default of
                             // five seconds; a card that outlives its line
                             // is the defect the critique stage names, so
@@ -13516,6 +14661,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // trim is a tail trim with no ripple: the
                             // card owns a lane of its own and nothing
                             // follows it on that lane.
+                            let spec = &specs[at];
                             let placed = log.last().cloned().unwrap_or_default();
                             let id = placed["createdId"].as_str().map(str::to_owned);
                             let default = placed["timeline"]["clips"]
@@ -13543,6 +14689,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 _ => None,
                             };
                             at += 1;
+                            proof_tries = 0;
                             phase = 0;
                             if let Some((id, delta)) = change {
                                 return Some(call(
@@ -13570,11 +14717,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 10. The music bed, only where the gate said the take carries none:
     //    the shelf prepared and polled, the track shopped (the emotional
     //    read's own bed words for the query - the mood and act the line
-    //    sits in name the genre - or the reading's language hint when the
+    //    sits in names the genre - or the reading's language hint when the
     //    read named neither), the bed imported at zero, the timeline read
     //    back, and the bed ducked under the voice to the level the arc's
-    //    own act profile set. The CC0 shelf only - an unattended run never
-    //    ships the non-commercial one.
+    //    own act profile set. The CC0 shelf always, and on a non-monetized
+    //    run the non-commercial Lo-Fi shelf shopped beside it - the
+    //    duration fit and the CLAP listen pick the best bed regardless of
+    //    which shelf offered it, and a monetized run keeps the CC0 shelf
+    //    alone because MobyGratis is non-commercial only: licence-honest,
+    //    never a bed the import would refuse.
     let music_project = project.clone();
     let music_source = takes.clone();
     // The stage's own settings, captured for the one word the bed calls
@@ -13658,6 +14809,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The next candidate a swap is importing, once the
                 // refused bed's clip is off the lane.
                 let mut pending_import: Option<String> = None;
+                // The non-commercial shelf's own door, on the runs the
+                // licence lets spend it: whether the Lo-Fi shelf is
+                // loaded, the polls its one-time census has drawn, the
+                // freepd page a door holds while the Lo-Fi one is drawn,
+                // and whether that second ask is in flight. The Lo-Fi
+                // shelf is warmed only after the CC0 one is ready - the
+                // bed the run needs comes first - and a search naming a
+                // shelf that is not loaded is refused, a refusal that
+                // would end the stage and cost the run its bed.
+                let mut lofi_ready = false;
+                let mut lofi_polls = 0u32;
+                let mut lofi_asked = false;
+                let mut freepd_page: Option<Vec<Value>> = None;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever. The reading's own forensic
@@ -14010,6 +15174,46 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // poll the loading one, shop the ready one.
                         return match last["freepd"].as_str() {
                             Some("ready") => {
+                                // The non-commercial shelf is warmed the
+                                // same way, on the runs the licence lets
+                                // spend it, once the CC0 one is ready: the
+                                // Lo-Fi pack's catalog is a few MB and a
+                                // one-time census, kept on disk, so the
+                                // first non-monetized run pays it and every
+                                // later one finds it ready. The warm-up is
+                                // bounded by its own poll budget, and a
+                                // budget it outlasts simply leaves the door
+                                // shut - the CC0 shelf still answers, and a
+                                // bonus shelf is never a bed the run dies
+                                // for. A failed Lo-Fi shelf is skipped for
+                                // the same reason: the refusal that names it
+                                // would end the stage, and the FreePD bed
+                                // must not pay for a shelf it never needed.
+                                if !music_settings.monetized {
+                                    match last["lofi"].as_str() {
+                                        Some("ready") => lofi_ready = true,
+                                        Some("missing") => {
+                                            lofi_polls += 1;
+                                            if lofi_polls <= 200 {
+                                                return Some(call(
+                                                    "bgm_prepare",
+                                                    json!({ "source": "lofi" }),
+                                                ));
+                                            }
+                                        }
+                                        Some(word) if word.starts_with("loading") => {
+                                            lofi_polls += 1;
+                                            if lofi_polls <= 200 {
+                                                // The Lo-Fi census is real
+                                                // work: the poll waits
+                                                // between looks.
+                                                std::thread::sleep(Duration::from_millis(3000));
+                                                return Some(call("bgm_status", json!({})));
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 // The bed's words: the emotional read's
                                 // own, from the piece's dominant line -
                                 // the mood and the act name the genre -
@@ -14099,7 +15303,40 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 })
                             })
                             .unwrap_or(0.0);
-                        let tracks = last["tracks"].as_array().cloned().unwrap_or_default();
+                        let page = last["tracks"].as_array().cloned().unwrap_or_default();
+                        // The non-commercial shelf's own door, on the runs
+                        // the licence lets spend it: the same question is
+                        // asked of the Lo-Fi shelf before the door is
+                        // judged, and the two pages merge into one
+                        // candidate list - the duration fit that orders
+                        // them and the CLAP listen that keeps or swaps
+                        // them pick the bed regardless of which shelf
+                        // offered it. The freepd page is held while the
+                        // Lo-Fi one is drawn because two search replies
+                        // are the same shape; only the order they were
+                        // asked in tells them apart.
+                        if !music_settings.monetized && lofi_ready && !lofi_asked {
+                            freepd_page = Some(page);
+                            lofi_asked = true;
+                            let query = bed_query_chain(log, &music_source)
+                                .get(query_cursor)
+                                .cloned()
+                                .flatten();
+                            let mut arguments = json!({
+                                "source": "lofi",
+                                "limit": 5,
+                                "sort": "relevance",
+                            });
+                            if let Some(query) = query {
+                                arguments["query"] = json!(query);
+                            }
+                            return Some(call("bgm_search", arguments));
+                        }
+                        let mut tracks = freepd_page.take().unwrap_or_default();
+                        tracks.extend(page);
+                        // The door's two asks are spent: a next door, if
+                        // the chain walks one, asks both shelves again.
+                        lofi_asked = false;
                         if tracks.is_empty() {
                             // The word matched nothing: the chain's next
                             // door, and the browse after the last of them
@@ -14134,9 +15371,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .filter_map(|track| track["id"].as_str().map(str::to_owned))
                             .collect();
                         if bed_candidates.is_empty() {
-                            bed_candidates = last
-                                .pointer("/tracks/0/id")
-                                .and_then(|id| id.as_str())
+                            // The shelf's own first answer is the floor when
+                            // no duration was measured at all - the merged
+                            // page's first, which is the CC0 shelf's own
+                            // first answer whenever that shelf answered.
+                            bed_candidates = tracks
+                                .first()
+                                .and_then(|track| track["id"].as_str())
                                 .map(str::to_owned)
                                 .into_iter()
                                 .collect();
@@ -15933,9 +17174,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 14. Save and read back the editable project. AUTO EDIT's default
-    //     deliverable is the timeline the user can continue editing, not
-    //     an MP4 the user did not ask to render.
+    // 14. Save and read back the editable project: the timeline the user
+    //     keeps editing - and the cut the export stage that follows
+    //     renders its own MP4 from, so the file beside it is the cut that
+    //     was saved, not an earlier draft of it.
     let ready_project = source.project.clone();
     steps.push(
         StageStep::run(
@@ -15948,19 +17190,69 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
 
-    // 15. Verify the saved timeline and its lanes. The independent
-    //     acceptance receipt checks every media reference and source path;
-    //     this stage's own gate refuses shared lanes before the user opens
-    //     the result.
+    // 15. Verify the saved timeline and its lanes, and the picture over
+    //     its words. The independent acceptance receipt checks every media
+    //     reference and source path; this stage's own gate refuses shared
+    //     lanes before the user opens the result, and its coverage pass
+    //     repairs what it can of a narration span playing over no picture
+    //     - one bounded batch of edge stretches, issued before the final
+    //     read-back so the view the stage lands is the view the export
+    //     renders. The repair is best-effort under the warn-tools policy
+    //     (a refused batch is a warning; the lane gate stays hard), and a
+    //     span no honest stretch can reach is left to the receipt's
+    //     coverage gate to name, span by span - never filled with media
+    //     the run does not have.
     let verify_project = source.project.clone();
+    let verify_takes = source.takes.clone();
     steps.push(
-        StageStep::run(
+        DerivedStep::react(
             Stage::Verify,
-            vec![
-                call("collision_check", json!({ "path": verify_project.clone() })),
-                call("timeline_read", json!({ "path": verify_project })),
-            ],
+            Box::new({
+                let verify_project = verify_project.clone();
+                let verify_takes = verify_takes.clone();
+                let mut phase = 0u8;
+                move |log| {
+                    if phase == 0 {
+                        phase = 1;
+                        return Some(call(
+                            "collision_check",
+                            json!({ "path": verify_project.clone() }),
+                        ));
+                    }
+                    if phase == 1 {
+                        phase = 2;
+                        // The coverage repair, read from the view the run
+                        // has: a timeline with nothing to stretch is a
+                        // verify that simply reads the timeline back,
+                        // exactly as it always did.
+                        let commands = coverage_repair(log, &verify_takes);
+                        if commands.is_empty() {
+                            phase = 3;
+                            return Some(call(
+                                "timeline_read",
+                                json!({ "path": verify_project.clone() }),
+                            ));
+                        }
+                        return Some(call(
+                            "edit_apply",
+                            json!({
+                                "path": verify_project.clone(),
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        ));
+                    }
+                    if phase == 2 {
+                        phase = 3;
+                        return Some(call(
+                            "timeline_read",
+                            json!({ "path": verify_project.clone() }),
+                        ));
+                    }
+                    None
+                }
+            }),
         )
+        .warn_tools()
         .gate(ReplyGate::True {
             field: "clean",
             what: "clips share a lane on the saved timeline",
@@ -16087,6 +17379,219 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             field: "overall",
             minimum: 7.0,
             what: "the final timeline preview scored under the craft bar",
+        })
+        .into(),
+    );
+
+    // 17. The export: the run's own MP4, rendered from the timeline the
+    //     run just certified and scored. The one-click promise is the
+    //     finished file at the path the program fixed before it began
+    //     (`source.export`), not a project the user must still render by
+    //     hand - so the stage starts the render, waits it to a terminal
+    //     state under the same generous budget the transcription stages
+    //     keep (four 590-second waits, the watcher's own count), and then
+    //     proves the file it wrote: the media reader opens it, the mix's
+    //     loudness is measured against the platform target, and the words
+    //     it carries are re-read and compared with the words the edit
+    //     placed - the three encoded-file gates the receipt holds a
+    //     rendered run to.
+    //
+    //     A failed render FAILS the run: the export is the promise, and a
+    //     run that cannot keep it says so rather than shipping a project
+    //     with the file quietly missing. The gate below is the render's
+    //     own word - the last wait's `state` must read `done` - and the
+    //     waits themselves refuse (a real tool error, never a warning)
+    //     when the job ends failed or cancelled, so a dead encode fails
+    //     the run whatever shape it died in.
+    //
+    //     Resume (IDEM): `export_start` is not idempotent - a naive
+    //     re-run would start a second render over a finished one - so the
+    //     stage leans on the runner's stage-boundary record rather than a
+    //     probe first. A stage that completes lands in the record with
+    //     the replies that proved it, and the next run on the same runner
+    //     skips the export whole, making no export call at all; a
+    //     cancelled run's render is cancelled by the runner's own stop
+    //     (the flag it keeps for exactly this), and a failed one never
+    //     reached the record, so the retry re-renders - the honest answer
+    //     for a render that died. A probe of `export_status` before the
+    //     start was weighed and refused: a first run has no job to name,
+    //     so the probe's refusal would warn every healthy run, and its
+    //     non-done answers would poison the gate below, which reads every
+    //     `state` the stage's replies carry.
+    let export_project = source.project.clone();
+    let export_target = source.export.clone();
+    let export_takes = source.takes.clone();
+    steps.push(
+        DerivedStep::react(
+            Stage::Export,
+            Box::new({
+                let export_project = export_project.clone();
+                let export_target = export_target.clone();
+                let export_takes = export_takes.clone();
+                let mut phase = 0u8;
+                // The waits the render has drawn, and the waits the
+                // rendered file's own transcript has drawn.
+                let mut render_waits = 0u8;
+                let mut read_waits = 0u8;
+                // The file the render wrote, in the job's own word.
+                let mut rendered = String::new();
+                move |log| {
+                    // The render: started, then waited to its end. The
+                    // start's reply names the job and the file it will
+                    // write; each wait returns the moment the job ends,
+                    // or "still running" when its own budget ran out.
+                    if phase == 0 {
+                        phase = 1;
+                        // The plan's own export block, verbatim: the
+                        // codec and the crf the run validated, so the
+                        // file is rendered as the plan promised and not
+                        // as a default nobody wrote down.
+                        return Some(call(
+                            "export_start",
+                            json!({
+                                "path": export_project.clone(),
+                                "output": export_target.clone(),
+                                "codec": "h264",
+                                "crf": 20,
+                            }),
+                        ));
+                    }
+                    if phase == 1 {
+                        // The job every reply about the render names: the
+                        // start's own word, and the waits' after it.
+                        let job = log
+                            .last()
+                            .and_then(|reply| reply.get("job").and_then(Value::as_str))
+                            .unwrap_or_default()
+                            .to_owned();
+                        if job.is_empty() {
+                            // A start that named no job rendered nothing:
+                            // the stage ends, and the gate below says so.
+                            return None;
+                        }
+                        // The last word about the render: nothing yet
+                        // (the start's own reply carries no state),
+                        // `running` (a wait's budget ended), or `done`. A
+                        // settled word that is not `done` is the gate's,
+                        // never another wait - the queue does not pretend
+                        // a refusal is a poll.
+                        let state = log
+                            .last()
+                            .and_then(|reply| reply.get("state").and_then(Value::as_str))
+                            .unwrap_or_default()
+                            .to_owned();
+                        if (state.is_empty() || state == "running") && render_waits < 4 {
+                            render_waits += 1;
+                            return Some(call(
+                                "export_wait",
+                                json!({ "job": job, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                        if state != "done" {
+                            // The budget is spent and the render is still
+                            // going: the gate reads the last wait's word
+                            // and fails the run honestly.
+                            return None;
+                        }
+                        // The file the render wrote, in the job's own
+                        // word - the path every probe below reads, not
+                        // one reconstructed from the ask.
+                        rendered = log
+                            .last()
+                            .and_then(|reply| reply.get("output").and_then(Value::as_str))
+                            .unwrap_or_default()
+                            .to_owned();
+                        if rendered.is_empty() {
+                            // A done render that named no file wrote
+                            // nothing the run can prove: the probes have
+                            // no path, and the receipt says so.
+                            return None;
+                        }
+                        phase = 2;
+                    }
+                    // The file the exporter wrote, proved three ways: the
+                    // reader opens it, the mix measures, and the words it
+                    // carries compare with the words the edit placed.
+                    if phase == 2 {
+                        phase = 3;
+                        return Some(call("motion_probe", json!({ "path": rendered.clone() })));
+                    }
+                    if phase == 3 {
+                        phase = 4;
+                        return Some(call(
+                            "measure_loudness",
+                            json!({ "path": rendered.clone() }),
+                        ));
+                    }
+                    if phase == 4 {
+                        phase = 5;
+                        // The render's own words, on the transcriber the
+                        // preflight already paid for: the words the
+                        // verify compares are the ones the file speaks,
+                        // not the ones the plan promised.
+                        return Some(call("transcribe", json!({ "path": rendered.clone() })));
+                    }
+                    if phase == 5 {
+                        // The transcript's own waits, the fan's pattern:
+                        // two 590-second waits cover the transcriber's
+                        // budget, and a read that outlasts them is the
+                        // gate's to judge, exactly as the render's was.
+                        // A settled word that is not `done` is the gate's
+                        // here too - never another wait.
+                        let state = log
+                            .last()
+                            .and_then(|reply| reply.get("state").and_then(Value::as_str))
+                            .unwrap_or_default()
+                            .to_owned();
+                        if (state.is_empty() || state == "running") && read_waits < 2 {
+                            read_waits += 1;
+                            return Some(call(
+                                "analysis_wait",
+                                json!({
+                                    "path": rendered.clone(),
+                                    "timeoutSeconds": 590,
+                                }),
+                            ));
+                        }
+                        if state != "done" {
+                            return None;
+                        }
+                        phase = 6;
+                    }
+                    if phase == 6 {
+                        phase = 7;
+                        // The expected words, as the edit placed them:
+                        // the voiceover clips of the final view, each
+                        // mapped as the take it plays, so the comparison
+                        // is against the timeline's own coordinates.
+                        let rows = verify_expected_takes(log, &export_takes);
+                        if rows.is_empty() {
+                            // No narration spans to compare: the
+                            // receipt's words gate says the comparison
+                            // never ran, which is the honest answer for
+                            // an edit whose voiceover read back as
+                            // nothing.
+                            return None;
+                        }
+                        return Some(call(
+                            "emotion",
+                            json!({
+                                "action": "verify",
+                                "expectedTakes": rows,
+                                "actualPath": rendered.clone(),
+                                "toleranceMs": 60,
+                            }),
+                        ));
+                    }
+                    None
+                }
+            }),
+        )
+        .gate(ReplyGate::Word {
+            field: "state",
+            equals: "done",
+            what: "the run's export, or the transcript its words are verified against, \
+                   was still running when its waits ran out",
         })
         .into(),
     );
@@ -16317,7 +17822,11 @@ mod tests {
     /// gate reads every job's last word.
     #[test]
     fn the_preflight_shops_its_whole_setup_queue_before_the_run_spends() {
-        use super::preflight;
+        // The queue this test walks is the non-monetized one - the whole
+        // library, bed generator included - through a local eye so the
+        // call sites below read the way the queue does: one log, one
+        // answer at a time.
+        let preflight = |log: &[Value]| super::preflight(log, false);
 
         // Nothing asked yet: the transcriber itself, headlessly.
         let ask = preflight(&[]).expect("the first call");
@@ -16404,6 +17913,36 @@ mod tests {
                 "a settled job ({settled}) is the gate's, not another wait"
             );
         }
+
+        // A monetized run never downloads the bed generator: its licence
+        // refuses the model on every spend a monetized edit can make, so
+        // the 426 MiB of TinyMusician stays on the shelf. The queue the
+        // monetized word walks names the critic's eye right after the
+        // large SFX set, the bed's own row gone from between them.
+        let mut monetized_log = Vec::new();
+        let jobs = [
+            ("j1", "base.bin", "whisper base"),
+            ("j2", "set", "sound-models"),
+            ("j3", "vision", "picture-models"),
+            ("j4", "sfx", "sfx-small"),
+            ("j5", "sfx-large", "sfx-large"),
+        ];
+        for (job, path, what) in jobs {
+            let started = json!({ "job": job, "path": path, "output": "" });
+            let done = json!({ "job": job, "path": path, "state": "done" });
+            monetized_log.extend([started, done]);
+            let ask = super::preflight(&monetized_log, true).expect(what);
+            assert!(
+                ask.tool == "models_download" || ask.tool == "local_vlm",
+                "the monetized queue holds only downloads and the eye: {ask:?}"
+            );
+        }
+        let eye = json!({ "ok": true, "setup": true, "reused": true });
+        monetized_log.push(eye);
+        assert!(
+            super::preflight(&monetized_log, true).is_none(),
+            "the monetized setup queue ends without ever naming the bed"
+        );
     }
 
     /// A caption group never spans a speaker change: the words either
@@ -16492,9 +18031,9 @@ mod tests {
     /// fanned repair and transcription (every take at the same time),
     /// the derived tighten, grade, licensed live-stock B-roll, captions,
     /// title entrances, music bed and accents, the preview, the revise,
-    /// the saved timeline, the verify and the watch. The plan's creative
-    /// brief, the eye-picked stock and the baked motion comps remain the
-    /// Director agent's.
+    /// the saved timeline, the verify, the watch and the run's own
+    /// export. The plan's creative brief, the eye-picked stock and the
+    /// baked motion comps remain the Director agent's.
     #[test]
     fn the_auto_edit_program_is_the_watchers_spine_over_fixed_paths() {
         use concat_director::{ErrorPolicy, FanStep, ProgramStep};
@@ -16540,10 +18079,12 @@ mod tests {
         let program = super::auto_edit_program(&source);
 
         // The register, in the run's own order: the model preflight,
-        // the fanned repair and transcription, the derived
-        // tighten-then-grade, B-roll, captions, title entrances, bed and
-        // accents, the preview, the revise, the saved timeline, the
-        // verify gates and the final watch.
+        // the fanned repair and transcription, the transcription's own
+        // upgrade pass (the non-English take's second read on the
+        // better model), the derived tighten-then-grade, B-roll,
+        // captions, title entrances, bed and accents, the preview, the
+        // revise, the saved timeline, the verify gates, the final watch
+        // and the export that renders the run's own MP4.
         let order: Vec<&str> = program
             .steps
             .iter()
@@ -16555,6 +18096,7 @@ mod tests {
                 "preflight",
                 "handoff-voiceover",
                 "audio-repair",
+                "transcribe",
                 "transcribe",
                 "voice-signals",
                 "understand",
@@ -16570,14 +18112,17 @@ mod tests {
                 "timeline-ready",
                 "verify",
                 "watch",
+                "export",
             ]
         );
-        // Stage::ALL is the complete register, including the optional
-        // explicit-export stage. The default run must be an ordered
-        // subsequence and must not schedule an export.
+        // Stage::ALL is the complete register. Every stage the run
+        // schedules is in it; the export - which the register lists
+        // before the verify and the watch - runs last in the program,
+        // after the watch has scored the open timeline, so the encode is
+        // spent on the cut that was looked at.
         let register: Vec<&str> = Stage::ALL.iter().map(|stage| stage.label()).collect();
         assert!(order.iter().all(|stage| register.contains(stage)));
-        assert!(!order.contains(&"export"));
+        assert!(order.contains(&"export"));
         // The warn-policy stages, and only them: a take that cannot be
         // repaired ships as recorded, an emotional read that cannot be
         // made leaves the cut on its defaults, a tighten or B-roll slot or
@@ -16594,6 +18139,7 @@ mod tests {
             warn,
             vec![
                 "audio-repair",
+                "transcribe",
                 "understand",
                 "timeline",
                 "gather",
@@ -16606,22 +18152,26 @@ mod tests {
                 "watch"
             ]
         );
-        // The preflight and the plan are the warn-TOOLS stages: the
-        // setup's own calls are best-effort - the critic's eye that will
-        // not install is a warning the run ships - while each stage's
-        // gate stays hard, and the plan the validator refuses stops the
-        // run before a single edit lands, rather than shipping an edit no
-        // plan justified.
+        // The preflight, the plan and the verify are the warn-TOOLS
+        // stages: the setup's own calls are best-effort - the critic's
+        // eye that will not install is a warning the run ships - while
+        // each stage's gate stays hard, and the plan the validator
+        // refuses stops the run before a single edit lands, rather than
+        // shipping an edit no plan justified. The verify joins them for
+        // its coverage repair: a refused stretch is a warning, while the
+        // lane gate it carries stays the hard thing it always was.
         let warn_tools: Vec<&str> = program
             .steps
             .iter()
             .filter(|step| step.policy() == ErrorPolicy::WarnTools)
             .map(|step| step.stage().label())
             .collect();
-        assert_eq!(warn_tools, vec!["preflight", "plan"]);
+        assert_eq!(warn_tools, vec!["preflight", "plan", "verify"]);
 
-        // The program's artifact is the editable timeline. Rendering
-        // remains an explicit user action in the editor.
+        // The program's artifact is still the editable timeline - the
+        // project the window opens - with the run's own MP4 rendered
+        // beside it at the fixed export path: the export step's promise
+        // is the file, the program's promise is the cut the user keeps.
         assert_eq!(program.export, std::path::Path::new("timeline"));
         assert!(
             program.enforce_acceptance,
@@ -16695,14 +18245,15 @@ mod tests {
         );
 
         // The tighten-and-grade, the B-roll, the captions, the title
-        // entrances, the bed, the accents, the preview and the revise are
-        // derived: their calls are the run's own replies to answer for,
-        // and the runner's reactive queue asks for them one at a time.
+        // entrances, the bed, the accents, the preview, the revise, the
+        // verify and the export are derived: their calls are the run's
+        // own replies to answer for, and the runner's reactive queue asks
+        // for them one at a time.
         // The tighten and the grade are ONE step: the resume record is
         // keyed by the stage, so a second step sharing `Stage::Timeline`
         // was skipped the moment the first completed and the run never
         // graded.
-        for at in [5usize, 7, 8, 9, 10, 11, 12, 13, 14, 17] {
+        for at in [6usize, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
@@ -16710,24 +18261,25 @@ mod tests {
         }
 
         // The saved timeline is explicitly written and read back; the
-        // final verify checks collisions, and the final watch reviews the
-        // open project rather than an automatically encoded MP4.
-        let ready = program.steps[15].as_static();
+        // verify checks collisions and repairs the picture coverage, and
+        // the final watch reviews the open project - the export that
+        // follows renders the MP4 the run keeps as its own.
+        let ready = program.steps[16].as_static();
         assert_eq!(ready.calls[0].tool, "project_save");
         assert_eq!(ready.calls[0].arguments["path"], source.project.as_str());
         assert_eq!(ready.calls[1].tool, "timeline_read");
         assert_eq!(ready.calls[1].arguments["path"], source.project.as_str());
-        let verify = program.steps[16].as_static();
-        assert_eq!(verify.calls[0].tool, "collision_check");
-        assert_eq!(verify.calls[1].tool, "timeline_read");
+        // The verify is derived now - the coverage repair reads the view
+        // the run has - and its lane gate is as hard as it ever was.
+        assert!(matches!(program.steps[17], ProgramStep::Derived(_)));
         assert_eq!(
-            verify.gates,
+            program.steps[17].gates(),
             vec![ReplyGate::True {
                 field: "clean",
                 what: "clips share a lane on the saved timeline",
             }]
         );
-        assert!(matches!(program.steps[17], ProgramStep::Derived(_)));
+        assert!(matches!(program.steps[18], ProgramStep::Derived(_)));
         // The transcription's own done gate: a wait that gives up with
         // "still running" used to complete the stage over a transcript
         // that never arrived, and every word-derived stage downstream
@@ -16741,32 +18293,421 @@ mod tests {
             }]
         );
         assert_eq!(
-            program.steps[17].gates(),
+            program.steps[18].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
                 what: "the final timeline preview scored under the craft bar",
             }]
         );
+        // The export's own done gate: the last wait's word must read
+        // `done` - the render's, and the transcript its words are
+        // verified against - or the run fails honestly instead of
+        // shipping a project with the file quietly missing.
+        assert!(matches!(program.steps[19], ProgramStep::Derived(_)));
+        assert_eq!(
+            program.steps[19].gates(),
+            vec![ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "the run's export, or the transcript its words are verified against, \
+                       was still running when its waits ran out",
+            }]
+        );
         // The plan's own gate: its structure is refused before a single
         // edit lands, not warned about after the fact.
         assert_eq!(
-            program.steps[6].gates(),
+            program.steps[7].gates(),
             vec![ReplyGate::True {
                 field: "valid",
                 what: "the plan the run wrote did not validate",
             }]
         );
         // No other step gates its replies: the preflight's arrival gate
-        // beside the transcription, plan, verify and watch ones.
+        // beside the two transcription steps, the plan, verify, watch and
+        // export ones.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 0 && at != 3 && at != 6 && at != 16 && at != 17 {
+            if at != 0 && at != 3 && at != 4 && at != 7 && at != 17 && at != 18 && at != 19 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
         // The fan compile-time proof the type system wanted: the repair
         // grouping is the FanStep the runner fans out.
         let _: &FanStep = repair;
+    }
+
+    /// A narration span no picture plays over is a voiceover on a black
+    /// screen. The verify stage's repair hands the hole to the nearest
+    /// picture clip with a bounded edge stretch - and the hole no stretch
+    /// can honestly reach is never invented over: the receipt's coverage
+    /// gate names the span out loud instead, so the flaw the edit ships
+    /// with is a thing the record says rather than a thing the viewer
+    /// finds.
+    #[test]
+    fn a_narration_hole_gets_the_stretch_it_can_reach_and_names_the_rest() {
+        let takes = vec![TakePaths {
+            take: "/edits/Reel edit/voiceover/take.wav".to_owned(),
+            enhanced: String::new(),
+            aroll: None,
+        }];
+        // Twelve seconds of narration; picture over 0-3 and 5-8. The
+        // 3-5 hole has a neighbour within reach on both sides; the 8-12
+        // tail has none - the only clips that could stretch that far are
+        // two and four seconds past the reach the repair trusts.
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "track": "t-voice", "media": "m-take",
+                  "start": 0.0, "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c-shot-a", "kind": "video", "track": "t-broll", "media": "m-broll",
+                  "start": 0.0, "duration": 3.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c-shot-b", "kind": "video", "track": "t-broll-2", "media": "m-broll",
+                  "start": 5.0, "duration": 3.0, "sourceStart": 5.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m-take", "path": "/edits/Reel edit/voiceover/take.wav",
+                  "duration": 12.0 },
+                { "id": "m-broll", "path": "/cache/broll.mp4", "duration": 12.0 },
+            ],
+        });
+        // The reachable hole is stretched: the outgoing shot's tail is
+        // dragged across 3-5 by exactly the hole's width, without ripple
+        // - the voiceover and every other clip stay where the edit put
+        // them - and the tie between the two equidistant neighbours goes
+        // to the earlier clip, so the incoming shot's entrance is the
+        // one left alone. The unreachable tail earns no command at all.
+        let commands = coverage_repair(std::slice::from_ref(&view), &takes);
+        assert_eq!(
+            commands,
+            vec![json!({
+                "op": "trimClip", "clipId": "c-shot-a", "edge": "end",
+                "delta": 2.0, "ripple": false,
+            })],
+            "the one hole within reach is stretched; the other is left to the receipt"
+        );
+        // The hole the stretch cannot reach, named: the receipt's
+        // coverage gate reads the words-verify's own expected takes and
+        // the final read-back - the view the repair left behind, with
+        // c-shot-a now covering 0-5 - and fails on the span that remains,
+        // span by span, required, so the warned run says what it ships.
+        let repaired = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "track": "t-voice", "media": "m-take",
+                  "start": 0.0, "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c-shot-a", "kind": "video", "track": "t-broll", "media": "m-broll",
+                  "start": 0.0, "duration": 5.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c-shot-b", "kind": "video", "track": "t-broll-2", "media": "m-broll",
+                  "start": 5.0, "duration": 3.0, "sourceStart": 5.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m-take", "path": "/edits/Reel edit/voiceover/take.wav",
+                  "duration": 12.0 },
+                { "id": "m-broll", "path": "/cache/broll.mp4", "duration": 12.0 },
+            ],
+        });
+        let expected_takes = json!([{
+            "path": "/edits/Reel edit/voiceover/take.wav",
+            "start": 0.0, "sourceIn": 0.0, "sourceOut": 12.0, "speed": 1.0,
+        }]);
+        let observed = vec![
+            (
+                ToolCall {
+                    tool: "timeline_read".to_owned(),
+                    arguments: json!({ "path": "/edits/Reel edit" }),
+                },
+                repaired,
+            ),
+            (
+                ToolCall {
+                    tool: "emotion".to_owned(),
+                    arguments: json!({
+                        "action": "verify",
+                        "expectedTakes": expected_takes,
+                        "actualPath": "/edits/Reel edit/export/auto-edit.mp4",
+                    }),
+                },
+                json!({ "verdict": "pass" }),
+            ),
+        ];
+        let gates = concat_director::receipt::derive_gates_with_stages(&observed, &[]);
+        let coverage = gates
+            .iter()
+            .find(|gate| gate.gate == "coverage")
+            .expect("the receipt measures the picture over the words");
+        assert_eq!(coverage.status, concat_director::GateStatus::Fail);
+        assert!(coverage.required, "a rendered narration edit is held to it");
+        assert!(
+            coverage.evidence.contains("8.0-12.0s"),
+            "the unfixable span is named: {}",
+            coverage.evidence
+        );
+        // The same view with the tail covered passes: the gate measures
+        // the timeline the run saved, and a covered edit is accepted, not
+        // merely unwarned.
+        let covered = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "track": "t-voice", "media": "m-take",
+                  "start": 0.0, "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c-shot-a", "kind": "video", "track": "t-broll", "media": "m-broll",
+                  "start": 0.0, "duration": 5.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c-shot-b", "kind": "video", "track": "t-broll-2", "media": "m-broll",
+                  "start": 5.0, "duration": 7.0, "sourceStart": 5.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m-take", "path": "/edits/Reel edit/voiceover/take.wav",
+                  "duration": 12.0 },
+                { "id": "m-broll", "path": "/cache/broll.mp4", "duration": 12.0 },
+            ],
+        });
+        let observed = vec![
+            (
+                ToolCall {
+                    tool: "timeline_read".to_owned(),
+                    arguments: json!({ "path": "/edits/Reel edit" }),
+                },
+                covered,
+            ),
+            (
+                ToolCall {
+                    tool: "emotion".to_owned(),
+                    arguments: json!({
+                        "action": "verify",
+                        "expectedTakes": json!([{
+                            "path": "/edits/Reel edit/voiceover/take.wav",
+                            "start": 0.0, "sourceIn": 0.0, "sourceOut": 12.0, "speed": 1.0,
+                        }]),
+                        "actualPath": "/edits/Reel edit/export/auto-edit.mp4",
+                    }),
+                },
+                json!({ "verdict": "pass" }),
+            ),
+        ];
+        let gates = concat_director::receipt::derive_gates_with_stages(&observed, &[]);
+        let coverage = gates
+            .iter()
+            .find(|gate| gate.gate == "coverage")
+            .expect("the receipt measures the picture over the words");
+        assert_eq!(coverage.status, concat_director::GateStatus::Pass);
+    }
+
+    /// The export stage's own walk: the render is started on the fixed
+    /// path with the plan's own codec and crf, waited to its `done` word
+    /// under a bounded budget of waits, and the file it wrote is then
+    /// proved three ways - opened by the media reader, measured for
+    /// loudness, and its words re-read and compared with the takes the
+    /// edit placed, mapped through the view the run saved. A render that
+    /// outlasts its four waits ends the stage on the last wait's own
+    /// word, so the done gate - never a fifth wait - is what fails the
+    /// run.
+    #[test]
+    fn the_export_stage_renders_waits_and_proves_the_file_it_wrote() {
+        use concat_director::{ErrorPolicy, ProgramStep};
+
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel edit".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel edit/voiceover/take.wav".to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let export = program
+            .steps
+            .iter()
+            .position(|step| step.stage().label() == "export")
+            .expect("the program has an export stage");
+        // The render is the one-click promise: the stage stands on the
+        // fail policy, and its done gate is the hard thing the run cannot
+        // ship without.
+        assert_eq!(program.steps[export].policy(), ErrorPolicy::Fail);
+        assert_eq!(
+            program.steps[export].gates(),
+            vec![ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "the run's export, or the transcript its words are verified against, \
+                       was still running when its waits ran out",
+            }]
+        );
+        let ProgramStep::Derived(step) = &mut program.steps[export] else {
+            panic!("the export stage derives its calls from the render's own word");
+        };
+
+        // The saved view the words-verify maps its expected takes
+        // through, followed by every reply the render and its probes
+        // draw - the log the runner would hand the closure.
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "voice", "kind": "audio", "track": "t-voice", "media": "m-take",
+                  "start": 0.0, "duration": 12.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m-take", "path": "/edits/Reel edit/voiceover/take.wav",
+                  "duration": 12.0 },
+            ],
+        });
+        let mut log: Vec<Value> = vec![view];
+
+        // The render is started on the fixed path, exactly as the plan's
+        // own export block wrote it down.
+        let started = (step.next)(&log).expect("the render is started");
+        assert_eq!(started.tool, "export_start");
+        assert_eq!(
+            started.arguments,
+            json!({
+                "path": "/edits/Reel edit",
+                "output": "/edits/Reel edit/export/auto-edit.mp4",
+                "codec": "h264",
+                "crf": 20,
+            })
+        );
+        log.push(json!({
+            "job": "j9",
+            "path": "/edits/Reel edit",
+            "output": "/edits/Reel edit/export/auto-edit.mp4",
+        }));
+
+        // A wait the render outlasts draws another, on the job the start
+        // itself named.
+        let first_wait = (step.next)(&log).expect("the render is waited on");
+        assert_eq!(first_wait.tool, "export_wait");
+        assert_eq!(
+            first_wait.arguments,
+            json!({ "job": "j9", "timeoutSeconds": 590 })
+        );
+        log.push(json!({
+            "job": "j9",
+            "state": "running",
+            "output": "/edits/Reel edit/export/auto-edit.mp4",
+        }));
+        let second_wait = (step.next)(&log).expect("a running render is waited on again");
+        assert_eq!(
+            second_wait.arguments,
+            json!({ "job": "j9", "timeoutSeconds": 590 })
+        );
+        log.push(json!({
+            "job": "j9",
+            "state": "done",
+            "output": "/edits/Reel edit/export/auto-edit.mp4",
+            "frame": 360,
+            "total": 360,
+            "fraction": 1.0,
+        }));
+
+        // The file the render wrote, in the job's own word, is the file
+        // every probe reads: opened by the reader, measured for the
+        // platform target, re-heard by the transcriber.
+        let probe = (step.next)(&log).expect("the file is opened");
+        assert_eq!(probe.tool, "motion_probe");
+        assert_eq!(
+            probe.arguments,
+            json!({ "path": "/edits/Reel edit/export/auto-edit.mp4" })
+        );
+        log.push(json!({
+            "file": "/edits/Reel edit/export/auto-edit.mp4",
+            "probe": { "duration": 12.0 },
+        }));
+        let loudness = (step.next)(&log).expect("the mix is measured");
+        assert_eq!(loudness.tool, "measure_loudness");
+        assert_eq!(
+            loudness.arguments,
+            json!({ "path": "/edits/Reel edit/export/auto-edit.mp4" })
+        );
+        log.push(json!({
+            "integratedLufs": -14.0,
+            "truePeakDbtp": -1.5,
+            "platformTargetMet": true,
+        }));
+        let heard = (step.next)(&log).expect("the words are re-read");
+        assert_eq!(heard.tool, "transcribe");
+        assert_eq!(
+            heard.arguments,
+            json!({ "path": "/edits/Reel edit/export/auto-edit.mp4" })
+        );
+        log.push(json!({
+            "job": "j10",
+            "path": "/edits/Reel edit/export/auto-edit.mp4",
+            "output": "/transcripts/j10.json",
+        }));
+
+        // The re-read's own wait, the fan's pattern - and once it lands
+        // done, the words the file speaks are compared with the takes
+        // the edit placed, as the saved view maps them.
+        let read_wait = (step.next)(&log).expect("the re-read is waited on");
+        assert_eq!(read_wait.tool, "analysis_wait");
+        assert_eq!(
+            read_wait.arguments,
+            json!({ "path": "/edits/Reel edit/export/auto-edit.mp4", "timeoutSeconds": 590 })
+        );
+        log.push(json!({
+            "job": "j10",
+            "state": "done",
+            "output": "/transcripts/j10.json",
+        }));
+        let verified = (step.next)(&log).expect("the words are compared");
+        assert_eq!(verified.tool, "emotion");
+        assert_eq!(
+            verified.arguments,
+            json!({
+                "action": "verify",
+                "expectedTakes": [{
+                    "path": "/edits/Reel edit/voiceover/take.wav",
+                    "start": 0.0,
+                    "sourceIn": 0.0,
+                    "sourceOut": 12.0,
+                    "speed": 1.0,
+                }],
+                "actualPath": "/edits/Reel edit/export/auto-edit.mp4",
+                "toleranceMs": 60,
+            })
+        );
+        log.push(json!({ "ok": true, "verdict": "pass", "matchRate": 1.0 }));
+        assert!(
+            (step.next)(&log).is_none(),
+            "the stage ends once every proof it owes is drawn"
+        );
+
+        // The budget: a render that outlasts four waits is the gate's to
+        // judge, never a fifth wait's - the stage ends on the last
+        // wait's own word, and the gate above reads it and fails the
+        // run.
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(step) = &mut program.steps[export] else {
+            panic!("the export stage derives its calls");
+        };
+        let mut log: Vec<Value> = Vec::new();
+        assert_eq!(
+            (step.next)(&log).expect("the render is started").tool,
+            "export_start"
+        );
+        log.push(json!({
+            "job": "j9",
+            "path": "/edits/Reel edit",
+            "output": "/edits/Reel edit/export/auto-edit.mp4",
+        }));
+        for wait in 1..=4 {
+            let asked = (step.next)(&log).unwrap_or_else(|| {
+                panic!("wait {wait} of the render's four is drawn before the gate is asked")
+            });
+            assert_eq!(asked.tool, "export_wait");
+            log.push(json!({
+                "job": "j9",
+                "state": "running",
+                "output": "/edits/Reel edit/export/auto-edit.mp4",
+            }));
+        }
+        assert!(
+            (step.next)(&log).is_none(),
+            "the fourth wait is the last: a render still running is the gate's, not the queue's"
+        );
     }
 
     #[test]
@@ -18773,14 +20714,15 @@ mod tests {
         let timeline_ready = at("timeline-ready");
         let verify = at("verify");
         let watch = at("watch");
+        let export = at("export");
 
         // The revise reads the preview's sheet, so it follows it...
         assert!(preview < revise, "the revise answers the preview");
         // ...and corrects the timeline the program then saves and reads
         // back. The timeline is the deliverable the user keeps editing -
-        // an export the run was asked to land reads the same saved
-        // timeline, so a revise after the save leaves the shipped file
-        // unrevised exactly the way it left the exported one.
+        // and the export the run renders itself reads the same saved
+        // timeline, so a revise after the save would leave the shipped
+        // file unrevised exactly the way it left the exported one.
         assert!(
             revise < timeline_ready,
             "a revise after the save lands a timeline the revise never corrected"
@@ -18794,6 +20736,13 @@ mod tests {
         assert!(
             timeline_ready < watch,
             "the watch scores the saved timeline"
+        );
+        // The export renders last, after the watch has scored the open
+        // timeline: the one encode the run pays for is the corrected cut
+        // by construction.
+        assert!(
+            revise < export && watch < export,
+            "the render pays for the cut the revise corrected and the watch scored"
         );
     }
 
@@ -20157,6 +22106,191 @@ mod tests {
             "media": [],
         }));
         assert_eq!((captions.next)(log.as_slice()), None);
+    }
+
+    /// A stretch the edit shows no picture over - the voiceover's own
+    /// clip and nothing else - hands its static titles to one word-timed
+    /// kinetic reel: the caption engine is asked with the same measured
+    /// words the titles showed, the reel it drew goes to the bin and
+    /// lands above the piece at the piece's own zero, and one closing
+    /// batch trims the reel to the piece and retires the titles it
+    /// covers. A stretch with footage under the words keeps its static
+    /// titles: an opaque reel may only cover a background, never a shot.
+    #[test]
+    fn a_picture_free_span_hands_its_titles_to_a_kinetic_reel() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let transcript = json!({
+            "segments": [{
+                "start": 0.5, "end": 1.5, "text": "hello there",
+                "words": [
+                    { "text": "hello", "start": 0.5, "end": 0.9 },
+                    { "text": "there", "start": 0.95, "end": 1.5 },
+                ],
+            }],
+        });
+        // One stressed word, so the accent pass styles a static before
+        // the reel retires it: the walk crosses every phase the stage has.
+        let signals = json!({
+            "audio": { "path": take },
+            "lines": [{
+                "start": 0.5, "end": 1.5,
+                "prosody": { "emphasisWords": [
+                    { "t": 0.6, "strength": 0.8, "wordIndex": 0, "wordText": "hello" },
+                ]},
+            }],
+        });
+        // The whole walk, over a timeline that either shows footage under
+        // the words or shows nothing but the take's own piece: every call
+        // the stage makes after the placement, with the replies a run
+        // would give each one.
+        let walk = |picture: bool| -> Vec<ToolCall> {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(captions) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "captions")
+                .expect("the program has a captions stage")
+            else {
+                panic!("the captions stage is derived");
+            };
+            // The take's own piece, and on the picture walk the B-roll
+            // shot the gather landed over the words.
+            let mut clips = vec![json!({
+                "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                "sourceStart": 0.0, "speed": 1.0
+            })];
+            let mut media = vec![json!({ "id": "m1", "path": take })];
+            if picture {
+                clips.push(json!({
+                    "id": "b1", "kind": "video", "media": "m2",
+                    "start": 0.0, "duration": 4.0
+                }));
+                media.push(json!({ "id": "m2", "path": "/edits/Reel/stock/harbour.mp4" }));
+            }
+            let view = |clips: &[Value], media: &[Value]| {
+                json!({
+                    "timeline": { "id": "t1", "clips": clips.to_vec() },
+                    "media": media.to_vec(),
+                })
+            };
+            let mut log = vec![
+                view(&clips, &media),
+                json!({ "path": take, "output": transcript.to_string() }),
+                signals.clone(),
+            ];
+            let first = captions_edit_after_readings(captions, &mut log);
+            assert_eq!(first.tool, "edit_apply");
+            // The batch's reply: the view carrying the title it placed,
+            // with the piece - and the picture, when there is one -
+            // still under it.
+            let mut titled = clips.clone();
+            titled.push(json!({
+                "id": "title-1", "kind": "text", "start": 0.5, "duration": 1.0
+            }));
+            log.push(view(&titled, &media));
+            let mut asked: Vec<ToolCall> = Vec::new();
+            while let Some(call) = (captions.next)(log.as_slice()) {
+                asked.push(call);
+                // The reply each ask earns, in the order the stage asks
+                // them: the accent batch's own view, the reel the engine
+                // drew, the bin's id, the reel on its lane - and the
+                // closing batch's reply, which nothing reads.
+                log.push(match asked.len() {
+                    1 => view(&titled, &media),
+                    2 => json!({
+                        "file": "/edits/Reel/motion/captions-hello.mp4",
+                        "duration": 6.0,
+                    }),
+                    3 => json!({ "createdId": "m9" }),
+                    4 => json!({
+                        "createdId": "reel-1",
+                        "timeline": { "clips": [
+                            { "id": "reel-1", "duration": 6.0 }
+                        ]},
+                    }),
+                    _ => json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }),
+                });
+            }
+            asked
+        };
+        // The voiceover-only walk: the accent pass styles the stressed
+        // word, then the reel takes the span over.
+        let reel = walk(false);
+        assert_eq!(
+            reel.len(),
+            5,
+            "accent, animate, import, place, close: {reel:?}"
+        );
+        assert_eq!(reel[0].tool, "edit_apply");
+        assert_eq!(
+            reel[0].arguments["command"]["commands"][0]["op"], "styleTextRange",
+            "the static is styled before the reel retires it"
+        );
+        // The kinetic ask: the same measured words the titles showed, at
+        // the reading budget the statics were cut with, on the project's
+        // own rate.
+        assert_eq!(reel[1].tool, "captions_animate");
+        assert_eq!(reel[1].arguments["project"], "/edits/Reel");
+        assert_eq!(
+            reel[1].arguments["words"],
+            json!([["hello", 0.5, 0.9], ["there", 0.95, 1.5]])
+        );
+        assert_eq!(reel[1].arguments["wordsPerLine"], 4);
+        assert_eq!(reel[1].arguments["maxLineSeconds"], 3.5);
+        assert_eq!(reel[1].arguments["curtain"], false);
+        assert_eq!(reel[1].arguments["kinetic"], true);
+        assert_eq!(reel[1].arguments["fps"], 30.0);
+        // The reel goes to the bin first, then lands above the picture at
+        // the piece's own zero.
+        assert_eq!(reel[2].tool, "media_import");
+        assert_eq!(reel[2].arguments["path"], "/edits/Reel");
+        assert_eq!(
+            reel[2].arguments["file"],
+            "/edits/Reel/motion/captions-hello.mp4"
+        );
+        assert_eq!(reel[3].tool, "edit_apply");
+        assert_eq!(reel[3].arguments["command"]["op"], "addClipAtFirstFree");
+        assert_eq!(reel[3].arguments["command"]["mediaId"], "m9");
+        assert_eq!(reel[3].arguments["command"]["start"], 0.0);
+        assert_eq!(reel[3].arguments["command"]["above"], true);
+        // One closing batch: the reel trimmed to the piece it plays, and
+        // the static titles inside the span retired.
+        assert_eq!(reel[4].tool, "edit_apply");
+        let close = reel[4].arguments["command"]["commands"]
+            .as_array()
+            .expect("one undoable close");
+        assert_eq!(close[0]["op"], "trimClip");
+        assert_eq!(close[0]["clipId"], "reel-1");
+        assert_eq!(close[0]["edge"], "end");
+        assert_eq!(close[0]["delta"], -2.0);
+        assert_eq!(close[1]["op"], "removeClips");
+        assert_eq!(close[1]["clipIds"], json!(["title-1"]));
+        assert_eq!(close[1]["ripple"], false);
+        // The pictured walk: the accent pass is the last word the span
+        // gets, and the statics stand over the footage.
+        let statics = walk(true);
+        assert_eq!(
+            statics.len(),
+            1,
+            "a span with footage under the words keeps its static titles: {statics:?}"
+        );
+        assert_eq!(statics[0].tool, "edit_apply");
     }
 
     /// A line the speaker lifted above the take's own level is set
@@ -21841,7 +23975,7 @@ mod tests {
         })];
         // No script: the transcript's own words are the lines.
         let mut program = auto_edit_program(&build(None));
-        let ProgramStep::Derived(signals) = &mut program.steps[4] else {
+        let ProgramStep::Derived(signals) = &mut program.steps[5] else {
             panic!("step 4 is the delivery read");
         };
         let mut asked: Vec<ToolCall> = Vec::new();
@@ -21863,7 +23997,7 @@ mod tests {
         );
         // A script rides along beside the measured lines.
         let mut program = auto_edit_program(&build(Some("we found it. and it was ours.")));
-        let ProgramStep::Derived(signals) = &mut program.steps[4] else {
+        let ProgramStep::Derived(signals) = &mut program.steps[5] else {
             panic!("step 4 is the delivery read");
         };
         let first = (signals.next)(&log).expect("the first take's read");
@@ -21903,7 +24037,7 @@ mod tests {
             monetized: true,
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(understand) = &mut program.steps[5] else {
+        let ProgramStep::Derived(understand) = &mut program.steps[6] else {
             panic!("step 5 is the understand stage");
         };
         // Only the first take transcribed: one music gate per take, one
@@ -21962,7 +24096,7 @@ mod tests {
             monetized: true,
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(understand) = &mut program.steps[5] else {
+        let ProgramStep::Derived(understand) = &mut program.steps[6] else {
             panic!("step 5 is the understand stage");
         };
         let word =
@@ -22489,6 +24623,325 @@ mod tests {
             specs[0].hold() > 1.35,
             "a performed, lifted line holds longer: {}",
             specs[0].hold()
+        );
+    }
+
+    /// The card is proved before the oven is paid for it: `motion_inspect`
+    /// reads the comp the bake would draw - the same preset, the same
+    /// slot fills, the same words - and the comp that passed is the comp
+    /// the bake draws next, unchanged. The card then lands as a motion
+    /// clip linked to its comp, at the second the line now plays, and is
+    /// trimmed to the line's own hold capped by the comp's own duration.
+    #[test]
+    fn the_card_is_proved_before_the_oven_is_paid_for_it() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(motion) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "motion")
+            .expect("the program has a motion stage")
+        else {
+            panic!("the motion stage is derived");
+        };
+        // The log as the stage finds it: the take's own piece on the
+        // timeline, the transcript the words came from, and one hook the
+        // read earned a chapter card on.
+        let mut log = vec![
+            json!({
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({ "path": take, "output": json!({
+                "segments": [
+                    { "start": 0.0, "end": 4.0, "text": "the wreck below the old harbour wall" }
+                ]
+            }).to_string() }),
+            json!({ "lines": [emotion_row(0.0, 4.0, "surprise", 0.9, "hook", "cold", "")] }),
+        ];
+        // The library once, before the first proof.
+        let library = (motion.next)(&log).expect("the library is asked");
+        assert_eq!(library.tool, "motion_presets");
+        log.push(json!({ "presets": [
+            { "id": "funcut.chapter.chip", "duration": 4.0,
+              "slots": [ { "field": "text", "label": "Title" } ] },
+        ]}));
+        // The proof: the preset the plan named, its text slot filled with
+        // the line's own words - exactly the fields the bake spends.
+        let proof = (motion.next)(&log).expect("the proof is asked");
+        assert_eq!(proof.tool, "motion_inspect");
+        assert_eq!(proof.arguments["project"], "/edits/Reel");
+        assert_eq!(proof.arguments["preset"], "funcut.chapter.chip");
+        assert_eq!(
+            proof.arguments["ops"],
+            json!([{ "op": "set-slot", "slot": "Title",
+                     "value": "the wreck below the old harbour wall" }]),
+            "the words ride in the preset's own text slot"
+        );
+        // The proof passes: no validation problems, a renderer that draws.
+        log.push(json!({
+            "comp": { "problems": [] },
+            "route": { "renderer": "geneva" },
+        }));
+        let bake = (motion.next)(&log).expect("the bake is asked");
+        assert_eq!(bake.tool, "motion_bake");
+        assert_eq!(
+            bake.arguments, proof.arguments,
+            "the proof read exactly the comp the oven draws"
+        );
+        // The bake's reply carries the comp's hash: the card lands as a
+        // motion clip linked to it, where the line now plays.
+        log.push(json!({ "hash": "ab12cd34ef56ab12", "engine": "geneva" }));
+        let place = (motion.next)(&log).expect("the card is placed");
+        assert_eq!(place.tool, "edit_apply");
+        assert_eq!(place.arguments["command"]["op"], "addMotionClip");
+        assert_eq!(place.arguments["command"]["start"], 0.0);
+        assert_eq!(place.arguments["command"]["comp"], "ab12cd34ef56ab12.json");
+        assert_eq!(place.arguments["command"]["hash"], "ab12cd34ef56ab12");
+        assert_eq!(place.arguments["command"]["engine"], "geneva");
+        // The card lands at the editorial default and is trimmed to the
+        // line's own hold, capped by the comp's own duration.
+        log.push(json!({
+            "createdId": "card-1",
+            "timeline": { "clips": [ { "id": "card-1", "duration": 5.0 } ] },
+        }));
+        let trim = (motion.next)(&log).expect("the card is trimmed");
+        assert_eq!(trim.tool, "edit_apply");
+        assert_eq!(trim.arguments["command"]["op"], "trimClip");
+        assert_eq!(trim.arguments["command"]["clipId"], "card-1");
+        assert_eq!(trim.arguments["command"]["delta"], -1.0);
+        // One card, one bake: the stage is done.
+        log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
+        assert_eq!((motion.next)(&log), None);
+    }
+
+    /// A card the proof refuses walks a bounded ladder of alternates -
+    /// one rung down the library's own family, never a promotion, the
+    /// words re-seated in whatever text slot the new card actually has -
+    /// and a card the whole ladder refuses is skipped: three proofs, no
+    /// bake, and the run goes on to the next beat.
+    #[test]
+    fn a_refused_card_walks_the_ladder_and_skips() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(motion) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "motion")
+            .expect("the program has a motion stage")
+        else {
+            panic!("the motion stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            json!({ "path": take, "output": json!({
+                "segments": [
+                    { "start": 0.0, "end": 4.0, "text": "the wreck below the old harbour wall" }
+                ]
+            }).to_string() }),
+            json!({ "lines": [emotion_row(0.0, 4.0, "surprise", 0.9, "hook", "cold", "")] }),
+        ];
+        let library = (motion.next)(&log).expect("the library is asked");
+        assert_eq!(library.tool, "motion_presets");
+        // The library carries the whole ladder a refusal may walk.
+        log.push(json!({ "presets": [
+            { "id": "funcut.chapter.chip", "duration": 4.0,
+              "slots": [ { "field": "text", "label": "Title" } ] },
+            { "id": "funcut.sting.wordmark", "duration": 4.0,
+              "slots": [ { "field": "text", "label": "Words" } ] },
+            { "id": "funcut.quote.pull", "duration": 4.0,
+              "slots": [ { "field": "text", "label": "Quote" } ] },
+        ]}));
+        // Every proof is refused - the first by its own validation
+        // problems, the second by a renderer that cannot draw it, the
+        // third again - and each refusal walks one rung down.
+        let mut proofs: Vec<ToolCall> = Vec::new();
+        for refusal in [
+            json!({
+                "comp": { "problems": ["slots.Title: the text overflows the card"] },
+                "route": { "renderer": "geneva" },
+            }),
+            json!({
+                "comp": { "problems": [] },
+                "route": { "renderer": "lottie" },
+            }),
+            json!({
+                "comp": { "problems": ["slots.Quote: the text overflows the card"] },
+                "route": { "renderer": "geneva" },
+            }),
+        ] {
+            let proof = (motion.next)(&log).expect("the ladder keeps proving");
+            assert_eq!(proof.tool, "motion_inspect");
+            proofs.push(proof);
+            log.push(refusal);
+        }
+        let walked: Vec<&str> = proofs
+            .iter()
+            .map(|proof| {
+                proof.arguments["preset"]
+                    .as_str()
+                    .expect("the proof names its preset")
+            })
+            .collect();
+        assert_eq!(
+            walked,
+            [
+                "funcut.chapter.chip",
+                "funcut.sting.wordmark",
+                "funcut.quote.pull"
+            ],
+            "the plan's own card, then two rungs down the family"
+        );
+        // The alternates carry the words in their own text slots: the
+        // plan's slot named the refused preset's field, and the library's
+        // labels say what each new card calls it.
+        assert_eq!(proofs[1].arguments["ops"][0]["slot"], "Words");
+        assert_eq!(proofs[2].arguments["ops"][0]["slot"], "Quote");
+        // A card the whole ladder refuses is skipped, not baked.
+        assert_eq!(
+            (motion.next)(&log),
+            None,
+            "no bake is ever paid for a card the ladder refused"
+        );
+    }
+
+    /// The question card's collision veto reads the reel the captions
+    /// stage landed as captions: a timeline whose only caption is the
+    /// kinetic reel - a video clip whose media lives under the project's
+    /// motion/ - answers the question-card collision by not asking it,
+    /// exactly as the static titles it retired did. Stock footage under
+    /// the same question is not captions, and the card is still earned.
+    #[test]
+    fn the_question_card_s_veto_reads_the_reel_as_captions() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "have you ever lost a wreck" },
+            ],
+        });
+        let acts = json!({ "perLine": [
+            { "line": 0, "text": "have you ever lost a wreck",
+              "start": 0.0, "end": 2.0,
+              "acts": ["rhetorical_question"], "primary": "rhetorical_question" },
+        ]});
+        // The stage's first ask, over the clip the timeline carries
+        // beside the take's own piece: the reel the captions stage
+        // landed, the static titles it replaced, or the stock shot it
+        // sat above. The title is too short to hold an entrance, so the
+        // walk reaches the cards on the first ask.
+        let first_ask = |clip: Value, media: Value| -> Option<String> {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(motion) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "motion")
+                .expect("the program has a motion stage")
+            else {
+                panic!("the motion stage is derived");
+            };
+            let log = vec![
+                json!({
+                    "timeline": { "id": "t1", "clips": [
+                        { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                          "sourceStart": 0.0, "speed": 1.0 },
+                        clip,
+                    ]},
+                    "media": [{ "id": "m1", "path": take }, media],
+                }),
+                json!({ "path": take, "output": transcript.to_string() }),
+                json!({ "tool": "detect_speech_acts", "perLine": acts["perLine"].clone() }),
+            ];
+            (motion.next)(&log).map(|call| call.tool)
+        };
+        // The reel: the veto the titles held, held by the thing that
+        // replaced them - two caption systems on one screen collide
+        // whichever of them drew the words.
+        let reel = first_ask(
+            json!({ "id": "r1", "kind": "video", "media": "m9",
+                    "start": 0.0, "duration": 4.0 }),
+            json!({ "id": "m9", "path": "/edits/Reel/motion/captions-hello.mp4" }),
+        );
+        assert_eq!(
+            reel, None,
+            "a reel that replaced every title keeps the veto the titles held"
+        );
+        // The static titles themselves keep the veto they always held.
+        let titles = first_ask(
+            json!({ "id": "title-1", "kind": "text", "start": 0.0, "duration": 0.2 }),
+            json!({ "id": "m2", "path": "/edits/Reel/stock/harbour.mp4" }),
+        );
+        assert_eq!(
+            titles, None,
+            "the static titles hold the veto they always held"
+        );
+        // Stock footage: not captions, and the question still earns its
+        // card - the library is the stage's first ask.
+        let stock = first_ask(
+            json!({ "id": "b1", "kind": "video", "media": "m2",
+                    "start": 0.0, "duration": 4.0 }),
+            json!({ "id": "m2", "path": "/edits/Reel/stock/harbour.mp4" }),
+        );
+        assert_eq!(
+            stock.as_deref(),
+            Some("motion_presets"),
+            "the question card is a captions-off run's answer"
         );
     }
 
@@ -24697,8 +27150,11 @@ mod tests {
     }
 
     /// A successful transcript and loudness reading do not prove that
-    /// the rendered file is a decodable video. Verify ends by probing the
-    /// exact export path, after the timeline, transcript and mix checks.
+    /// the rendered file is a decodable video. The run's own export stage
+    /// probes the exact export path it just rendered, after the timeline,
+    /// transcript and mix checks - and the verify stage that precedes it
+    /// reads the timeline back clean, with the coverage repair riding
+    /// between the collision check and that read.
     #[test]
     fn verify_probes_the_rendered_export_after_content_and_mix_gates() {
         use concat_director::ProgramStep;
@@ -24725,38 +27181,48 @@ mod tests {
             frame_rate: None,
             monetized: true,
         };
-        let program = auto_edit_program(&source);
+        let mut program = auto_edit_program(&source);
         // The program's own Verify stage is the timeline's: the lanes it
-        // leaves clean and the timeline it reads back. The encoded-file
-        // probes - the transcript re-read, the loudness, the words
-        // comparison and the motion probe of the actual file - are the
-        // independent acceptance's checks() when a render exists, so the
-        // shipped file is probed exactly where the surface says it is.
+        // leaves clean and the timeline it reads back, with the coverage
+        // repair asked for between the two when a narration span plays
+        // over no picture. The encoded-file probes - the transcript
+        // re-read, the loudness, the words comparison and the motion
+        // probe of the actual file - are the export stage's own calls on
+        // the file it just rendered, and the independent acceptance's
+        // checks() when a Director run leaves a render behind.
         let verify = program
             .steps
             .iter()
-            .find(|step| step.stage().label() == "verify")
+            .position(|step| step.stage().label() == "verify")
             .expect("the program has a Verify stage");
-        let ProgramStep::Static(step) = verify else {
-            panic!("Verify is a static stage");
+        let ProgramStep::Derived(step) = &mut program.steps[verify] else {
+            panic!("Verify is a derived stage");
         };
-        let calls: Vec<&str> = step.calls.iter().map(|call| call.tool.as_str()).collect();
-        assert_eq!(calls, ["collision_check", "timeline_read"]);
         assert!(
             step.gates.iter().any(|gate| gate.field() == "clean"),
             "the verify gate refuses shared lanes on the saved timeline"
         );
+        // A log with no timeline in it: the collision check first, then
+        // the read-back - the same two calls the static stage made, one
+        // at a time now that the coverage pass rides between them.
+        let mut asked: Vec<String> = Vec::new();
+        let mut log: Vec<Value> = Vec::new();
+        while let Some(next) = (step.next)(&log) {
+            asked.push(next.tool.clone());
+            log.push(json!({ "clean": true }));
+        }
+        assert_eq!(asked, ["collision_check", "timeline_read"]);
         // The probes the rendered export owes, on the acceptance's own
         // list: the file itself is opened by the motion probe, its
         // loudness measured, and the words it carries compared - after
         // the content and mix gates the program already landed.
-        let asked = crate::acceptance::checks(&source.project, Some(&source.export));
-        let probes: Vec<&str> = asked.iter().map(|(tool, _)| *tool).collect();
+        let checks = crate::acceptance::checks(&source.project, Some(&source.export));
+        let probes: Vec<&str> = checks.iter().map(|(tool, _)| *tool).collect();
         assert!(
             probes.contains(&"motion_probe"),
             "the actual export is probed by the acceptance"
         );
-        let probe = asked
+        let probe = checks
             .iter()
             .find(|(tool, _)| *tool == "motion_probe")
             .expect("the probe is asked");

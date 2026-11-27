@@ -15,18 +15,22 @@
 #                                       after it, for a fork of a fork
 #
 # What comes down beside the app. The default is everything a first run
-# needs: the core models (whisper base.en for captions, Kokoro int8 for
-# speech, the person-cutout and enhance networks), the sound library's
-# manifest and the sticker shelf's index - all digest-checked, all into
-# the app's own data folder, exactly where the editor's Settings page
-# would put them, so the first run asks for nothing. Two flags tune it:
+# needs: the core models (whisper base and base.en for captions, Kokoro
+# int8 for speech, the person-cutout and enhance networks), the sound
+# library's manifest and the sticker shelf's index - all digest-checked,
+# all into the app's own data folder, exactly where the editor's
+# Settings page would put them, so the first run asks for nothing. Two
+# flags tune it:
 #
 #   --no-models      install the app alone; the downloads stay where they
 #                    always were, in Settings on first use
-#   --all-models     every model in models/manifest.toml (~2.7 GB: every
-#                    whisper size, both Kokoro builds, Pocket TTS, the
-#                    whole Chatterbox bundle, both cutout networks and
-#                    the SAM brushes)
+#   --all-models     every model in models/manifest.toml (51 models,
+#                    ~5 GB: the six whisper sizes, the three TTS banks
+#                    (Kokoro int8 and fp, Pocket), the nine-file
+#                    Chatterbox bundle, and the cutout, vision and sound
+#                    generators - the cutout and enhance networks, the
+#                    SAM brushes, the CLAP/YAMNet readers, the picture
+#                    doors, the sfx and bgm generators)
 #   --with-openvid   also the ~435 MB OpenVid stock index, so the stock
 #                    shelf is ready the first time it is opened
 #
@@ -84,6 +88,11 @@ MODELS="core"
 # The OpenVid stock index (~435 MB) is the one piece big enough to
 # stay opt-in: --with-openvid brings it too.
 WITH_OPENVID="no"
+# The release tag the model mirror lives on. Named here only as the
+# fallback: the manifest's own `release` line overrides it once the
+# manifest is fetched, so a tag bump there cannot leave this script
+# asking a release that no longer exists.
+MODELS_RELEASE="models-v1"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -120,7 +129,11 @@ while [ $# -gt 0 ]; do
         --use-upstream)
             # The documented form takes no value and names the upstream
             # this fork stands on; an OWNER/NAME after it overrides that
-            # for a fork-of-a-fork.
+            # for a fork-of-a-fork. Only the app itself moves: the data
+            # releases - the models and their manifest, the sound
+            # library, the sticker and OpenVid indexes, the fonts - are
+            # always fetched from the fork's repository, which ships the
+            # only builds of them there are.
             FALLBACK="$UPSTREAM_REPO"
             case "${2:-}" in
                 [a-zA-Z0-9_-]*/[a-zA-Z0-9_.-]*) FALLBACK="$2"; shift ;;
@@ -735,8 +748,9 @@ esac
 # ── the first run's downloads, now ──────────────────────────────
 # Everything the editor would otherwise ask for on the first run that
 # needs it, fetched here so a fresh install opens ready: the core models
-# (whisper base.en, Kokoro int8, the person cutout, the enhance network),
-# the sound shelf's manifest and the sticker shelf's index - each into
+# (whisper base and base.en, Kokoro int8, the person cutout, the enhance
+# network), the sound shelf's manifest and the sticker shelf's index -
+# each into
 # the app's own data folder, at the exact path and name the editor's
 # Settings page would have written, and each checked against the digest
 # models/manifest.toml pins before it is moved into place. A file that
@@ -744,7 +758,8 @@ esac
 # re-downloads what it already installed.
 #
 # --no-models skips all of this; --all-models takes every row of the
-# manifest (~2.7 GB); --with-openvid adds the stock index (~435 MB).
+# manifest (51 models, ~5 GB); --with-openvid adds the stock index
+# (~435 MB).
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/app.concat.editor"
 
 # One model row from the manifest, by id: prints "file sha256 bytes
@@ -839,7 +854,7 @@ install_model() {
         return 0
     fi
     MB_HUMAN=$(awk -v b="$MBYTES" 'BEGIN { printf "%.0f MB", b / 1048576 }')
-    MURL="https://github.com/$FORK_REPO/releases/download/models-v1/$MFILE"
+    MURL="https://github.com/$FORK_REPO/releases/download/$MODELS_RELEASE/$MFILE"
     if ! fetch "$MURL" "$TMP/model-file"; then
         say "  $MID: could not download it ($MURL) - the editor will offer it again"
         return 0
@@ -891,13 +906,18 @@ if [ "$MODELS" != none ] && [ "$LIST_ONLY" = no ]; then
     say "the editor's own downloads, now (so the first run asks for nothing):"
     MANIFEST="$TMP/manifest.toml"
     if fetch "https://raw.githubusercontent.com/$FORK_REPO/main/models/manifest.toml" "$MANIFEST"; then
+        # The manifest names the release its own files are mirrored on;
+        # that line is the authority, and the known tag above stays the
+        # fallback for a manifest it cannot be read from.
+        MODELS_RELEASE=$(awk -F'"' '/^release = / { print $2; exit }' "$MANIFEST")
+        [ -n "$MODELS_RELEASE" ] || MODELS_RELEASE="models-v1"
         # The core set: what a first session touches - captions, speech,
         # background removal, enhance - with the sizes a small machine
         # can hold. --all-models takes every row instead.
         if [ "$MODELS" = all ]; then
             MODEL_IDS=$(awk '/^\[\[model\]\]/ { infound = 1; next } infound && /^id = / { gsub(/"/, ""); print $3; infound = 0 }' "$MANIFEST")
         else
-            MODEL_IDS="whisper-base.en kokoro-int8-multi-lang-v1_0 cutout-person enhance-upscale"
+            MODEL_IDS="whisper-base whisper-base.en kokoro-int8-multi-lang-v1_0 cutout-person enhance-upscale"
         fi
         for MODEL_ID in $MODEL_IDS; do
             install_model "$MODEL_ID"

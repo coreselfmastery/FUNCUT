@@ -3486,7 +3486,12 @@ def run_pipeline(
         view = imported.get("view") if isinstance(imported, dict) else None
         placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
-            view = transport.call("project_get", {"path": project})
+            # The import's own view did not answer the placement: read
+            # the project back through the same recording helper every
+            # other read rides (advance), never a bare transport.call -
+            # a read outside the record is a call count the run record
+            # pretends never happened.
+            view = advance("project_get", {"path": project})
             placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
             raise PipelineError(f"{slot_id}: imported media is not present on the timeline")
@@ -4476,7 +4481,10 @@ def run_pipeline(
                     bed_view = imported.get("view") if isinstance(imported, dict) else None
                     bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
                     if bed_clip is None:
-                        bed_view = transport.call("project_get", {"path": project})
+                        # Same recording rule as the B-roll read above: a
+                        # re-read the run record does not count is a
+                        # placement story with a hole in it.
+                        bed_view = advance("project_get", {"path": project})
                         bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
                     if bed_clip is None:
                         raise PipelineError("the music bed was imported but never placed on the timeline")
@@ -5080,7 +5088,10 @@ def run_pipeline(
         view = imported.get("view") if isinstance(imported, dict) else None
         placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
-            view = transport.call("project_get", {"path": project})
+            # Recorded like every other read (see the B-roll read back
+            # in the placement walk): the revision's own re-read rides
+            # the run record with the rest of the loop's calls.
+            view = advance("project_get", {"path": project})
             placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
             raise PipelineError(f"{slot_id}: replacement media is not present on the timeline")
@@ -5207,7 +5218,10 @@ def run_pipeline(
             old_id = graphic_clip_ids.get(index)
             if isinstance(old_id, str) and old_id:
                 try:
-                    view = transport.call("project_get", {"path": project})
+                    # A courtesy, but a recorded one: the read rides
+                    # advance so the run record counts it like every
+                    # other call the run made.
+                    view = advance("project_get", {"path": project})
                 except Exception as error:  # noqa: BLE001 - the read is a courtesy
                     log(f"{key}: could not read the old graphic's lane: {error}")
                     view = None

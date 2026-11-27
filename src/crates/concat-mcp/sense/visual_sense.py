@@ -114,14 +114,20 @@ CONSUMERS = {
                  "shot pushes, two of one scale in a row is flagged",
     "quality": "the stock veto: a soft, noisy, letterboxed, flat, dark or "
                "blown candidate sinks behind one that passed",
-    "palette": "recorded, not spent: the sheet's own colour temperature is "
-               "the continuity seam today; a palette seam is a later bench",
+    "palette": "the measured temperature: the grade's own look "
+               "(cool-blue, warm) is chosen on it and the next slot's "
+               "near-duplicate line is drawn against the chosen clip's; "
+               "the dominant colours themselves are recorded for the bench",
     "saliency": "the caption band: words move away from where the eye is",
-    "composition": "the stock ranking's taste term and the caption band: a "
-                   "subject on a third holds a caption without a fight",
+    "composition": "the stock ranking's taste term, inside the sheet's own "
+                   "score: a subject on a third ranks over one dead-centre "
+                   "(the caption band reads saliency, not this)",
     "blur": "the stock veto: motion that is a pan's smear is not an entrance",
     "scene": "the stock veto: a clip that cuts inside itself is a montage, "
              "not a take",
+    "models": "the enrich doors' readings, parsed from this row by the "
+              "Rust reader: the film-shot word, the depth room, the "
+              "action and the aesthetic score all join the stock choice",
     "visualScore": "the stock ranking: the sheet's combined score breaks "
                    "the choice within a class",
     "motion.mean": "the drift veto and the continuity gate's motion floor",

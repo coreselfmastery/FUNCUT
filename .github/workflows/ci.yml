@@ -204,7 +204,11 @@ jobs:
     # what this lane senses, and skips it. Anything else - a push, a
     # dispatch, a workflow_call from release.yml - runs it.
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
+    # The changes job is skipped on push and workflow_call. This status
+    # function overrides GitHub's implicit success() so those events still
+    # run the required lane. A docs-only PR still skips, and a failed filter
+    # falls through to run rather than hiding a failed required check.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true') }}
     # This name is a branch-protection required check; do not rename it
     # without moving the required check with it.
     name: The analysis senses against real fixtures
@@ -246,7 +250,7 @@ jobs:
     # it. A skipped job still reports its check run as `skipped`, which
     # branch protection counts as met, so the required check holds.
     needs: changes
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true') }}
     # This name is a branch-protection required check; do not rename it
     # without moving the required check with it.
     name: Engine tests and lints

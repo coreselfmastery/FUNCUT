@@ -3339,16 +3339,26 @@ fn build_voiceover_sibling(
     }
 }
 
+/// Whether a value from the environment is actually configured. An
+/// exported-but-empty variable is common in shell profiles and is not a
+/// usable endpoint or credential.
+fn configured_value(value: Option<String>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn env_configured(name: &str) -> bool {
+    configured_value(std::env::var(name).ok())
+}
+
 /// Whether a vision critic answers without any setup: the environment the
 /// editor was started with, a key the Forge page keeps (handed to the
 /// spawned harness and to the in-process AUTO EDIT's tool calls alike), or
 /// the saved `vlm.json` the `local_vlm {action:"configure"}` tool writes.
-/// The run prompt used to look only at `FUNCUT_VLM_ENDPOINT` and
-/// `FUNCUT_VLM_API_KEY`, so a critic configured the normal way was
-/// invisible to it - the agent was told to set one up when one was
-/// already active, and the quality loop started a step behind.
+/// Blank exported variables do not count as a critic: treating them as
+/// configured skips the local setup and silently leaves craft_critique on
+/// its heuristic tier.
 fn hosted_critic_ready(studio: &Studio) -> bool {
-    if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok() || std::env::var("FUNCUT_VLM_API_KEY").is_ok() {
+    if env_configured("FUNCUT_VLM_ENDPOINT") || env_configured("FUNCUT_VLM_API_KEY") {
         return true;
     }
     // A provider key the page keeps, or one already exported, is a hosted
@@ -3363,7 +3373,7 @@ fn hosted_critic_ready(studio: &Studio) -> bool {
     ];
     if provider_keys
         .iter()
-        .any(|(field, name)| !field.trim().is_empty() || std::env::var(name).is_ok())
+        .any(|(field, name)| !field.trim().is_empty() || env_configured(name))
     {
         return true;
     }
@@ -4655,6 +4665,7 @@ fn auto_edit_event_line(progress: &AutoEditProgress) -> String {
 #[cfg(test)]
 mod tests {
     use super::auto_edit_busy;
+    use super::configured_value;
     use super::director_acceptance_fraction;
     use super::director_phase;
     use super::director_retry_available;
@@ -4664,6 +4675,15 @@ mod tests {
     use super::{AutoEditSource, TakePaths};
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn blank_environment_values_do_not_claim_a_configured_vision_critic() {
+        assert!(!configured_value(None));
+        assert!(!configured_value(Some(String::new())));
+        assert!(!configured_value(Some("  \t\n".to_owned())));
+        assert!(configured_value(Some("https://critic.example/v1".to_owned())));
+        assert!(configured_value(Some("api-key".to_owned())));
+    }
 
     #[test]
     fn director_progress_reaches_one_hundred_percent_only_after_acceptance() {

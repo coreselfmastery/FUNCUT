@@ -15,12 +15,14 @@
 #                                       after it, for a fork of a fork
 #
 # What comes down beside the app. The default is everything a first run
-# needs: the core models (whisper base and base.en for captions, Kokoro
-# int8 for speech, the person-cutout and enhance networks), the sound
+# needs: the core models a one-click AUTO EDIT spends (whisper base for
+# the words, the CLAP and YAMNet sound readers, the four picture models,
+# the two SFX generators and the BGM bed - 29 rows, ~1.8 GB), the sound
 # library's manifest and the sticker shelf's index - all digest-checked,
 # all into the app's own data folder, exactly where the editor's
-# Settings page would put them, so the first run asks for nothing. Two
-# flags tune it:
+# Settings page would put them, so the first run asks for nothing. The
+# critic's own local VLM is not among them: it lives on no mirror this
+# script knows, so the first run fetches it itself. Two flags tune it:
 #
 #   --no-models      install the app alone; the downloads stay where they
 #                    always were, in Settings on first use
@@ -748,9 +750,10 @@ esac
 # ── the first run's downloads, now ──────────────────────────────
 # Everything the editor would otherwise ask for on the first run that
 # needs it, fetched here so a fresh install opens ready: the core models
-# (whisper base and base.en, Kokoro int8, the person cutout, the enhance
-# network), the sound shelf's manifest and the sticker shelf's index -
-# each into
+# a one-click AUTO EDIT spends (whisper base, the CLAP and YAMNet sound
+# readers, the four picture models, the two SFX generators, the BGM
+# bed), the sound shelf's manifest and the sticker shelf's index - each
+# into
 # the app's own data folder, at the exact path and name the editor's
 # Settings page would have written, and each checked against the digest
 # models/manifest.toml pins before it is moved into place. A file that
@@ -911,13 +914,24 @@ if [ "$MODELS" != none ] && [ "$LIST_ONLY" = no ]; then
         # fallback for a manifest it cannot be read from.
         MODELS_RELEASE=$(awk -F'"' '/^release = / { print $2; exit }' "$MANIFEST")
         [ -n "$MODELS_RELEASE" ] || MODELS_RELEASE="models-v1"
-        # The core set: what a first session touches - captions, speech,
-        # background removal, enhance - with the sizes a small machine
-        # can hold. --all-models takes every row instead.
+        # The core set: the sets a first one-click AUTO EDIT's own
+        # preflight downloads - the base transcriber, the CLAP/YAMNet
+        # readers, the four picture models, the two SFX generators and
+        # the BGM bed, 29 rows and ~1.8 GB. The manifest rows are listed
+        # in the order the app itself fetches each set, smallest first,
+        # so an interrupted install leaves whole files behind. The
+        # sets the button never spends - base.en, the TTS banks, the
+        # cutout and enhance networks - stay in Settings, and --all-models
+        # takes every row instead.
         if [ "$MODELS" = all ]; then
             MODEL_IDS=$(awk '/^\[\[model\]\]/ { infound = 1; next } infound && /^id = / { gsub(/"/, ""); print $3; infound = 0 }' "$MANIFEST")
         else
-            MODEL_IDS="whisper-base whisper-base.en kokoro-int8-multi-lang-v1_0 cutout-person enhance-upscale"
+            MODEL_IDS="whisper-base
+                yamnet-classes yamnet clap-tokenizer clap-audio clap-text
+                dinov2-small depth-anything-v2-small transnetv2 clip-vit-b32-visual
+                sfx-small-pipeline sfx-small-tokenizer sfx-small-vae sfx-small-text sfx-small-flow
+                sfx-large-meta sfx-large-tokenizer sfx-large-seconds sfx-large-vae sfx-large-vae-data sfx-large-t5 sfx-large-t5-data sfx-large-dit sfx-large-dit-data
+                bgm-config bgm-tokenizer bgm-codec bgm-text bgm-decoder"
         fi
         for MODEL_ID in $MODEL_IDS; do
             install_model "$MODEL_ID"

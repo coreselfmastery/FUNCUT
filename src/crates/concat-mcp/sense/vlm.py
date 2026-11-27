@@ -60,6 +60,12 @@ DEFAULT_PORT = 8099
 # an endless stream - must not be able to fill the disk.
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
+# hf-mirror.com serves whatever Hugging Face does, under the same path -
+# the last-resort source the engine's own fetch chain ends with (mirror
+# -> HF -> upstream -> hf-mirror.com), for networks huggingface.co is
+# unreachable on. No other host is mirrored there.
+HF_MIRROR_HOST = "https://hf-mirror.com"
+
 # SHA-256 of every artifact setup() fetches, pinned so that "verified,
 # public, pinned artifacts" in the module docstring is enforced by code
 # and not by trust in a CDN: the llama.cpp b11930 release assets (as the
@@ -565,12 +571,29 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _hf_mirror(url: str):
+    """`url` served by hf-mirror.com instead, for a Hugging Face URL; None
+    for any other host, which that mirror does not carry - the same
+    rewrite scripts/models.py and the engine's own fetch make of one."""
+    for host in ("https://huggingface.co/", "https://hf.co/"):
+        if url.startswith(host):
+            return HF_MIRROR_HOST + "/" + url[len(host):]
+    return None
+
+
 def _download(url: str, dest: Path, label: str, progress=None, sha256: str = None):
     """Fetch `url` into `dest`. When `sha256` is pinned, the bytes must
     match it or the file is deleted and the fetch fails: an artifact that
     arrives wrong is never left where a later call would find and use it.
     The stream is also capped, so a mirror that never ends cannot fill
-    the disk."""
+    the disk.
+
+    A Hugging Face URL that fails - unreachable, incomplete, or not the
+    pinned bytes - is retried on hf-mirror.com, the one source of the
+    engine's chain this module can walk: the same path on the mirror
+    host, and the pin faces whatever arrives from it too. When every
+    source fails, the error names them all rather than whatever the last
+    one said."""
     if dest.exists() and dest.stat().st_size > 1_000_000:
         if sha256 and _sha256(dest) != sha256:
             raise RuntimeError(
@@ -583,44 +606,65 @@ def _download(url: str, dest: Path, label: str, progress=None, sha256: str = Non
     # on some earlier download having created it (or failed outright).
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    tmp.unlink(missing_ok=True)
+    sources = [url]
+    twin = _hf_mirror(url)
+    if twin:
+        sources.append(twin)
+    failures = []
     try:
-        with _http(url, 30.0) as resp, open(tmp, "wb") as out:
-            total = int(resp.headers.get("Content-Length") or 0)
-            if total > MAX_DOWNLOAD_BYTES:
-                raise RuntimeError(
-                    f"{label} claims {total} bytes; the most this module fetches is "
-                    f"{MAX_DOWNLOAD_BYTES}"
+        for source in sources:
+            tmp.unlink(missing_ok=True)
+            try:
+                with _http(source, 30.0) as resp, open(tmp, "wb") as out:
+                    total = int(resp.headers.get("Content-Length") or 0)
+                    if total > MAX_DOWNLOAD_BYTES:
+                        raise RuntimeError(
+                            f"{label} claims {total} bytes; the most this module fetches is "
+                            f"{MAX_DOWNLOAD_BYTES}"
+                        )
+                    done, chunk = 0, 1 << 20
+                    last_report = 0.0
+                    while True:
+                        buf = resp.read(chunk)
+                        if not buf:
+                            break
+                        out.write(buf)
+                        done += len(buf)
+                        if done > MAX_DOWNLOAD_BYTES:
+                            raise RuntimeError(
+                                f"{label} passed {MAX_DOWNLOAD_BYTES} bytes without ending"
+                            )
+                        now = time.time()
+                        if progress and (now - last_report > 1.0 or done == total):
+                            last_report = now
+                            progress(label, done, total)
+                if total and tmp.stat().st_size != total:
+                    raise RuntimeError(f"incomplete download for {label}: {tmp.stat().st_size}/{total} bytes")
+                if sha256:
+                    actual = _sha256(tmp)
+                    if actual != sha256:
+                        raise RuntimeError(
+                            f"{label} is not the file it should be: sha256 {actual}, pinned "
+                            f"{sha256}. The download was discarded."
+                        )
+                tmp.replace(dest)
+                return dest
+            except Exception as error:
+                # One source down: its bytes go, and the failure is carried
+                # into the message that names every host tried - a source
+                # whose digest failed is a reason to try the next one, not
+                # to end the setup, exactly as the engine's fetch treats it.
+                failures.append(
+                    f"{urllib.parse.urlparse(source).hostname or source}: {error}"
                 )
-            done, chunk = 0, 1 << 20
-            last_report = 0.0
-            while True:
-                buf = resp.read(chunk)
-                if not buf:
-                    break
-                out.write(buf)
-                done += len(buf)
-                if done > MAX_DOWNLOAD_BYTES:
-                    raise RuntimeError(
-                        f"{label} passed {MAX_DOWNLOAD_BYTES} bytes without ending"
-                    )
-                now = time.time()
-                if progress and (now - last_report > 1.0 or done == total):
-                    last_report = now
-                    progress(label, done, total)
-        if total and tmp.stat().st_size != total:
-            raise RuntimeError(f"incomplete download for {label}: {tmp.stat().st_size}/{total} bytes")
-        if sha256:
-            actual = _sha256(tmp)
-            if actual != sha256:
-                raise RuntimeError(
-                    f"{label} is not the file it should be: sha256 {actual}, pinned "
-                    f"{sha256}. The download was discarded."
-                )
-        tmp.replace(dest)
+        hosts = ", ".join(
+            urllib.parse.urlparse(source).hostname or source for source in sources
+        )
+        raise RuntimeError(
+            f"could not download {label} from {hosts}. The last one said: {failures[-1]}"
+        )
     finally:
         tmp.unlink(missing_ok=True)
-    return dest
 
 
 def _safe_members(archive_names):
@@ -1019,6 +1063,13 @@ def selftest():
     assert _is_local("http://[::1]:8099") is True
     assert _is_local("https://api.groq.com/openai/v1") is False
     out["localProbe"] = "ok"
+    # The mirror fallback a Hugging Face download carries: the same path on
+    # hf-mirror.com, and no twin for a host that mirror does not serve.
+    hf = "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/x.gguf"
+    assert _hf_mirror(hf) == "https://hf-mirror.com/" + hf[len("https://huggingface.co/"):]
+    assert _hf_mirror("https://hf.co/a/b") == "https://hf-mirror.com/a/b"
+    assert _hf_mirror("https://github.com/ggml-org/llama.cpp/releases/download/b11930/x.zip") is None
+    out["mirrorFallback"] = "ok"
     # The extraction allow-list: absolute paths, `..`, drive letters and
     # mixed separators must all fall away however they are spelled.
     keep = _safe_members(

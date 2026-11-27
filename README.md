@@ -115,7 +115,7 @@ Or run it straight from the repository:
 curl -fsSL https://raw.githubusercontent.com/coreselfmastery/FUNCUT/main/install-linux.sh | bash
 ```
 
-`install-linux.sh` downloads the newest published release for your architecture, verifies its checksum, and drops the AppImage into `~/.local/bin` — no root. It also fetches the Geneva motion sidecar (v1.6.0, ~16 MB) on a best-effort basis. Other shapes:
+`install-linux.sh` downloads the newest published release for your architecture, verifies its checksum, and drops the AppImage into `~/.local/bin` — no root. It also fetches the Geneva motion sidecar (v1.6.0, ~16 MB) on a best-effort basis, and pre-fetches the core models a one-click AUTO EDIT spends — whisper base, the CLAP/YAMNet sound readers, the four picture models, both SFX generators and the BGM bed, ~1.8 GB — so the first edit asks for nothing but its local VLM (~546 MB, fetched on first run). `--no-models` leaves all of it to Settings; `--all-models` takes the whole 51-model shelf (~5 GB). Other shapes:
 
 ```sh
 ./install-linux.sh --deb      # through apt, asks for sudo
@@ -146,7 +146,7 @@ sudo apt install mesa-vulkan-drivers libasound2t64   # Debian 13+ / Ubuntu 24.04
 sudo dnf install mesa-vulkan-drivers alsa-lib        # Fedora
 ```
 
-A machine with no GPU still runs: Mesa’s lavapipe is a software Vulkan renderer — slower, but complete. The AI models download once from Settings and work offline after that. The 3D layer itself never needs a GPU.
+A machine with no GPU still runs: Mesa’s lavapipe is a software Vulkan renderer — slower, but complete. The AI models download once — the installer already brought the AUTO EDIT core set, the rest comes from Settings — and work offline after that. The 3D layer itself never needs a GPU.
 
 ### Headless
 

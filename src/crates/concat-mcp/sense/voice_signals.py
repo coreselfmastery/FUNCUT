@@ -2327,7 +2327,7 @@ def _director_hints(lines_out, pauses, rust, language, arc, bgm):
     }
 
 
-def _bgm_decision(rust, speech_ratio):
+def _bgm_decision(rust, speech_ratio, duration=None):
     """Dry voice wants music under it; a take that already carries music
     wants none added."""
     whole = (rust or {}).get("forensic", {}).get("whole")
@@ -2344,13 +2344,21 @@ def _bgm_decision(rust, speech_ratio):
                     "reason": f"music likelihood {likelihood:.2f}: dense, regular "
                               "onsets with a music-like spectrum - this take "
                               "already carries music"}
-        if flatness is not None and flatness > 0.25 and onsets >= 60:
-            # 60 onsets in ANY window is a length claim, not a density one:
-            # a 30-minute narration clears it in dead speech. The rate is
-            # the measured form (onsetRatePerMin >= 60 is one onset per
-            # second sustained, the same bar the director reads).
+        # The rate, never the raw count: a count bar is a length claim,
+        # not a density one - a 30-minute narration clears 60 raw onsets
+        # in dead speech. onsetRatePerMin >= 60 is one onset per second
+        # sustained, the same bar the director reads. An older ear that
+        # did not serialize the rate is answered honestly by deriving it
+        # from the count over the take's duration; with neither a rate
+        # nor a duration the gate stays silent rather than guess.
+        onset_rate = whole.get("onsetRatePerMin")
+        if not isinstance(onset_rate, (int, float)):
+            onset_rate = onsets / duration * 60.0 if duration else None
+        if flatness is not None and flatness > 0.25 and \
+                isinstance(onset_rate, (int, float)) and onset_rate >= 60.0:
             return {"recommendation": "skip",
-                    "reason": f"spectral flatness {flatness:.2f} with {onsets} flux onsets: "
+                    "reason": f"spectral flatness {flatness:.2f} with an onset "
+                              f"rate of {onset_rate:.0f}/min: "
                               "this take already carries music-like content"}
         if floor is not None and floor < -45.0:
             return {"recommendation": "add",
@@ -2630,7 +2638,7 @@ def extract(spec):
                      for l in lines
                      if isinstance(l.get("start"), (int, float)) and isinstance(l.get("end"), (int, float)))
         speech_ratio = max(0.0, min(1.0, spoken / max(0.1, duration)))
-    bgm = _bgm_decision(rust, speech_ratio)
+    bgm = _bgm_decision(rust, speech_ratio, duration)
     hints = _director_hints(lines_out, pauses, rust, language, arc, bgm)
     motifs_out = _motifs(lines)
     motion = _motion_design(
@@ -3012,6 +3020,44 @@ def selftest():
             failures.append("no cut style")
         if result["directorHints"]["bgm"]["recommendation"] not in ("add", "skip", "duck_only"):
             failures.append(f"bgm said {result['directorHints']['bgm']}")
+        # The bgm gate reads the RATE, never the raw count: a 30-minute dry
+        # narration carries 360 onsets (one every 5 s) - a count bar of 60
+        # would strip its music bed - while its rate is 12/min, far below
+        # the one-onset-a-second bar the director reads. A dense take (a
+        # click every 0.5 s, 120/min) skips. Both proven directly, so the
+        # gate answers without the Rust ears on this machine.
+        dry_take = {"forensic": {"whole": {
+            "noiseFloorDbfs": -60.0, "snrDb": 30.0,
+            "spectralFlatness": 0.4, "musicLikelihood": 0.1,
+            "onsetRatePerMin": 12.0,
+            "fluxOnsetsSec": [i * 5.0 for i in range(360)],
+        }}}
+        long_dry = _bgm_decision(dry_take, 0.9, 1800.0)
+        if long_dry["recommendation"] != "add":
+            failures.append(
+                f"a 30-minute dry narration said {long_dry['recommendation']}, not add: "
+                f"{long_dry}")
+        # The same take without the rate key (an older ear) is answered by
+        # the derived rate - count over duration - and still beds.
+        older_ear = {"forensic": {"whole": {
+            k: v for k, v in dry_take["forensic"]["whole"].items()
+            if k != "onsetRatePerMin"}}}
+        derived = _bgm_decision(older_ear, 0.9, 1800.0)
+        if derived["recommendation"] != "add":
+            failures.append(
+                f"the derived-rate fallback said {derived['recommendation']}, not add: "
+                f"{derived}")
+        dense_take = {"forensic": {"whole": {
+            "noiseFloorDbfs": -60.0, "snrDb": 30.0,
+            "spectralFlatness": 0.4, "musicLikelihood": 0.1,
+            "onsetRatePerMin": 120.0,
+            "fluxOnsetsSec": [i * 0.5 for i in range(120)],
+        }}}
+        dense = _bgm_decision(dense_take, 0.9, 60.0)
+        if dense["recommendation"] != "skip":
+            failures.append(
+                f"a 120-onsets-a-minute take said {dense['recommendation']}, not skip: "
+                f"{dense}")
         # The Rust ears' new readings flow through the merge whole: the
         # fifty-ear keys exist whenever the binary ran, so a shape that
         # drifts (a renamed key on the Rust side) fails here rather than

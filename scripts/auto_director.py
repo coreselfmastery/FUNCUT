@@ -5936,7 +5936,26 @@ def _sense_replies(**actions: Any) -> Any:
 
 
 SELF_TEST_REPLIES = {
-    "concat_version": {"version": "0.2.8-funcut.12", "tools": 110},
+    # The reply's own shape, as the server actually sends it
+    # (VersionInfo in concat-api/src/message.rs, with the mcp layer's
+    # own describe() folded in by tools.rs): apiVersion is the API's
+    # own "0.2" (API_VERSION, message.rs - not the MCP handshake's
+    # 2025-11-25), concat the running build's fork-iterated version,
+    # dirs the config/data pair, capabilities the served-transport
+    # names, mcp the mode the server serves over. The old mock's
+    # {"version", "tools"} was fiction in both keys: the reply never
+    # carried them, and its remembered 110 named a catalogue the
+    # server outgrew long ago. The log-only consumer just prints it.
+    "concat_version": {
+        "apiVersion": "0.2",
+        "concat": "0.2.8-funcut.15",
+        "dirs": {
+            "config": "/tmp/funcut-selftest/config",
+            "data": "/tmp/funcut-selftest/data",
+        },
+        "capabilities": ["events", "json-rpc"],
+        "mcp": {"mode": "window", "address": "127.0.0.1:7420"},
+    },
     "local_vlm": {"status": "heuristic", "installed": False},
     "sense_audio_repair": _sense_replies(),
     "transcribe": {"job": "speech-job"},

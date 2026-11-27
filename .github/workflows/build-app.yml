@@ -359,6 +359,12 @@ jobs:
           workspaces: src
           key: ${{ matrix.target }}
           env-vars: CARGO CC CFLAGS CXX CMAKE RUST GGML ORT
+          # Saved even when the job fails, for the reason ci.yml's engine
+          # lane gives: a cache saved only by a green run is never saved
+          # while the lane is red, and every red lane then compiles the
+          # Slint-and-wgpu window whole, from nothing, on a runner that
+          # keeps dying under exactly that build.
+          cache-on-failure: true
 
       # The shipping profile: fat LTO, panic=abort, stripped. See the
       # workspace Cargo.toml for what each knob costs.

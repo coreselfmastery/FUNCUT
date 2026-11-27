@@ -31,6 +31,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Documentation cannot change a rendered frame, and this file's
+    # jobs are not among the branch-protection required checks, so a
+    # suppressed run leaves nothing pending: markdown and docs/ alone
+    # skip the sidecar lanes entirely.
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -53,6 +58,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+      # The same room the ci.yml engine lane pays for: this job compiles
+      # the ort-and-whisper-adjacent stack one job wide, and the runner
+      # class that died under that lane died at the link, not the
+      # compile. Sixteen gigabytes of swap beside the build, so the one
+      # process that does not fit RAM fits the machine.
+      - name: Room for the build
+        run: |
+          set -euo pipefail
+          echo "== memory =="; free -h
+          echo "== swap before =="; swapon --show || true
+          swap_kib() { awk 'NR>1 { sum += $3 } END { print sum + 0 }' /proc/swaps; }
+          had_kib=$(swap_kib)
+          if [ "$had_kib" -lt 16777216 ]; then
+            for where in /mnt /; do
+              if sudo fallocate -l 16G "$where/swapfile" 2>/dev/null; then
+                sudo chmod 600 "$where/swapfile"
+                sudo mkswap "$where/swapfile"
+                sudo swapon "$where/swapfile"
+                echo "swap on at $where/swapfile, beside the ${had_kib} KiB already there"
+                break
+              fi
+            done
+          fi
+          echo "== swap after =="; swapon --show || true
       - name: The pinned toolchain
         id: toolchain
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
@@ -234,6 +263,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+      # The same room the ci.yml engine lane pays for: this job compiles
+      # the ort-and-whisper-adjacent stack one job wide, and the runner
+      # class that died under that lane died at the link, not the
+      # compile. Sixteen gigabytes of swap beside the build, so the one
+      # process that does not fit RAM fits the machine.
+      - name: Room for the build
+        run: |
+          set -euo pipefail
+          echo "== memory =="; free -h
+          echo "== swap before =="; swapon --show || true
+          swap_kib() { awk 'NR>1 { sum += $3 } END { print sum + 0 }' /proc/swaps; }
+          had_kib=$(swap_kib)
+          if [ "$had_kib" -lt 16777216 ]; then
+            for where in /mnt /; do
+              if sudo fallocate -l 16G "$where/swapfile" 2>/dev/null; then
+                sudo chmod 600 "$where/swapfile"
+                sudo mkswap "$where/swapfile"
+                sudo swapon "$where/swapfile"
+                echo "swap on at $where/swapfile, beside the ${had_kib} KiB already there"
+                break
+              fi
+            done
+          fi
+          echo "== swap after =="; swapon --show || true
       - name: The pinned toolchain
         id: toolchain
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"

@@ -1728,12 +1728,22 @@ def _rust_binary():
     # could even start - which took the whole voice-signals read down
     # with it, on every run whose ears were simply absent. A shallow
     # tree offers fewer bases; the absent ears stay absent, as designed.
-    for base in list(here.parents)[2:4]:
+    for base in _rust_binary_search_bases(here):
         for profile in ("release", "debug"):
             built = base / "target" / profile / "voice-signals"
             if built.is_file():
                 return str(built)
     return None
+
+
+def _rust_binary_search_bases(here):
+    """The two checkout roots beside the sense scripts, if they exist.
+
+    Runtime copies can live in a shallow temporary directory. Slicing the
+    parents sequence returns the available roots without indexing a parent
+    that the runtime tree does not have.
+    """
+    return list(Path(here).parents)[2:4]
 
 
 def _rust_ears(spec, lines, audio, ff):
@@ -2864,6 +2874,14 @@ def selftest():
         # binary is built, and their absence is a note, not a failure.
         result = extract(spec)
         failures = []
+        # A runtime copy can be only one directory below its temporary
+        # root. The checkout-root walk must then be empty, not an IndexError
+        # that aborts the entire voice-signals stage when its Rust binary is
+        # absent.
+        shallow_runtime = Path(workdir) / "runtime"
+        shallow_runtime.mkdir()
+        if _rust_binary_search_bases(shallow_runtime):
+            failures.append("a shallow runtime tree exposed nonexistent checkout roots")
         if not result.get("ok"):
             return {"ok": False, "selftest": "extract failed", "error": result.get("error")}
         lines = result["lines"]

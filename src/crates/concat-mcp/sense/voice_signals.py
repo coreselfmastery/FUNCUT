@@ -2878,8 +2878,7 @@ def selftest():
         # root. The checkout-root walk must then be empty, not an IndexError
         # that aborts the entire voice-signals stage when its Rust binary is
         # absent.
-        shallow_runtime = Path(workdir) / "runtime"
-        shallow_runtime.mkdir()
+        shallow_runtime = Path("/runtime")
         if _rust_binary_search_bases(shallow_runtime):
             failures.append("a shallow runtime tree exposed nonexistent checkout roots")
         if not result.get("ok"):

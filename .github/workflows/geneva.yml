@@ -45,6 +45,12 @@ on:
         type: string
 
 
+# Keep every run for this ref: older commits finish and newer commits queue.
+concurrency:
+  group: geneva-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

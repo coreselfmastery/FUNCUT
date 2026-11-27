@@ -27,6 +27,12 @@ on:
 
 # The tests and lints read the tree and post their results; nothing a
 # green run needs the token to write.
+# Keep every run for this ref: older commits finish and newer commits queue.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

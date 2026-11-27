@@ -70,6 +70,12 @@ on:
 # The bundles read the tree and fetch their pinned dependencies; the
 # token has nothing to write until the release workflow's own publish
 # job says otherwise.
+# Keep every run for this ref: older commits finish and newer commits queue.
+concurrency:
+  group: build-app-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

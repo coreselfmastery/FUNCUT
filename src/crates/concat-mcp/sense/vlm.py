@@ -1075,6 +1075,23 @@ def selftest():
         if kept:
             assert env[key].endswith(os.pathsep + kept)
         out["serverEnv"] = "ok"
+        # The archive is extracted without symlinks. Recreate the short
+        # SONAME that the loader asks for, and preserve any existing file
+        # rather than replacing an operator-provided alias.
+        with tempfile.TemporaryDirectory(prefix="vlm-sonames-") as scratch:
+            folder = Path(scratch)
+            versioned = folder / "libllama-common.so.0.7.0"
+            versioned.write_bytes(b"versioned library")
+            existing = folder / "libggml.so.0"
+            existing.write_text("keep", encoding="utf-8")
+            (folder / "libggml.so.0.1.0").write_bytes(b"other library")
+            _link_sonames(folder)
+            alias = folder / "libllama-common.so.0"
+            assert alias.is_symlink(), "the short SONAME was not recreated"
+            assert alias.resolve() == versioned.resolve(), alias
+            assert existing.read_text(encoding="utf-8") == "keep"
+            assert not existing.is_symlink(), "an existing alias was replaced"
+        out["sonames"] = "ok"
     # The provider-key resolution: the first named provider whose key is
     # exported is the critic, in the table's own order, and none is
     # reported when no provider key is set. This is the seam that lets a

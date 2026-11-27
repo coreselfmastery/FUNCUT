@@ -1854,7 +1854,7 @@ def _whisperx_words(audio, lines, language):
 
 
 def _motion_design(lines_out, pauses, motifs, entities, arc, speaker,
-                   forensic_whole):
+                   forensic_whole, whole_prosody=None):
     """The twenty motion-design readings, derived from the profile.
 
     They add no pass: each one turns a reading the profile already made
@@ -1963,7 +1963,13 @@ def _motion_design(lines_out, pauses, motifs, entities, arc, speaker,
             "speed": round(max(0.6, min(1.6, (wpm or 150.0) / 150.0)), 3),
         })
 
-        layers = prosody.get("rhythmLayers") or []
+        # The rhythm layers are a WHOLE-TAKE reading: the Rust ear emits
+        # them at prosody.rhythmLayers and never per line (LineProsody
+        # carries no layers), so the stagger draws on the take's own
+        # layers, handed in beside the forensic whole - the per-line
+        # prosody keeps the fields that ARE per-line (emphasis, pitch,
+        # rise) above.
+        layers = (whole_prosody or {}).get("rhythmLayers") or []
         rhythm_stagger.append({
             "line": index,
             "layers": layers,
@@ -2644,7 +2650,8 @@ def extract(spec):
     motion = _motion_design(
         lines_out, pauses, motifs_out, entities, arc,
         (rust or {}).get("speaker"),
-        (rust or {}).get("forensic", {}).get("whole"))
+        (rust or {}).get("forensic", {}).get("whole"),
+        (rust or {}).get("prosody"))
     sources["motion"] = ("derived from the profile's own readings "
                          "(no extra pass)")
     # The filter's own note lands before the confidence builder reads the
@@ -2869,6 +2876,29 @@ def selftest():
                      "rateTempo", "rhythmStagger", "sentenceEntry"):
             if len(motion.get(name) or []) != len(lines):
                 failures.append(f"motion.{name} did not answer every line")
+        # rhythmStagger draws on the WHOLE-TAKE prosody: the Rust ear
+        # emits the rhythm layers at prosody.rhythmLayers and never per
+        # line, so the reading is proven by handing _motion_design a
+        # fully-populated whole-take prosody directly - two differing
+        # layers must yield non-empty layers and a non-zero stagger for
+        # every line, whatever the per-line prosody carries.
+        two_layers = [
+            {"eigenvalue": 0.12, "periodSec": 2.4, "strength": 0.8},
+            {"eigenvalue": 0.41, "periodSec": 1.1, "strength": 0.4},
+        ]
+        staged = _motion_design(
+            lines, result["pauses"], result["motifs"], result["entities"],
+            result.get("arc"), result.get("speaker"),
+            (result.get("wholeTake") or {}).get("forensic"),
+            {"rhythmLayers": two_layers})
+        staggered = staged.get("rhythmStagger") or []
+        if len(staggered) != len(lines):
+            failures.append("rhythmStagger did not answer every line on the whole-take read")
+        elif not all(entry.get("layers") == two_layers for entry in staggered):
+            failures.append(f"the whole-take layers did not reach the stagger: "
+                            f"{staggered[:1]}")
+        elif not all((entry.get("staggerSec") or 0.0) > 0.0 for entry in staggered):
+            failures.append("differing layers staggered the entries by nothing")
         # Half the signals ride ffmpeg (silencedetect, ebur128); the rest
         # are pure Python. The selftest proves everything it can on this
         # machine and names the half it proved.

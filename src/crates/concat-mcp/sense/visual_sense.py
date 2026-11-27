@@ -2998,7 +2998,10 @@ def models(spec):
             "path": found,
             "onDiskBytes": Path(found).stat().st_size if found else 0,
             "pinned": pin.get("sha256"),
-            "ready": found is not None and np is not None,
+            # The same readiness `_ready_door` gates every door on: a file
+            # on disk, numpy for the tensors AND onnxruntime to run them -
+            # a file with no runtime is listed, not ready.
+            "ready": found is not None and np is not None and _has_onnxruntime(),
         })
     present = [row["id"] for row in rows if row["present"]]
     missing = [row["id"] for row in rows if not row["present"]]

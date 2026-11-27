@@ -1616,7 +1616,16 @@ def selftest(spec=None):
           models.state in ("ready", "absent"), models.state or models.reason or "")
 
     if models.state == "ready":
-        shelf = Path(str(spec.get("shelf") or Path(__file__).resolve().parents[4] / "audio"))
+        # The shelf the selftest listens into: the repository's own
+        # audio/ folder when the script runs from a checkout, and a path
+        # that names nothing when it does not - the runtime copy of this
+        # script lives in the sense runtime's own temp directory, where
+        # the fifth parent does not exist, and indexing it raised
+        # IndexError the selftest then reported as its own failure
+        # instead of skipping the listen.
+        bases = list(Path(__file__).resolve().parents)
+        default_shelf = (bases[4] / "audio") if len(bases) > 4 else Path("/no-audio-shelf")
+        shelf = Path(str(spec.get("shelf") or default_shelf))
         whoosh = shelf / "reverse-whoosh-medium-strong.ogg"
         if whoosh.is_file():
             yam = models.yamnet_read(whoosh)

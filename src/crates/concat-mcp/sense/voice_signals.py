@@ -1721,7 +1721,14 @@ def _rust_binary():
     # target/ (this repo keeps its Cargo workspace under src/, so the
     # script's grandparents are the workspace root) and, for a checkout
     # whose workspace sits at the root, the repository's own target/.
-    for base in (here.parents[2], here.parents[3]):
+    # The walk is sliced, never indexed: the runtime copy of this script
+    # lives two or three levels deep in the sense runtime's own temp
+    # directory, where the third or fourth parent does not exist, and
+    # indexing one that is not there raised IndexError before the walk
+    # could even start - which took the whole voice-signals read down
+    # with it, on every run whose ears were simply absent. A shallow
+    # tree offers fewer bases; the absent ears stay absent, as designed.
+    for base in list(here.parents)[2:4]:
         for profile in ("release", "debug"):
             built = base / "target" / profile / "voice-signals"
             if built.is_file():

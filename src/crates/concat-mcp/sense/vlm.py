@@ -40,6 +40,7 @@ import ipaddress
 import json
 import os
 import platform
+import re
 import stat
 import subprocess
 import sys
@@ -727,8 +728,42 @@ def server_binary(progress=None):
     if not found:
         raise RuntimeError("llama-server binary missing from downloaded archive")
     found.chmod(found.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _link_sonames(found.parent)
     archive.unlink(missing_ok=True)
     return found
+
+
+def _link_sonames(folder):
+    """The loader's short names for the shared libraries the release
+    archive ships versioned only.
+
+    The llama.cpp release carries `libllama-common.so.0.7.0` beside the
+    server, but the binary's own NEEDED entries ask for the short
+    `libllama-common.so.0` - and the safe extraction above drops
+    whatever links the archive itself carried, on purpose, so the short
+    names have to be recreated from the files that remain. Without them
+    the server dies at once with "error while loading shared
+    libraries", and the health wait reports a ninety-second timeout on
+    a server that never started. Every `lib*.so.MAJOR.MINOR.PATCH`
+    gains its `lib*.so.MAJOR` short name, inside the folder the app
+    owns, pointing at a file that folder already holds.
+    """
+    if os.name == "nt":
+        return
+    for name in os.listdir(folder):
+        match = re.match(r"^(lib[^/]+)\.so\.(\d+)\.\d+\.\d+$", name)
+        if not match or not (folder / name).is_file():
+            continue
+        short = folder / f"{match.group(1)}.so.{match.group(2)}"
+        if not short.exists():
+            try:
+                short.symlink_to(name)
+            except OSError:
+                # A filesystem that refuses links (some FAT sticks, some
+                # sandboxes) keeps the versioned names only; the server
+                # may still find its libraries another way, and the
+                # health wait reports the truth if it does not.
+                pass
 
 
 def model_files(profile: str, progress=None):

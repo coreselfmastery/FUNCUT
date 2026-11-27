@@ -21,8 +21,19 @@ use std::sync::{Arc, Mutex};
 
 use crate::message::{ApiError, ErrorCode, Event, JobState, JobStatus};
 
-/// How many finished jobs are remembered, oldest forgotten first.
-const FINISHED_KEPT: usize = 32;
+/// How many finished jobs are remembered, oldest forgotten first. The
+/// auto-edit's own run is the ceiling that decides this number: a whole
+/// one-click edit starts dozens of analysis jobs - the transcription,
+/// its upgrade pass, the per-take signal reads, the beat and emotion
+/// extracts, the contact sheets, the watches and the previews - and its
+/// LAST stage re-reads the FIRST job's transcript (the words the export
+/// is verified against, fetched by path because the program was written
+/// before the job was minted). A cap of 32 evicted the take's
+/// transcription mid-run, and the export honestly refused to verify
+/// against words it could no longer see. 256 holds a whole run's
+/// history with room for a much longer one; a job's status is a small
+/// record, and the biggest outputs - transcripts - are kilobytes.
+const FINISHED_KEPT: usize = 256;
 
 /// The running jobs' flags and every job's last known state.
 #[derive(Default)]

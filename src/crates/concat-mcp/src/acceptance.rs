@@ -630,7 +630,10 @@ mod tests {
         assert_eq!(asked[0].1["path"], "/edits/Reel");
         assert_eq!(asked[1].1["project"], "/edits/Reel");
         assert!(asked[1].1.get("path").is_none());
-        assert_eq!(asked[1].1["audio"], true);
+        // The open-project watch renders frames only, so the ask carries
+        // no audio flag: one it could not honour left the critic advising
+        // the call that had just been made.
+        assert!(asked[1].1.get("audio").is_none());
         assert_eq!(asked[2].1["path"], "/edits/Reel");
     }
 

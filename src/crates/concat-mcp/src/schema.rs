@@ -668,8 +668,14 @@ mod tests {
         // seven fields ride the same door (#218) - the director writes
         // its accents and its bed with them, and the two merges together
         // need the room both measured.
+        // 267,000 -> 268,000 at 109: `auto_edit` carries the author's
+        // creative brief and the monetised switch on the surface - the
+        // words a run must be able to spell before it can obey them -
+        // and the setup-first preflight adds nothing new to spend;
+        // 267,784 measured with every description already at its terse
+        // form. Function, not prose.
         assert!(
-            director < 267_000,
+            director < 268_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

@@ -9854,6 +9854,17 @@ fn preflight(log: &[Value]) -> Option<ToolCall> {
             "models_download",
             json!({ "kind": "sound", "id": "sfx-small" }),
         ),
+        // The hook accent's own generator and the written bed: the SFX
+        // stage spends the large set on the one hit that carries the
+        // hook and the Music stage writes a short bed with the BGM set,
+        // so a cold machine that stopped at the small set used to refuse
+        // both mid-run. The setup stage is where the whole spine's
+        // material belongs, not the stage that needed it first.
+        (
+            "models_download",
+            json!({ "kind": "sound", "id": "sfx-large" }),
+        ),
+        ("models_download", json!({ "kind": "sound", "id": "bgm" })),
         ("local_vlm", json!({ "action": "setup", "profile": "mini" })),
     ];
     // The download items, in queue order - the VLM starts no job.
@@ -9910,6 +9921,12 @@ fn preflight(log: &[Value]) -> Option<ToolCall> {
             // finds it on disk and walks past it.
             return None;
         }
+        if last["state"] != "done" {
+            // Settled as a refusal: the gate's to judge, never walked
+            // past. A queue that moved on would start the edit without
+            // the model and only say so at the stage that needed it.
+            return None;
+        }
         // Settled: the next item in the queue.
     }
     // Every download item settled: the VLM's own setup, if it has not
@@ -9919,6 +9936,49 @@ fn preflight(log: &[Value]) -> Option<ToolCall> {
         return Some(call(tool, arguments.clone()));
     }
     None
+}
+
+/// The project's brand guide, when its brief carries one: the channel's
+/// non-negotiables, in the shape `emotion {action:"template"}` documents.
+/// Only the fields the spine spends are read through the accessors below;
+/// the whole object travels to the placement gate, which enforces the
+/// taboos against every stock candidate.
+fn brand_kit(project: &str) -> Option<Value> {
+    let text =
+        std::fs::read_to_string(std::path::Path::new(project).join("creative-brief.json")).ok()?;
+    let brief: Value = serde_json::from_str(&text).ok()?;
+    brief.get("brandKit").filter(|kit| kit.is_object()).cloned()
+}
+
+/// One colour out of the kit at `pointer`, when it is a `#RRGGBB` the
+/// title tool can paint. A name, a gradient or a half-written hex is no
+/// colour: the house colour stands rather than a guess.
+fn brand_colour(brand: &Option<Value>, pointer: &str) -> Option<String> {
+    let hex = brand.as_ref()?.pointer(pointer)?.as_str()?.trim();
+    let body = hex.strip_prefix('#')?;
+    (body.len() == 6 && body.chars().all(|c| c.is_ascii_hexdigit())).then(|| format!("#{body}"))
+}
+
+/// The brand's base grade, when the kit names one: the look the emotion
+/// read pushes on top of, per the guide's own `grade.base` note.
+fn brand_grade(brand: &Option<Value>) -> Option<String> {
+    brand
+        .as_ref()?
+        .pointer("/grade/base")?
+        .as_str()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// The look the grade lays: the brand's base when the read landed on the
+/// house default, the read's own when it chose one. The guide says the
+/// per-act temperature pushes on top of the base, never instead of it.
+fn look_with_brand(brand: &Option<Value>, decided: &'static str) -> String {
+    match (brand_grade(brand), decided) {
+        (Some(base), "concat.teal-orange") => base,
+        (_, decided) => decided.to_owned(),
+    }
 }
 
 /// The AUTO EDIT's whole program: every stage the unattended run can run
@@ -9948,6 +10008,11 @@ fn preflight(log: &[Value]) -> Option<ToolCall> {
 pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let project = source.project.clone();
     let takes = source.takes.clone();
+    // The project's brand guide, read once here: the accent the captions
+    // wear, the base look the grade starts from, and the kit the stock
+    // gate enforces the taboos of. A brief with no kit is no kit, and
+    // every stage falls back to the read.
+    let brand = brand_kit(&project);
     let call = |tool: &str, arguments: Value| ToolCall {
         tool: tool.to_owned(),
         arguments,
@@ -9959,8 +10024,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let mut steps: Vec<ProgramStep> = Vec::new();
     // 1. The preflight: the setup stage. The models the run's own
     //    spine spends - the transcriber's words, the ears' sound set,
-    //    the visual doors' picture set, the accents' SFX set, and the
-    //    critic's own eye last - are downloaded and waited for before
+    //    the visual doors' picture set, the accents' two SFX sets, the
+    //    written bed's set, and the critic's own eye last - are downloaded and waited for before
     //    anything else is paid for them, so the edit starts with its
     //    material on disk instead of degrading mid-run. Each download
     //    ends at once when its model is already there, and the gate
@@ -10534,6 +10599,11 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut bed_lane: Option<String> = None;
                 let mut bed_lane_asked = false;
                 let mut bed_lane_pending = false;
+                // The track the search chose, held across the lane's own
+                // mint: the mint's reply is not a search page, so the id
+                // has to wait somewhere the next entry into this phase
+                // can find it.
+                let mut bed_chosen: Option<String> = None;
                 move |log| {
                     if phase == 0 {
                         phase = 1;
@@ -10604,6 +10674,32 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         }
                     }
                     if phase == 10 {
+                        // The lane's mint answered: the bed the search
+                        // chose is laid on it now, before anything reads
+                        // the log's last seat as a search page.
+                        if bed_lane_pending {
+                            bed_lane_pending = false;
+                            if let Some(lane) = log
+                                .last()
+                                .and_then(|reply| reply.get("createdId"))
+                                .and_then(Value::as_str)
+                            {
+                                bed_lane = Some(lane.to_owned());
+                            }
+                            if let Some(id) = bed_chosen.take() {
+                                phase = 11;
+                                return Some(call(
+                                    "bgm_import",
+                                    json!({
+                                        "path": plan_project,
+                                        "ids": [id],
+                                        "start": 0.0,
+                                        "monetized": plan_settings.monetized,
+                                        "track": bed_lane.clone(),
+                                    }),
+                                ));
+                            }
+                        }
                         // The search's answer: the bed is the track that
                         // fits the cut. An empty page walks the chain's
                         // next door; a chain with no doors left leaves the
@@ -10632,35 +10728,25 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .and_then(|track| track["id"].as_str().map(str::to_owned));
                         match chosen {
                             Some(id) => {
-                                phase = 11;
                                 // The lane before the import: minted once,
-                                // before the very first placement - the
-                                // phase stays at 11, so the next ask
-                                // re-enters this branch with the mint
-                                // answered and lays the bed on its lane.
-                                if bed_lane.is_none() {
-                                    if !bed_lane_asked {
-                                        bed_lane_asked = true;
-                                        bed_lane_pending = true;
-                                        return Some(call(
-                                            "edit_apply",
-                                            json!({
-                                                "path": plan_project,
-                                                "command": { "op": "addTrack" },
-                                            }),
-                                        ));
-                                    }
-                                    if bed_lane_pending {
-                                        bed_lane_pending = false;
-                                        if let Some(lane) = log
-                                            .last()
-                                            .and_then(|reply| reply.get("createdId"))
-                                            .and_then(Value::as_str)
-                                        {
-                                            bed_lane = Some(lane.to_owned());
-                                        }
-                                    }
+                                // before the very first placement. The
+                                // phase does not move until the import is
+                                // actually asked - a phase that advanced
+                                // here read the mint's `createdId` as the
+                                // import's reply and dropped the bed.
+                                if bed_lane.is_none() && !bed_lane_asked {
+                                    bed_lane_asked = true;
+                                    bed_lane_pending = true;
+                                    bed_chosen = Some(id);
+                                    return Some(call(
+                                        "edit_apply",
+                                        json!({
+                                            "path": plan_project,
+                                            "command": { "op": "addTrack" },
+                                        }),
+                                    ));
                                 }
+                                phase = 11;
                                 return Some(call(
                                     "bgm_import",
                                     json!({
@@ -10876,6 +10962,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let tighten_project = project.clone();
     let grade_source = takes.clone();
     let grade_project = project.clone();
+    let grade_brand = brand.clone();
     let level_source = takes.clone();
     let level_project = project.clone();
     steps.push(
@@ -10926,7 +11013,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 && runtime > 1.0
                             {
                                 let choice = grade_decision(log, &grade_source);
-                                let (key, base) = grade_param(choice.look);
+                                let look = look_with_brand(&grade_brand, choice.look);
+                                let (key, base) = grade_param(&look);
                                 let body = base * 0.85;
                                 let mut commands = vec![json!({
                                     "op": "setEffectKey",
@@ -11067,7 +11155,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     if runtime < 0.5 {
                         return None;
                     }
-                    let look = grade_decision(log, &grade_source).look;
+                    let look =
+                        look_with_brand(&grade_brand, grade_decision(log, &grade_source).look);
                     graded = true;
                     // The texture rides under the grade: a second layer
                     // the mood asks for - grain for a warm film look, a
@@ -11077,7 +11166,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // second, at its own default intensity - no keys, so
                     // a package whose parameter names differ from the
                     // grade's still lands whole.
-                    let texture = texture_for_look(look);
+                    let texture = texture_for_look(&look);
                     let mut commands: Vec<Value> = vec![json!({
                         "op": "addLayerClip",
                         "trackId": null,
@@ -11124,6 +11213,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let gather_source = takes.clone();
     let gather_project = project.clone();
     let gather_emotion = takes.clone();
+    let gather_brand = brand.clone();
     let gather_provider = source.stock_provider.clone();
     steps.push(
         DerivedStep::react(
@@ -11749,14 +11839,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 })
                                 .collect();
                             phase = GatherPhase::ReadGate;
-                            return Some(call(
-                                "emotion",
-                                json!({
-                                    "action": "gate",
-                                    "segment": segment,
-                                    "candidates": gate_candidates,
-                                }),
-                            ));
+                            // The brand travels with the gate: the taboos
+                            // are the check the author wrote, and a gate
+                            // without them passes what the channel forbids.
+                            let mut ask = json!({
+                                "action": "gate",
+                                "segment": segment,
+                                "candidates": gate_candidates,
+                            });
+                            if let Some(brand) = &gather_brand {
+                                ask["brand"] = brand.clone();
+                            }
+                            return Some(call("emotion", ask));
                         }
                         GatherPhase::ReadGate => {
                             // Among the candidates the gate passed, the
@@ -12486,6 +12580,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let caption_source = takes.clone();
     let caption_project = project.clone();
     let caption_emotion = takes.clone();
+    let caption_brand = brand.clone();
     steps.push(
         DerivedStep::react(
             Stage::Captions,
@@ -13088,7 +13183,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     "start": word.at,
                                     "end": word.at + chars,
                                     "patch": {
-                                        "color": "#ffd400",
+                                        // The channel's own accent when the
+                                        // brief carries one: the words the
+                                        // delivery stressed are where a brand
+                                        // is seen most, and the house yellow
+                                        // is only the fallback.
+                                        "color": brand_colour(
+                                            &caption_brand,
+                                            "/palette/accent",
+                                        )
+                                        .unwrap_or_else(|| "#ffd400".to_owned()),
                                         "fontScale": 1.18,
                                     },
                                 }));
@@ -15953,6 +16057,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
 mod tests {
     use super::*;
 
+    /// The brand guide is spent only where it can be painted: a real hex
+    /// takes the caption accent, a name or a half-written colour does not,
+    /// and the base grade replaces the house default while a look the read
+    /// chose stands.
+    #[test]
+    fn the_brand_kit_spends_only_what_it_can_paint() {
+        let kit = Some(json!({
+            "palette": { "accent": "#4CC9F0", "ink": "not-a-colour" },
+            "grade": { "base": "concat.warm" },
+        }));
+        assert_eq!(
+            brand_colour(&kit, "/palette/accent").as_deref(),
+            Some("#4CC9F0")
+        );
+        assert_eq!(brand_colour(&kit, "/palette/ink"), None);
+        assert_eq!(brand_colour(&None, "/palette/accent"), None);
+        assert_eq!(brand_grade(&kit).as_deref(), Some("concat.warm"));
+        assert_eq!(look_with_brand(&kit, "concat.teal-orange"), "concat.warm");
+        assert_eq!(look_with_brand(&kit, "concat.cool"), "concat.cool");
+    }
+
     /// The fixed-spine source an agent's call is built from: narration
     /// audio only, the bed skipped, takes de-duplicated in first-play
     /// order, and every placement carrying its file span and rate.
@@ -16196,10 +16321,24 @@ mod tests {
         assert_eq!(ask.arguments["kind"], json!("sound"));
         assert_eq!(ask.arguments["id"], json!("sfx-small"));
 
-        // All four sets settled: the critic's own eye, asked for once.
-        let sfx_started = json!({ "job": "j4", "path": "sfx", "output": "" });
-        let sfx_done = json!({ "job": "j4", "path": "sfx", "state": "done" });
-        let log = [log, vec![sfx_started, sfx_done]].concat();
+        // The hook's large set and the written bed follow the small set.
+        let small_started = json!({ "job": "j4", "path": "sfx", "output": "" });
+        let small_done = json!({ "job": "j4", "path": "sfx", "state": "done" });
+        let log = [log, vec![small_started, small_done]].concat();
+        let ask = preflight(&log).expect("the large SFX set");
+        assert_eq!(ask.arguments["kind"], json!("sound"));
+        assert_eq!(ask.arguments["id"], json!("sfx-large"));
+        let large_started = json!({ "job": "j5", "path": "sfx-large", "output": "" });
+        let large_done = json!({ "job": "j5", "path": "sfx-large", "state": "done" });
+        let log = [log, vec![large_started, large_done]].concat();
+        let ask = preflight(&log).expect("the BGM set");
+        assert_eq!(ask.arguments["kind"], json!("sound"));
+        assert_eq!(ask.arguments["id"], json!("bgm"));
+        let bgm_started = json!({ "job": "j6", "path": "bgm", "output": "" });
+        let bgm_done = json!({ "job": "j6", "path": "bgm", "state": "done" });
+        let log = [log, vec![bgm_started, bgm_done]].concat();
+
+        // Every set settled: the critic's own eye, asked for once.
         let ask = preflight(&log).expect("the critic's eye");
         assert_eq!(ask.tool, "local_vlm");
         assert_eq!(ask.arguments["action"], json!("setup"));
@@ -16424,18 +16563,19 @@ mod tests {
                 "watch"
             ]
         );
-        // The plan stage is the one warn-TOOLS stage: its calls are
-        // best-effort - a cold shelf is a warning, a run without a beat
-        // grid still plans - while its own gate stays hard, and a plan
-        // the validator refuses stops the run before a single edit
-        // lands, rather than shipping an edit no plan justified.
+        // The preflight and the plan are the warn-TOOLS stages: the
+        // setup's own calls are best-effort - the critic's eye that will
+        // not install is a warning the run ships - while each stage's
+        // gate stays hard, and the plan the validator refuses stops the
+        // run before a single edit lands, rather than shipping an edit no
+        // plan justified.
         let warn_tools: Vec<&str> = program
             .steps
             .iter()
             .filter(|step| step.policy() == ErrorPolicy::WarnTools)
             .map(|step| step.stage().label())
             .collect();
-        assert_eq!(warn_tools, vec!["plan"]);
+        assert_eq!(warn_tools, vec!["preflight", "plan"]);
 
         // The program's artifact is the editable timeline. Rendering
         // remains an explicit user action in the editor.
@@ -21159,9 +21299,15 @@ mod tests {
                 "url": "https://videos.pexels.com/files/hd.mp4"
             }]
         }));
+        // A licence-less video is not used, but the gap is not given up:
+        // the shelf's stills aisle is asked once with the same words.
+        let photo = (gather.next)(&log).expect("the stills aisle is asked");
+        assert_eq!(photo.tool, "stock_search");
+        assert_eq!(photo.arguments["kind"], json!("photo"));
+        log.push(json!({ "hits": [] }));
         assert!(
             (gather.next)(&log).is_none(),
-            "a hit without licence metadata is left unused"
+            "a hit without licence metadata is left unused, and an empty              stills page leaves the gap empty"
         );
     }
 
@@ -23136,6 +23282,10 @@ mod tests {
             }),
         ];
 
+        let mint = (sfx.next)(&log).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        log.push(json!({ "createdId": "t-sfx" }));
         assert_eq!(
             (sfx.next)(&log).expect("the first generator is asked").tool,
             "sense_sound_model"
@@ -23266,6 +23416,10 @@ mod tests {
                 ],
             }),
         ];
+        let mint = (sfx.next)(&log).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        log.push(json!({ "createdId": "t-sfx" }));
         assert_eq!(
             (sfx.next)(&log).expect("the first generator is asked").tool,
             "sense_sound_model"
@@ -23385,6 +23539,10 @@ mod tests {
                 ],
             }),
         ];
+        let mint = (sfx.next)(&log).expect("the accents' lane is minted first");
+        assert_eq!(mint.tool, "edit_apply");
+        assert_eq!(mint.arguments["command"]["op"], json!("addTrack"));
+        log.push(json!({ "createdId": "t-sfx" }));
         assert_eq!(
             (sfx.next)(&log).expect("the first generator is asked").tool,
             "sense_sound_model"

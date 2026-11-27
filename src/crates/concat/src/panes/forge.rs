@@ -405,10 +405,10 @@ impl ForgePane {
                     // locked for the rest of the session, a folder the
                     // window refuses to open; the sibling itself is kept on
                     // disk, untouched - only the server's hold is let go.
-                    if let Some(path) = self.result_path.clone() {
-                        if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                            log::warn!("forge: the run's session did not release: {error}");
-                        }
+                    if let Some(path) = self.result_path.clone()
+                        && let Err(error) = concat_mcp::backend::release_window_session(&path)
+                    {
+                        log::warn!("forge: the run's session did not release: {error}");
                     }
                     // A stopped run keeps its sibling for the retry; the
                     // window goes back to the project it held.
@@ -452,10 +452,10 @@ impl ForgePane {
                     // sibling rather than resuming the half-made one. The
                     // claim is let go here, so the edit the failed run
                     // half-made stays one the window can open.
-                    if let Some(path) = self.result_path.clone() {
-                        if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                            log::warn!("forge: the run's session did not release: {error}");
-                        }
+                    if let Some(path) = self.result_path.clone()
+                        && let Err(error) = concat_mcp::backend::release_window_session(&path)
+                    {
+                        log::warn!("forge: the run's session did not release: {error}");
                     }
                     studio.end_live_follow_back();
                 }
@@ -1221,10 +1221,10 @@ impl ForgePane {
             // first act, so letting go here loses nothing of the
             // resume - and held, the half-made edit stays one the
             // window cannot open for the rest of the session.
-            if let Some(path) = self.auto.project.clone() {
-                if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                    log::warn!("forge: the run's session did not release: {error}");
-                }
+            if let Some(path) = self.auto.project.clone()
+                && let Err(error) = concat_mcp::backend::release_window_session(&path)
+            {
+                log::warn!("forge: the run's session did not release: {error}");
             }
             studio.end_live_follow_back();
             // The sibling stays for the retry, but the Director's hold on
@@ -1232,10 +1232,10 @@ impl ForgePane {
             // own server, and a session that outlives its Director
             // leaves the sibling unopenable by hand until the retry
             // succeeds or the app restarts.
-            if let Some(path) = self.auto.project.clone() {
-                if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                    log::warn!("forge: the run's session did not release: {error}");
-                }
+            if let Some(path) = self.auto.project.clone()
+                && let Err(error) = concat_mcp::backend::release_window_session(&path)
+            {
+                log::warn!("forge: the run's session did not release: {error}");
             }
             return;
         }
@@ -1271,10 +1271,10 @@ impl ForgePane {
                 studio.notify(&t("forge.autoEditDirectorNoProject"), true);
                 self.live_follow_stop();
                 studio.end_live_follow_back();
-                if let Some(path) = self.auto.project.clone() {
-                    if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                        log::warn!("forge: the run's session did not release: {error}");
-                    }
+                if let Some(path) = self.auto.project.clone()
+                    && let Err(error) = concat_mcp::backend::release_window_session(&path)
+                {
+                    log::warn!("forge: the run's session did not release: {error}");
                 }
                 return;
             };
@@ -1343,10 +1343,10 @@ impl ForgePane {
         // server, and a session that outlives its Director leaves the
         // sibling unopenable by hand - refused as open through a remote
         // connection - until a retry succeeds or the app restarts.
-        if let Some(path) = self.auto.project.clone() {
-            if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                log::warn!("forge: the run's session did not release: {error}");
-            }
+        if let Some(path) = self.auto.project.clone()
+            && let Err(error) = concat_mcp::backend::release_window_session(&path)
+        {
+            log::warn!("forge: the run's session did not release: {error}");
         }
     }
 
@@ -1639,10 +1639,9 @@ impl ForgePane {
                 // server session the failed run opened.
                 if !error.retryable
                     && let Some(path) = self.auto.project.clone()
+                    && let Err(error) = concat_mcp::backend::release_window_session(&path)
                 {
-                    if let Err(error) = concat_mcp::backend::release_window_session(&path) {
-                        log::warn!("forge: the run's session did not release: {error}");
-                    }
+                    log::warn!("forge: the run's session did not release: {error}");
                 }
                 studio.end_live_follow_back();
             }

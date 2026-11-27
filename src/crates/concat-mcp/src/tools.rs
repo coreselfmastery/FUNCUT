@@ -487,8 +487,7 @@ pub fn catalogue() -> Vec<Tool> {
             "stock_search",
             "Search live stock (Pexels, Pixabay)",
             "Search live rights-cleared stock (Pexels, Pixabay) by words; every hit carries its licence. \
-             Videos by default; kind: \"photo\" walks the stills aisle - a still lands as an image clip. \
-             A missing key is a named refusal.",
+             kind: \"photo\" walks the stills aisle. A missing key is a named refusal.",
             "stock.search",
             Raw,
         )
@@ -884,13 +883,9 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "models_download",
             title: "Download an AI model",
-            description: "Download a missing voice (tts), transcriber (whisper), sound set \
-             (sound-models|sfx-small|sfx-large|bgm) or picture set (picture-models); or kind \"all\" \
-             - every family in one job, the setup preflight to run on a cold machine BEFORE auto_edit \
-             or a director run, so no stage meets a missing model. Wait on the job with analysis_wait; \
-             a model already on disk is skipped. The one model kind \"all\" does not fetch is the \
-             local vision critic: set it up with local_vlm (action setup) - the kind \"all\" reply \
-             says whether it is up.",
+            description: "Download a missing voice, whisper, sound set \
+             (sound-models|sfx-small|sfx-large|bgm) or picture set; kind \"all\" fetches every \
+             family. Wait with analysis_wait; the local vision critic is local_vlm.",
             read_only: false,
             destructive: false,
             // A second call finds everything the first one fetched and

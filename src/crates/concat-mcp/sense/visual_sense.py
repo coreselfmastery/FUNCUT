@@ -1921,7 +1921,8 @@ VISUAL_MODELS = [
         "id": "transnetv2",
         "tier": 1,
         "file": "transnetv2.onnx",
-        "bytes": 30_000_000,
+        "bytes": 31_250_929,
+        "sha256": "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c",
         "licence": "MIT",
         "tool": "shot_boundaries",
         "signal": "shot-boundary probability per frame",
@@ -1991,7 +1992,8 @@ VISUAL_MODELS = [
         "id": "depth-anything-v2-small",
         "tier": 2,
         "file": "depth-anything-v2-small.onnx",
-        "bytes": 27_300_000,
+        "bytes": 27_258_801,
+        "sha256": "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d",
         "licence": "Apache-2.0",
         "tool": "depth_map",
         "signal": "per-pixel relative depth",
@@ -2051,7 +2053,8 @@ VISUAL_MODELS = [
         "id": "dinov2-small",
         "tier": 3,
         "file": "dinov2-small.onnx",
-        "bytes": 84_400_000,
+        "bytes": 24_446_700,
+        "sha256": "c179f8f7f592449c4c1bca4cd124a7538021428c5ffb89afde9503935b197efb",
         "licence": "Apache-2.0",
         "tool": "visual_embedding",
         "signal": "384-d visual embedding per frame",
@@ -2064,7 +2067,8 @@ VISUAL_MODELS = [
         "id": "clip-vit-b32",
         "tier": 3,
         "file": "clip-vit-b32-visual.onnx",
-        "bytes": 150_000_000,
+        "bytes": 89_117_001,
+        "sha256": "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299",
         "licence": "MIT",
         "tool": "visual_embedding",
         "signal": "image-text similarity embedding",
@@ -3214,10 +3218,14 @@ def download(spec):
     Three ways to name the file, in this order: `url` (any address),
     `hfRepo` + `file` (the Hub's own resolve URL, with `HF_TOKEN` when the
     repo is gated), or the registry's `download` when a row carries one.
-    With `sha256` the digest is checked before anything is kept. Without
-    it the digest of what arrived is **pinned** in the folder's
-    `index.json` and checked on every later `download` of the same file:
-    trust on first use, recorded, not silent.
+    With `sha256` the digest is checked before anything is kept - and a
+    registry row that carries its own digest (the four core picture
+    models carry the same digests the Rust fetch pins, so a door download
+    and a settings download cannot disagree) is checked against it too:
+    a mismatch is refused and nothing is kept. Without either the digest
+    of what arrived is **pinned** in the folder's `index.json` and checked
+    on every later `download` of the same file: trust on first use,
+    recorded, not silent.
     """
     wanted = spec.get("modelId") or spec.get("id")
     model = _model_row(wanted) if wanted else None
@@ -3273,7 +3281,14 @@ def download(spec):
                 sink.write(chunk)
                 written += len(chunk)
         actual = digest.hexdigest()
-        expected = str(spec.get("sha256") or pinned or "").lower().strip()
+        # The digest to expect, in the order the trust is earned: the
+        # caller's own `sha256` first, then the registry row's own pin (the
+        # four core picture models - the same digests the Rust fetch
+        # pins, so a door download and a settings download cannot
+        # disagree), then the folder's previous pin - trust on first use,
+        # recorded. A mismatch refuses and keeps nothing.
+        row_digest = str((model or {}).get("sha256") or "").lower().strip()
+        expected = str(spec.get("sha256") or row_digest or pinned or "").lower().strip()
         if expected and actual != expected:
             partial.unlink(missing_ok=True)
             return {"ok": False, "model": model["id"] if model else name,
@@ -3286,7 +3301,10 @@ def download(spec):
                 "path": str(target), "bytes": written, "sha256": actual,
                 "verified": bool(expected), "pinned": not bool(expected),
                 "licence": model["licence"] if model else None,
-                "note": ("Digest matched the one given." if expected else
+                "note": (("Digest matched the one the caller gave."
+                          if spec.get("sha256") else
+                          "Digest matched the registry row's own pin.")
+                         if expected else
                          "No digest was given, so the one that arrived is now "
                          "pinned in index.json and checked on every later "
                          "download of this file. Re-run `models` to see the "
@@ -3818,6 +3836,57 @@ def selftest(only=None):
               == "abc", _pins({"modelDir": str(pin_dir)}))
         import shutil
         shutil.rmtree(pin_dir, ignore_errors=True)
+
+        # The four core rows pin their own digests - the same hex the Rust
+        # fetch pins and models/manifest.toml records - so a door download
+        # is verified from its first byte, not trust-on-first-use. The
+        # mechanism itself is proven on a local file:// address, so the
+        # check never reaches the network: a row digest that matches keeps
+        # the file and says verified, one that does not refuses and keeps
+        # nothing - the same refusal the Rust fetch answers.
+        import hashlib
+        core_pins = {
+            "transnetv2":
+                "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c",
+            "depth-anything-v2-small":
+                "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d",
+            "dinov2-small":
+                "c179f8f7f592449c4c1bca4cd124a7538021428c5ffb89afde9503935b197efb",
+            "clip-vit-b32":
+                "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299",
+        }
+        by_id = {row["id"]: row for row in VISUAL_MODELS}
+        check("the four core rows pin the digests the Rust fetch pins",
+              all(by_id[row_id].get("sha256") == digest
+                  for row_id, digest in core_pins.items()),
+              {row_id: by_id[row_id].get("sha256") for row_id in core_pins})
+        good_dir = Path(tempfile.mkdtemp(prefix="funcut-digest-good-"))
+        bad_dir = Path(tempfile.mkdtemp(prefix="funcut-digest-bad-"))
+        (good_dir / "weights.onnx").write_bytes(b"stub weights, not the real graph")
+        (bad_dir / "weights.onnx").write_bytes(b"different bytes, a different digest")
+        row = by_id["transnetv2"]
+        original_digest = row.get("sha256")
+        row["sha256"] = hashlib.sha256(
+            (good_dir / "weights.onnx").read_bytes()).hexdigest()
+        try:
+            fetched = download({"modelId": "transnetv2", "modelDir": str(good_dir),
+                               "url": (good_dir / "weights.onnx").as_uri()})
+            refused = download({"modelId": "transnetv2", "modelDir": str(bad_dir),
+                                "url": (bad_dir / "weights.onnx").as_uri()})
+        finally:
+            row["sha256"] = original_digest
+        check("a row digest that matches keeps the file and says verified",
+              fetched.get("ok") and fetched.get("verified") is True
+              and (good_dir / "transnetv2.onnx").is_file(),
+              fetched.get("note") or fetched)
+        check("a row digest that does not match refuses and keeps nothing",
+              not refused.get("ok")
+              and "digest mismatch" in str(refused.get("error"))
+              and not (bad_dir / "transnetv2.onnx").is_file()
+              and not list(bad_dir.glob("*.part")),
+              refused.get("error", "")[:60])
+        shutil.rmtree(good_dir, ignore_errors=True)
+        shutil.rmtree(bad_dir, ignore_errors=True)
 
         check("the sheet enriches nothing when no door is installed",
               _enrich({"modelDir": "/tmp/no-doors-here"}, stub_frames) == {},

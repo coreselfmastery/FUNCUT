@@ -5998,7 +5998,23 @@ SELF_TEST_REPLIES = {
         "valid": True,
         "creativeReady": True,
         "creativeBlockers": [],
-        "signalLog": {"driven": True, "coverage": 1.0, "blockers": [], "problems": []},
+        # The gate's signalLog answer in the shape the real tool sends
+        # it (tools.rs' driven/entries/coverage/perDecision/problems/
+        # how): the old mock carried a `blockers` key the reply never
+        # had, teaching the reader's compat fallback as the primary
+        # shape. The reader's blockers->problems fallback stays, for
+        # servers that predate the key; the mock teaches the shape the
+        # server sends.
+        "signalLog": {
+            "driven": True,
+            "entries": 1,
+            "coverage": 1.0,
+            "perDecision": {"cut": 1},
+            "problems": [],
+            "how": "voice_signals (action extract) on the take, then "
+                   "record {at, decision, signals, confidence, note} "
+                   "for each choice",
+        },
         "craftScore": 8.0,
     },
     "openvid_rank_for_slot": {
@@ -7336,7 +7352,20 @@ def self_test() -> int:
         "valid": True,
         "creativeReady": False,
         "creativeBlockers": ["missing signal log"],
-        "signalLog": {"driven": False, "coverage": 0.0, "blockers": ["missing signal log"]},
+        # The refusal in the same shape the ready answer uses:
+        # problems, the key the real gate sends (the reader's
+        # blockers->problems compat fallback stays, for older
+        # servers, but the mock teaches the shape the server sends).
+        "signalLog": {
+            "driven": False,
+            "entries": 0,
+            "coverage": 0.0,
+            "perDecision": {},
+            "problems": ["missing signal log"],
+            "how": "voice_signals (action extract) on the take, then "
+                   "record {at, decision, signals, confidence, note} "
+                   "for each choice",
+        },
     }
     unready = MockMcp(unready_replies)
     _scenario_state_clear(project)
@@ -7745,8 +7774,14 @@ def self_test() -> int:
     # monetized flag said aloud, so the server enforces the licence too.
     risk02c_world = selftest_world()
     risk02c_world["bgm_search"] = {
+        # The track in BgmTrack's own serialization (seconds, the field
+        # the struct names, message.rs): the old mock spelled
+        # `duration`, a key the reply never carries, and leaned on the
+        # reader's seconds->duration compat path as if it were the
+        # shape. The compat path stays, for older servers; the mock
+        # teaches the real one.
         "tracks": [{"id": "freepd-0123456789ab", "title": "Daylight",
-                    "duration": 180.0, "license": "CC0-1.0"}],
+                    "seconds": 180.0, "license": "CC0-1.0"}],
         "total": 1,
     }
     risk02c_plan = copy.deepcopy(SELF_TEST_PLAN)

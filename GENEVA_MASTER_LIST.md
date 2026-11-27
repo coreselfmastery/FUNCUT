@@ -4,7 +4,7 @@
 > [docs/FEATURES.md](docs/FEATURES.md). This page carries Geneva's own
 > dated detail.
 
-**Last reconciled:** 25 November 2026  
+**Last reconciled:** 28 November 2026  
 **Repository:** `coreselfmastery/FUNCUT`  
 **Canonical implementation:** `src/crates/concat-motion`  
 **Sidecar contract:** Geneva 1.6.0, pinned by the installer and CI dependency lock  
@@ -239,3 +239,74 @@ The Geneva implementation boundaries remain unchanged: mixed markup/native-only 
 | Model provenance | `models-v1` mirror assets are digest-pinned; 26 of the 30 visual-shelf entries remain operator-sourced and are pinned on first download rather than having an independently verified upstream digest. | Partially verified; provenance follow-up open |
 
 **Geneva scope conclusion:** the Geneva CI/render path is green on this exact main SHA. That does not close target-machine performance, complete AI Director production, motion-clip round-trip or hardware acceptance. Do not mark FUNCUT release-ready until those E4 gates have evidence.
+
+## 13. Exact-main reconciliation — 28 November 2026
+
+This is the current review of `main` as of 28 November. It supersedes the
+current-main status in earlier sections; their older SHAs and links remain
+historical evidence. The main commit itself is dated 26 November.
+
+**Current main:** `da544297c4a1f33f8e29defa0301ad0ee9f011e5` (merge of PR #243).
+Exact-main push workflows: CI [45895570099](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570099),
+Geneva [45895570075](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570075),
+Build app [45895570052](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570052).
+All seven check-runs completed successfully on this SHA.
+
+| Gate | Exact evidence on `da544297` | Status |
+| --- | --- | --- |
+| Format, locales and model inventory | CI run [45895570099](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570099): `cargo fmt --check` passed; locale check passed with 4,256 English-identical lines warned (not failed); `scripts/models.py --check` reported 51 models / 5.06 GB on `models-v1`. | CI-verified on main |
+| Signal matrix and sense self-tests | The same CI job passed the matrix and sense self-tests. It reports 76 sense readings and 67 requested by AUTO EDIT (88%); nine are not requested by the spine. **Important:** current main invokes `scripts/check-signal-coverage.py` without `--require-button`, so the job enforces catalogue/matrix drift but does not fail on those nine unrequested actions. PR #246 proposes the stricter `--require-button` ledger; that PR is not merged as of this reconciliation. | CI-verified for matrix/self-tests; full button-consumption gate not enforced on main |
+| Real-fixture analysis | CI job [140168493501](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570099/job/140168493501) passed. The synthetic Director acceptance self-test recorded 14/14 verification checks, 17 plan actions executed and two skipped, two revision passes and three renders. It deliberately exercised a low-confidence heuristic critic and recorded warnings. This is synthetic fixture/safety evidence, not a real user's brief-to-export production. | CI-verified fixtures; real-project acceptance not verified |
+| Engine tests and lints | CI job [140168493574](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570099/job/140168493574) completed 2,368 workspace tests passed, 13 skipped, one slow; workspace/gRPC Clippy, docs/schema checks passed; gRPC tests 30/30 passed. | CI-verified on main |
+| Geneva motion stack and dependency environment | Geneva run [45895570075](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570075), both jobs passed: 640 motion-stack tests and 641 in the pinned dependency environment, each with five ignored tests. | CI-verified on main |
+| Geneva rendered example and golden frames | The multi-layer rendered/inspected job in [45895570075](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570075) produced a 4,337,591-byte output; all golden frames held at worst DSSIM 0.00000. The cold hosted 1080p30 render measured 28.833 seconds and 759.7 MiB sampled process-tree RSS. This is hosted rendering evidence, not interactive target-laptop scrubbing. | CI-verified on hosted runner |
+| Linux x86_64 and aarch64 packages | Build app run [45895570052](https://github.com/coreselfmastery/FUNCUT/actions/runs/45895570052): both architecture jobs passed build, package and clean-distribution smoke checks. | CI-verified on main |
+| Nix package | No Nix run was triggered for this main SHA because `nix.yml` is path-filtered and the merge did not change its watched inputs. PR #246 changes the Nix workflow and its Nix run is separate PR-head evidence, not current-main evidence. | Not re-run on current main |
+| RustSec | No dependency-audit run was triggered for this main SHA because `security-audit.yml` is path-filtered. PR #246's audit is PR-head evidence only. The last published-release audit is on an older SHA. | Not re-run on current main |
+| Model mirror | The last manual mirror run [45644419485](https://github.com/coreselfmastery/FUNCUT/actions/runs/45644419485) passed on branch head `284fb0f0`, publishing 51 digest-pinned assets to `models-v1`; current main independently checks the 51-row manifest. | Mirror CI-verified on its recorded branch; manifest CI-verified on main |
+| App release | Latest published release remains [`v0.2.8-funcut.15`](https://github.com/coreselfmastery/FUNCUT/releases/tag/v0.2.8-funcut.15), on the older SHA `bd1de9d073e5ba198bffe1c837dcee806db0f777`. No release/tag artifacts have been published for `da544297`. | Published release is older than current main |
+| Required main checks | The branch API reports `main` protected with the three required contexts: Format/locales/models, real-fixture analysis and Engine tests/lints, enforcement level `everyone`. The detailed branch-protection endpoint remains unavailable to the connected integration (403), so approval/admin/conversation-resolution rules are not independently certified. | Partially API-verified |
+
+**Separate open work as of this reconciliation:** PR #246 (`audit/all-signals-2026-11-27`) is the only open PR at the time of review. Its original head `67148b6b` has been updated during this run with a licensing-safe default for the new headless `auto_edit` tool; the resulting checks are not yet complete. Its Geneva/Nix/security and other PR-head results must not be substituted for exact-main evidence. The PR changes many files and has no formal review submission; keep it open until its complete checks, patch review and merge requirements are satisfied.
+
+**Separate FUNCUT release requirements still open:**
+
+- No real Forge AI Director production has yet demonstrated a real narration/script and media project through asset selection, motion, captions, music/SFX, editable timeline landing, independent acceptance and final export without manual recovery.
+- No interactive 1080p long-GOP scrubbing benchmark on the target antiX laptop is attached. Proxy defaults, MJPEG proxy selection and paused original-frame restoration are implemented and unit-tested, but actual proxy generation, seek latency, pause restoration, memory and sustained playback remain unverified. Do not claim a speedup without repeatable measurements.
+- Motion-clip command/page implementation exists; real-project metadata editing, save/reopen, in-page preview and final-export round-trip acceptance remain open.
+- Per-clip stock licensing/provenance, applicable person/property releases and provider-terms checks remain incomplete for monetized publishing.
+- VAAPI/NVDEC behavior and fallback still need physical Intel/AMD/NVIDIA hardware validation.
+- Native Lottie/dotLottie support is bounded playback with explicit unsupported-feature diagnostics, not full After Effects/Bodymovin parity.
+
+The original ten Geneva findings remain closed. The documented Geneva boundaries in Section 3 remain in force: mixed markup/native-only cases are refused rather than silently degraded, animated parent transforms and inherited scale/rotation are not fully represented by the Geneva bridge, and the pinned sidecar remains required for its version/cache contract. This section does not certify overall FUNCUT release readiness.
+
+### Same-day postscript — PR #246 merged
+
+Later on 28 November, PR #246 (`audit/all-signals-2026-11-27`) merged as
+`13295fa3` ("Merge pull request #246 from coreselfmastery/audit/all-signals-2026-11-27").
+The `da544297` evidence above remains the last completed exact-main push
+record; the merge commit's own push workflows were still running when this
+was written. The merged PR-head checks on `ce495ed6` (whose tree is identical
+to the merge, since `main` had not moved past the PR's base) all completed:
+CI run [46097714534](https://github.com/coreselfmastery/FUNCUT/actions/runs/46097714534)
+passed `Format, locales and models`, the real-fixture analysis and
+`Engine tests and lints`; Geneva run [46097714538](https://github.com/coreselfmastery/FUNCUT/actions/runs/46097714538),
+Build app run [46097714557](https://github.com/coreselfmastery/FUNCUT/actions/runs/46097714557)
+and the dependency security audit run [46097714550](https://github.com/coreselfmastery/FUNCUT/actions/runs/46097714550)
+all passed. The branch's Nix run stayed queued and is not a required check.
+An independent machine verification on the same tree (format, check, clippy,
+263 crate tests, coverage, matrix, self-test and plan-schema) also passed
+before the merge.
+
+Two consequences for the rows above:
+
+- The signal ledger is now enforced on `main`: `scripts/check-signal-coverage.py`
+  runs with `--require-button`, and the merged main reports 76 sense readings,
+  67 asked by the AUTO EDIT spine, 9 reasoned not applicable in the ledger's
+  `NOT_APPLICABLE` table, covered 76/76, missing 0. The "full
+  button-consumption gate not enforced on main" status in the table above
+  applied to `da544297` and is superseded by the merge.
+- The CI workflow now detects documentation-only pull requests and skips its
+  two heavy lanes for them, so a documentation change no longer pays the
+  engine lane's price. This pull request is the first to ride that path.
+

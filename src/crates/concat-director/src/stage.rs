@@ -167,6 +167,14 @@ pub enum ErrorPolicy {
     Fail,
     /// The stage's failure is recorded as a warning and the run goes on.
     Warn,
+    /// The stage's TOOL failures are recorded as warnings and the run
+    /// goes on; its GATES stay hard, and a failed gate fails the run.
+    /// For a stage whose calls are best-effort - a cold shelf, a
+    /// missing model, an analysis that could not run - but whose proof
+    /// is the one thing the run cannot run without: a plan the
+    /// validator refuses is an edit that cannot be built, whatever
+    /// shelf the shopping reached.
+    WarnTools,
 }
 
 /// What a stage's replies must say for the stage to count as done: the
@@ -320,6 +328,14 @@ impl StageStep {
         self
     }
 
+    /// The same step, with the warn-tools policy instead: a tool's
+    /// failure is recorded and the run goes on, while the step's gates
+    /// stay hard.
+    pub fn warn_tools(mut self) -> StageStep {
+        self.policy = ErrorPolicy::WarnTools;
+        self
+    }
+
     /// The same step, asking one more thing of the stage's replies: a
     /// gate is checked after every call landed, and a failed gate is the
     /// stage's own failure under the step's policy.
@@ -382,6 +398,14 @@ impl DerivedStep {
         self
     }
 
+    /// The same step, with the warn-tools policy instead: a tool's
+    /// failure is recorded and the run goes on, while the step's gates
+    /// stay hard.
+    pub fn warn_tools(mut self) -> DerivedStep {
+        self.policy = ErrorPolicy::WarnTools;
+        self
+    }
+
     /// The same step, asking one more thing of the stage's replies.
     pub fn gate(mut self, gate: ReplyGate) -> DerivedStep {
         self.gates.push(gate);
@@ -430,6 +454,14 @@ impl FanStep {
     /// The same step, with the warn policy instead.
     pub fn warn(mut self) -> FanStep {
         self.policy = ErrorPolicy::Warn;
+        self
+    }
+
+    /// The same step, with the warn-tools policy instead: a tool's
+    /// failure is recorded and the run goes on, while the step's gates
+    /// stay hard.
+    pub fn warn_tools(mut self) -> FanStep {
+        self.policy = ErrorPolicy::WarnTools;
         self
     }
 
@@ -627,8 +659,12 @@ mod tests {
         }];
         let fail = StageStep::run(Stage::Watch, calls.clone());
         assert_eq!(fail.policy, ErrorPolicy::Fail);
-        let warn = StageStep::run(Stage::Watch, calls).warn();
+        let warn = StageStep::run(Stage::Watch, calls.clone()).warn();
         assert_eq!(warn.policy, ErrorPolicy::Warn);
+        // The warn-tools policy: a tool's failure warned, its gates held
+        // hard - the plan stage's own stance.
+        let warn_tools = StageStep::run(Stage::Watch, calls).warn_tools();
+        assert_eq!(warn_tools.policy, ErrorPolicy::WarnTools);
     }
 
     #[test]

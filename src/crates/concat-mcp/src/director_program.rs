@@ -10522,15 +10522,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 }
             }),
         )
-        .warn()
+        .warn_tools()
         // The plan's STRUCTURE is a hard gate, not a warning: a plan the
         // validator refuses is an edit that cannot run - sections that do
         // not cover the runtime, segments claiming footage over audio, a
-        // signalLog that names nothing. The creative gate stays a
-        // warning: an audience the transcript never named is a real
-        // limitation the run reports, not one it hides or invents
-        // around. plan_validate runs in-process, so the gate cannot
-        // fail on an environment.
+        // signalLog that names nothing - and the run stops before it
+        // ships an edit no plan ever justified. The warn-TOOLS policy
+        // is what lets the hard gate stand beside a cold shelf: the
+        // bed shopping and the beat grid this stage also does are
+        // best-effort - a run on a cold machine plans without a grid,
+        // and a network the shelf never reached is a warning the run
+        // ships - while the plan's own validity is the one thing the
+        // run cannot run without. The creative gate stays a warning: an
+        // audience the transcript never named is a real limitation the
+        // run reports, not one it hides or invents around.
+        // plan_validate runs in-process, so the gate cannot fail on an
+        // environment.
         .gate(concat_director::ReplyGate::True {
             field: "valid",
             what: "the plan the run wrote did not validate",
@@ -15908,8 +15915,7 @@ mod tests {
         assert!(!order.contains(&"export"));
         // The warn-policy stages, and only them: a take that cannot be
         // repaired ships as recorded, an emotional read that cannot be
-        // made leaves the cut on its defaults, a plan the gate refuses
-        // still leaves the cut it measured, a tighten or B-roll slot or
+        // made leaves the cut on its defaults, a tighten or B-roll slot or
         // caption or title entrance or bed or accent that cannot land is a
         // flaw the edit ships with, and a low craft score is recorded
         // yellow, not thrown away.
@@ -15924,7 +15930,6 @@ mod tests {
             vec![
                 "audio-repair",
                 "understand",
-                "plan",
                 "timeline",
                 "gather",
                 "captions",
@@ -15936,6 +15941,18 @@ mod tests {
                 "watch"
             ]
         );
+        // The plan stage is the one warn-TOOLS stage: its calls are
+        // best-effort - a cold shelf is a warning, a run without a beat
+        // grid still plans - while its own gate stays hard, and a plan
+        // the validator refuses stops the run before a single edit
+        // lands, rather than shipping an edit no plan justified.
+        let warn_tools: Vec<&str> = program
+            .steps
+            .iter()
+            .filter(|step| step.policy() == ErrorPolicy::WarnTools)
+            .map(|step| step.stage().label())
+            .collect();
+        assert_eq!(warn_tools, vec!["plan"]);
 
         // The program's artifact is the editable timeline. Rendering
         // remains an explicit user action in the editor.

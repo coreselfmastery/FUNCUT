@@ -629,6 +629,11 @@ impl Runner {
 
             let mut failure: Option<AutoEditError> = None;
             let mut failed_attempt = 1;
+            // Whether the failure, when there is one, came from a gate:
+            // the warn-tools policy warns a tool's own failure but
+            // holds its gates hard, so the two must arrive at the
+            // policy decision separately.
+            let mut gate_failure = false;
             // The gate evidence: every reply this stage's calls drew, kept
             // for the gates below and dropped with them - only the Verify
             // stage's last answer travels on in `verification`.
@@ -671,11 +676,13 @@ impl Runner {
                         .iter()
                         .map(|group| group.iter().cloned().map(stamp(epoch, stage)).collect())
                         .collect();
+                    let groups_len = groups.len();
                     let lane_results: Vec<DriveResult> = match lanes {
                         Some(lanes) => std::thread::scope(|scope| {
                             let handles: Vec<_> = groups
                                 .into_iter()
-                                .map(|group| {
+                                .enumerate()
+                                .map(|(group_at, group)| {
                                     let runner = self.clone();
                                     let running = running.clone();
                                     scope.spawn(move || match lanes.lane() {
@@ -685,6 +692,8 @@ impl Runner {
                                             total,
                                             run_started,
                                             running,
+                                            group_at,
+                                            groups_len,
                                             group,
                                             &mut lane,
                                         ),
@@ -745,17 +754,27 @@ impl Runner {
                         }),
                         // No lanes: the groups still run, one after
                         // another on the one caller - correct, only
-                        // slower.
+                        // slower. The drive draws against a scratch log,
+                        // because the merge below is the log's single
+                        // write point for a fan's replies, lanes or
+                        // not: a drive that pushed into the caller's
+                        // log and a merge that extended it with the same
+                        // replies would leave every fan reply in the
+                        // log twice for a caller of the plain `run`, and
+                        // the log is the memory every later derived step
+                        // reads - a doubled reply is a doubled
+                        // caption, a doubled cut.
                         None => groups
                             .into_iter()
                             .map(|group| {
+                                let mut scratch = Vec::new();
                                 self.drive_calls(
                                     stage,
                                     index,
                                     total,
                                     run_started,
                                     &running,
-                                    &mut log,
+                                    &mut scratch,
                                     &mut applied,
                                     group,
                                     caller,
@@ -769,7 +788,19 @@ impl Runner {
                     // paths leave behind.
                     for (lane_failure, lane_replies) in lane_results {
                         if let Some((error, attempt)) = lane_failure {
-                            failure.get_or_insert(error);
+                            // The first lane's failure is the stage's own
+                            // error - the one the terminal state names -
+                            // but a fan is N lanes, and a repair where
+                            // three takes failed is three failures, not
+                            // one the other two never surface. Every
+                            // further lane failure rides as its own
+                            // warning, so the report the run ships names
+                            // each lane that did not make it.
+                            if failure.is_some() {
+                                warnings.push(error.line());
+                            } else {
+                                failure = Some(error);
+                            }
                             failed_attempt = failed_attempt.max(attempt);
                         }
                         // The log is the memory every later derived
@@ -948,6 +979,7 @@ impl Runner {
                         ));
                     }
                     if let Some(sentence) = failed {
+                        gate_failure = true;
                         failure = Some(AutoEditError::new(
                             stage,
                             last_call.clone(),
@@ -998,7 +1030,17 @@ impl Runner {
                         ),
                     );
                 }
-                Some(error) if policy == ErrorPolicy::Warn => {
+                // The warn policy warns the failure, whichever side of
+                // the stage it came from. The warn-tools policy warns
+                // the stage's TOOL failures - a cold shelf, a missing
+                // model - and holds its GATES hard: a gate the program
+                // named is the one thing the run cannot run without,
+                // and a stage that proved it absent stops the run
+                // rather than shipping past its own proof.
+                Some(error)
+                    if policy == ErrorPolicy::Warn
+                        || (policy == ErrorPolicy::WarnTools && !gate_failure) =>
+                {
                     records[index].outcome = StageOutcome::Warned;
                     records[index].elapsed_ms = Some(stage_elapsed_ms);
                     records[index].failure = Some(error.line());
@@ -1223,6 +1265,8 @@ impl Runner {
         total: usize,
         run_started: Instant,
         running: AutoEditState,
+        group_at: usize,
+        groups_len: usize,
         calls: Vec<ToolCall>,
         caller: &mut Box<dyn ToolCaller>,
     ) -> DriveResult {
@@ -1248,6 +1292,12 @@ impl Runner {
                 ));
                 break 'calls;
             }
+            // The lane's own identity rides the detail, because a fan
+            // is N lanes answering at once: without it, a five-take fan
+            // reads as five interleaved "transcribe" lines no reader
+            // can tell apart, and the window cannot say which take a
+            // reading belongs to.
+            let detail = format!("lane {}/{}: {}", group_at + 1, groups_len, call.tool);
             self.emit(
                 running.clone(),
                 AutoEditProgress::new(
@@ -1256,7 +1306,7 @@ impl Runner {
                     total,
                     run_started.elapsed(),
                     Duration::ZERO,
-                    call.tool.as_str(),
+                    detail,
                 ),
             );
             let mut attempt = 1;
@@ -1771,6 +1821,128 @@ mod tests {
         assert_eq!(caller.calls.len(), 2, "both groups ran, in order");
         assert_eq!(caller.calls[0].arguments["path"], "/takes/one.wav");
         assert_eq!(caller.calls[1].arguments["path"], "/takes/two.wav");
+    }
+
+    #[test]
+    fn a_fan_step_without_lanes_leaves_each_reply_once() {
+        // The regression this test holds: a fan step run on the one
+        // caller - no lanes - used to leave every group reply in the log
+        // TWICE. The drive pushed each reply into the log as it drew it,
+        // and the merge afterwards extended the same log with the same
+        // replies again, so a caller of the plain `run` handed every
+        // later derived step a doubled memory - and the log is what a
+        // later derived step reads: a doubled reply is a doubled
+        // caption, a doubled cut. The merge is the log's single write
+        // point for a fan's replies now, lanes or not.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "take": "one" })),
+            Ok(json!({ "take": "two" })),
+        ]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                FanStep::fan(
+                    Stage::Transcribe,
+                    vec![
+                        vec![call_with("transcribe", json!({ "path": "one" }))],
+                        vec![call_with("transcribe", json!({ "path": "two" }))],
+                    ],
+                )
+                .into(),
+                // A reader that answers with one call per reply the log
+                // actually carries, in group order: a doubled log would
+                // draw doubled calls, in the log's own doubled order.
+                DerivedStep::react(
+                    Stage::Timeline,
+                    Box::new({
+                        let mut issued = 0;
+                        move |log| {
+                            let takes: Vec<&str> = log
+                                .iter()
+                                .filter_map(|reply| reply.get("take").and_then(Value::as_str))
+                                .collect();
+                            let next = issued < takes.len();
+                            issued += 1;
+                            next.then(|| {
+                                call_with("clip_cut_spans", json!({ "take": takes[issued - 1] }))
+                            })
+                        }
+                    }),
+                )
+                .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Completed);
+        // The fan's own two calls, then one reader call per reply the
+        // log carried: a doubled log would have drawn four.
+        assert_eq!(caller.calls.len(), 4, "each fan reply reached the log once");
+        assert_eq!(caller.calls[2].arguments["take"], "one");
+        assert_eq!(caller.calls[3].arguments["take"], "two");
+    }
+
+    #[test]
+    fn a_warn_tools_stage_warns_its_tools_and_holds_its_gate() {
+        // The plan stage's own stance, held as a runner law: a call that
+        // fails is a warning the run ships - a cold shelf, a network the
+        // beat analysis never reached - while the stage's gate stays
+        // hard, and a reply that fails it stops the run rather than
+        // letting an edit the program cannot justify ship as one more
+        // warning.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+
+        // A tool's failure is warned, and the run completes.
+        let mut caller = Scripted::new(vec![
+            Err(ToolError {
+                message: "the shelf is cold".to_owned(),
+                retryable: Some(false),
+                retry_after: None,
+                code: None,
+            }),
+            Ok(json!({ "valid": true })),
+        ]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::Plan, vec![call_with("plan_validate", json!({}))])
+                    .warn_tools()
+                    .gate(ReplyGate::True {
+                        field: "valid",
+                        what: "the plan the run wrote did not validate",
+                    })
+                    .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(
+            outcome,
+            RunOutcome::CompletedWithWarnings,
+            "a warn-tools stage warns its tool's own failure"
+        );
+
+        // The same stage, the same warning tools, a gate that refuses:
+        // the run fails, because the gate is the one thing the run
+        // cannot run without.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({ "valid": false }))]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::Plan, vec![call_with("plan_validate", json!({}))])
+                    .warn_tools()
+                    .gate(ReplyGate::True {
+                        field: "valid",
+                        what: "the plan the run wrote did not validate",
+                    })
+                    .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert!(
+            matches!(outcome, RunOutcome::Failed(_)),
+            "a warn-tools stage holds its gate hard: {outcome:?}"
+        );
     }
 
     #[test]

@@ -263,7 +263,14 @@ fn an_agent_edits_previews_and_exports_a_project_headless() {
         }),
     );
     assert_eq!(created["structuredContent"]["project"]["name"], "Agent Cut");
-    let path = home.join("Agent Cut").to_string_lossy().into_owned();
+    // The reply names the folder it made: every later tool takes that
+    // path, and a caller that named only a location and a name has no
+    // other way to learn it.
+    let path = created["structuredContent"]["path"]
+        .as_str()
+        .expect("the created project's path")
+        .to_owned();
+    assert_eq!(path, home.join("Agent Cut").to_string_lossy());
 
     let titled = agent.tool(
         "title_add",

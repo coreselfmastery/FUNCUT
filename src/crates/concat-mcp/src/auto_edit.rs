@@ -28,8 +28,36 @@ use serde_json::{Value, json};
 
 use crate::backend::Backend;
 use crate::director::{BackendToolCaller, LaneOpener};
-use crate::director_program::{auto_edit_program, auto_edit_source_from_view};
+use crate::director_program::{
+    AutoEditProgramSource, auto_edit_program, auto_edit_source_from_view,
+};
 use crate::tools::{Context, Outcome, Toolbox};
+
+/// Keeps the recorded copy of every take that lives outside the project.
+///
+/// The repair chain lands its result on the take the timeline plays - it
+/// has to, because a project's clip names its media and nothing relinks
+/// it - so a take imported by reference from the user's own folder would
+/// be rewritten in place. The recorded file is copied into the edit's
+/// own folder first, so the take as recorded always survives a repair
+/// that lands badly. A take already inside the project needs no copy:
+/// the project holds it.
+fn keep_recorded_takes(project: &Path, source: &AutoEditProgramSource) {
+    for (index, take) in source.takes.iter().enumerate() {
+        let path = Path::new(&take.take);
+        if path.starts_with(project) || !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("take.wav");
+        let kept = project.join("auto-edit").join(format!("recorded-{index:03}-{name}"));
+        if !kept.is_file() {
+            let _ = std::fs::copy(path, &kept);
+        }
+    }
+}
 
 /// Run the fixed AUTO EDIT spine over `path`, or over a sibling copy of
 /// it. The terminal state is returned whether the run completed, warned,
@@ -168,6 +196,7 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             return Err(ApiError::invalid(error));
         }
     };
+    keep_recorded_takes(&project, &program_source);
     let mut program = auto_edit_program(&program_source);
     // The runner's event receiver is dropped on purpose: a headless call
     // has no watcher to read it, and a receiver held and never drained

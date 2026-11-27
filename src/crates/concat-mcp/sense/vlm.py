@@ -703,6 +703,28 @@ def model_files(profile: str, progress=None):
     return model, mmproj
 
 
+def _server_env(binary):
+    """The loader path llama-server's own shared libraries need.
+
+    The Linux and macOS release archives put `libllama.so`,
+    `libllama-common.so.0` and the ggml libraries beside the binary, and
+    the binary carries no rpath: started with the caller's environment it
+    dies at once with "error while loading shared libraries:
+    libllama-common.so.0", which the health wait then reported as a
+    ninety-second timeout on a server that never started. The binary's
+    own folder goes first so the pinned build's libraries win over any
+    the machine has installed.
+    """
+    if os.name == "nt":
+        return None
+    folder = str(Path(binary).resolve().parent)
+    env = dict(os.environ)
+    key = "DYLD_LIBRARY_PATH" if platform.system() == "Darwin" else "LD_LIBRARY_PATH"
+    current = env.get(key, "")
+    env[key] = folder if not current else folder + os.pathsep + current
+    return env
+
+
 def _server_alive(base: str):
     try:
         with _http(base + "/health", 1.5) as r:
@@ -740,6 +762,9 @@ def start(profile: str = "mini", port: int = DEFAULT_PORT, progress=None):
         kwargs = {"stdout": log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        env = _server_env(binary)
+        if env:
+            kwargs["env"] = env
         subprocess.Popen(cmd, **kwargs)
     base = f"http://127.0.0.1:{port}"
     for _ in range(90):
@@ -958,6 +983,19 @@ def selftest():
     assert _mask("short") == "****"
     assert _mask("sk-1234567890abcdef") == "sk-1...cdef"
     out["mask"] = "ok"
+    # The loader path the server is started with: the archive's own
+    # folder, ahead of whatever the caller's environment had, because the
+    # binary ships its libraries beside itself and carries no rpath - the
+    # bug that made every fresh install's vision critic a 90-second
+    # timeout instead of a start.
+    if os.name != "nt":
+        key = "DYLD_LIBRARY_PATH" if platform.system() == "Darwin" else "LD_LIBRARY_PATH"
+        kept = os.environ.get(key, "")
+        env = _server_env("/opt/llama/bin/llama-server")
+        assert env[key].split(os.pathsep)[0] == "/opt/llama/bin", env[key]
+        if kept:
+            assert env[key].endswith(os.pathsep + kept)
+        out["serverEnv"] = "ok"
     # The provider-key resolution: the first named provider whose key is
     # exported is the critic, in the table's own order, and none is
     # reported when no provider key is set. This is the seam that lets a

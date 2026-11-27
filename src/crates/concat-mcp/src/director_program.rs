@@ -9684,8 +9684,19 @@ pub fn auto_edit_source_from_view(
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("voiceover.wav");
-            let enhanced = std::path::Path::new(project)
-                .join("auto-edit")
+            // The enhanced intermediate is a SIBLING of the take, not a
+            // file in the project's auto-edit folder: `sense_audio_repair`
+            // confines every write to the folder of the audio it reads
+            // (the guard that keeps a prompt-injected agent from writing
+            // anywhere it pleases), so a path in another folder was
+            // refused on every run - the repair stage measured the take,
+            // then shipped it as recorded, in silence. Beside the take,
+            // the chain lands: the take the timeline plays is the file
+            // the repair overwrites.
+            let enhanced = std::path::Path::new(&take)
+                .parent()
+                .map(|folder| folder.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join(format!("enhanced-{index:03}-{name}"))
                 .to_string_lossy()
                 .into_owned();
@@ -10208,17 +10219,46 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //    handed one, rides along: the reading aligns the transcript to
     //    the author's wording (misheard words corrected, timings kept)
     //    and its reply carries the alignment verdict beside the words.
-    let signals: Vec<Vec<ToolCall>> = takes
-        .iter()
-        .map(|take| {
-            let mut arguments = json!({ "audio": take.take });
-            if let Some(script) = script.as_deref() {
-                arguments["script"] = json!(script);
-            }
-            vec![call("voice_signals", arguments)]
-        })
-        .collect();
-    steps.push(FanStep::fan(Stage::VoiceSignals, signals).into());
+    //
+    //    The call carries the words the transcribe stage just landed.
+    //    `voice_signals` has no way back to a job it did not start: it
+    //    reads `lines`, `transcript` or `script` and nothing else, so a
+    //    call naming only the audio was refused with "no lines" - and
+    //    that refusal was fatal, which made a voiceover imported without
+    //    a script (the one-click case the button exists for) die at the
+    //    delivery stage after the transcription had already been paid
+    //    for. A run handed a script keeps it: the alignment reconciles
+    //    the words against the author's wording, and the lines ride
+    //    along as the measured side.
+    let signals_source = takes.clone();
+    let signals_script = script.clone();
+    steps.push(
+        DerivedStep::react(
+            Stage::VoiceSignals,
+            Box::new({
+                let mut next = 0usize;
+                move |log| {
+                    let take = signals_source.get(next)?;
+                    next += 1;
+                    let mut arguments = json!({ "audio": take.take });
+                    let worded = worded_lines(log, &take.take);
+                    let lines = if worded.is_empty() {
+                        spoken_lines(log, &take.take)
+                    } else {
+                        worded
+                    };
+                    if !lines.is_empty() {
+                        arguments["lines"] = json!(lines);
+                    }
+                    if let Some(script) = signals_script.as_deref() {
+                        arguments["script"] = json!(script);
+                    }
+                    Some(call("voice_signals", arguments))
+                }
+            }),
+        )
+        .into(),
+    );
     // 6. The understanding: the music gate (a take that already carries
     //    music gets no bed stacked under it) and the emotional read of
     //    every take that has words - the arc, the acts, the colour
@@ -21750,6 +21790,82 @@ mod tests {
             // line, and the signal log rates an `emotion` entry by it.
             "confidence": 0.85,
         })
+    }
+
+    /// The delivery read is asked with the words the transcribe stage
+    /// landed: `voice_signals` reads `lines`, `transcript` or `script` and
+    /// nothing else, so a call that named only the audio was refused - and
+    /// the refusal was fatal, which killed every run whose voiceover was
+    /// imported without a script. The words ride on the call; a take with
+    /// no transcript is still asked (the audio's own doors measure it) but
+    /// carries no lines; and a run handed a script carries both, because
+    /// the alignment reconciles the two.
+    #[test]
+    fn the_delivery_read_is_asked_with_the_transcripts_words() {
+        use concat_director::ProgramStep;
+
+        let build = |script: Option<&str>| AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![
+                TakePaths {
+                    take: "/edits/Reel/voiceover/a.wav".to_owned(),
+                    enhanced: String::new(),
+                    aroll: None,
+                },
+                TakePaths {
+                    take: "/edits/Reel/voiceover/b.wav".to_owned(),
+                    enhanced: String::new(),
+                    aroll: None,
+                },
+            ],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: script.map(str::to_owned),
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let log = vec![json!({
+            "path": "/edits/Reel/voiceover/a.wav",
+            "output": json!({
+                "segments": [
+                    { "start": 0.0, "end": 1.5, "text": "we found it" },
+                    { "start": 2.0, "end": 3.0, "text": "and it was ours" },
+                ],
+            }).to_string(),
+        })];
+        // No script: the transcript's own words are the lines.
+        let mut program = auto_edit_program(&build(None));
+        let ProgramStep::Derived(signals) = &mut program.steps[4] else {
+            panic!("step 4 is the delivery read");
+        };
+        let mut asked: Vec<ToolCall> = Vec::new();
+        while let Some(next) = (signals.next)(&log) {
+            asked.push(next);
+        }
+        assert_eq!(asked.len(), 2, "one read per take");
+        assert!(asked.iter().all(|call| call.tool == "voice_signals"));
+        let lines = asked[0].arguments["lines"]
+            .as_array()
+            .expect("the transcribed take is read with its words");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["text"], "we found it");
+        assert_eq!(lines[1]["end"], 3.0);
+        assert!(asked[0].arguments.get("script").is_none());
+        assert!(
+            asked[1].arguments.get("lines").is_none(),
+            "a take with no transcript carries no lines - never an empty list"
+        );
+        // A script rides along beside the measured lines.
+        let mut program = auto_edit_program(&build(Some("we found it. and it was ours.")));
+        let ProgramStep::Derived(signals) = &mut program.steps[4] else {
+            panic!("step 4 is the delivery read");
+        };
+        let first = (signals.next)(&log).expect("the first take's read");
+        assert_eq!(first.arguments["script"], "we found it. and it was ours.");
+        assert!(first.arguments["lines"].is_array());
     }
 
     /// The emotion read the stage asks for is derived from the take's own

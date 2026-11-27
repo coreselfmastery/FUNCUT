@@ -47,6 +47,12 @@ pub struct EditorView {
     /// The id a creating command minted, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_id: Option<String>,
+    /// The project folder this view is of - the path every later call
+    /// takes. `project.create`'s own reply is where a caller learns it,
+    /// so a reply that named only the folder's settings left an agent
+    /// guessing the name the engine chose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// Set by the API layer when the edit this view answers applied but
     /// its autosave did not land (F-07): the sentence is the save's own
     /// failure, and the caller is told in the reply - never left
@@ -253,6 +259,7 @@ impl Session {
                 rate_den: settings.rate_den,
             },
             created_id,
+            path: Some(self.path.clone()),
             unsaved: None,
         }
     }

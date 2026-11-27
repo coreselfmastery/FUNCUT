@@ -1,6 +1,9 @@
 [Desktop Entry]
+Type=Application
 Name=FUNCUT
+Comment=The free, open-source CapCut replacement for Linux
 Exec=concat %F
 Icon=funcut
-Type=Application
 Categories=AudioVideo;Video;
+Terminal=false
+StartupWMClass=concat

@@ -539,10 +539,11 @@ impl Api {
         })
     }
 
-    /// [`crate::Request::ModelsDownload`]: one model from Concat's mirror,
-    /// on a job of its own - the download a headless caller had no way to
-    /// start before, which the errors used to point at a Settings window
-    /// that is not there without the window.
+    /// [`crate::Request::ModelsDownload`]: one model from Concat's
+    /// mirror, or the whole registry with kind "all" - each on a job of
+    /// its own, the download a headless caller had no way to start
+    /// before, which the errors used to point at a Settings window that
+    /// is not there without the window.
     pub fn models_download(&mut self, kind: &str, id: &str) -> Result<Started, ApiError> {
         let known = match kind {
             "tts" => concat_speech::Speech::status(&self.dirs)
@@ -560,11 +561,26 @@ impl Api {
             // sound sets are, so a headless caller installs the first-edit
             // picture reader the same way it installs a voice.
             "picture" => id == concat_host::visualmodel::SET_ID,
-            // The whole shelf in one job: every missing model, walked in
-            // the settings sheet's own order. The id is the word "all" -
-            // the one id the walk has, and the one the answer's `id`
-            // echoes.
-            "all" => id == "all",
+            // The whole registry in one job: every voice, every
+            // transcriber, the four sound sets and the picture set, each
+            // through the same code path its own kind takes - the one
+            // call a cold machine's setup makes, so the fixed spine and a
+            // director run never meet a model that is not there. The id
+            // names no model under this kind, so exactly one spelling
+            // passes: "all", the word the MCP layer fills in for a caller
+            // that sends none. A caller that sends a model id here is
+            // thinking of another kind, and the refusal is one round trip
+            // before a job is booked, the same door the other kinds keep.
+            "all" => {
+                if id != "all" {
+                    return Err(ApiError::new(
+                        ErrorCode::Invalid,
+                        "kind \"all\" takes no model id - it downloads every family; pass id \"all\""
+                            .to_owned(),
+                    ));
+                }
+                true
+            }
             other => {
                 return Err(ApiError::new(
                     ErrorCode::Invalid,
@@ -682,10 +698,11 @@ enum Work {
     },
     /// Bring one model down from the mirror: the headless download.
     Download {
-        /// Which engine the model serves: "tts", "whisper", "sound" or
-        /// "picture".
+        /// Which engine the model serves: "tts", "whisper", "sound",
+        /// "picture" - or "all", the whole registry on this one job.
         kind: String,
-        /// The model's id.
+        /// The model's id; "all" for the whole-registry kind, which names
+        /// no model.
         id: String,
     },
     /// Bring the whole shelf down: every missing model, one job, in the

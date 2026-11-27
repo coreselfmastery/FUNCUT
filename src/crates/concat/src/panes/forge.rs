@@ -395,6 +395,21 @@ impl ForgePane {
                 self.live_follow_stop();
                 if self.kill.load(Ordering::Relaxed) {
                     self.set_status(t("forge.stopped"));
+                    // The killed harness's claim on the sibling outlives the
+                    // kill - a connection ending is not a project closing,
+                    // so the server still holds the folder the agent opened
+                    // - and nothing is coming back for that claim: the Start
+                    // that may follow builds a fresh sibling beside the
+                    // half-made one (`edit 2`, `edit 3`), never resuming this
+                    // one. Without this release the stopped run's edit stays
+                    // locked for the rest of the session, a folder the
+                    // window refuses to open; the sibling itself is kept on
+                    // disk, untouched - only the server's hold is let go.
+                    if let Some(path) = self.result_path.clone() {
+                        if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                            log::warn!("forge: the run's session did not release: {error}");
+                        }
+                    }
                     // A stopped run keeps its sibling for the retry; the
                     // window goes back to the project it held.
                     studio.end_live_follow_back();
@@ -429,6 +444,19 @@ impl ForgePane {
                     }
                 } else {
                     self.set_status(tf("forge.exited", &[&code.to_string()]));
+                    // A failed run's sibling is in the stopped run's
+                    // position: the server still holds the folder the
+                    // harness opened (an exit is a connection ending, not
+                    // a project closing), and no retry is coming for the
+                    // claim - a Start after a failed run builds a fresh
+                    // sibling rather than resuming the half-made one. The
+                    // claim is let go here, so the edit the failed run
+                    // half-made stays one the window can open.
+                    if let Some(path) = self.result_path.clone() {
+                        if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                            log::warn!("forge: the run's session did not release: {error}");
+                        }
+                    }
                     studio.end_live_follow_back();
                 }
             }
@@ -826,10 +854,7 @@ impl ForgePane {
         let trimmed = orientation.trim().to_owned();
         let orientation = (!trimmed.is_empty()).then_some(trimmed);
         if auto_edit_busy(self.auto.running, self.auto.checking) {
-            studio.notify(
-                "AUTO EDIT is still running or checking its previous timeline",
-                true,
-            );
+            studio.notify(&t("forge.autoEditStillBusy"), true);
             return;
         }
         // A Start and an AUTO EDIT share the same sibling project and
@@ -1089,11 +1114,7 @@ impl ForgePane {
         // and press again - or let the run fill the picture with the
         // project's own footage and typography, which is what it will do.
         if !stock_shelves_ready(studio) {
-            studio.notify_warning(
-                "no stock key is saved (Settings > Stock APIs), so the live shelves \
-                 cannot be shopped: the run carries the project's own footage and fills \
-                 the rest with typography over the narration",
-            );
+            studio.notify_warning(&t("forge.autoEditNoStockKey"));
         }
         let mut director_fallback: Option<String> = None;
         let handed_over = match director_ready(self.connected, self.installed, studio) {
@@ -1121,12 +1142,7 @@ impl ForgePane {
                 true
             }
             Err(why) => {
-                studio.notify(
-                    &format!(
-                        "the Director is not available, so this run uses the fixed edit: {why}"
-                    ),
-                    true,
-                );
+                studio.notify(&tf("forge.autoEditDirectorFallback", &[&why]), true);
                 // The reason rides the source into the report: a missed
                 // toast is not a lost explanation.
                 director_fallback = Some(why.clone());
@@ -1199,6 +1215,17 @@ impl ForgePane {
             self.set_status(t("forge.autoEditCancelledStage"));
             studio.notify(&t("forge.autoEditCancelled"), true);
             self.live_follow_stop();
+            // The sibling and its source stay for the retry, but the
+            // server's claim need not stay with them: the Director's
+            // retry re-opens the project through the server as its
+            // first act, so letting go here loses nothing of the
+            // resume - and held, the half-made edit stays one the
+            // window cannot open for the rest of the session.
+            if let Some(path) = self.auto.project.clone() {
+                if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                    log::warn!("forge: the run's session did not release: {error}");
+                }
+            }
             studio.end_live_follow_back();
             // The sibling stays for the retry, but the Director's hold on
             // it does not: the handover opened it through the window's
@@ -1241,10 +1268,7 @@ impl ForgePane {
                 self.auto.outcome = 2;
                 self.auto.stage = t("forge.autoEditDirectorFailedStage");
                 self.set_status(t("forge.autoEditDirectorFailedStage"));
-                studio.notify(
-                    "the Director finished but the run has no project to check",
-                    true,
-                );
+                studio.notify(&t("forge.autoEditDirectorNoProject"), true);
                 self.live_follow_stop();
                 studio.end_live_follow_back();
                 if let Some(path) = self.auto.project.clone() {
@@ -1279,9 +1303,14 @@ impl ForgePane {
                     }
                     // The window's server is how the check reaches the
                     // tools; without it there is no measurement, and an
-                    // unmeasured run is not a finished one.
+                    // unmeasured run is not a finished one. Only the
+                    // backend's own words ride the message: the pane's
+                    // wording for this landing is the localized sentence
+                    // `auto_director_check_failed` shows, and an English
+                    // prefix written here would reach the user raw inside
+                    // that sentence's {0}.
                     Err(error) => {
-                        let message = format!("the edit cannot be checked: {error}");
+                        let message = error;
                         crate::host::on_ui(move |studio, _, _| {
                             studio.handle(Msg::Forge(ForgeMsg::DirectorCheckFailed(message)));
                         });
@@ -1348,7 +1377,8 @@ impl ForgePane {
             }
         }
         let summary = receipt.summary();
-        self.log.push(format!("acceptance: {summary}").into());
+        self.log
+            .push(tf("forge.autoEditAcceptance", &[&summary]).into());
         let extra = self.log.len().saturating_sub(LOG_KEPT);
         self.log.drain(0..extra);
         if accepted {
@@ -1415,12 +1445,15 @@ impl ForgePane {
         self.auto.outcome = 2;
         self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
         self.set_status(tf("forge.autoEditDirectorUnproven", &[&error]));
-        studio.notify(
-            &format!("the edit could not be independently checked: {error}"),
-            true,
-        );
+        studio.notify(&tf("forge.autoEditDirectorCheckFailed", &[&error]), true);
         self.live_follow_stop();
         studio.end_live_follow_back();
+        // The sibling opens for inspection, and the server held it for the
+        // run and the half-made check: without a release the open below
+        // is refused with "the project is open through a remote
+        // connection" and the edit stays locked for the rest of the
+        // session. The retry that may follow re-opens the project through
+        // the server, so nothing of the resume is lost.
         if let Some(path) = self.auto.project.clone() {
             // The server held the sibling through the check the worker
             // failed; without letting go first, the open below is
@@ -1548,7 +1581,11 @@ impl ForgePane {
                     self.auto
                         .project
                         .clone()
-                        .unwrap_or_else(|| "editable timeline".to_owned())
+                        // The one deliverable with no file to name is the
+                        // pane's own word for it, riding the toast's {0}:
+                        // a localized line, not an English fragment
+                        // baked into the code.
+                        .unwrap_or_else(|| t("forge.autoEditEditableTimeline"))
                 } else {
                     export.display().to_string()
                 };
@@ -1593,6 +1630,20 @@ impl ForgePane {
                 self.auto.outcome = if error.retryable { 1 } else { 2 };
                 self.set_status(tf("forge.autoEditFailedStatus", &[&error.message]));
                 studio.notify(&tf("forge.autoEditFailed", &[&error.message]), true);
+                // A hard failure has no resume coming - the runner and its
+                // source were cleared above - so the server's claim on the
+                // sibling outlives nothing: it is let go here, and the
+                // half-made edit stays one the window can open. A
+                // retryable failure keeps the claim, exactly as the
+                // cancelled run does, because the resume runs on the same
+                // server session the failed run opened.
+                if !error.retryable
+                    && let Some(path) = self.auto.project.clone()
+                {
+                    if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                        log::warn!("forge: the run's session did not release: {error}");
+                    }
+                }
                 studio.end_live_follow_back();
             }
             AutoEditState::Cancelled { rolled_back, .. } => {
@@ -1672,7 +1723,14 @@ impl ForgePane {
         if let Some(project) = &self.auto.project {
             let receipt = match &state {
                 AutoEditState::Completed { receipt, .. }
-                | AutoEditState::CompletedWithWarnings { receipt, .. } => receipt.as_deref(),
+                | AutoEditState::CompletedWithWarnings { receipt, .. }
+                // A failed or cancelled run ships its partial evidence
+                // too: the stages that had completed, the gates their
+                // answers had measured. The report beside the edit and
+                // the toast the pane showed are not evidence; without
+                // this the first thing a failed run leaves is nothing.
+                | AutoEditState::Failed { receipt, .. }
+                | AutoEditState::Cancelled { receipt, .. } => receipt.as_deref(),
                 _ => None,
             };
             if let Some(receipt) = receipt {
@@ -1691,12 +1749,16 @@ impl ForgePane {
                     }
                 }
                 let summary = receipt.summary();
-                studio.handle(Msg::Forge(ForgeMsg::Line(format!("acceptance: {summary}"))));
+                studio.handle(Msg::Forge(ForgeMsg::Line(tf(
+                    "forge.autoEditAcceptance",
+                    &[&summary],
+                ))));
                 // The pane's own log carries the line too: the nested
                 // handle above lands in the blank pane `update` runs
                 // against, so without this the fixed spine's one-line
                 // summary never appears in the log the user reads.
-                self.log.push(format!("acceptance: {summary}").into());
+                self.log
+                    .push(tf("forge.autoEditAcceptance", &[&summary]).into());
                 let extra = self.log.len().saturating_sub(LOG_KEPT);
                 self.log.drain(0..extra);
             }
@@ -2120,7 +2182,10 @@ fn read_one_signal(audio: &str, name: &str) -> Result<(String, String), String> 
     let mut backend = concat_mcp::backend::open(concat_mcp::backend::Mode::Window)?;
     let toolbox = match std::panic::catch_unwind(concat_mcp::tools::Toolbox::new) {
         Ok(toolbox) => std::sync::Arc::new(toolbox),
-        Err(_) => return Err("the tool box could not be built".to_owned()),
+        // The refusal lands as the reading card's whole body, so it is the
+        // lab's own wording - a localized line, the same sentence the
+        // AUTO EDIT's toolbox guard shows.
+        Err(_) => return Err(t("forge.signalsToolboxFailed")),
     };
     let cancelled = Arc::new(AtomicBool::new(false));
     // The one reading, taken once: the reply the profile's own extract
@@ -2132,19 +2197,22 @@ fn read_one_signal(audio: &str, name: &str) -> Result<(String, String), String> 
         let outcome =
             concat_mcp::sense::voice_signals(arguments, backend).map_err(|error| error.message)?;
         if outcome.is_error {
+            // The tool's own sentence rides as it came; the fallback for a
+            // refusal that said nothing is the lab's wording, so it is a
+            // localized line rather than an English fragment in the card.
             let sentence = outcome
                 .content
                 .iter()
                 .find_map(|block| block["text"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| "the reading refused".to_owned());
+                .unwrap_or_else(|| t("forge.signalsRefused"));
             return Err(sentence);
         }
         let reply = outcome.structured.unwrap_or_else(|| serde_json::json!({}));
         if reply.get("ok") == Some(&serde_json::json!(false)) {
             return Err(reply["error"]
                 .as_str()
-                .unwrap_or("the reading refused")
-                .to_owned());
+                .map(str::to_owned)
+                .unwrap_or_else(|| t("forge.signalsRefused")));
         }
         Ok(reply)
     };
@@ -2184,7 +2252,9 @@ fn read_one_signal(audio: &str, name: &str) -> Result<(String, String), String> 
         Err(why) => return Err(why),
     };
     format_signal_reading(&reply, name)
-        .ok_or_else(|| "the reading carried no requested block".to_owned())
+        // The reply named no reading for the button that asked: the lab's
+        // own wording for that, as a localized line the card can show.
+        .ok_or_else(|| t("forge.signalsNoRequestedBlock"))
 }
 
 /// The catalogue as the lab holds it: the families in the catalogue's
@@ -2554,8 +2624,12 @@ fn build_voiceover_sibling(
                 voiceover_copy_name(copied.len(), source_file)
             };
             let target = into.join(&name);
+            // The refusal is the pane's own wording and lands as the
+            // toast itself - the same kind of sentence the sibling's
+            // other refusals are - so it is a localized line, with the
+            // file and the file system's own reason riding its places.
             std::fs::copy(&item.path, &target)
-                .map_err(|error| format!("could not copy voiceover {}: {error}", item.path))?;
+                .map_err(|error| tf("forge.voiceoverCopyFailed", &[&item.path, &error]))?;
             let path = target.to_string_lossy().into_owned();
             take_of.insert(item.path.clone(), path.clone());
             if for_auto_edit {
@@ -2625,12 +2699,10 @@ fn build_voiceover_sibling(
                 &take_target,
                 None,
             );
-            mix.map_err(|error| {
-                format!(
-                    "could not extract the narration from {}: {error}",
-                    item.path
-                )
-            })?;
+            // The same pane-authored refusal, localized the same way:
+            // the video the sound was pulled from and the engine's own
+            // reason ride the two places.
+            mix.map_err(|error| tf("forge.narrationExtractFailed", &[&item.path, &error]))?;
             let take_path = take_target.to_string_lossy().into_owned();
             // The footage copy is made below with the rest of the
             // picture; the take's a-roll link is its sibling path, named
@@ -2679,8 +2751,11 @@ fn build_voiceover_sibling(
             let source_file = std::path::Path::new(&item.path);
             let name = footage_copy_name(roll_copied.len(), source_file);
             let target = roll_dir.join(&name);
+            // The carried picture's copy refuses in the pane's own
+            // words too, so it reads as the localized toast the
+            // voiceover copy's refusal does.
             std::fs::copy(&item.path, &target)
-                .map_err(|error| format!("could not copy footage {}: {error}", item.path))?;
+                .map_err(|error| tf("forge.footageCopyFailed", &[&item.path, &error]))?;
             let path = target.to_string_lossy().into_owned();
             let mut entry = (*item).clone();
             entry.id = mint.next("m");
@@ -2875,8 +2950,11 @@ fn build_voiceover_sibling(
             rate_num: video.rate_num,
             rate_den: video.rate_den,
         };
+        // The sibling's own document refusing to save is the pane's
+        // toast, not a lower layer's sentence, so it is a localized
+        // line with the document layer's own reason riding its place.
         let document = concat_project::doc::to_document(&settings, &sibling)
-            .map_err(|error| format!("the voiceover project cannot be saved: {error}"))?;
+            .map_err(|error| tf("forge.voiceoverSaveFailed", &[&error]))?;
         concat_host::projects::save(&info.path, &document)?;
         // The mapping is the provenance record: which sibling clip plays
         // which source clip, with everything the reconstruction kept.
@@ -2891,18 +2969,22 @@ fn build_voiceover_sibling(
         // string already carries - and absent from the mappings the first
         // builds wrote, so a reader takes missing as 1.
         mapping.insert("schemaVersion".to_owned(), serde_json::json!(1));
+        // The mapping's refusals - serializing its segments, pretty-
+        // printing it, writing the file - are the pane's own words and
+        // land as the toast itself, so they read as one localized line:
+        // to the reader the three are one sentence either way.
         mapping.insert(
             "segments".to_owned(),
             serde_json::to_value(&segments)
-                .map_err(|error| format!("the voiceover mapping cannot be written: {error}"))?,
+                .map_err(|error| tf("forge.voiceoverMappingFailed", &[&error]))?,
         );
         let bytes = serde_json::to_vec_pretty(&mapping)
-            .map_err(|error| format!("the voiceover mapping cannot be written: {error}"))?;
+            .map_err(|error| tf("forge.voiceoverMappingFailed", &[&error]))?;
         std::fs::write(
             std::path::Path::new(&info.path).join("voiceover-mapping.json"),
             bytes,
         )
-        .map_err(|error| format!("could not write the voiceover mapping: {error}"))?;
+        .map_err(|error| tf("forge.voiceoverMappingFailed", &[&error]))?;
         Ok(BuiltSibling {
             files: copied,
             segments,
@@ -2927,9 +3009,14 @@ fn build_voiceover_sibling(
                             info.path
                         );
                     }
-                    return Err(format!(
-                        "could not create the AUTO EDIT export folder {}: {error}",
-                        export_dir.display()
+                    // The refusal is the pane's own wording, and it lands
+                    // as the toast itself - the same kind of sentence
+                    // `forge.projectFailed` is - so it is a localized
+                    // line, with the folder and the file system's own
+                    // reason riding its two places.
+                    return Err(tf(
+                        "forge.autoEditExportFolderFailed",
+                        &[&export_dir.display(), &error],
                     ));
                 }
                 Some(AutoEditSource {
@@ -3231,6 +3318,11 @@ fn a_model_key_is_saved(studio: &Studio) -> bool {
 /// fields: while `update` runs, the studio's copy of the pane is a blank
 /// `mem::take` left behind, so reading `studio.forge` here would answer
 /// "not connected" on every call and the handover could never happen.
+///
+/// The refusals are the pane's own words for the user - the retry path
+/// shows one as the toast itself, and the first run embeds one inside
+/// `forge.autoEditDirectorFallback`'s {0} - so each is a localized line a
+/// locale can carry, never an English sentence baked into the code.
 fn director_ready(
     connected: Option<bool>,
     installed: Option<bool>,
@@ -3240,22 +3332,13 @@ fn director_ready(
     // harness itself still has to exist and be wired, which the page's
     // own probe answers.
     if !a_model_key_is_saved(studio) {
-        return Err(
-            "no model key is saved on the Forge page, so the Director has no model to think with"
-                .to_owned(),
-        );
+        return Err(t("forge.autoEditDirectorNoModelKey"));
     }
     if connected != Some(true) {
-        return Err(
-            "the Forge harness is not connected to this editor (press Connect on the Forge page)"
-                .to_owned(),
-        );
+        return Err(t("forge.autoEditDirectorNotConnected"));
     }
     if installed != Some(true) {
-        return Err(
-            "the funcut-director skill is not installed (press Install on the Forge page)"
-                .to_owned(),
-        );
+        return Err(t("forge.autoEditDirectorSkillMissing"));
     }
     // The surface, not just the wiring. A run told to verify its export
     // meets a refusal mid-edit if the server it talks to does not serve
@@ -3265,12 +3348,12 @@ fn director_ready(
     // stops the handover before anything is cut.
     let unserved = concat_mcp::protocol::unserved(concat_mcp::protocol::DIRECTOR_REQUIRED);
     if !unserved.is_empty() {
-        return Err(format!(
-            "the editor's MCP surface does not serve {} - an edit that cannot measure itself \
-             would report a success nobody checked; name {} on CONCAT_MCP_ALLOW (or serve the \
-             whole catalogue) and try again",
-            unserved.join(", "),
-            if unserved.len() == 1 { "it" } else { "them" }
+        // The tool names ride the {0} as they are - names, not words - and
+        // the line itself dodges the one-or-many pronoun the old English
+        // picked between, so one localized line serves both counts.
+        return Err(tf(
+            "forge.autoEditDirectorSurfaceUnserved",
+            &[&unserved.join(", ")],
         ));
     }
     Ok(())
@@ -3566,18 +3649,17 @@ fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<Atom
     match spawned {
         Ok(child) => {
             crate::host::on_ui(|studio, _, _| {
-                studio.handle(Msg::Forge(ForgeMsg::Line(
-                    "the Director has the edit: it reads the measurements, plans, cuts and \
-                     reviews its own work"
-                        .to_owned(),
-                )));
+                studio.handle(Msg::Forge(ForgeMsg::Line(t(
+                    "forge.autoEditDirectorHasEdit",
+                ))));
             });
             read_the_director_run(child, kill);
         }
         Err(error) => {
             crate::host::on_ui(move |studio, _, _| {
-                studio.handle(Msg::Forge(ForgeMsg::Line(format!(
-                    "the Director could not start: {error}"
+                studio.handle(Msg::Forge(ForgeMsg::Line(tf(
+                    "forge.autoEditDirectorStartFailed",
+                    &[&error],
                 ))));
                 studio.handle(Msg::Forge(ForgeMsg::AutoDirectorEnded(-1)));
             });
@@ -3874,7 +3956,11 @@ fn connect_forge() -> Result<bool, String> {
     if code == 0 {
         Ok(true)
     } else {
-        Err(first_line(&words).unwrap_or_else(|| "the command failed".to_owned()))
+        // The harness's own first line rides as it comes; the fallback for
+        // a harness that said nothing is the pane's own word, so it is a
+        // localized line rather than an English fragment riding the
+        // toast's {0}.
+        Err(first_line(&words).unwrap_or_else(|| t("forge.commandFailed")))
     }
 }
 
@@ -3884,7 +3970,10 @@ fn install_skill() -> Result<bool, String> {
     if code == 0 {
         Ok(true)
     } else {
-        Err(first_line(&words).unwrap_or_else(|| "the command failed".to_owned()))
+        // The same fallback, for the same reason: the harness's own words
+        // as they come, the pane's own word localized when there were
+        // none.
+        Err(first_line(&words).unwrap_or_else(|| t("forge.commandFailed")))
     }
 }
 
@@ -4014,13 +4103,23 @@ fn run_auto_edit(
                                 Stage::Plan,
                                 None,
                                 ToolError {
-                                    message: "the tool box could not be built".to_owned(),
+                                    // The sentence is the pane's own
+                                    // wording, and it lands raw inside
+                                    // `forge.autoEditFailed`'s {0}, so it
+                                    // is a localized line - the lower
+                                    // layers' own words, when there are
+                                    // any, ride the toast as they come.
+                                    message: t("forge.autoEditToolboxFailed"),
                                     retryable: Some(false),
                                     retry_after: None,
                                     code: None,
                                 },
                             ),
                             attempt: 1,
+                            // No receipt: the toolbox never built, so no
+                            // call ever answered and there is no evidence
+                            // a receipt could name.
+                            receipt: None,
                         },
                     ))));
                 });
@@ -4058,7 +4157,10 @@ fn run_auto_edit(
                 } else if let Some(text) = panic.downcast_ref::<String>() {
                     text.clone()
                 } else {
-                    "without a message".to_owned()
+                    // The pane's own words for a payload that carried
+                    // none - a sentence the toast shows, so a localized
+                    // one.
+                    t("forge.autoEditPanickedWithoutMessage")
                 };
                 // The state is built here, not read back from the
                 // runner: a panic mid-emit can leave the runner's own
@@ -4071,13 +4173,24 @@ fn run_auto_edit(
                         Stage::Plan,
                         None,
                         ToolError {
-                            message: format!("the run panicked: {what}"),
+                            // The pane's own prefix around whatever the
+                            // panic carried rides `forge.autoEditFailed`'s
+                            // {0} raw, so it is a localized line and only
+                            // the panicking code's own words ride as
+                            // they came.
+                            message: tf("forge.autoEditPanicked", &[&what]),
                             retryable: Some(false),
                             retry_after: None,
                             code: None,
                         },
                     ),
                     attempt: 1,
+                    // No receipt: the state is built here rather than
+                    // read back from the runner - the runner's own locks
+                    // may be poisoned - so the partial receipt it held
+                    // dies with the panic. `None` is the honest answer,
+                    // not a silent half of one.
+                    receipt: None,
                 }
             }
         };

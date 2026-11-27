@@ -480,6 +480,9 @@ impl Runner {
                     stage: Stage::Plan,
                     error: error.clone(),
                     attempt: 1,
+                    // No receipt: the program never walked a stage, so
+                    // there is no evidence a receipt could name.
+                    receipt: None,
                 },
                 AutoEditProgress::new(
                     Stage::Plan,
@@ -551,6 +554,7 @@ impl Runner {
                         Duration::ZERO,
                         "cancel asked for before the stage began",
                     ),
+                    self.partial_receipt(program, &records, &observed, &warnings),
                 );
             }
             // IDEM: a stage a prior run on this runner completed is
@@ -1028,6 +1032,7 @@ impl Runner {
                             stage_started.elapsed(),
                             "the stage stopped: a cancel was asked for",
                         ),
+                        self.partial_receipt(program, &records, &observed, &warnings),
                     );
                 }
                 // The warn policy warns the failure, whichever side of
@@ -1050,11 +1055,13 @@ impl Runner {
                     records[index].outcome = StageOutcome::Failed;
                     records[index].elapsed_ms = Some(stage_elapsed_ms);
                     records[index].failure = Some(error.line());
+                    let receipt = self.partial_receipt(program, &records, &observed, &warnings);
                     self.emit(
                         AutoEditState::Failed {
                             stage,
                             error: error.clone(),
                             attempt: failed_attempt,
+                            receipt: Some(receipt),
                         },
                         AutoEditProgress::new(
                             stage,
@@ -1393,6 +1400,7 @@ impl Runner {
         applied: &[Stage],
         exported: bool,
         boundary: AutoEditProgress,
+        receipt: Box<crate::receipt::AcceptanceReceipt>,
     ) -> RunOutcome {
         let running = self.state();
         let mut rolled_back = true;
@@ -1458,10 +1466,39 @@ impl Runner {
                 at: timestamp(),
                 rolled_back,
                 undone_to,
+                receipt: Some(receipt),
             },
             note,
         );
         RunOutcome::Cancelled
+    }
+
+    /// The receipt a run that stopped early still owes its caller: the
+    /// same evidence a completed run ships beside its edit - the
+    /// stages, the gates, the warnings, the assets - read from whatever
+    /// the run had done when it stopped. A stage that never got its
+    /// turn stays `NotReached` and a gate whose measurement never
+    /// landed is `Skipped`, never a pass the run did not earn: a failed
+    /// or cancelled run's terminal state carries no `Completed` receipt
+    /// of its own, so this partial one is the evidence the report
+    /// beside the edit writes and the retry reads.
+    fn partial_receipt(
+        &self,
+        program: &EditProgram,
+        records: &[StageRecord],
+        observed: &[(ToolCall, Value)],
+        warnings: &[String],
+    ) -> Box<crate::receipt::AcceptanceReceipt> {
+        Box::new(
+            AcceptanceReceipt::new(
+                self.project().display().to_string(),
+                program.export.display().to_string(),
+                records.to_vec(),
+                derive_gates_with_stages(observed, records),
+                warnings.to_vec(),
+            )
+            .with_assets(provenance_of(observed)),
+        )
     }
 
     /// One event: the state and the last event move together, so a
@@ -1606,7 +1643,98 @@ mod tests {
         );
         assert_eq!(outcome, RunOutcome::Cancelled);
         assert!(caller.calls.is_empty(), "a cancelled run made a tool call");
-        assert!(matches!(runner.state(), AutoEditState::Cancelled { .. }));
+        // The stop still ships its receipt: the evidence of a run that
+        // never walked a stage - every stage `NotReached`, no gate a
+        // pass it did not earn - is still evidence, not nothing.
+        let AutoEditState::Cancelled {
+            receipt: Some(receipt),
+            ..
+        } = runner.state()
+        else {
+            panic!("a cancelled run shipped no receipt");
+        };
+        assert_eq!(receipt.stages.len(), 1);
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::NotReached);
+    }
+
+    #[test]
+    fn a_failed_run_ships_the_partial_receipt_it_earned() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "valid": true })),
+            refused("the read is refused"),
+        ]);
+        let mut program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan")]),
+            StageStep::run(Stage::Timeline, vec![call("timeline_read")]),
+            StageStep::run(Stage::Watch, vec![call("watch")]),
+        ]);
+
+        let outcome = runner.run(&mut program, &mut caller);
+        assert!(matches!(outcome, RunOutcome::Failed(_)));
+        let AutoEditState::Failed {
+            receipt: Some(receipt),
+            ..
+        } = runner.state()
+        else {
+            panic!("a failed run shipped no receipt");
+        };
+        // The stages exactly as far as the run walked them: the plan
+        // completed, the timeline failed, and the watch stage - the
+        // one the run never reached - stays `NotReached` rather than
+        // borrowing a verdict it did not earn.
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::Completed);
+        assert_eq!(receipt.stages[0].calls, vec!["plan"]);
+        assert_eq!(receipt.stages[1].outcome, StageOutcome::Failed);
+        // The failure's own line: the stage, the tool, the sentence.
+        assert_eq!(
+            receipt.stages[1].failure.as_deref(),
+            Some("timeline timeline_read: the read is refused")
+        );
+        assert_eq!(receipt.stages[2].outcome, StageOutcome::NotReached);
+        // The receipt names the run it belonged to: the project and the
+        // export the program had promised, whether or not it landed.
+        assert_eq!(receipt.project, "/edits/Reel");
+        assert_eq!(receipt.export, "/edits/Reel/export.mp4");
+    }
+
+    #[test]
+    fn a_run_cancelled_mid_stage_ships_the_receipt_of_what_had_landed() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        // The plan answers, then the timeline's call asks for the stop
+        // as it fails - the way a cancel lands mid-stage: a stop asked
+        // while a call was in flight lands cancelled, not failed.
+        let mut caller = Cancelling {
+            runner: runner.clone(),
+            when: "timeline_read",
+            replies: vec![
+                Ok(json!({ "valid": true })),
+                refused("the read stopped: the run was asked to stop"),
+            ]
+            .into_iter()
+            .collect(),
+            calls: Vec::new(),
+        };
+        let mut program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan")]),
+            StageStep::run(Stage::Timeline, vec![call("timeline_read")]),
+        ]);
+
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Cancelled);
+        let AutoEditState::Cancelled {
+            receipt: Some(receipt),
+            ..
+        } = runner.state()
+        else {
+            panic!("a cancelled run shipped no receipt");
+        };
+        // What had landed before the stop: the plan completed, and the
+        // stage the stop landed in never finished, so it stays
+        // `NotReached` - the receipt claims no completed work the
+        // rollback took back off the timeline.
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::Completed);
+        assert_eq!(receipt.stages[1].outcome, StageOutcome::NotReached);
     }
 
     #[test]

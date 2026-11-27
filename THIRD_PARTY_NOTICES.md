@@ -237,6 +237,72 @@ ONNX Runtime
 accelerator the runtime brings on this machine. How the runtime is
 carried is under "ONNX Runtime" above.
 
+## The sound models (two readers, three generators)
+
+Settings > Models carries four rows of sound models beside the cutout
+models, each a set of files rather than one graph, downloaded on demand
+into the same `cutout-models` folder and never bundled with the app. The
+settings sheet, the `models_download` API and `sound_model.py`'s
+`generate` all read one table
+(`src/crates/concat-host/src/soundmodel.rs`), so a row and a generation
+name the same bytes. See `docs/SOUND-MODEL.md` and
+`docs/SOUND-GENERATION.md`.
+
+One row is the reader's set, and gives a sound a meaning:
+
+- **CLAP**, LAION's contrastive audio-text model, in the int8 ONNX
+  export Xenova publishes
+  (https://huggingface.co/Xenova/clap-htsat-unfused - the audio tower,
+  the text tower and the tokenizer), **Apache-2.0** per
+  `models/manifest.toml` and the choice table in `docs/SOUND-MODEL.md`.
+- **YAMNet**, Google's AudioSet event classifier, in the community ONNX
+  conversion at https://huggingface.co/zeropointnine/yamnet-onnx, with
+  its class map. The conversion and Google's original weights are both
+  **Apache-2.0**; `docs/SOUND-MODEL.md` also asks that the conversion
+  be checked against the TensorFlow original before it is trusted,
+  because a conversion that is subtly wrong still produces plausible
+  labels.
+
+Three rows are generators, and write sound from words; the code holds
+each to the licence its weights carry:
+
+- **TinyAudio-MF** (`sfx-small`): the small sound-effect generator - 87
+  M parameters, one mean-flow step, 10 s at 44.1 kHz. Its five files
+  (pipeline, tokenizer, text encoder, flow step and VAE decoder) are
+  fetched from https://huggingface.co/junxiliu/TinyAudio, **MIT** per
+  `models/manifest.toml` and the model table in
+  `src/crates/concat-vision/src/models.rs`.
+- **Stable Audio Open Small** (`sfx-large`): the heavier sound-effect
+  generator - 341 M parameters, eight distilled rectified-flow steps,
+  11.9 s of stereo at 44.1 kHz. Its nine files are fetched from the
+  ONNX export at
+  https://huggingface.co/fernhoof/stable-audio-open-small, under the
+  **Stability AI Community License** as this repository's tables record
+  it: free for research and for commercial use under $1M annual revenue,
+  with the licence's own attribution terms (`docs/SOUND-GENERATION.md`).
+  Read the licence itself before shipping client work over that line.
+- **TinyMusician** (`bgm`): the music-bed generator - MusicGen at 15
+  layers, four codebooks, 32 kHz mono. Its five files are fetched from
+  the ONNX export at https://huggingface.co/itsmax/TinyMusician, whose
+  repository carries no licence file of its own - `models/manifest.toml`
+  records exactly that. Its model card names `facebook/musicgen-small`
+  as its base, and MusicGen-small's weights are **CC-BY-NC 4.0**, so
+  this repository treats the export as a derivative bound by those
+  terms; the licence the app's tables record is "CC-BY-NC-4.0
+  (MusicGen-small weights)". There is no licence file upstream to
+  check that conclusion against, so verify the base model's licence
+  before shipping. Either way, a bed this model writes never goes into
+  monetized or client work.
+
+The licence is wired, not advised: `generate` refuses the music
+generator in a monetized project (`reason: "licence"`, before anything
+is loaded), a generated file carries its licence beside it
+(`<file>.licence.json`), and `sounds_add` / `bgm_import` read that
+record and refuse a non-commercial file in a monetized edit - the same
+line MobyGratis is held to. The generator's reply carries its `licence`
+and `commercial`, so a run can record which model wrote which file and
+what that allowed.
+
 ## The model mirror
 
 Every downloaded model named above is mirrored onto a release of Concat's own
@@ -247,13 +313,20 @@ what is mirrored, and the digest each download is checked against, is
 mirror.
 
 Mirroring is redistribution, and each model keeps the licence it arrived
-under - Apache-2.0 for the Kokoro bundles, SlimSAM and IS-Net, CC-BY-4.0
-for Pocket TTS, BSD-3-Clause for Real-ESRGAN, MIT for Chatterbox Turbo and
-the whisper conversions, GPL-3.0 for Robust Video Matting. Those terms are met
-by the attributions above and by the licence files each mirrored archive
-carries; a mirrored file is a verbatim copy, never a modification. Nothing
-in the mirror is bundled with the app, and Concat claims no rights over any
-of it.
+under - Apache-2.0 for the Kokoro bundles, SlimSAM, IS-Net, CLAP and
+YAMNet, CC-BY-4.0 for Pocket TTS, BSD-3-Clause for Real-ESRGAN, MIT for
+Chatterbox Turbo, the whisper conversions and TinyAudio-MF, the Stability
+AI Community License for Stable Audio Open Small, GPL-3.0 for Robust
+Video Matting, and CC-BY-NC 4.0 - inherited from MusicGen-small's
+weights - for TinyMusician, whose own repository carries no licence file
+at all. Those terms are met by the attributions above and by the licence
+files each mirrored archive carries; the sound models are mirrored as the
+loose files their publishers serve, renamed to one flat layout (save the
+three `sfx-large` weight files, which keep the names their graphs were
+exported with), and carry no licence file beside them, so their terms are
+the attributions above alone. A mirrored file is a verbatim copy, never a
+modification. Nothing in the mirror is bundled with the app, and Concat
+claims no rights over any of it.
 
 ## Effect preview photograph
 

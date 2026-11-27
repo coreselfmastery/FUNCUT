@@ -331,13 +331,18 @@ fn write_report(project: &Path, state_value: &Value) -> Result<String, String> {
         .map_err(|error| format!("could not write {}: {error}", path.display()))
 }
 
-/// Write the run's receipt beside the edit, when its state carries one.
-/// A state with no receipt to write is `Ok(None)`, not a failure: only a
-/// receipt that existed and could not be written answers `Err`.
+/// Write the run's receipt beside the edit, whatever its standing: a
+/// completed run's receipt and a failed or cancelled run's partial one -
+/// the stages that had completed, the gates their answers had measured
+/// - are both evidence the caller keeps. A state with no receipt to
+/// write is `Ok(None)`, not a failure: only a receipt that existed and
+/// could not be written answers `Err`.
 fn write_receipt(project: &Path, state: &AutoEditState) -> Result<Option<String>, String> {
     let receipt = match state {
         AutoEditState::Completed { receipt, .. }
-        | AutoEditState::CompletedWithWarnings { receipt, .. } => receipt.as_deref(),
+        | AutoEditState::CompletedWithWarnings { receipt, .. }
+        | AutoEditState::Failed { receipt, .. }
+        | AutoEditState::Cancelled { receipt, .. } => receipt.as_deref(),
         _ => None,
     };
     let Some(receipt) = receipt else {

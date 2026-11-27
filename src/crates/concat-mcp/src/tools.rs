@@ -172,6 +172,14 @@ pub enum Action {
     /// from a transcript (and a beat grid, when the caller has one), as
     /// the B-roll shopping list written before the plan is.
     FootagePlanSuggest,
+    /// `models.download`: one model from the mirror, or - kind "all" -
+    /// the whole registry on one job. An action of its own rather than a
+    /// plain method because the whole-registry spelling arrives without
+    /// the id the API's request requires, and because its reply carries
+    /// the setup preflight's one answer about the vision critic - the
+    /// model that is not part of the registry and must not be silently
+    /// missing from a download that promised everything.
+    ModelsDownload,
 }
 
 /// How a reply is shown to the agent.
@@ -873,16 +881,24 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         )
         .reading(),
-        method(
-            "models_download",
-            "Download an AI model",
-            "Download a missing voice (tts), transcriber (whisper), sound set \
-             (sound-models|sfx-small|sfx-large|bgm), or picture set (picture-models) - \
-             or every missing model at once (kind: all, id: all); poll models_list or \
-             analysis_wait for job status.",
-            "models.download",
-            Raw,
-        ),
+        Tool {
+            name: "models_download",
+            title: "Download an AI model",
+            description: "Download a missing voice (tts), transcriber (whisper), sound set \
+             (sound-models|sfx-small|sfx-large|bgm) or picture set (picture-models); or kind \"all\" \
+             - every family in one job, the setup preflight to run on a cold machine BEFORE auto_edit \
+             or a director run, so no stage meets a missing model. Wait on the job with analysis_wait; \
+             a model already on disk is skipped. The one model kind \"all\" does not fetch is the \
+             local vision critic: set it up with local_vlm (action setup) - the kind \"all\" reply \
+             says whether it is up.",
+            read_only: false,
+            destructive: false,
+            // A second call finds everything the first one fetched and
+            // skips it, so calling twice is calling once plus a round
+            // trip - the honest spelling of idempotent for a download.
+            idempotent: true,
+            action: Action::ModelsDownload,
+        },
         Tool {
             name: "motion_presets",
             title: "List the motion library",
@@ -1502,6 +1518,38 @@ fn openvid_search_schema(schemas: &Schemas) -> Option<Value> {
     Some(schema)
 }
 
+/// The `models_download` tool's argument schema: the API's own, with the
+/// id no longer required - the whole-registry kind names no model, so a
+/// caller that writes `{kind: "all"}` and nothing else is a correct
+/// caller, and a schema that demanded an id would refuse the one call a
+/// cold machine's setup makes. The descriptions are restated here
+/// because the API's own still say three kinds: the tool is the contract
+/// an agent reads, and the tool says all five, with what each one is
+/// for.
+fn models_download_schema(schemas: &Schemas) -> Option<Value> {
+    let mut schema = schemas.method("models.download")?;
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.retain(|name| name.as_str() != Some("id"));
+    }
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        if let Some(kind) = properties.get_mut("kind") {
+            kind["description"] = json!(
+                "Which family: \"tts\", \"whisper\", \"sound\" or \"picture\" - or \"all\", \
+                 every family in one job. \"all\" is the setup preflight on a cold machine: \
+                 call it once before auto_edit or a director run so no stage meets a missing model."
+            );
+        }
+        if let Some(id) = properties.get_mut("id") {
+            id["description"] = json!(
+                "The model's id, from models_list. Absent only for kind \"all\", which \
+                 downloads the whole registry and names no model; a kind other than \"all\" \
+                 without an id is refused."
+            );
+        }
+    }
+    Some(schema)
+}
+
 /// The schema a tool's arguments follow.
 fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
     match tool.action {
@@ -1510,6 +1558,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
             ..
         } => openvid_search_schema(schemas),
         Action::Method { method, .. } => schemas.method(method),
+        Action::ModelsDownload => models_download_schema(schemas),
         Action::Command { op } => schemas.command(op),
         Action::Version => schemas.method("version"),
         Action::TimelineRead => schemas.method("project.get"),
@@ -2748,6 +2797,101 @@ fn edit(op: &str, mut arguments: Value) -> Result<Request, ApiError> {
     request("edit.apply", json!({ "path": path, "command": arguments }))
 }
 
+/// `models_download`'s arguments as the API's request: one model when an
+/// id names it, or the whole registry when the kind is "all". The API's
+/// own request requires the id, so the whole-registry spelling - which
+/// names no model, and is the one a cold machine's setup writes - has it
+/// filled in here rather than refused as half a call: the registry knows
+/// its own models, and "all" is the id of all of them.
+///
+/// Any other kind still needs its id, and the refusal says where the ids
+/// are rather than letting the request layer answer "missing field `id`"
+/// - a caller that forgot the id is one round trip from a correct call,
+/// not from decoding serde's words.
+fn models_download_request(mut arguments: Value) -> Result<Request, ApiError> {
+    let Some(fields) = arguments.as_object_mut() else {
+        return Err(ApiError::invalid("the arguments are an object"));
+    };
+    let kind = fields
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let id = fields
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if kind == "all" {
+        if id.is_empty() {
+            fields.insert("id".to_owned(), json!("all"));
+        }
+    } else if id.is_empty() {
+        return Err(ApiError::invalid(
+            "id is required for a one-model kind - the ids are in models_list; \
+             only kind \"all\" downloads the whole registry without one",
+        ));
+    }
+    request("models.download", arguments)
+}
+
+/// The `models_download` tool: the API's download started, and - for the
+/// whole-registry kind, the setup preflight - the one answer about the
+/// model the job cannot fetch. The local vision critic's model lives
+/// behind the `local_vlm` tool, fetched by its own setup into its own
+/// folder, so a download that promised "everything" and said nothing
+/// about it would leave the cold machine's craft critique silently
+/// scoring with measured pixels instead - the failure the preflight
+/// turns into a sentence.
+fn models_download(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
+    let whole = arguments.get("kind").and_then(Value::as_str) == Some("all");
+    let mut result = backend.call(models_download_request(arguments)?)?;
+    if whole {
+        result["vlm"] = vlm_preflight();
+    }
+    Ok(Outcome::json(result))
+}
+
+/// The vision critic's half of the setup preflight: up, with its
+/// endpoint, or the one sentence that says it is not part of the
+/// registry download and names the call that fetches it. The status is
+/// asked cheaply - a probe of the local endpoints, no download - and
+/// any failure to ask (no Python on the machine, a broken runtime)
+/// degrades to the same sentence with the reason beside it, because a
+/// preflight that failed loudly would cost a download that started
+/// fine.
+fn vlm_preflight() -> Value {
+    const NEXT: &str = "the local vision critic's model is not part of this download - it is the \
+                        one model that lives behind local_vlm rather than the model registry; call \
+                        local_vlm {\"action\": \"setup\"} once (about 546 MB for the default mini \
+                        profile) and craft_critique scores with the full six-axis critic instead of \
+                        measured pixels";
+    match crate::sense::local_vlm(json!({ "action": "status" })) {
+        Ok(outcome) => {
+            let said = outcome.structured.unwrap_or_else(|| json!({}));
+            if said["available"].as_bool() == Some(true) {
+                let mut up = json!({
+                    "available": true,
+                    "endpoint": said["endpoint"],
+                    "model": said["model"],
+                    "hosted": said["hosted"],
+                });
+                // The privacy note a hosted critic owes every reply: the
+                // frames it scores leave the machine, and a setup preflight
+                // that repeated the endpoint without repeating the note
+                // would be the one place the warning is missing.
+                if let Some(note) = said.get("privacy").filter(|note| !note.is_null()) {
+                    up["privacy"] = note.clone();
+                }
+                up
+            } else {
+                json!({ "available": false, "next": NEXT })
+            }
+        }
+        Err(error) => json!({ "available": false, "next": NEXT, "check": error.to_string() }),
+    }
+}
+
 fn run(
     toolbox: &Toolbox,
     tool: &Tool,
@@ -2802,6 +2946,7 @@ fn run(
             let result = backend.call(edit(op, arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
         }
+        Action::ModelsDownload => models_download(arguments, backend),
         Action::Version => {
             let mut result = backend.call(request("version", arguments)?)?;
             result["mcp"] = backend.describe();
@@ -5536,7 +5681,9 @@ mod tests {
             ),
             (
                 "models_download",
-                json!({ "kind": "tts", "id": "kokoro-int8-multi-lang-v1_0" }),
+                // The whole-registry spelling, the one a cold machine's
+                // setup writes: no id, because "all" names no model.
+                json!({ "kind": "all" }),
             ),
             (
                 "analysis_wait",
@@ -5787,6 +5934,7 @@ mod tests {
                     request("export.status", sample)
                 }
                 Action::PreviewFrame => request("preview.frame", sample.clone()),
+                Action::ModelsDownload => models_download_request(sample.clone()),
                 Action::Mask => mask(sample.clone()),
                 // The motion tools wrap `concat-motion`, not the API: the
                 // two that need no engine and no project run for real,
@@ -6756,6 +6904,105 @@ mod tests {
         let text = outcome.content[0]["text"].as_str().expect("says why");
         assert!(text.contains("style2"), "names the key: {text}");
         assert!(backend.0.is_empty(), "nothing reached the backend");
+    }
+
+    /// The whole-registry download: the id-less spelling a cold machine's
+    /// setup writes reaches the API as the request its own schema
+    /// requires, and the reply carries the vision critic's preflight -
+    /// the one model the job cannot fetch, said in one sentence rather
+    /// than left as the craft critique's silent fallback to measured
+    /// pixels. The backend is a fake, the way this file's other tool
+    /// tests fake one: the contract under test is what reaches the API
+    /// and what rides back on the reply, not the download itself.
+    #[test]
+    fn the_whole_registry_download_fills_its_own_id_and_preflights_the_vision_critic() {
+        let toolbox = Toolbox::new();
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "job": "j1", "path": "all", "output": "" })].into(),
+        );
+        let cancelled = AtomicBool::new(false);
+        let outcome = toolbox
+            .call(
+                "models_download",
+                json!({ "kind": "all" }),
+                Context {
+                    backend: &mut backend,
+                    cancelled: &cancelled,
+                    progress: None,
+                },
+            )
+            .expect("the tool exists");
+        assert!(!outcome.is_error, "{:?}", outcome.content);
+        let said = outcome.structured.expect("structured");
+        assert_eq!(said["job"], "j1", "the job the API started: {said}");
+        // The request that reached the API: the whole-registry kind with
+        // the id its request requires filled in from "all" - the spelling
+        // the schema accepts and serde would have refused.
+        let calls = backend.0.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["method"], "models.download");
+        assert_eq!(calls[0]["kind"], "all");
+        assert_eq!(calls[0]["id"], "all", "the id is filled in, not missed");
+        // The preflight: the model the job does not fetch, said once. A
+        // machine with a critic up answers its endpoint; a machine
+        // without one answers the sentence that names the call to make -
+        // both are the preflight working, so the test takes either.
+        let vlm = &said["vlm"];
+        assert!(vlm["available"].is_boolean(), "{vlm}");
+        if vlm["available"] == json!(true) {
+            assert!(
+                vlm["endpoint"]
+                    .as_str()
+                    .is_some_and(|endpoint| !endpoint.is_empty()),
+                "{vlm}"
+            );
+        } else {
+            let next = vlm["next"].as_str().unwrap_or_default();
+            assert!(next.contains("local_vlm"), "{next}");
+            assert!(next.contains("setup"), "{next}");
+        }
+    }
+
+    /// A one-model kind without its id is refused with the sentence that
+    /// says where the ids are, not serde's "missing field `id`" - a
+    /// caller that forgot the id is one round trip from a correct call -
+    /// and nothing reaches the API while it is wrong.
+    #[test]
+    fn a_one_model_download_without_its_id_is_refused_with_where_the_ids_are() {
+        let toolbox = Toolbox::new();
+        let mut backend = Answers(std::cell::RefCell::new(Vec::new()), Vec::new().into());
+        let cancelled = AtomicBool::new(false);
+        let outcome = toolbox
+            .call(
+                "models_download",
+                json!({ "kind": "tts" }),
+                Context {
+                    backend: &mut backend,
+                    cancelled: &cancelled,
+                    progress: None,
+                },
+            )
+            .expect("the tool exists");
+        assert!(outcome.is_error, "the id-less one-model kind is refused");
+        let text = outcome.content[0]["text"].as_str().expect("says why");
+        assert!(
+            text.contains("id is required"),
+            "names what is missing: {text}"
+        );
+        assert!(
+            text.contains("models_list"),
+            "says where the ids are: {text}"
+        );
+        assert!(
+            text.contains("\"all\""),
+            "names the one kind that takes no id: {text}"
+        );
+        let calls = backend.0.borrow();
+        assert!(
+            calls.is_empty(),
+            "the refusal happens before the API is asked: {calls:?}"
+        );
     }
 
     /// A render that ends failed is the wait's error, not its result: a

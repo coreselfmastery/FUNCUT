@@ -354,10 +354,31 @@ impl Library {
         self.dirs.data.join("stock").join(provider.name())
     }
 
-    /// The path of a fetched clip, when it is on this machine.
+    /// The path of a fetched video, when it is on this machine.
     pub fn fetched(&self, provider: Provider, id: &str) -> Option<std::path::PathBuf> {
-        let path = self.folder(provider).join(format!("{}.mp4", safe_stem(id)));
-        path.is_file().then_some(path)
+        self.fetched_with_extension(provider, id, "mp4")
+    }
+
+    /// The path cached for this exact provider URL. Photo and video IDs
+    /// can share a numeric spelling, so the URL's extension is part of
+    /// the cache identity - a photo must not hit, or evict, a video's file.
+    pub fn fetched_for_url(
+        &self,
+        provider: Provider,
+        id: &str,
+        url: &str,
+    ) -> Option<std::path::PathBuf> {
+        let url = provider.validate_download_url(url).ok()?;
+        self.fetched_with_extension(provider, id, &extension_of_url(&url))
+    }
+
+    fn fetched_with_extension(
+        &self,
+        provider: Provider,
+        id: &str,
+        extension: &str,
+    ) -> Option<std::path::PathBuf> {
+        cached_file(&self.folder(provider), id, extension)
     }
 
     /// One provider's standing: whether a key is in reach and what the
@@ -550,24 +571,15 @@ impl Library {
         cancel: &std::sync::atomic::AtomicBool,
     ) -> Result<std::path::PathBuf, String> {
         let url = provider.validate_download_url(url)?;
-        if let Some(path) = self.fetched(provider, id) {
+        // The URL's extension distinguishes a still from a video even
+        // when a provider happens to reuse the same numeric id.
+        let ext = extension_of_url(&url);
+        if let Some(path) = self.fetched_with_extension(provider, id, &ext) {
             return Ok(path);
         }
         let folder = self.folder(provider);
         std::fs::create_dir_all(&folder)
             .map_err(|error| format!("{}'s cache could not be made: {error}", provider.name()))?;
-        // The extension the URL itself carries, so a still is cached as
-        // the still it is: Pexels' originals are .jpeg, Pixabay's larges
-        // are .jpg or .png, and a video's .mp4 stays .mp4. A URL without
-        // one keeps the clip's own name.
-        let ext = url
-            .path()
-            .rsplit('/')
-            .next()
-            .and_then(|last| last.rsplit_once('.'))
-            .map(|(_, ext)| ext.to_ascii_lowercase())
-            .filter(|ext| ext.len() <= 5 && ext.chars().all(|ch| ch.is_ascii_alphanumeric()))
-            .unwrap_or_else(|| "mp4".to_owned());
         let target = folder.join(format!("{}.{ext}", safe_stem(id)));
         let partial = target.with_extension(format!("{ext}.part"));
         // Provider hosts may redirect to their CDN. The fetch shelf returns
@@ -970,6 +982,27 @@ fn pixabay_photo_hit(hit: &Value) -> Option<Hit> {
     })
 }
 
+/// The extension carried by a provider URL, without its query string.
+/// Unknown or extensionless URLs retain the video shelf's historical .mp4
+/// default; the API's still URLs always name their image format.
+fn extension_of_url(url: &Url) -> String {
+    url.path()
+        .rsplit('/')
+        .next()
+        .and_then(|last| last.rsplit_once('.'))
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .filter(|ext| ext.len() <= 5 && ext.chars().all(|ch| ch.is_ascii_alphanumeric()))
+        .unwrap_or_else(|| "mp4".to_owned())
+}
+
+/// Finds only the cache entry for the requested media format. A Pexels
+/// photo and video can have the same numeric id; returning the other
+/// format would make the API reject and delete a perfectly good cache file.
+fn cached_file(folder: &std::path::Path, id: &str, extension: &str) -> Option<std::path::PathBuf> {
+    let path = folder.join(format!("{}.{}", safe_stem(id), extension));
+    path.is_file().then_some(path)
+}
+
 /// A file-name out of a caption's first words: the words a bin entry can
 /// carry, ASCII-friendlied, capped at a name's own length.
 fn name_of(caption: &str) -> String {
@@ -1009,6 +1042,33 @@ fn name_of(caption: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_photo_and_video_with_the_same_id_use_separate_cache_entries() {
+        let folder = tempfile::tempdir().expect("cache folder");
+        let video = folder.path().join("41.mp4");
+        let photo = folder.path().join("41.jpeg");
+        std::fs::write(&video, b"video").expect("video cache");
+        std::fs::write(&photo, b"photo").expect("photo cache");
+
+        let pexels_photo = Url::parse(
+            "https://images.pexels.com/photos/41/pexels-41.jpeg?auto=compress",
+        )
+        .expect("photo URL");
+        let pexels_video = Url::parse("https://videos.pexels.com/video-files/41.mp4")
+            .expect("video URL");
+
+        assert_eq!(extension_of_url(&pexels_photo), "jpeg");
+        assert_eq!(extension_of_url(&pexels_video), "mp4");
+        assert_eq!(
+            cached_file(folder.path(), "41", &extension_of_url(&pexels_photo)),
+            Some(photo)
+        );
+        assert_eq!(
+            cached_file(folder.path(), "41", &extension_of_url(&pexels_video)),
+            Some(video)
+        );
+    }
 
     #[test]
     fn the_providers_name_their_keys_and_their_licence() {

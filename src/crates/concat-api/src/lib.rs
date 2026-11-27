@@ -1817,24 +1817,25 @@ impl Api {
             hits: found
                 .hits
                 .iter()
-                .map(|hit| StockHit {
-                    id: hit.id.clone(),
-                    provider: provider.name().to_owned(),
-                    caption: hit.caption.clone(),
-                    name: hit.name.clone(),
-                    seconds: hit.seconds,
-                    width: hit.width,
-                    height: hit.height,
-                    fps: hit.fps,
-                    url: hit.url.clone(),
-                    preview: hit.preview.clone(),
-                    author: hit.author.clone(),
-                    photo: hit.photo,
-                    license: hit.license.to_owned(),
-                    cached: library.fetched(provider, &hit.id).is_some(),
-                    local_path: library
-                        .fetched(provider, &hit.id)
-                        .map(|path| path.to_string_lossy().into_owned()),
+                .map(|hit| {
+                    let cached = library.fetched_for_url(provider, &hit.id, &hit.url);
+                    StockHit {
+                        id: hit.id.clone(),
+                        provider: provider.name().to_owned(),
+                        caption: hit.caption.clone(),
+                        name: hit.name.clone(),
+                        seconds: hit.seconds,
+                        width: hit.width,
+                        height: hit.height,
+                        fps: hit.fps,
+                        url: hit.url.clone(),
+                        preview: hit.preview.clone(),
+                        author: hit.author.clone(),
+                        photo: hit.photo,
+                        license: hit.license.to_owned(),
+                        cached: cached.is_some(),
+                        local_path: cached.map(|path| path.to_string_lossy().into_owned()),
+                    }
                 })
                 .collect(),
             total: found.total,

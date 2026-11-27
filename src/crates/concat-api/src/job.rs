@@ -318,6 +318,44 @@ mod tests {
     }
 
     #[test]
+    fn the_first_transcript_job_survives_a_full_auto_edit_fan() {
+        let book = Book::default();
+        book.start(
+            JobStatus::running("j1", "/take.wav", "/transcript.json"),
+            Arc::new(AtomicBool::new(false)),
+            Side::Own,
+        );
+        book.record(&Event::AnalysisDone {
+            job: "j1".to_owned(),
+            path: "/take.wav".to_owned(),
+            output: "/transcript.json".to_owned(),
+        });
+
+        // One-click AUTO EDIT can finish dozens of jobs after transcription
+        // but before export verification asks for that first transcript.
+        for index in 2..=65 {
+            let job = format!("j{index}");
+            let path = format!("/analysis/{index}.json");
+            book.start(
+                JobStatus::running(&job, &path, "/result.json"),
+                Arc::new(AtomicBool::new(false)),
+                Side::Own,
+            );
+            book.record(&Event::AnalysisDone {
+                job,
+                path,
+                output: "/result.json".to_owned(),
+            });
+        }
+
+        assert_eq!(
+            book.status_for_path("/take.wav").map(|status| status.job),
+            Some("j1".to_owned()),
+            "the transcript must remain addressable until the edit's final verification",
+        );
+    }
+
+    #[test]
     fn a_job_that_vanished_is_failed_and_old_ones_are_forgotten() {
         let book = Book::default();
         begun(&book, "j0");

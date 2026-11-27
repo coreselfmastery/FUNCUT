@@ -21,15 +21,15 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use concat_mcp::director::{
-    AutoEditError, AutoEditState, EditProgram, Runner, Stage, ToolCaller, ToolError,
-    auto_edit_program,
+    AutoEditError, AutoEditEvent, AutoEditProgress, AutoEditState, EditProgram, Runner, Stage,
+    ToolCall, ToolCaller, ToolError, auto_edit_program,
 };
-use slint::SharedString;
+use slint::{ComponentHandle, SharedString};
 
 use crate::i18n::{t, tf};
 use crate::panes::Msg;
@@ -75,6 +75,12 @@ const MOODS: [&str; 6] = [
     "elegant strings",
     "lo-fi chill",
 ];
+
+/// The runner's event stream as the pane shares it with the drain thread
+/// each run spawns: a runner outlives a single run (a retryable end keeps
+/// it, and the resume reuses it), so the receiver must too - one channel,
+/// locked by whichever run is draining it now.
+type AutoEditEvents = Arc<Mutex<std::sync::mpsc::Receiver<AutoEditEvent>>>;
 
 /// Everything that can happen to the Forge page.
 #[derive(Clone, Debug)]
@@ -141,6 +147,13 @@ pub enum ForgeMsg {
     /// The auto-edit's clock moved, or its stage did: reread the
     /// runner's last event into the page's fields.
     AutoEditTick,
+    /// AUTO EDIT: a batch of the runner's events, drained off the
+    /// window's thread. One message carries whatever arrived together -
+    /// a fan's lanes answering at once are one wakeup, not five - and
+    /// the pane reads each batch into its own fields: the stage word,
+    /// the bar creeping through a stage's slot, and a line in the log
+    /// per stage and per call.
+    AutoEditEvents(Vec<AutoEditEvent>),
     /// The auto-edit ended. The state says which of the four ends the
     /// run met.
     AutoEditEnded(Box<AutoEditState>),
@@ -191,6 +204,10 @@ pub struct ForgePane {
     pub connected: Option<bool>,
     /// Whether the skill is installed: unknown until probed.
     pub installed: Option<bool>,
+    /// The setup probe is in flight: a press that arrives before its
+    /// answer waits on the same answer rather than asking the harness
+    /// again - and never on the window's own thread.
+    probing: bool,
     /// The project folder a voiceover run is editing, opened in the
     /// window when the run ends well: the edit lands on the timeline
     /// the user is looking at, which is the point of the run.
@@ -254,6 +271,27 @@ pub struct AutoEditPane {
     /// fixed spine's runner has its own cancel, and this is the other
     /// one's.
     kill: Option<Arc<AtomicBool>>,
+    /// The runner's event stream, when a spine run holds the runner: the
+    /// channel each run's drain thread reads, kept beside the runner a
+    /// retryable end keeps for the resume.
+    events: Option<AutoEditEvents>,
+    /// The press that waits on the setup probe: the script, the
+    /// orientation and the monetized word the button carried, held
+    /// while the probe asks the harness off the window's thread. The
+    /// start continues where the press left off once the answer is in -
+    /// the button reads as a Stop the while, because the run has begun.
+    pending: Option<(String, Option<String>, bool)>,
+    /// The stage the events last named, and how many of its events have
+    /// arrived beyond the stage's own beginning: the bar creeps toward
+    /// the stage's end with each, never claiming it before the run's
+    /// own accepted end does.
+    stage_index: Option<usize>,
+    stage_events: usize,
+    /// A waiting job's own reading of its progress - the export's
+    /// frames, as a fraction of a thousand - shared with the wait that
+    /// reports it and read by the tick: the one piece of a run that
+    /// knows how long its middle is.
+    job: Option<Arc<AtomicU32>>,
 }
 
 /// The voice-signal lab's standing on the page: the catalogue its
@@ -326,7 +364,8 @@ impl ForgePane {
                 self.shown = on;
                 // The first look probes the setup quietly: whether the
                 // harness is there and wired, and whether the skill is.
-                if on && self.connected.is_none() {
+                // A probe already in flight answers this look too.
+                if on && self.connected.is_none() && !self.probing {
                     self.probe();
                 }
                 // The same first look reads the signal catalogue, quietly:
@@ -472,15 +511,18 @@ impl ForgePane {
             ForgeMsg::Connected(Ok(true)) => {
                 self.connected = Some(true);
                 self.set_status(t("forge.connected"));
+                self.auto_edit_probe_answered(studio);
             }
             ForgeMsg::Connected(Ok(false)) => {
                 self.connected = Some(false);
                 self.set_status(t("forge.notConnected"));
+                self.auto_edit_probe_answered(studio);
             }
             ForgeMsg::Connected(Err(error)) => {
                 self.connected = Some(false);
                 self.set_status(t("forge.notConnected"));
                 studio.notify(&tf("forge.connectFailed", &[&error]), true);
+                self.auto_edit_probe_answered(studio);
             }
             ForgeMsg::Install => {
                 self.set_status(t("forge.installing"));
@@ -491,13 +533,24 @@ impl ForgePane {
             ForgeMsg::Installed(Ok(true)) => {
                 self.installed = Some(true);
                 self.set_status(t("forge.installedStatus"));
+                self.auto_edit_probe_answered(studio);
             }
             ForgeMsg::Installed(Ok(false)) => {
+                // The answer is remembered as a known no, the way the
+                // connect arm remembers its own: a press waiting on the
+                // probe would wait forever on a None, and the page draws
+                // a known no and an unknown exactly the same.
+                self.installed = Some(false);
                 self.set_status(t("forge.installFailed"));
+                self.auto_edit_probe_answered(studio);
             }
             ForgeMsg::Installed(Err(error)) => {
+                // The same remembering, for a probe that could not ask:
+                // the answer it owes is "not installed", not silence.
+                self.installed = Some(false);
                 self.set_status(t("forge.installFailed"));
                 studio.notify(&tf("forge.installFailedDetail", &[&error]), true);
+                self.auto_edit_probe_answered(studio);
             }
             ForgeMsg::KeyEdited { provider, key } => {
                 let key = key.trim().to_owned();
@@ -521,6 +574,21 @@ impl ForgePane {
             }
             ForgeMsg::AutoEditCancel => {
                 if self.auto.running {
+                    // A press still waiting on the setup probe has no run
+                    // to stop - the wait itself is what ends, and no edit
+                    // was ever made. The probe's answer, when it lands,
+                    // only caches itself: the press it was for is gone.
+                    if self.auto.pending.take().is_some() {
+                        self.auto.running = false;
+                        self.auto.checking = false;
+                        self.auto.check_cancel = None;
+                        self.auto.started = None;
+                        self.auto.outcome = 0;
+                        self.auto.fraction = 0.0;
+                        self.auto.stage = t("forge.autoEditCancelledStage");
+                        self.set_status(t("forge.autoEditCancelledStage"));
+                        return;
+                    }
                     if let Some(runner) = &self.auto.runner {
                         runner.cancel();
                     }
@@ -542,6 +610,7 @@ impl ForgePane {
                 }
             }
             ForgeMsg::AutoEditTick => self.auto_edit_tick(),
+            ForgeMsg::AutoEditEvents(events) => self.auto_edit_events(events),
             ForgeMsg::AutoEditEnded(state) => self.auto_edit_ended(*state, studio),
             ForgeMsg::AutoDirectorEnded(code) => self.auto_director_ended(code, studio),
             ForgeMsg::DirectorChecked(checked) => self.auto_director_checked(*checked, studio),
@@ -558,8 +627,13 @@ impl ForgePane {
     }
 
     /// A quiet look at the setup, on the first time the page is shown:
-    /// is the harness wired, is the skill where it reads.
+    /// is the harness wired, is the skill where it reads. The asking is
+    /// two bounded harness commands on a worker - never on the window's
+    /// own thread, which a slow harness would freeze for as long as its
+    /// timeouts allow - and the answers cache themselves exactly as the
+    /// Connect and Install buttons' own answers do.
     fn probe(&mut self) {
+        self.probing = true;
         self.set_status(t("forge.probing"));
         crate::host::spawn(probe_setup, |studio, _, _, (connected, installed)| {
             studio.handle(Msg::Forge(ForgeMsg::Connected(connected)));
@@ -839,15 +913,16 @@ impl ForgePane {
                     .any(|clip| is_talking_head(clip, project, root)))
     }
 
-    /// Starts an AUTO EDIT: the sibling is built exactly as a forge run's
-    /// is - the same handoff, the same voiceover lane reconstruction -
-    /// and then the deterministic spine of the pipeline is run by the
-    /// concat-director runner over the window's own server: the repair,
-    /// readings, tighten, grade, licensed live-stock B-roll, captions,
-    /// title entrances, music, preview, revise, save the timeline, verify and watch.
-    /// The plan's creative brief, the eye-picked stock and the baked motion
-    /// comps remain the Director agent's; this is the unattended voiceover
-    /// edit.
+    /// Starts an AUTO EDIT: the entry point the button reaches. The
+    /// sibling is built exactly as a forge run's is - the same handoff,
+    /// the same voiceover lane reconstruction - and then either the
+    /// Director agent or the deterministic spine of the pipeline runs
+    /// over it ([`Self::auto_edit_run`]). One thing can hold the press
+    /// before any of that: the setup's answers, without which the run
+    /// cannot know whether the Director may take the edit at all - the
+    /// probe for them runs off the window's thread and the press waits
+    /// as the run's first visible stage, where asking synchronously
+    /// froze the window for as long as the harness took to answer.
     fn auto_edit_start(&mut self, script: String, orientation: String, studio: &mut Studio) {
         // The page's pick arrives as a word, the empty word meaning "the
         // project's own frame": an empty pick is no pick at all.
@@ -865,24 +940,82 @@ impl ForgePane {
             studio.notify(&refusal, true);
             return;
         }
+        // The licence word the page's own switch carries is read at the
+        // same moment the page reads its script box: the choice belongs
+        // to the press, and travels with it.
+        let monetized = monetized_choice();
         // The button is the one entry point that must not fall back
         // silently. The pane's probe only ran if the Forge page was
         // shown once, so a user who never opened the tab would be
         // handed the fixed spine without the Director ever being asked
         // for - the exact mistake the fallback toast was written to
-        // prevent. Ask now, synchronously: the probe is two quick
-        // harness commands, and the answer is remembered either way.
+        // prevent. The answer is asked for off the window's thread -
+        // the same two bounded harness commands the page's own quiet
+        // probe runs - and the press becomes the run's first visible
+        // stage while it flies: the fields are held, the button reads
+        // as a Stop, and the start continues the moment the answer
+        // lands, its checks already stood.
         if self.connected.is_none() || self.installed.is_none() {
-            let (connected, installed) = probe_setup();
-            // An Err is Some(false), the way the async probe's arm
-            // remembers it (Connected(Err) sets the flag false): a probe
-            // that failed is a probe that answered, and remembering
-            // `None` would re-ask the harness synchronously on every
-            // press, a bounded-but-repeat freeze of the window's own
-            // thread each time.
-            self.connected = Some(connected.ok().unwrap_or(false));
-            self.installed = Some(installed.ok().unwrap_or(false));
+            self.auto.pending = Some((script, orientation, monetized));
+            self.auto.running = true;
+            self.auto.checking = false;
+            self.auto.stage = t("forge.probing");
+            self.auto.elapsed = elapsed_text(Duration::ZERO);
+            self.auto.fraction = 0.0;
+            self.auto.visible = true;
+            self.auto.outcome = 0;
+            self.auto.stage_index = None;
+            self.auto.stage_events = 0;
+            self.auto.started = Some(Instant::now());
+            self.set_status(t("forge.probing"));
+            if !self.probing {
+                self.probe();
+            }
+            return;
         }
+        self.auto_edit_run(script, orientation, monetized, studio);
+    }
+
+    /// The probe a pressed AUTO EDIT waited on has answered, or one of
+    /// the two answers it needed has: when both the wiring and the skill
+    /// are known, the held press continues where it left off - the
+    /// run's own stages take the state from there, exactly as a press
+    /// that found the answers already cached does.
+    fn auto_edit_probe_answered(&mut self, studio: &mut Studio) {
+        // Both answers in means no probe can be in flight; a later one
+        // would only cache what is already cached.
+        if self.connected.is_some() && self.installed.is_some() {
+            self.probing = false;
+        }
+        if self.auto.pending.is_none() || self.connected.is_none() || self.installed.is_none() {
+            return;
+        }
+        let (script, orientation, monetized) = self
+            .auto
+            .pending
+            .take()
+            .expect("the pending press was checked above");
+        self.auto_edit_run(script, orientation, monetized, studio);
+    }
+
+    /// The AUTO EDIT's run itself, once the setup's answers are known:
+    /// either the Director takes the sibling - the same handover a
+    /// failed Director run retries - or the deterministic spine of the
+    /// pipeline runs over the window's own server: the repair,
+    /// readings, tighten, grade, licensed live-stock B-roll, captions,
+    /// title entrances, music, preview, revise, save the timeline,
+    /// verify and watch. The plan's creative brief, the eye-picked
+    /// stock and the baked motion comps remain the Director agent's;
+    /// this is the unattended voiceover edit. `monetized` is the
+    /// licence word the press carried: it rides the source, so the
+    /// Director's prompt and the spine's program answer one choice.
+    fn auto_edit_run(
+        &mut self,
+        script: String,
+        orientation: Option<String>,
+        monetized: bool,
+        studio: &mut Studio,
+    ) {
         // A Director run has no deterministic Runner to resume. Its retry
         // must instead reopen the exact sibling it already edited; building
         // another sibling here would discard the previous creative work.
@@ -916,15 +1049,29 @@ impl ForgePane {
         // the resume picks up after the stages the failed run completed
         // (IDEM), instead of building a fresh sibling and paying for the
         // repair, the transcription and every reading again.
-        if let (Some(runner), Some(source)) = (self.auto.runner.clone(), self.auto.source.clone())
-            && source
-                .takes
-                .iter()
-                .all(|take| std::path::Path::new(&take.take).exists())
+        if let (Some(runner), Some(source), Some(events)) = (
+            self.auto.runner.clone(),
+            self.auto.source.clone(),
+            self.auto.events.clone(),
+        ) && source
+            .takes
+            .iter()
+            .all(|take| std::path::Path::new(&take.take).exists())
             && std::path::Path::new(&source.project)
                 .join("concat.json")
                 .exists()
         {
+            // The prior run's unread tail - events emitted between the
+            // last batch its drain thread took and its end - is dropped
+            // here, before this run's threads exist: its terminal state
+            // was reported through AutoEditEnded, and a stale stage index
+            // must not move this run's bar.
+            while events
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .try_recv()
+                .is_ok()
+            {}
             let backend = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
                 Ok(backend) => backend,
                 Err(error) => {
@@ -965,12 +1112,14 @@ impl ForgePane {
                 // was born in: no frame-set is wanted.
                 orientation: None,
                 frame_rate: None,
-                // The window's own run keeps the monetized word the
-                // Director prompt promises: this edit is monetized, so
-                // the non-commercial beds are refused it.
-                monetized: true,
+                // The licence word the pressed switch carried when this
+                // sibling's run began: the source kept it, because the
+                // plan stage that spends it is the one a resume skips -
+                // the brief the prior run wrote is the one this run ships.
+                monetized: source.monetized,
             });
             let tool_cancel = Arc::new(AtomicBool::new(false));
+            let job = Arc::new(AtomicU32::new(0));
             let project = source.project.clone();
             let project_for_follow = project.clone();
             self.auto = AutoEditPane {
@@ -988,10 +1137,15 @@ impl ForgePane {
                 started: Some(Instant::now()),
                 project: Some(project),
                 source: Some(source),
+                events: Some(Arc::clone(&events)),
+                pending: None,
+                stage_index: None,
+                stage_events: 0,
+                job: Some(Arc::clone(&job)),
             };
             self.set_status(t("forge.autoEditRunning"));
             self.live_follow_start(&project_for_follow, studio);
-            run_auto_edit(runner, program, backend, tool_cancel);
+            run_auto_edit(runner, program, backend, tool_cancel, events, job);
             return;
         }
         let Some(session) = studio.session.as_ref() else {
@@ -1023,6 +1177,12 @@ impl ForgePane {
         if !script.trim().is_empty() {
             auto.script = Some(script);
         }
+        // The licence word the switch carried is the run's own, the way
+        // the script is: it rides the source - the Director's prompt and
+        // the spine's program both read it - so the choice the press made
+        // stands for the retry too, and the report's reader can see what
+        // regime the edit was made under.
+        auto.monetized = monetized;
         // The keys the Forge page keeps are the environment of the
         // in-process tool calls too, not only the spawned harness: with a
         // hosted critic key saved here, the program's watch stage gets
@@ -1096,10 +1256,10 @@ impl ForgePane {
             // own, when nothing was picked): the handoff needs no set.
             orientation: None,
             frame_rate: None,
-            // The window's own run keeps the monetized word the Director
-            // prompt promises: this edit is monetized, so the
-            // non-commercial beds are refused it.
-            monetized: true,
+            // The licence word the pressed switch carried: it rules the
+            // non-commercial beds - the music model's, the free shelves -
+            // out of a monetized edit, and opens them to one that is not.
+            monetized: auto.monetized,
         });
         // The Director gets the edit whenever the page has a model to run
         // it: AUTO EDIT is the one-click form of Start Forge, so the
@@ -1135,6 +1295,11 @@ impl ForgePane {
                     project: Some(auto.project.clone()),
                     source: Some(auto.clone()),
                     kill: Some(Arc::clone(&kill)),
+                    events: None,
+                    pending: None,
+                    stage_index: None,
+                    stage_events: 0,
+                    job: None,
                 };
                 self.set_status(t("forge.autoEditDirectorStage"));
                 self.live_follow_start(&auto.project, studio);
@@ -1164,8 +1329,13 @@ impl ForgePane {
                 return;
             }
         };
-        let (runner, _events) = Runner::new(PathBuf::from(&auto.project));
+        // The runner is born with its event channel, and the pane keeps
+        // the receiving end: the drain thread each run spawns reads it,
+        // and a retryable end keeps it with the runner for the resume.
+        let (runner, events) = Runner::new(PathBuf::from(&auto.project));
+        let events = Arc::new(Mutex::new(events));
         let tool_cancel = Arc::new(AtomicBool::new(false));
+        let job = Arc::new(AtomicU32::new(0));
         let follow = auto.project.clone();
         self.auto = AutoEditPane {
             running: true,
@@ -1182,10 +1352,15 @@ impl ForgePane {
             project: Some(auto.project.clone()),
             source: Some(auto),
             kill: None,
+            events: Some(Arc::clone(&events)),
+            pending: None,
+            stage_index: None,
+            stage_events: 0,
+            job: Some(Arc::clone(&job)),
         };
         self.set_status(t("forge.autoEditRunning"));
         self.live_follow_start(&follow, studio);
-        run_auto_edit(runner, program, backend, tool_cancel);
+        run_auto_edit(runner, program, backend, tool_cancel, events, job);
     }
 
     /// The Director run's end. A zero exit is the harness saying the
@@ -1522,16 +1697,94 @@ impl ForgePane {
             && let Some(progress) = runner.progress()
         {
             self.auto.stage = stage_label(&progress.stage);
-            // A stage in progress sits halfway through its own slot: the
-            // bar reads 100% only when the run's own accepted end says
-            // so, not while its longest stage - the export, the watch -
-            // is still running.
+            // A stage in progress sits halfway through its own slot at
+            // the least: the event stream's own creep may have carried
+            // the bar further through it, and the bar only ever
+            // advances on evidence - a reread of the same reading moves
+            // nothing backwards, and 100% is the run's own accepted
+            // end's alone to show, not its longest stage's.
             let total = progress.total_stages.max(1) as f32;
-            self.auto.fraction = (progress.stage_index as f32 + 0.5) / total;
+            self.auto.fraction = self
+                .auto
+                .fraction
+                .max((progress.stage_index as f32 + 0.5) / total);
+            // A job the stage is waiting on reports its own reading -
+            // the export's frames, as a fraction of the whole render -
+            // and the bar rides it through the stage's own slot: the
+            // one piece of a run that knows how long its middle is. A
+            // finished job may claim its stage's slot whole; the run's
+            // accepted end is still the only thing that finishes the
+            // bar. The ride is through the slot of the stage the
+            // events last named, never the fresher one the runner may
+            // already be in: the batch that names the next stage is
+            // also what resets the reading, and in the window before
+            // it lands, a whole reading against the newer index would
+            // carry the bar a slot past where any evidence put it -
+            // and the bar only ever advances on evidence.
+            if let (Some(stage_index), Some(job)) = (self.auto.stage_index, &self.auto.job) {
+                let done = job.load(Ordering::Relaxed) as f32 / 1000.0;
+                if done > 0.0 {
+                    let ridden = stage_index as f32 / total + done / total;
+                    self.auto.fraction = self.auto.fraction.max(ridden);
+                }
+            }
         }
         if let Some(started) = self.auto.started {
             self.auto.elapsed = elapsed_text(started.elapsed());
         }
+    }
+
+    /// A batch of the runner's events, drained off the window's thread:
+    /// the stage word and the bar follow the events as they come - the
+    /// bar creeping through a stage's own slot with each of its calls -
+    /// and each stage and call leaves its line in the log, the way the
+    /// harness's own words fill the log of a Director run.
+    fn auto_edit_events(&mut self, events: Vec<AutoEditEvent>) {
+        // A batch that outlived its run - the end landed first, or the
+        // run was handed to the Director, whose progress is read from
+        // the harness's own words - moves nothing: the terminal state
+        // has already said where the run stands.
+        if !self.auto.running || self.auto.runner.is_none() {
+            return;
+        }
+        for event in &events {
+            // The terminal states are AutoEditEnded's to report: their
+            // toast, their receipt and their button are decided there,
+            // and a second report from the stream would only race it.
+            let AutoEditState::Running { stage, .. } = &event.state else {
+                continue;
+            };
+            let progress = &event.progress;
+            if self.auto.stage_index != Some(progress.stage_index) {
+                self.auto.stage_index = Some(progress.stage_index);
+                self.auto.stage_events = 0;
+                self.auto.stage = stage_label(stage);
+                // A new stage's slot starts empty: the reading the last
+                // stage's wait filled is not this stage's to claim.
+                if let Some(job) = &self.auto.job {
+                    job.store(0, Ordering::Relaxed);
+                }
+            } else {
+                self.auto.stage_events += 1;
+            }
+            // The bar only ever advances on evidence: a stage's own
+            // beginning, then each of its calls - never a reread of a
+            // reading the bar has already passed.
+            self.auto.fraction = self.auto.fraction.max(event_fraction(
+                progress.stage_index,
+                progress.total_stages,
+                self.auto.stage_events,
+            ));
+            let line = auto_edit_event_line(progress);
+            // The run's own repeats - the export's wait polls - say
+            // themselves once: a line the log already ends with is the
+            // same call still waiting, not a new fact.
+            if self.log.last().is_none_or(|last| last.as_str() != line) {
+                self.log.push(line.into());
+            }
+        }
+        let extra = self.log.len().saturating_sub(LOG_KEPT);
+        self.log.drain(0..extra);
     }
 
     /// The run's terminal state: the toast it earned, the button it
@@ -1552,6 +1805,8 @@ impl ForgePane {
         self.live_follow_stop();
         // A retryable end keeps the runner and its source for the resume;
         // a completed or hard-failed run has nothing to pick up from.
+        // The event stream follows the runner: kept for the resume, let
+        // go with it when there is nothing left to resume.
         let keep_for_retry = matches!(
             &state,
             AutoEditState::Failed { error, .. } if error.retryable
@@ -1560,6 +1815,8 @@ impl ForgePane {
             self.auto.runner = None;
             self.auto.source = None;
             self.auto.tool_cancel = None;
+            self.auto.events = None;
+            self.auto.job = None;
         } else {
             self.auto.tool_cancel = None;
         }
@@ -2066,6 +2323,14 @@ struct AutoEditSource {
     /// author's words. `None` when the box was empty: the transcript
     /// then stands as it was transcribed.
     script: Option<String>,
+    /// The licence word the pressed switch carried: a monetized edit is
+    /// refused the non-commercial beds - the music model's, the free
+    /// shelves - and one that is not may spend them. It rides the source
+    /// so the Director's prompt, the spine's program and the retry all
+    /// answer the one choice, and the plan stage that spends it is the
+    /// one a resume skips - the brief the prior run wrote is the one
+    /// this run ships.
+    monetized: bool,
     /// The frame the sibling was born in, when the build knew it: the
     /// handover prompt names it in numbers, not only in vocabulary - an
     /// agent handed a vertical reel should never have to read the
@@ -3042,6 +3307,11 @@ fn build_voiceover_sibling(
                     // is built (auto_edit_start knows it; the builder does
                     // not), so the construction names the honest default.
                     script: None,
+                    // The same honesty for the licence word: the builder
+                    // does not know the pressed switch, so the sibling is
+                    // born under the licence-safe default and the run that
+                    // knows the press overwrites it - never the other way.
+                    monetized: true,
                 })
             } else {
                 None
@@ -3400,11 +3670,29 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
         )
     });
     let frame = frame.unwrap_or_default();
+    // The licence word the press carried, said to the agent in the one
+    // place it decides shelves and beds: a monetized edit is refused
+    // OpenVid's unrecorded licence and the music model's non-commercial
+    // beds, and one that is not may spend them. The word rides the
+    // source, so this prompt and the spine's program answer one choice
+    // - and the brief the Director writes carries it, the way the
+    // spine's own brief would.
+    let licence = if source.monetized {
+        "THE LICENCE: this edit is monetized. OpenVid has no licence record \
+         and its import is refused; the music model's non-commercial beds \
+         are refused with it. Set the brief's monetized flag accordingly.\n\n"
+            .to_owned()
+    } else {
+        "THE LICENCE: this edit is not monetized. OpenVid's unrecorded \
+         shelf and the music model's non-commercial beds may be spent. \
+         Set the brief's monetized flag accordingly.\n\n"
+            .to_owned()
+    };
     format!(
         "Use the funcut-director skill and follow its 25 phases IN ORDER. This is an \
          UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
          creative decision yourself and record it.\n\n\
-         {frame}\
+         {frame}{licence}\
          READ THE DEEP PLAYBOOKS BEFORE YOU DECIDE: read .claude/skills/funcut-director/SKILL.md, \
          prompts/creative_direction.md, prompts/style_bible.md, prompts/ai_media.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
          and the example, prompts/motion_comps.md with .claude/skills/motion/SKILL.md, \
@@ -3915,6 +4203,22 @@ fn auto_edit_busy(running: bool, checking: bool) -> bool {
     running || checking
 }
 
+/// The licence word the page's own switch carries, read at the moment a
+/// press reads its script box: the choice belongs to the press, and
+/// travels with it. The reading runs where the press does - the window's
+/// own thread, the one place the page is reachable - and a window that
+/// is gone (or a pane under test, where no shell was ever installed)
+/// keeps the licence-safe default: a monetized edit is the one that may
+/// not spend the non-commercial beds, so the default never reaches for
+/// material it may not use.
+fn monetized_choice() -> bool {
+    let mut monetized = true;
+    crate::host::Shell::with(|_, app| {
+        monetized = app.global::<crate::ui::Forge>().get_monetized();
+    });
+    monetized
+}
+
 /// The AI phase is not complete until the independent export gates accept.
 fn director_acceptance_fraction(accepted: bool) -> f32 {
     if accepted { 1.0 } else { 0.98 }
@@ -4026,6 +4330,45 @@ fn first_line(words: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// A ToolCaller that carries a waiting job's own reading of its progress
+/// out of the reply the wait drew: a status-shaped reply - the export's
+/// frames, a model's arrival - reports `fraction` (or `frame` against
+/// `total`), and the reading is stored as a fraction of a thousand for
+/// the tick to ride through the stage's own slot. The stage the wait
+/// runs in is the one the bar is creeping through, so this is the one
+/// piece of a run that knows how long its middle is; a reply that
+/// carries no reading is not a job's report and moves nothing.
+struct JobReportingCaller<C> {
+    /// The caller every call is forwarded to, unchanged.
+    caller: C,
+    /// Where a job's reading is stored, shared with the tick that reads
+    /// it: a fraction of a thousand, zero meaning "nothing to ride".
+    job: Arc<AtomicU32>,
+}
+
+impl<C: ToolCaller> ToolCaller for JobReportingCaller<C> {
+    fn call(&mut self, call: &ToolCall) -> Result<serde_json::Value, ToolError> {
+        let reply = self.caller.call(call)?;
+        // The reading, as the wait itself spells it: a fraction, else the
+        // frames against the whole. Anything else on the reply is not a
+        // job's report.
+        let reading = reply
+            .get("fraction")
+            .and_then(serde_json::Value::as_f64)
+            .map(|fraction| fraction.clamp(0.0, 1.0))
+            .or_else(|| {
+                let frame = reply.get("frame").and_then(serde_json::Value::as_f64)?;
+                let total = reply.get("total").and_then(serde_json::Value::as_f64)?;
+                (total > 0.0).then(|| (frame / total).clamp(0.0, 1.0))
+            });
+        if let Some(reading) = reading {
+            self.job
+                .store((reading * 1000.0).round() as u32, Ordering::Relaxed);
+        }
+        Ok(reply)
+    }
+}
+
 /// The AUTO EDIT's program: the deterministic spine of the watcher's
 /// pipeline, written from paths the pane fixed before the run began -
 /// which is what makes the program static, and the runner's the right
@@ -4038,10 +4381,11 @@ fn first_line(words: &str) -> Option<String> {
 ///   on the take the timeline plays;
 /// - the readings: the words, the delivery, the music gate;
 /// - the sanity reads before any render;
-/// - the export, waited on by its project (the job's name is minted at
-///   run time, so the wait asks by what it was started on);
-/// - the verify: the words re-read from the render, the loudness
-///   measured against the short-form target;
+/// - the save: the project saved and read back, the editable timeline
+///   the user opens - and the export renders the run's own MP4 of the
+///   same cut, waited to done;
+/// - the verify: the saved timeline's lanes checked for clips that
+///   share one, the timeline read back clean;
 /// - the watch, warn-policy: the cut seen as a contact sheet and scored,
 ///   and a low score is a flaw recorded - the yellow toast - not a run
 ///   thrown away.
@@ -4052,8 +4396,9 @@ fn first_line(words: &str) -> Option<String> {
 /// Runs the auto-edit on its own thread: the toolbox and the backend are
 /// the adapter's ground, the runner drives them, and the pane hears every
 /// move through the messages the threads post. A ticker beside the run
-/// posts the clock and the stage when either moves; the run's own end
-/// posts the terminal state.
+/// posts the clock and the stage when either moves; a drain thread reads
+/// the runner's event stream into the pane a batch at a time, off the
+/// window's thread; the run's own end posts the terminal state.
 fn run_auto_edit(
     runner: Runner,
     // The runner reads and writes the program it runs - the fan lanes and
@@ -4062,6 +4407,16 @@ fn run_auto_edit(
     mut program: EditProgram,
     backend: Box<dyn concat_mcp::Backend>,
     tool_cancel: Arc<AtomicBool>,
+    // The runner's event stream, the receiving end the pane kept beside
+    // the runner: the drain thread below reads it, and a retryable end
+    // keeps it with the runner for the resume - one channel per runner,
+    // whichever run is draining it now.
+    events: AutoEditEvents,
+    // The waiting job's own reading of its progress, as a fraction of a
+    // thousand: the caller the run drives reports into it when a reply
+    // carries one, and the tick rides the bar through the stage's slot
+    // on it - the one piece of a run that knows how long its middle is.
+    job: Arc<AtomicU32>,
 ) {
     let still = Arc::new(AtomicBool::new(true));
     // The ticker: the pane's fields reread the runner's last event, so
@@ -4082,6 +4437,32 @@ fn run_auto_edit(
                 });
             }
             std::thread::sleep(Duration::from_millis(250));
+        }
+    });
+    // The drain: the runner's events, read off the window's thread and
+    // posted as one batch per look - a fan's lanes answering at once are
+    // one wakeup, not five. The lock is only ever held for the taking,
+    // never across the sleep: the resume's own clearing of a prior run's
+    // unread tail must never wait on this thread's nap.
+    let drain_still = Arc::clone(&still);
+    std::thread::spawn(move || {
+        while drain_still.load(Ordering::Relaxed) {
+            let mut batch = Vec::new();
+            {
+                let receiver = events
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                while let Ok(event) = receiver.try_recv() {
+                    batch.push(event);
+                }
+            }
+            if batch.is_empty() {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+            crate::host::on_ui(move |studio, _, _| {
+                studio.handle(Msg::Forge(ForgeMsg::AutoEditEvents(batch)));
+            });
         }
     });
     std::thread::spawn(move || {
@@ -4127,8 +4508,19 @@ fn run_auto_edit(
         };
         let mut backend = backend;
         let cancelled = tool_cancel;
-        let mut caller =
-            concat_mcp::director::BackendToolCaller::new(&toolbox, backend.as_mut(), &cancelled);
+        // The caller the runner drives, wrapped so a waiting job's own
+        // reading of its progress reaches the bar: the export's frames, a
+        // model's arrival - whatever a reply reports as a fraction,
+        // stored as a fraction of a thousand for the tick to ride. The
+        // call itself is forwarded unchanged; only the reading is taken.
+        let mut caller = JobReportingCaller {
+            caller: concat_mcp::director::BackendToolCaller::new(
+                &toolbox,
+                backend.as_mut(),
+                &cancelled,
+            ),
+            job: Arc::clone(&job),
+        };
         // The lanes a fan step runs its groups on: every lane its own
         // connection to the same server, over the one shared toolbox,
         // stopped by the one shared flag. A run without fan steps never
@@ -4236,6 +4628,30 @@ fn elapsed_text(duration: Duration) -> String {
     }
 }
 
+/// The bar's reading of one event: a stage's own beginning sits its slot
+/// halfway - the same place the tick's reread puts a stage in progress -
+/// and each of its calls beyond creeps further through the slot,
+/// approaching the stage's end without ever claiming it: 100% of the
+/// bar is the run's own accepted end's alone to show, and a stage that
+/// merely looks busy must not promise the stage after it.
+fn event_fraction(stage_index: usize, total_stages: usize, stage_events: usize) -> f32 {
+    let total = total_stages.max(1) as f32;
+    // The creep halves the distance that is left with each event: 0.5,
+    // 0.75, 0.833... - a curve that always rises, never settles, and
+    // never arrives.
+    let through = 0.5 + 0.5 * (stage_events as f32 / (stage_events as f32 + 1.0));
+    (stage_index as f32 + through) / total
+}
+
+/// One event's line in the log: the stage's own word, then what the
+/// event says is happening inside it - the call the runner is making,
+/// the lane it is making it on, the stage's own beginning. The stage's
+/// word is the page's (localized); the detail is the runner's, exactly
+/// as it was written.
+fn auto_edit_event_line(progress: &AutoEditProgress) -> String {
+    format!("{}: {}", stage_label(&progress.stage), progress.detail)
+}
+
 #[cfg(test)]
 mod tests {
     use super::auto_edit_busy;
@@ -4287,6 +4703,9 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
             director: None,
             script: None,
+            // The licence-safe default, the word a sibling is born under:
+            // the builder does not know the pressed switch.
+            monetized: true,
         };
         assert!(director_retry_available(&source));
 
@@ -4623,6 +5042,11 @@ mod tests {
         assert!(auto.export.ends_with("export/auto-edit.mp4"));
         assert!(auto.export.starts_with(&auto.project));
         assert_eq!(auto.sheet, "auto-edit-sheet.png");
+        // The licence word is the licence-safe default until the press
+        // that knows the switch overwrites it: a monetized edit is the
+        // one that may not spend the non-commercial beds, so the default
+        // never reaches for material it may not use.
+        assert!(auto.monetized);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -4824,5 +5248,96 @@ mod tests {
         assert_eq!(super::elapsed_text(Duration::from_secs(42)), "42s");
         assert_eq!(super::elapsed_text(Duration::from_secs(64)), "1m 04s");
         assert_eq!(super::elapsed_text(Duration::from_secs(601)), "10m 01s");
+    }
+
+    /// The event stream's reading of the bar: a stage's own beginning
+    /// sits its slot halfway - the same place the tick's reread puts a
+    /// stage in progress - each call beyond creeps further through the
+    /// slot, and no number of calls ever claims the stage's end: 100% of
+    /// the bar is the run's own accepted end's alone to show.
+    #[test]
+    fn the_events_creep_the_bar_through_a_stage_without_claiming_its_end() {
+        // The stage's own beginning, halfway through the first slot.
+        assert_eq!(super::event_fraction(0, 4, 0), 0.125);
+        // Each call beyond the beginning creeps further through.
+        assert!(super::event_fraction(0, 4, 1) > super::event_fraction(0, 4, 0));
+        assert!(super::event_fraction(0, 4, 2) > super::event_fraction(0, 4, 1));
+        // However long a stage runs, its slot's end stays unclaimed.
+        for events in 0..100 {
+            assert!(super::event_fraction(2, 4, events) < 0.75);
+            assert!(super::event_fraction(2, 4, events) >= 0.625);
+        }
+        // The last stage is the same: a busy final stage is not a
+        // finished run.
+        for events in 0..100 {
+            assert!(super::event_fraction(3, 4, events) < 1.0);
+        }
+        // A later stage's beginning is beyond an earlier stage's creep,
+        // so the bar only ever advances on evidence.
+        assert!(super::event_fraction(1, 4, 0) > super::event_fraction(0, 4, 99));
+        // A program of no stages is not divided by zero.
+        assert!(super::event_fraction(0, 0, 3) > 0.0);
+    }
+
+    /// A waiting job's own reading of its progress rides out of the
+    /// reply the wait drew - the export's frames, a model's arrival -
+    /// and nothing else does: a reply that carries no reading is not a
+    /// job's report, and the bar does not move on it.
+    #[test]
+    fn a_waiting_jobs_reading_rides_out_of_the_reply_that_carries_it() {
+        use concat_mcp::director::{ToolCall, ToolCaller as _};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        // The caller under the test's own: whatever reply the test armed
+        // it with, verbatim.
+        struct Says(serde_json::Value);
+        impl super::ToolCaller for Says {
+            fn call(&mut self, _call: &ToolCall) -> Result<serde_json::Value, super::ToolError> {
+                Ok(self.0.clone())
+            }
+        }
+        let asked = |reply: serde_json::Value| {
+            let job = Arc::new(AtomicU32::new(0));
+            let mut caller = super::JobReportingCaller {
+                caller: Says(reply),
+                job: Arc::clone(&job),
+            };
+            caller
+                .call(&ToolCall {
+                    tool: "analysis_wait".to_owned(),
+                    arguments: serde_json::json!({ "path": "take.wav" }),
+                })
+                .expect("the armed reply is the answer");
+            job.load(Ordering::Relaxed)
+        };
+        // A fraction, as the wait itself spells it.
+        assert_eq!(
+            asked(serde_json::json!({ "state": "running", "fraction": 0.25 })),
+            250
+        );
+        // The frames against the whole, when the fraction is absent.
+        assert_eq!(
+            asked(serde_json::json!({ "state": "running", "frame": 60, "total": 240 })),
+            250
+        );
+        // A settled job reports whole - the stage's slot is its own to
+        // claim, the run's accepted end still the only thing that
+        // finishes the bar.
+        assert_eq!(
+            asked(serde_json::json!({ "state": "done", "fraction": 1.0 })),
+            1000
+        );
+        // A reading past the whole is clamped to it.
+        assert_eq!(
+            asked(serde_json::json!({ "state": "running", "fraction": 2.0 })),
+            1000
+        );
+        // A reply that carries no reading moves nothing.
+        assert_eq!(asked(serde_json::json!({ "ok": true })), 0);
+        // A fraction that is not a number is not a reading.
+        assert_eq!(asked(serde_json::json!({ "fraction": "soon" })), 0);
+        // A total of zero is not a promise of instant completion.
+        assert_eq!(asked(serde_json::json!({ "frame": 0, "total": 0 })), 0);
     }
 }

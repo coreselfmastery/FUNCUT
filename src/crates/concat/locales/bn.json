@@ -388,6 +388,7 @@
   "forge.liveFollow": "The timeline now follows the edit live as it is made.",
   "forge.liveFollowFailed": "The timeline could not follow the edit live: {0}",
   "forge.logEmpty": "The agent's words appear here while it works.",
+  "forge.monetized": "মনিটাইজড",
   "forge.mood": "Music",
   "forge.narrationExtractFailed": "{0} থেকে ভয়েসওভার বের করা যায়নি: {1}",
   "forge.needProject": "Open the project with the voiceover first: the run builds its edit beside it.",

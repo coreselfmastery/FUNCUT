@@ -42,23 +42,36 @@ use crate::tools::{Context, Outcome, Toolbox};
 /// own folder first, so the take as recorded always survives a repair
 /// that lands badly. A take already inside the project needs no copy:
 /// the project holds it.
-fn keep_recorded_takes(project: &Path, source: &AutoEditProgramSource) {
+fn keep_recorded_takes(project: &Path, source: &AutoEditProgramSource) -> Result<(), String> {
     for (index, take) in source.takes.iter().enumerate() {
-        let path = Path::new(&take.take);
-        if path.starts_with(project) || !path.is_file() {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("take.wav");
-        let kept = project
-            .join("auto-edit")
-            .join(format!("recorded-{index:03}-{name}"));
-        if !kept.is_file() {
-            let _ = std::fs::copy(path, &kept);
-        }
+        preserve_recorded_take(project, index, Path::new(&take.take))?;
     }
+    Ok(())
+}
+
+/// Preserve the current bytes before the repair chain can write back to an
+/// externally referenced take. Refresh an earlier snapshot on every run:
+/// an old copy is not evidence of the current source. A failed copy stops
+/// the edit rather than silently risking the only original.
+fn preserve_recorded_take(project: &Path, index: usize, path: &Path) -> Result<(), String> {
+    if path.starts_with(project) || !path.is_file() {
+        return Ok(());
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("take.wav");
+    let kept = project
+        .join("auto-edit")
+        .join(format!("recorded-{index:03}-{name}"));
+    std::fs::copy(path, &kept).map_err(|error| {
+        format!(
+            "could not preserve the original take {} at {} before repair: {error}",
+            path.display(),
+            kept.display()
+        )
+    })?;
+    Ok(())
 }
 
 
@@ -204,7 +217,13 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             return Err(ApiError::invalid(error));
         }
     };
-    keep_recorded_takes(&project, &program_source);
+    if let Err(error) = keep_recorded_takes(&project, &program_source) {
+        let close_error = close_project(toolbox, backend, cancelled, &project_path).err();
+        return Err(ApiError::failed(match close_error {
+            Some(close) => format!("{error}; additionally, {close}"),
+            None => error,
+        }));
+    }
     let mut program = auto_edit_program(&program_source);
     // The runner's event receiver is dropped on purpose: a headless call
     // has no watcher to read it, and a receiver held and never drained
@@ -725,6 +744,38 @@ mod tests {
         });
         assert!(!lanes.load(Ordering::Relaxed));
         assert!(!runner.cancelled());
+    }
+
+    #[test]
+    fn a_recorded_take_snapshot_is_refreshed_before_each_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Reel");
+        std::fs::create_dir_all(project.join("auto-edit")).unwrap();
+        let source = dir.path().join("take.wav");
+        let kept = project.join("auto-edit").join("recorded-000-take.wav");
+
+        std::fs::write(&source, b"first take").unwrap();
+        preserve_recorded_take(&project, 0, &source).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"first take");
+
+        // copy=false can revisit a project with an earlier snapshot. It
+        // must refresh that file before the next repair, not trust stale bytes.
+        std::fs::write(&source, b"new take").unwrap();
+        preserve_recorded_take(&project, 0, &source).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"new take");
+    }
+
+    #[test]
+    fn a_failed_recorded_take_snapshot_is_not_silently_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Reel");
+        std::fs::create_dir_all(project.join("auto-edit").join("recorded-000-take.wav"))
+            .unwrap();
+        let source = dir.path().join("take.wav");
+        std::fs::write(&source, b"original").unwrap();
+
+        let error = preserve_recorded_take(&project, 0, &source).unwrap_err();
+        assert!(error.contains("could not preserve the original take"), "{error}");
     }
 
     #[test]

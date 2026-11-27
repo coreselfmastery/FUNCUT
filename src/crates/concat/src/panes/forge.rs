@@ -849,8 +849,14 @@ impl ForgePane {
         // harness commands, and the answer is remembered either way.
         if self.connected.is_none() || self.installed.is_none() {
             let (connected, installed) = probe_setup();
-            self.connected = connected.ok();
-            self.installed = installed.ok();
+            // An Err is Some(false), the way the async probe's arm
+            // remembers it (Connected(Err) sets the flag false): a probe
+            // that failed is a probe that answered, and remembering
+            // `None` would re-ask the harness synchronously on every
+            // press, a bounded-but-repeat freeze of the window's own
+            // thread each time.
+            self.connected = Some(connected.ok().unwrap_or(false));
+            self.installed = Some(installed.ok().unwrap_or(false));
         }
         // A Director run has no deterministic Runner to resume. Its retry
         // must instead reopen the exact sibling it already edited; building
@@ -1186,6 +1192,16 @@ impl ForgePane {
             studio.notify(&t("forge.autoEditCancelled"), true);
             self.live_follow_stop();
             studio.end_live_follow_back();
+            // The sibling stays for the retry, but the Director's hold on
+            // it does not: the handover opened it through the window's
+            // own server, and a session that outlives its Director
+            // leaves the sibling unopenable by hand until the retry
+            // succeeds or the app restarts.
+            if let Some(path) = self.auto.project.clone() {
+                if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                    log::warn!("forge: the run's session did not release: {error}");
+                }
+            }
             return;
         }
         if code == 0 {
@@ -1223,6 +1239,11 @@ impl ForgePane {
                 );
                 self.live_follow_stop();
                 studio.end_live_follow_back();
+                if let Some(path) = self.auto.project.clone() {
+                    if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                        log::warn!("forge: the run's session did not release: {error}");
+                    }
+                }
                 return;
             };
             let export = self
@@ -1280,6 +1301,16 @@ impl ForgePane {
         );
         self.live_follow_stop();
         studio.end_live_follow_back();
+        // The sibling stays for the retry, but the Director's hold on it
+        // does not: the handover opened it through the window's own
+        // server, and a session that outlives its Director leaves the
+        // sibling unopenable by hand - refused as open through a remote
+        // connection - until a retry succeeds or the app restarts.
+        if let Some(path) = self.auto.project.clone() {
+            if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                log::warn!("forge: the run's session did not release: {error}");
+            }
+        }
     }
 
     /// The measured check came back: the receipt decides whether the run
@@ -1349,6 +1380,14 @@ impl ForgePane {
             // proven. The user can inspect and keep editing it, and a
             // second run resumes from it rather than rebuilding it.
             if let Some(path) = self.auto.project.clone() {
+                // The server held the sibling through the run and the
+                // acceptance check; without letting go first, the open
+                // below is refused - the project is open through the
+                // remote connection - and the window is left on the
+                // launch screen with an error toast instead of the edit.
+                if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                    log::warn!("forge: the run's session did not release: {error}");
+                }
                 match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
                 {
                     Ok(()) => {}
@@ -1375,6 +1414,13 @@ impl ForgePane {
         self.live_follow_stop();
         studio.end_live_follow_back();
         if let Some(path) = self.auto.project.clone() {
+            // The server held the sibling through the check the worker
+            // failed; without letting go first, the open below is
+            // refused and the user never sees the edit the check could
+            // not judge.
+            if let Err(error) = concat_mcp::backend::release_window_session(&path) {
+                log::warn!("forge: the run's session did not release: {error}");
+            }
             match concat_host::projects::open(&path).and_then(|info| studio.open_project(info)) {
                 Ok(()) => {}
                 Err(open) => studio.notify(&open, true),
@@ -1543,7 +1589,13 @@ impl ForgePane {
             }
             AutoEditState::Cancelled { rolled_back, .. } => {
                 self.auto.stage = t("forge.autoEditCancelledStage");
-                self.auto.outcome = 0;
+                // Retry, not done: the fixed spine kept its sibling,
+                // its source and its runner (keep_for_retry), so the
+                // next press resumes after the stages the cancelled run
+                // completed instead of building a fresh sibling - and
+                // the button must say so rather than reading as an edit
+                // that simply finished.
+                self.auto.outcome = 1;
                 self.set_status(t("forge.autoEditCancelledStage"));
                 // The two endings a cancelled run has: everything the run
                 // applied was stepped back, or the rollback stopped
@@ -3795,11 +3847,35 @@ fn install_skill() -> Result<bool, String> {
 /// that reads the tail. A harness that is not there is Err, in the
 /// harness's own spelling.
 fn forge(args: &[&str]) -> Result<(i32, String), String> {
-    let run = Command::new("forge")
+    // Bounded: the button's first press asks the harness synchronously
+    // (below), and a harness wrapper that starts but never answers - a
+    // slow npx-style launcher, a wedged CLI - must not hang the window
+    // on the one thread that draws it. Thirty seconds holds a warm
+    // skill install; past it the harness is killed and named, and the
+    // answer is remembered as a failure rather than awaited forever.
+    let mut child = Command::new("forge")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("forge did not answer within 30 s".to_owned());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let run = child
+        .wait_with_output()
         .map_err(|error| error.to_string())?;
     let mut words = String::from(String::from_utf8_lossy(&run.stdout));
     words.push('\n');

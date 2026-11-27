@@ -1330,12 +1330,22 @@ impl Tool {
             // bound is the net the rarest, slowest batch hits, not the
             // arithmetic of every budget at once.
             "openvid_search_batch",
-            // The whole unattended spine in one call: transcription,
-            // stock fetches, a motion bake and the watch render all run
-            // under it, so the 60 s default would cancel healthy work.
-            "auto_edit",
         ];
-        if DEEP.contains(&self.name) {
+        // The whole unattended spine in one call, in a class of its
+        // own: the preflight's downloads, the transcription (and its
+        // non-English upgrade), the stock fetches, the motion bakes,
+        // the watch renders, the VLM critiques and the export render
+        // with its own re-read and verify all run under it. A real run
+        // on a modest machine measures past twenty minutes - the DEEP
+        // cap it used to share cut healthy runs at exactly 1200 s and
+        // answered the agent with an empty result while the edit kept
+        // going without it - so the spine's outer bound is an hour: the
+        // ceiling a whole edit with every model cold can honestly need,
+        // and still a net that answers a run that genuinely hangs.
+        const SPINE: &[&str] = &["auto_edit"];
+        if SPINE.contains(&self.name) {
+            3600
+        } else if DEEP.contains(&self.name) {
             1200
         } else if TRANSCRIBE.contains(&self.name) {
             900

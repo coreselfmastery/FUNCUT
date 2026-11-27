@@ -1470,5 +1470,12 @@ mod tests {
         assert_eq!(limit("watch_render"), 300);
         assert_eq!(limit("timeline_read"), 60);
         assert_eq!(limit("clip_add"), 60);
+        // The whole spine in one call sits in a class of its own: a real
+        // run - downloads, transcription, bakes, critiques, the export
+        // render and its verify - measures past the twenty minutes the
+        // deep bucket allows, and the cap cut healthy runs at exactly
+        // 1200 s to answer the agent with an empty result while the
+        // edit kept going without it.
+        assert_eq!(limit("auto_edit"), 3600);
     }
 }

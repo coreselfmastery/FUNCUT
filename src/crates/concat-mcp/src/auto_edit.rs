@@ -57,20 +57,72 @@ fn preserve_recorded_take(project: &Path, index: usize, path: &Path) -> Result<(
     if path.starts_with(project) || !path.is_file() {
         return Ok(());
     }
+    let folder = project.join("auto-edit");
+    let metadata = std::fs::symlink_metadata(&folder)
+        .map_err(|error| format!("could not inspect the recorded-takes folder {}: {error}", folder.display()))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "the recorded-takes folder {} is not a real directory",
+            folder.display()
+        ));
+    }
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("take.wav");
-    let kept = project
-        .join("auto-edit")
-        .join(format!("recorded-{index:03}-{name}"));
-    std::fs::copy(path, &kept).map_err(|error| {
-        format!(
+    let kept = folder.join(format!("recorded-{index:03}-{name}"));
+    let mut input = std::fs::File::open(path).map_err(|error| {
+        format!("could not open the original take {} before repair: {error}", path.display())
+    })?;
+
+    // Write beside the destination under an exclusive name, then rename
+    // over the old snapshot. On Linux this replaces a stale file or a
+    // symlink itself; it never follows a destination symlink and writes
+    // through it into an unrelated file.
+    let mut reserved = None;
+    for attempt in 0..50 {
+        let temporary = folder.join(format!(
+            ".recorded-{index:03}-{name}.tmp-{}-{attempt}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(output) => {
+                reserved = Some((temporary, output));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not reserve a temporary snapshot for {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    let Some((temporary, mut output)) = reserved else {
+        return Err(format!(
+            "could not reserve a temporary snapshot for {} after 50 attempts",
+            path.display()
+        ));
+    };
+    let copied = (|| {
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        std::fs::rename(&temporary, &kept)?;
+        Ok::<(), std::io::Error>(())
+    })();
+    if let Err(error) = copied {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!(
             "could not preserve the original take {} at {} before repair: {error}",
             path.display(),
             kept.display()
-        )
-    })?;
+        ));
+    }
     Ok(())
 }
 
@@ -763,6 +815,34 @@ mod tests {
         std::fs::write(&source, b"new take").unwrap();
         preserve_recorded_take(&project, 0, &source).unwrap();
         assert_eq!(std::fs::read(&kept).unwrap(), b"new take");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_recorded_take_snapshot_replaces_a_symlink_without_writing_through_it() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Reel");
+        std::fs::create_dir_all(project.join("auto-edit")).unwrap();
+        let source = dir.path().join("take.wav");
+        let protected = dir.path().join("protected.bin");
+        let kept = project.join("auto-edit").join("recorded-000-take.wav");
+        std::fs::write(&source, b"new original").unwrap();
+        std::fs::write(&protected, b"do not overwrite").unwrap();
+        symlink(&protected, &kept).unwrap();
+
+        preserve_recorded_take(&project, 0, &source).unwrap();
+
+        assert_eq!(std::fs::read(&protected).unwrap(), b"do not overwrite");
+        assert!(
+            !std::fs::symlink_metadata(&kept)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the snapshot replaces the link itself"
+        );
+        assert_eq!(std::fs::read(&kept).unwrap(), b"new original");
     }
 
     #[test]

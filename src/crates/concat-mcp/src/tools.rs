@@ -1058,7 +1058,9 @@ pub fn catalogue() -> Vec<Tool> {
             name: "track_subject",
             title: "Follow the subject",
             description: "The subject's path across a clip, frame by frame, as crop keyframes.",
-            read_only: false,
+            // The ask measures and answers; it changes nothing - the
+            // keyframes it proposes are the caller's to place.
+            read_only: true,
             destructive: false,
             idempotent: true,
             action: Action::TrackSubject,
@@ -1290,6 +1292,10 @@ impl Tool {
             "motion_preview",
             "captions_animate",
             "watch_render",
+            // A true-frame render - a cutout over a full-size frame, a
+            // 4K still on a slow disk - is render work, not a metadata
+            // read: the 60 s default killed healthy thumbnails.
+            "preview_frame",
         ];
         const DEEP: &[&str] = &[
             // The two whose own internal deadline is 900 s: the local

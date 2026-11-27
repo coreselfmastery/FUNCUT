@@ -5130,6 +5130,20 @@ fn shelf_orientation(aspect: &str) -> Option<&'static str> {
 /// captioned and graded landscape (the hand-built `/settings` views lived
 /// on only in the unit tests, codifying the wrong shape). The
 /// `/settings` read stays as the fallback for a raw editor view.
+/// The timeline's own frame in pixels, from the view the reading was
+/// aimed at - the numbers a fraction of the frame needs, whatever shape
+/// the project actually is. Defaults to the classic 1920x1080 when the
+/// view says nothing usable.
+fn frame_dimensions(view: &Value) -> (f64, f64) {
+    let frame = frame_of(view);
+    let FrameOf { width, height } = frame;
+    if width > 0.0 && height > 0.0 {
+        (width, height)
+    } else {
+        (1920.0, 1080.0)
+    }
+}
+
 fn aspect_of(view: &Value) -> &'static str {
     let frame = frame_of(view);
     let FrameOf { width, height } = frame;
@@ -5137,11 +5151,19 @@ fn aspect_of(view: &Value) -> &'static str {
         return "16:9";
     }
     let ratio = width / height;
+    // The real frames a shelf or a camera hands over, named: 4:3 and
+    // 3:4 (the classic television shapes) and 21:9 (the cinema wide)
+    // used to read as their nearest cousin - a 4:3 source took the
+    // square's portrait band, a 21:9 reel read as plain 16:9 - and a
+    // mis-named frame is a mis-banded caption and a mis-oriented shelf.
     let candidates = [
         ("16:9", 16.0 / 9.0),
         ("9:16", 9.0 / 16.0),
         ("1:1", 1.0),
         ("4:5", 0.8),
+        ("4:3", 4.0 / 3.0),
+        ("3:4", 3.0 / 4.0),
+        ("21:9", 21.0 / 9.0),
     ];
     candidates
         .iter()
@@ -8245,7 +8267,16 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                 .as_i64()
                 .unwrap_or_else(|| direction.caption_weight()),
             "emphasisColor": palette[1],
-            "position": if orientation == "vertical" { "center" } else { "lower-third" },
+            // The band word follows the portrait set, not the vertical
+            // word alone: a square edit places its captions in the
+            // portrait band (the caption stage's own portrait set is
+            // 9:16, 4:5 and 1:1), so the style self-describes what the
+            // edit actually does instead of calling a square "lower-third".
+            "position": if matches!(orientation, "vertical" | "square") {
+                "center"
+            } else {
+                "lower-third"
+            },
         },
         "motion": {
             "language": direction.motion_language(),
@@ -9531,11 +9562,18 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
                     continue;
                 }
                 already.push(key);
+                // The offsets are fractions of the timeline's own frame,
+                // read from the view the critique was aimed at: a
+                // portrait reel is 1080x1920, and a shift divided by a
+                // hardcoded 1920x1080 lands at half strength on one axis
+                // and double on the other - the critic's fix arrives as
+                // a different move than the one it asked for.
+                let (frame_w, frame_h) = frame_dimensions(view);
                 commands.push(json!({
                     "op": "setClipTransform",
                     "clipId": clip_id,
-                    "offsetX": round3((dx / 1920.0).clamp(-0.25, 0.25)),
-                    "offsetY": round3((dy / 1080.0).clamp(-0.25, 0.25)),
+                    "offsetX": round3((dx / frame_w).clamp(-0.25, 0.25)),
+                    "offsetY": round3((dy / frame_h).clamp(-0.25, 0.25)),
                 }));
             }
             // Look: a framing fill for bars the critic saw, which is the
@@ -15787,28 +15825,43 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 move |log| {
                     if phase == 0 {
                         phase = 1;
+                        // No `audio` on the open-project branch: it
+                        // renders frames only, and an audio:true the
+                        // branch cannot honour used to leave the critic
+                        // demanding the exact call that had just been
+                        // made. The honest ask is the frames; the mix's
+                        // loudness is a rendered file's reading.
                         return Some(call(
                             "watch_render",
                             json!({
                                 "project": watch_project,
                                 "out": watch_sheet,
-                                "audio": true,
                             }),
                         ));
                     }
                     if phase == 1 {
                         phase = 2;
+                        // This stage's own sheet, and no other: the log
+                        // carries pngPaths from the stock contact sheet and
+                        // the preview and revise critiques before it, and a
+                        // backward scan that takes any pngPath handed the
+                        // critic a foreign sheet - stock thumbnails scored
+                        // as the timeline. The render's own out names the
+                        // one this stage asked for; a render that named no
+                        // pixels ends the critique rather than scoring a
+                        // stale sheet, exactly as the preview and revise
+                        // stages end on theirs.
                         let sheet = log
                             .iter()
                             .rev()
                             .find(|reply| {
-                                reply
-                                    .get("pngPath")
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|path| !path.trim().is_empty())
+                                reply.get("pngPath").and_then(Value::as_str)
+                                    == Some(watch_sheet.as_str())
                             })
-                            .cloned()
-                            .unwrap_or_else(|| json!({}));
+                            .cloned();
+                        let Some(sheet) = sheet else {
+                            return None;
+                        };
                         let png_path = sheet
                             .get("pngPath")
                             .and_then(Value::as_str)
@@ -15845,12 +15898,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         watch_thumbnails.remove(0);
                         let output = thumbnail_output_path(&watch_project, watch_thumbnail_index);
                         watch_thumbnail_index += 1;
+                        // The frame's own size, from the timeline the
+                        // thumbnail is of: an unsized ask is served from
+                        // the quarter-size proxies, and an upscaled proxy
+                        // is not the frame the voice leaned on. The ask
+                        // pays for the original, whatever shape the
+                        // project is.
+                        let (width, height) = frame_dimensions(latest_view(log));
                         return Some(call(
                             "preview_frame",
                             json!({
                                 "path": watch_project,
                                 "time": round3(at),
                                 "output": output,
+                                "width": width as i64,
+                                "height": height as i64,
                             }),
                         ));
                     }

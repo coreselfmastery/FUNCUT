@@ -2005,6 +2005,11 @@ struct AutoEditSource {
     /// author's words. `None` when the box was empty: the transcript
     /// then stands as it was transcribed.
     script: Option<String>,
+    /// The frame the sibling was born in, when the build knew it: the
+    /// handover prompt names it in numbers, not only in vocabulary - an
+    /// agent handed a vertical reel should never have to read the
+    /// project to learn which shape it edits.
+    frame: Option<(u32, u32)>,
 }
 
 /// What the sibling build collected, as one unit: a copy that fails or
@@ -2326,15 +2331,24 @@ fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<String
 }
 
 /// The frame an orientation pick maps to: horizontal 1920x1080, vertical
-/// 1080x1920, square 1080x1080. The rate and the colour are never the
-/// pick's to name - the sibling keeps the source project's own. `None` for
-/// no pick, or a word the table does not know: the sibling is born in the
-/// source's own frame, exactly as the handoff always built it.
-fn orientation_frame(orientation: Option<&str>) -> Option<(u32, u32)> {
+/// 1080x1920, square 1080x1080, each with the source project's own size
+/// tier - a 4K project picked vertical is born 2160x3840, not 1080x1920,
+/// because the pick names the shape and the tier is the project's own to
+/// keep. The rate and the colour are never the pick's to name - the
+/// sibling keeps the source project's own. `None` for no pick, or a word
+/// the table does not know: the sibling is born in the source's own
+/// frame, exactly as the handoff always built it.
+fn orientation_frame(orientation: Option<&str>, tier: (u32, u32)) -> Option<(u32, u32)> {
+    // The tier is the pick's own short edge: the source's smaller side,
+    // clamped to the ladder a shelf or a platform actually serves - so a
+    // 2160-wide project picked vertical is born 2160x3840, a 720 one
+    // 720x1280, and a pick over the source's own tier never downscales
+    // what the project already paid for.
+    let short_edge = tier.0.min(tier.1).max(360);
     match orientation.map(str::trim) {
-        Some("horizontal") => Some((1920, 1080)),
-        Some("vertical") => Some((1080, 1920)),
-        Some("square") => Some((1080, 1080)),
+        Some("horizontal") => Some((short_edge * 16 / 9, short_edge)),
+        Some("vertical") => Some((short_edge, short_edge * 16 / 9)),
+        Some("square") => Some((short_edge, short_edge)),
         _ => None,
     }
 }
@@ -2454,7 +2468,11 @@ fn build_voiceover_sibling(
     // early decision at the birth adapts everything downstream - the
     // stock the plan shops, the caption band, the motion canvas, the
     // plan's own aspect - with no downstream change at all.
-    let video = match orientation_frame(orientation) {
+    // The tier the pick inherits: the source project's own short edge,
+    // so a 4K project picked vertical is born a 4K reel and a 720 one
+    // is born 720 - the pick names the shape, never the price.
+    let tier = (timeline.video.width, timeline.video.height);
+    let video = match orientation_frame(orientation, tier) {
         Some((width, height)) => concat_project::model::VideoSettings {
             width,
             height,
@@ -2916,6 +2934,7 @@ fn build_voiceover_sibling(
                 }
                 Some(AutoEditSource {
                     project: info.path.clone(),
+                    frame: Some((video.width, video.height)),
                     takes,
                     placements: segments
                         .iter()
@@ -3281,10 +3300,29 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          A critique from a model that cannot see is a guess wearing a score.\n\n"
             .to_owned()
     };
+    // The frame in numbers, said once at the top: the vocabulary below
+    // says the shapes in words, and a Director handed a vertical reel
+    // should never have to read the project to learn which number it is.
+    let frame = source.frame.map(|(width, height)| {
+        let shape = if height > width {
+            "a vertical reel"
+        } else if width > height {
+            "a horizontal cut"
+        } else {
+            "a square"
+        };
+        format!(
+            "THE FRAME: {width}x{height} ({shape}). The timeline is already this shape: \
+             do not set it, spend it - a 16:9 clip unreframed in a vertical reel is a \
+             letterboxed frame, not a stylistic choice.\n\n"
+        )
+    });
+    let frame = frame.unwrap_or_default();
     format!(
         "Use the funcut-director skill and follow its 25 phases IN ORDER. This is an \
          UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
          creative decision yourself and record it.\n\n\
+         {frame}\
          READ THE DEEP PLAYBOOKS BEFORE YOU DECIDE: read .claude/skills/funcut-director/SKILL.md, \
          prompts/creative_direction.md, prompts/style_bible.md, prompts/ai_media.md, prompts/edit_plan.md with templates/edit_plan.schema.json \
          and the example, prompts/motion_comps.md with .claude/skills/motion/SKILL.md, \
@@ -3292,7 +3330,7 @@ fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
          prompts/signal_recipes.md, prompts/emotion_to_edit.md, prompts/token_budget.md \
          and prompts/tool_reference.md. The skill is the pipeline; the playbooks are the \
          craft. Do not plan from memory.\n\n\
-         ALL-SIGNAL CONTRACT: voice_signals exposes 70 named readings across 14 families. Read \
+         ALL-SIGNAL CONTRACT: voice_signals exposes 71 named readings across 14 families. Read \
          prompts/signal_matrix.md and spend the readings, not just the family names: use the \
          accepted signalLog family alias from the matrix, name the exact catalogue reading in \
          its evidence note, and record confidence plus the decision it changed; a reading that \
@@ -4123,6 +4161,7 @@ mod tests {
         std::fs::write(&take, b"voice").unwrap();
         let source = AutoEditSource {
             project: root.to_string_lossy().into_owned(),
+            frame: None,
             takes: vec![TakePaths {
                 take: take.to_string_lossy().into_owned(),
                 enhanced: voiceover
@@ -4534,6 +4573,29 @@ mod tests {
         };
         // A vertical pick turns the canvas and keeps the NTSC rate.
         assert_eq!(frame_of(Some("vertical")), (1080, 1920, 30000, 1001));
+        // The pick keeps the project's own size tier: a 4K source picked
+        // vertical is born a 4K reel, not a downscaled 1080 one - the
+        // pick names the shape, never the price.
+        let mut four_k = Project::with_video(VideoSettings {
+            width: 3840,
+            height: 2160,
+            rate_num: 30000,
+            rate_den: 1001,
+            ..Default::default()
+        });
+        four_k.media = source.media.clone();
+        let mut clip = Clip::blank("c1", "T1", ClipKind::Audio, "c1", 0.0, 6.0);
+        clip.media_id = "m1".to_owned();
+        four_k.active_mut().clips.push(std::sync::Arc::new(clip));
+        let (_, auto) =
+            super::build_voiceover_sibling(&four_k, &source_root, true, Some("vertical")).unwrap();
+        let auto = auto.expect("the AUTO EDIT's paths");
+        let document =
+            std::fs::read_to_string(std::path::Path::new(&auto.project).join("concat.json"))
+                .unwrap();
+        let document: serde_json::Value = serde_json::from_str(&document).unwrap();
+        assert_eq!(document["video"]["width"].as_u64().unwrap(), 2160);
+        assert_eq!(document["video"]["height"].as_u64().unwrap(), 3840);
         // No pick - and a word the table does not know - keeps the
         // source's own canvas.
         assert_eq!(frame_of(None), (1920, 1080, 30000, 1001));

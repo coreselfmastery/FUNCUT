@@ -99,7 +99,10 @@ pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)>
         ],
         None => vec![
             ("timeline_read", json!({ "path": project })),
-            ("watch_render", json!({ "project": project, "audio": true })),
+            // No `audio`: the open-project branch renders frames only -
+            // an audio:true it cannot honour used to leave the critic
+            // advising the exact call that had just been made.
+            ("watch_render", json!({ "project": project })),
             ("collision_check", json!({ "path": project })),
         ],
     }

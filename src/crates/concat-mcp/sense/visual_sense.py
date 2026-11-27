@@ -3623,17 +3623,25 @@ def selftest(only=None):
     measured = measure_clips({"paths": ["synthetic"], "frames": encoded,
                               "width": 32, "intent": "cut"})
     row = measured["clips"][0] if measured.get("clips") else {}
-    expected = {"motion", "camera", "shotScale", "quality", "palette",
-                "saliency", "scene", "visualScore"}
-    missing = expected - set(row)
+    # The guard reads the row the sheet itself emitted, never a
+    # hand-written list that can drift from it: a reading the sheet emits
+    # with no consumer entry is a measurement the edit paid for and threw
+    # away, and a table entry the sheet no longer emits is a claim about
+    # nothing. Bookkeeping keys are not readings: the path, the ok flag,
+    # the sample count, the door report, the notes and the per-frame
+    # evidence sheet.
+    bookkeeping = {"path", "ok", "samples", "doors", "notes", "perFrame"}
+    expected = {key for key in row if key not in bookkeeping}
     unnamed = [key for key in expected if key not in CONSUMERS]
+    unemitted = [key for key in CONSUMERS
+                 if "." not in key and key not in row]
     unnamed += [f"motion.{key}" for key in ("mean", "peak", "peakAt",
                                             "onsets", "still")
                 if f"motion.{key}" not in CONSUMERS]
     unnamed += ["camera.travel"] if "camera.travel" not in CONSUMERS else []
     check("every visual reading names its consumer",
-          not missing and not unnamed,
-          f"missing={sorted(missing)} unnamed={unnamed}")
+          row.get("ok") and not unnamed and not unemitted,
+          f"unnamed={unnamed} unemitted={unemitted}")
 
     montage_score = _visual_score({"peak": 0.2, "peakAt": 0.2},
                                   {"sharpness": 25, "noise": 1, "letterbox": 0,

@@ -879,40 +879,38 @@ impl SpeechJob {
                         }
                     }
                 }
-                if !self.cancel.load(Ordering::Relaxed) {
-                    if let Ok(standing) = concat_speech::Transcriber::status(&self.dirs) {
-                        for model in standing.models {
-                            if model.downloaded {
-                                continue;
-                            }
-                            match self
-                                .transcriber
-                                .download_model(&self.dirs, &model.id, |_| {})
-                            {
-                                Ok(()) => fetched.push(format!("whisper {}", model.id)),
-                                Err(error) => {
-                                    refused.push(format!("whisper {}: {error}", model.id))
-                                }
-                            }
-                            if self.cancel.load(Ordering::Relaxed) {
-                                break;
-                            }
+                if !self.cancel.load(Ordering::Relaxed)
+                    && let Ok(standing) = concat_speech::Transcriber::status(&self.dirs)
+                {
+                    for model in standing.models {
+                        if model.downloaded {
+                            continue;
+                        }
+                        match self
+                            .transcriber
+                            .download_model(&self.dirs, &model.id, |_| {})
+                        {
+                            Ok(()) => fetched.push(format!("whisper {}", model.id)),
+                            Err(error) => refused.push(format!("whisper {}: {error}", model.id)),
+                        }
+                        if self.cancel.load(Ordering::Relaxed) {
+                            break;
                         }
                     }
                 }
-                if !self.cancel.load(Ordering::Relaxed) {
-                    if let Ok(standing) = concat_speech::Speech::status(&self.dirs) {
-                        for model in standing.models {
-                            if model.downloaded {
-                                continue;
-                            }
-                            match self.speech.download_model(&self.dirs, &model.id, |_| {}) {
-                                Ok(()) => fetched.push(format!("tts {}", model.id)),
-                                Err(error) => refused.push(format!("tts {}: {error}", model.id)),
-                            }
-                            if self.cancel.load(Ordering::Relaxed) {
-                                break;
-                            }
+                if !self.cancel.load(Ordering::Relaxed)
+                    && let Ok(standing) = concat_speech::Speech::status(&self.dirs)
+                {
+                    for model in standing.models {
+                        if model.downloaded {
+                            continue;
+                        }
+                        match self.speech.download_model(&self.dirs, &model.id, |_| {}) {
+                            Ok(()) => fetched.push(format!("tts {}", model.id)),
+                            Err(error) => refused.push(format!("tts {}: {error}", model.id)),
+                        }
+                        if self.cancel.load(Ordering::Relaxed) {
+                            break;
                         }
                     }
                 }

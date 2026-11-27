@@ -152,10 +152,11 @@ jobs:
       - run: python3 scripts/check-signal-matrix.py
         if: ${{ !cancelled() }}
       # The coverage ledger: every sense reading is taught in the matrix,
-      # and the button's own coverage is measured rather than asserted.
-      # It prints asked/missing per door and fails only on documentation
-      # drift - the wiring gap is reported, not hidden.
-      - run: python3 scripts/check-signal-coverage.py
+      # and every reading is either asked by the AUTO EDIT spine or named
+      # in its NOT_APPLICABLE ledger with the call that answers it. The
+      # gate is on now that the wiring is complete, so a reading added
+      # without a consumer - or a ledger entry gone stale - fails here.
+      - run: python3 scripts/check-signal-coverage.py --require-button
         if: ${{ !cancelled() }}
       - run: python3 scripts/ci/check-release-gates.py
         if: ${{ !cancelled() }}

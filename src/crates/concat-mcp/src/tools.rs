@@ -2023,6 +2023,11 @@ fn auto_edit_schema() -> Value {
             "stockProvider": { "type": "string", "enum": ["pexels", "pixabay"], "default": "pexels" },
             "copy": { "type": "boolean", "default": true, "description": "Edit a sibling copy." },
             "orientation": { "type": "string", "enum": ["horizontal", "vertical", "square"], "description": "The frame the edit is built for; horizontal maps 1920x1080, vertical 1080x1920, square 1080x1080, keeping the project's own rate. Absent keeps the frame the project already has." },
+            "monetized": { "type": "boolean", "default": false, "description": "True when the edit ships on a monetised channel or as client work: the non-commercial beds (the music model's, MobyGratis) are refused and the stock gate is told. Absent is the documented honest default, false." },
+            "brief": {
+                "type": "object",
+                "description": "The author's creative intent, merged into the project's creative-brief.json before the run: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid, monetized. The fields the author states outrank the ones the run derives from the transcript; fields left out keep the derived reading.",
+            },
         },
         "required": ["path"],
         "additionalProperties": false,
@@ -2805,9 +2810,9 @@ fn edit(op: &str, mut arguments: Value) -> Result<Request, ApiError> {
 /// its own models, and "all" is the id of all of them.
 ///
 /// Any other kind still needs its id, and the refusal says where the ids
-/// are rather than letting the request layer answer "missing field `id`"
-/// - a caller that forgot the id is one round trip from a correct call,
-/// not from decoding serde's words.
+/// are rather than letting the request layer answer "missing field `id`".
+/// A caller that forgot the id is one round trip from a correct call, not
+/// from decoding serde's words.
 fn models_download_request(mut arguments: Value) -> Result<Request, ApiError> {
     let Some(fields) = arguments.as_object_mut() else {
         return Err(ApiError::invalid("the arguments are an object"));

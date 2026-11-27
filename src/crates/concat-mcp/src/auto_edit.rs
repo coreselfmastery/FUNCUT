@@ -83,6 +83,14 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         .get("monetized")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    // The author's own creative intent, when the caller carries one: the
+    // same `creative-brief.json` every later turn reads, merged field by
+    // field over whatever the project already persisted so a second run
+    // can change the tone without losing the audience it set last time.
+    let brief = arguments
+        .get("brief")
+        .filter(|brief| brief.is_object())
+        .cloned();
 
     let project = if copy {
         copy_project(&source)?
@@ -95,6 +103,30 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             "could not make the auto-edit folder in {project_path}: {error}"
         ))
     })?;
+    if let Some(brief) = brief {
+        let path = project.join("creative-brief.json");
+        let mut merged = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if let Some(fields) = brief.as_object() {
+            for (key, value) in fields {
+                if !value.is_null() {
+                    merged.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        let bytes = serde_json::to_vec_pretty(&Value::Object(merged)).map_err(|error| {
+            ApiError::failed(format!("could not serialise the creative brief: {error}"))
+        })?;
+        std::fs::write(&path, bytes).map_err(|error| {
+            ApiError::failed(format!(
+                "could not write the creative brief to {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
 
     call_json(
         toolbox,
@@ -332,11 +364,11 @@ fn write_report(project: &Path, state_value: &Value) -> Result<String, String> {
 }
 
 /// Write the run's receipt beside the edit, whatever its standing: a
-/// completed run's receipt and a failed or cancelled run's partial one -
-/// the stages that had completed, the gates their answers had measured
-/// - are both evidence the caller keeps. A state with no receipt to
-/// write is `Ok(None)`, not a failure: only a receipt that existed and
-/// could not be written answers `Err`.
+/// completed run's receipt and a failed or cancelled run's partial one
+/// (the stages that had completed, the gates their answers had measured)
+/// are both evidence the caller keeps. A state with no receipt to write
+/// is `Ok(None)`, not a failure: only a receipt that existed and could
+/// not be written answers `Err`.
 fn write_receipt(project: &Path, state: &AutoEditState) -> Result<Option<String>, String> {
     let receipt = match state {
         AutoEditState::Completed { receipt, .. }

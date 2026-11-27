@@ -5134,9 +5134,11 @@ fn shelf_orientation(aspect: &str) -> Option<&'static str> {
 /// aimed at - the numbers a fraction of the frame needs, whatever shape
 /// the project actually is. Defaults to the classic 1920x1080 when the
 /// view says nothing usable.
-fn frame_dimensions(view: &Value) -> (f64, f64) {
-    let frame = frame_of(view);
-    let FrameOf { width, height } = frame;
+fn frame_dimensions(view: Option<&Value>) -> (f64, f64) {
+    let FrameOf { width, height } = view.map(frame_of).unwrap_or(FrameOf {
+        width: 1920.0,
+        height: 1080.0,
+    });
     if width > 0.0 && height > 0.0 {
         (width, height)
     } else {
@@ -7138,6 +7140,26 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // never asked - every run read as monetized, and the music model's
     // bed was a door no run could open.
     brief.insert("monetized".to_owned(), json!(source.monetized));
+    // The project's persisted brief, when the author wrote one with
+    // `creative_brief`: the file is the same intent every later turn
+    // reads, so it outranks the reading field by field - the derived
+    // value is the fallback for what the author did not say, never a
+    // correction of what they did. An explicit `monetized: true` on
+    // the run itself stays the caller's word; the file cannot switch
+    // an opted-in run back off.
+    let persisted =
+        std::fs::read_to_string(std::path::Path::new(&source.project).join("creative-brief.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| value.as_object().cloned());
+    if let Some(persisted) = persisted {
+        for (key, value) in persisted {
+            if value.is_null() || (key == "monetized" && source.monetized) {
+                continue;
+            }
+            brief.insert(key, value);
+        }
+    }
     // The evidence: one entry per decision, naming the signals from the
     // voice_signals vocabulary that actually drove it. The names are the
     // ones this run read - a plan that cites `pause` for a boundary no
@@ -9568,7 +9590,7 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
                 // hardcoded 1920x1080 lands at half strength on one axis
                 // and double on the other - the critic's fix arrives as
                 // a different move than the one it asked for.
-                let (frame_w, frame_h) = frame_dimensions(view);
+                let (frame_w, frame_h) = frame_dimensions(latest_view(log));
                 commands.push(json!({
                     "op": "setClipTransform",
                     "clipId": clip_id,
@@ -14737,9 +14759,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // when there is one to make: the derive returns to this
                     // ask with the mint's own reply in the log's last seat,
                     // the pending state below preserved through both.
-                    if peaks.as_ref().is_some_and(|found| !found.is_empty())
-                        && accent_lane.is_none()
-                    {
+                    if !peaks.is_empty() && accent_lane.is_none() {
                         if !accent_lane_asked {
                             accent_lane_asked = true;
                             accent_lane_pending = true;
@@ -15859,9 +15879,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     == Some(watch_sheet.as_str())
                             })
                             .cloned();
-                        let Some(sheet) = sheet else {
-                            return None;
-                        };
+                        let sheet = sheet?;
                         let png_path = sheet
                             .get("pngPath")
                             .and_then(Value::as_str)
@@ -22772,7 +22790,7 @@ mod tests {
         });
         // Two peaks: one inside a loud angry line, one inside a calm
         // informational line the read calls neutral.
-        let log = vec![
+        let mut log = vec![
             view.clone(),
             json!({
                 "path": take,

@@ -162,6 +162,22 @@ impl Provider {
                 }
                 url
             }
+            (Provider::Pixabay, StockKind::Video) => {
+                let mut url =
+                    format!("https://pixabay.com/api/videos/?per_page={per_page}&safesearch=true");
+                if !query.is_empty() {
+                    url.push_str("&q=");
+                    url.push_str(&urlencode(query));
+                }
+                // Pixabay's video search has no square: anything an
+                // orientation filter would say is horizontal or vertical.
+                if orientation == "portrait" || orientation == "vertical" {
+                    url.push_str("&orientation=vertical");
+                } else if orientation == "landscape" || orientation == "horizontal" {
+                    url.push_str("&orientation=horizontal");
+                }
+                url
+            }
             (Provider::Pixabay, StockKind::Photo) => {
                 let mut url = format!(
                     "https://pixabay.com/api/?per_page={per_page}&image_type=photo&safesearch=true"
@@ -221,14 +237,11 @@ fn urlencode(text: &str) -> String {
     out
 }
 
-/// One clip as the live APIs answer it, normalized: whatever the
-/// provider's own dialect said, the fields the editor wants are here.
-#[derive(Clone, Debug, PartialEq)]
 /// Which aisle of the live shelves a search walks: the videos, or the
-/// stills. Both shelves serve both - Pexels' `/v1/search` photographs
-/// beside its `/videos/search`, Pixabay's image API beside its video one
-/// - and the stills are B-roll too: a still that fits a gap lands as an
-/// image clip, measured by the same contact sheet a video is.
+/// stills. Both shelves serve both: Pexels' `/v1/search` photographs
+/// beside its `/videos/search`, Pixabay's image API beside its video
+/// one, and the stills are B-roll too. A still that fits a gap lands as
+/// an image clip, measured by the same contact sheet a video is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum StockKind {
     /// The video search, the shelf the AUTO EDIT has always shopped.
@@ -257,6 +270,9 @@ impl StockKind {
     }
 }
 
+/// One clip as the live APIs answer it, normalized: whatever the
+/// provider's own dialect said, the fields the editor wants are here.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Hit {
     /// The provider's own id, as its fetch URL is spelled back.
     pub id: String,

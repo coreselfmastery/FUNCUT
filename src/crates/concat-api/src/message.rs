@@ -347,6 +347,12 @@ pub enum Request {
         /// environment's own otherwise. Never echoed back.
         #[serde(default)]
         api_key: Option<String>,
+        /// Which aisle to walk: "video" (the default, the shelf the
+        /// AUTO EDIT has always shopped) or "photo" (the stills aisle -
+        /// a still lands as an image clip that holds its frame for the
+        /// gap it fills).
+        #[serde(default)]
+        kind: Option<String>,
     },
 
     /// `stock.fetch`: one clip from its own URL - the exact file the
@@ -1301,6 +1307,10 @@ pub struct StockHit {
     pub preview: String,
     /// Who shot it, when the provider named them.
     pub author: String,
+    /// Whether this hit is a still from the photo aisle: a still lands
+    /// as an image clip that holds its frame for the gap it fills, and
+    /// no run of seconds constrains it.
+    pub photo: bool,
     /// The licence the clip carries, spelled by the shelf itself.
     pub license: String,
     /// The clip's MP4 is already in this machine's cache.

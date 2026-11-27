@@ -478,7 +478,9 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "stock_search",
             "Search live stock (Pexels, Pixabay)",
-            "Search live rights-cleared stock (Pexels, Pixabay) by words; every hit carries its licence. Live shelves return VIDEO only; for a still use preview_frame. A missing key is a named refusal.",
+            "Search live rights-cleared stock (Pexels, Pixabay) by words; every hit carries its licence. \
+             Videos by default; kind: \"photo\" walks the stills aisle - a still lands as an image clip. \
+             A missing key is a named refusal.",
             "stock.search",
             Raw,
         )

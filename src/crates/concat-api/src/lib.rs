@@ -738,6 +738,7 @@ impl Api {
                 limit,
                 page,
                 api_key,
+                kind,
             } => Ok(Reply::StockFound(self.stock_search(
                 &provider,
                 query.as_deref(),
@@ -745,6 +746,7 @@ impl Api {
                 limit.unwrap_or(20),
                 page.unwrap_or(1),
                 api_key.as_deref(),
+                kind.as_deref(),
             )?)),
             Request::StockFetch { provider, id, url } => {
                 Ok(Reply::StockFetched(self.stock_fetch(&provider, &id, &url)?))
@@ -1583,6 +1585,42 @@ impl Api {
         head[..read].windows(4).any(|window| window == b"ftyp")
     }
 
+    /// A still's own head check, the same honesty for the photo aisle: a
+    /// JPEG opens with its marker, a PNG with its signature, and a WebP
+    /// with its RIFF tag and the four bytes that name it - anything else
+    /// is not the photograph the shelf said it sent.
+    fn still_head_ok(path: &Path) -> bool {
+        use std::io::Read;
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut head = [0_u8; 16];
+        let Ok(read) = file.read(&mut head) else {
+            return false;
+        };
+        let head = &head[..read];
+        head.starts_with(&[0xFF, 0xD8, 0xFF])
+            || head.starts_with(&[0x89, b'P', b'N', b'G'])
+            || (head.starts_with(b"RIFF") && head.len() >= 12 && &head[8..12] == b"WEBP")
+    }
+
+    /// The aisle a download URL names: the still extensions name the
+    /// photo aisle, everything else the video one. The search page's
+    /// stills carry their own extensions on the URL it hands back, so the
+    /// caller's word travels with the file it names.
+    fn url_is_still(url: &str) -> bool {
+        url.rsplit('/')
+            .next()
+            .and_then(|last| last.rsplit_once('.'))
+            .map(|(_, ext)| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "jpg" | "jpeg" | "png" | "webp"
+                )
+            })
+            .unwrap_or(false)
+    }
+
     /// A fetched clip, proven before use (DEG-08): fetch, then the head
     /// check, and a file that fails it leaves the cache so the next ask
     /// re-downloads instead of serving the corruption forever.
@@ -1748,8 +1786,10 @@ impl Api {
         limit: u32,
         page: u32,
         api_key: Option<&str>,
+        kind: Option<&str>,
     ) -> Result<StockFound, ApiError> {
         let provider = Self::live_provider(provider)?;
+        let kind = live_stock::StockKind::of(kind.unwrap_or_default());
         if let Some(orientation) = orientation.filter(|orientation| {
             !matches!(
                 orientation.trim().to_ascii_lowercase().as_str(),
@@ -1764,6 +1804,7 @@ impl Api {
             .live_library()
             .search(
                 provider,
+                kind,
                 query.unwrap_or_default().trim(),
                 limit,
                 page.max(1),
@@ -1788,6 +1829,7 @@ impl Api {
                     url: hit.url.clone(),
                     preview: hit.preview.clone(),
                     author: hit.author.clone(),
+                    photo: hit.photo,
                     license: hit.license.to_owned(),
                     cached: library.fetched(provider, &hit.id).is_some(),
                     local_path: library
@@ -1849,12 +1891,20 @@ impl Api {
         let path = library
             .fetch_url(provider, id.trim(), url, &cancel)
             .map_err(ApiError::failed)?;
-        if !Self::mp4_head_ok(&path) {
+        let still = Self::url_is_still(url);
+        let head_ok = if still {
+            Self::still_head_ok(&path)
+        } else {
+            Self::mp4_head_ok(&path)
+        };
+        if !head_ok {
             let _ = std::fs::remove_file(&path);
             return Err(ApiError::failed(format!(
-                "the {} clip {id} arrived but does not read as MP4 media; the bad copy was \
+                "the {} {} {id} arrived but does not read as {} media; the bad copy was \
                  dropped from the cache - ask again to re-download it",
-                provider.name()
+                provider.name(),
+                if still { "still" } else { "clip" },
+                if still { "an image" } else { "MP4" },
             )));
         }
         Ok(path)
@@ -1897,7 +1947,20 @@ impl Api {
         };
         // The provider's own name plus the id: unique for ever, and the
         // same clip imported twice is the same file, copied over itself.
-        let name = format!("{}-{}.mp4", provider.name(), live_stock::safe_stem(id));
+        // The extension is the cached file's own - a still from the photo
+        // aisle lands as the .jpeg it is, a clip as the .mp4 it is, so
+        // the bin and the platform's own file dialogs read the truth.
+        let extension = cached
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .unwrap_or_else(|| "mp4".to_owned());
+        let name = format!(
+            "{}-{}.{}",
+            provider.name(),
+            live_stock::safe_stem(id),
+            extension
+        );
         let into = folder.join(&name);
         std::fs::copy(&cached, &into).map_err(|error| {
             ApiError::failed(format!("could not copy into the project: {error}"))

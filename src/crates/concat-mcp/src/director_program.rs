@@ -1001,6 +1001,12 @@ fn fitting_hits(
                     return false;
                 }
             }
+            // A still from the photo aisle has no run of seconds to
+            // constrain it: it holds its frame for the gap it fills, so
+            // the orientation the still carries is the whole question.
+            if hit["photo"].as_bool().unwrap_or(false) {
+                return true;
+            }
             let seconds = hit["seconds"].as_f64().unwrap_or(0.0);
             seconds.is_finite() && seconds > 0.0 && seconds + 0.05 >= span
         })
@@ -11073,6 +11079,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut shopping = 0usize;
                 let mut phase = GatherPhase::Search;
                 let mut fetch_queue: Vec<Value> = Vec::new();
+                // Whether this slot already asked the photo aisle: one
+                // still search per slot, after the video page came back
+                // with nothing that fits and before the gap is left
+                // empty - a still that fits is B-roll too, and the
+                // shelf's stills were a whole aisle nothing imported.
+                let mut photo_tried = false;
                 let mut fetched: Vec<StockCandidate> = Vec::new();
                 // The CLIP rerank's answer for the slot being shopped:
                 // each looked-at candidate's text-image cosine against
@@ -11231,6 +11243,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 .unwrap_or_default();
                             let fits = fitting_hits(&hits, span, &aspect, &used_ids, look_at);
                             if fits.is_empty() {
+                                // The video page came back with nothing
+                                // this gap can use: the shelf's stills
+                                // aisle is asked once, the same words and
+                                // the same frame, before the gap is left
+                                // empty - a still that fits is B-roll
+                                // too, and an image held for the gap it
+                                // fills is a shot the video page never
+                                // offered.
+                                if !photo_tried {
+                                    photo_tried = true;
+                                    let mut arguments = json!({
+                                        "provider": gather_provider.clone(),
+                                        "query": slots[shopping].query.clone(),
+                                        "kind": "photo",
+                                        "limit": 6,
+                                    });
+                                    if let Some(orientation) = latest_view(log)
+                                        .map(|view| shelf_orientation(aspect_of(view)))
+                                    {
+                                        arguments["orientation"] = json!(orientation);
+                                    }
+                                    return Some(call("stock_search", arguments));
+                                }
                                 // A page with no eligible hit is a slot
                                 // left empty - the honest answer - not a
                                 // clip that will not fit.
@@ -11238,6 +11273,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 phase = GatherPhase::Search;
                                 continue;
                             }
+                            photo_tried = false;
                             fetch_queue = fits;
                             fetched = Vec::new();
                             phase = GatherPhase::Fetch;
@@ -16015,6 +16051,7 @@ mod tests {
             script: None,
             orientation: Some("square".to_owned()),
             frame_rate: None,
+            monetized: true,
         };
         let calls = handoff_calls(&handmade);
         assert_eq!(calls.len(), 4, "{calls:?}");
@@ -16236,6 +16273,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let program = super::auto_edit_program(&source);
 
@@ -16681,6 +16719,7 @@ mod tests {
                 script: None,
                 orientation: None,
                 frame_rate: None,
+                monetized: true,
             },
         )
         .expect("a plan from the read");
@@ -16763,6 +16802,7 @@ mod tests {
                 script: None,
                 orientation: None,
                 frame_rate: None,
+                monetized: true,
             },
         )
         .expect("a plan from the read");
@@ -16874,6 +16914,7 @@ mod tests {
                 script: None,
                 orientation: None,
                 frame_rate: None,
+                monetized: true,
             },
         )
         .expect("a plan from the read");
@@ -17143,6 +17184,7 @@ mod tests {
                 script: None,
                 orientation: None,
                 frame_rate: None,
+                monetized: true,
             },
         )
         .expect("a plan from the read");
@@ -18074,6 +18116,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let pacing = |log: &[Value]| {
             let plan = auto_plan(log, &takes, &source()).expect("a plan from the read");
@@ -18143,6 +18186,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         // The weight and the size, for a line whose pitch range was read
         // as `range`. `None` is a take whose prosody was never measured.
@@ -18245,6 +18289,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mix = |lufs: Option<f64>| {
             let read = match lufs {
@@ -18391,6 +18436,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let at = program
@@ -18445,6 +18491,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let program = auto_edit_program(&source);
         let order: Vec<&str> = program
@@ -18505,6 +18552,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let at = program
@@ -18649,6 +18697,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(timeline) = program
@@ -18719,6 +18768,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(timeline) = program
@@ -18781,6 +18831,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let bed_for = |floor_dbfs: f64| {
             let mut program = auto_edit_program(&source);
@@ -18829,6 +18880,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let bed_for = |decision: &str| {
             let mut program = auto_edit_program(&source);
@@ -18922,6 +18974,7 @@ mod tests {
                     script: None,
                     orientation: None,
                     frame_rate: None,
+                    monetized: true,
                 },
             )
             .expect("a plan from the read");
@@ -18962,6 +19015,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -19094,6 +19148,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -19231,6 +19286,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -19503,6 +19559,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = program
@@ -19570,6 +19627,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let view = json!({
             "timeline": { "id": "t1", "clips": [
@@ -19763,6 +19821,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = program
@@ -19857,6 +19916,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let weight_for = |relative_lu: f64| {
             let mut program = auto_edit_program(&source);
@@ -20573,6 +20633,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -20821,6 +20882,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -20976,6 +21038,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -21049,6 +21112,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(gather) = program
@@ -21491,6 +21555,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(understand) = &mut program.steps[5] else {
@@ -21549,6 +21614,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(understand) = &mut program.steps[5] else {
@@ -22624,6 +22690,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -22745,6 +22812,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         // One fresh program per scenario: the derived step keeps its own
         // rotation and spent ids, and a second scenario must not inherit
@@ -22943,6 +23011,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -23073,6 +23142,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -23191,6 +23261,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(sfx) = program
@@ -23347,6 +23418,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let base = || {
             vec![
@@ -23475,6 +23547,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let log = vec![
             json!({
@@ -23641,6 +23714,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -23790,6 +23864,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -23920,6 +23995,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = program
@@ -23973,6 +24049,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -24199,6 +24276,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(plan) = program
@@ -24288,6 +24366,7 @@ mod tests {
             script: None,
             orientation: None,
             frame_rate: None,
+            monetized: true,
         };
         let program = auto_edit_program(&source);
         // The program's own Verify stage is the timeline's: the lanes it

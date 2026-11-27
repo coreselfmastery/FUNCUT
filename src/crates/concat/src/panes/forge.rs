@@ -940,6 +940,10 @@ impl ForgePane {
                 // was born in: no frame-set is wanted.
                 orientation: None,
                 frame_rate: None,
+                // The window's own run keeps the monetized word the
+                // Director prompt promises: this edit is monetized, so
+                // the non-commercial beds are refused it.
+                monetized: true,
             });
             let tool_cancel = Arc::new(AtomicBool::new(false));
             let project = source.project.clone();
@@ -1067,6 +1071,10 @@ impl ForgePane {
             // own, when nothing was picked): the handoff needs no set.
             orientation: None,
             frame_rate: None,
+            // The window's own run keeps the monetized word the Director
+            // prompt promises: this edit is monetized, so the
+            // non-commercial beds are refused it.
+            monetized: true,
         });
         // The Director gets the edit whenever the page has a model to run
         // it: AUTO EDIT is the one-click form of Start Forge, so the

@@ -111,7 +111,12 @@ impl Provider {
         }
         let host = parsed.host_str().unwrap_or_default();
         let allowed: &[&str] = match self {
-            Provider::Pexels => &["videos.pexels.com", "www.pexels.com", "player.vimeo.com"],
+            Provider::Pexels => &[
+                "videos.pexels.com",
+                "images.pexels.com",
+                "www.pexels.com",
+                "player.vimeo.com",
+            ],
             Provider::Pixabay => &["cdn.pixabay.com", "i.pixabay.com"],
         };
         if !allowed.contains(&host) {
@@ -126,10 +131,14 @@ impl Provider {
 
     /// The search URL for words and filters, without the key - Pexels
     /// takes its key as a header, Pixabay as a query parameter, so the
-    /// URL alone stays shareable for one of them.
-    fn search_url(self, query: &str, per_page: u32, orientation: &str) -> String {
-        match self {
-            Provider::Pexels => {
+    /// URL alone stays shareable for one of them. The photo endpoint is
+    /// the same shelf's stills aisle: Pexels photographs live under
+    /// `/v1/search`, Pixabay's under the image API with
+    /// `image_type=photo`, and the orientation dialects are the same
+    /// two words the video search takes.
+    fn search_url(self, kind: StockKind, query: &str, per_page: u32, orientation: &str) -> String {
+        match (self, kind) {
+            (Provider::Pexels, StockKind::Video) => {
                 let mut url = format!("https://api.pexels.com/videos/search?per_page={per_page}");
                 if !query.is_empty() {
                     url.push_str("&query=");
@@ -141,15 +150,26 @@ impl Provider {
                 }
                 url
             }
-            Provider::Pixabay => {
-                let mut url =
-                    format!("https://pixabay.com/api/videos/?per_page={per_page}&safesearch=true");
+            (Provider::Pexels, StockKind::Photo) => {
+                let mut url = format!("https://api.pexels.com/v1/search?per_page={per_page}");
+                if !query.is_empty() {
+                    url.push_str("&query=");
+                    url.push_str(&urlencode(query));
+                }
+                if !orientation.is_empty() {
+                    url.push_str("&orientation=");
+                    url.push_str(orientation);
+                }
+                url
+            }
+            (Provider::Pixabay, StockKind::Photo) => {
+                let mut url = format!(
+                    "https://pixabay.com/api/?per_page={per_page}&image_type=photo&safesearch=true"
+                );
                 if !query.is_empty() {
                     url.push_str("&q=");
                     url.push_str(&urlencode(query));
                 }
-                // Pixabay's video search has no square: anything an
-                // orientation filter would say is horizontal or vertical.
                 if orientation == "portrait" || orientation == "vertical" {
                     url.push_str("&orientation=vertical");
                 } else if orientation == "landscape" || orientation == "horizontal" {
@@ -204,6 +224,39 @@ fn urlencode(text: &str) -> String {
 /// One clip as the live APIs answer it, normalized: whatever the
 /// provider's own dialect said, the fields the editor wants are here.
 #[derive(Clone, Debug, PartialEq)]
+/// Which aisle of the live shelves a search walks: the videos, or the
+/// stills. Both shelves serve both - Pexels' `/v1/search` photographs
+/// beside its `/videos/search`, Pixabay's image API beside its video one
+/// - and the stills are B-roll too: a still that fits a gap lands as an
+/// image clip, measured by the same contact sheet a video is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StockKind {
+    /// The video search, the shelf the AUTO EDIT has always shopped.
+    Video,
+    /// The photo search, the stills aisle.
+    Photo,
+}
+
+impl StockKind {
+    /// The word the search request carries.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StockKind::Video => "video",
+            StockKind::Photo => "photo",
+        }
+    }
+
+    /// The word back again; an unknown word is the video shelf, the
+    /// aisle every existing caller already names by saying nothing.
+    pub fn of(word: &str) -> StockKind {
+        if word.trim().eq_ignore_ascii_case("photo") {
+            StockKind::Photo
+        } else {
+            StockKind::Video
+        }
+    }
+}
+
 pub struct Hit {
     /// The provider's own id, as its fetch URL is spelled back.
     pub id: String,
@@ -227,6 +280,10 @@ pub struct Hit {
     /// page shows it the way OpenVid's card does, and the fetch refuses
     /// a lie about it past the cap.
     pub bytes: u64,
+    /// Whether this hit is a still from the photo aisle, not a video: a
+    /// still lands as an image clip that holds its frame for the gap it
+    /// fills, and no run of seconds constrains it.
+    pub photo: bool,
     /// The direct download URL of the file the sizes describe.
     pub url: String,
     /// The provider's thumbnail, for the card to show one day.
@@ -306,6 +363,7 @@ impl Library {
     pub fn search(
         &self,
         provider: Provider,
+        kind: StockKind,
         query: &str,
         per_page: u32,
         page: u32,
@@ -338,9 +396,9 @@ impl Library {
             Provider::Pixabay => request,
         };
         let url = match provider {
-            Provider::Pexels => provider.search_url(query, per_page, orientation),
+            Provider::Pexels => provider.search_url(kind, query, per_page, orientation),
             Provider::Pixabay => {
-                let mut url = provider.search_url(query, per_page, orientation);
+                let mut url = provider.search_url(kind, query, per_page, orientation);
                 url.push_str(if url.contains('?') { "&" } else { "?" });
                 url.push_str("key=");
                 url.push_str(&urlencode(&key));
@@ -395,9 +453,11 @@ impl Library {
             .map_err(|error| format!("{}'s answer could not be read: {error}", provider.name()))?;
         let json: Value = serde_json::from_str(&body)
             .map_err(|error| format!("{}'s answer was not JSON: {error}", provider.name()))?;
-        let found = match provider {
-            Provider::Pexels => pexels_found(&json),
-            Provider::Pixabay => pixabay_found(&json),
+        let found = match (provider, kind) {
+            (Provider::Pexels, StockKind::Video) => pexels_found(&json),
+            (Provider::Pexels, StockKind::Photo) => pexels_photo_found(&json),
+            (Provider::Pixabay, StockKind::Video) => pixabay_found(&json),
+            (Provider::Pixabay, StockKind::Photo) => pixabay_photo_found(&json),
         };
         Ok(found)
     }
@@ -480,8 +540,20 @@ impl Library {
         let folder = self.folder(provider);
         std::fs::create_dir_all(&folder)
             .map_err(|error| format!("{}'s cache could not be made: {error}", provider.name()))?;
-        let target = folder.join(format!("{}.mp4", safe_stem(id)));
-        let partial = target.with_extension("mp4.part");
+        // The extension the URL itself carries, so a still is cached as
+        // the still it is: Pexels' originals are .jpeg, Pixabay's larges
+        // are .jpg or .png, and a video's .mp4 stays .mp4. A URL without
+        // one keeps the clip's own name.
+        let ext = url
+            .path()
+            .rsplit('/')
+            .next()
+            .and_then(|last| last.rsplit_once('.'))
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .filter(|ext| ext.len() <= 5 && ext.chars().all(|ch| ch.is_ascii_alphanumeric()))
+            .unwrap_or_else(|| "mp4".to_owned());
+        let target = folder.join(format!("{}.{ext}", safe_stem(id)));
+        let partial = target.with_extension(format!("{ext}.part"));
         // Provider hosts may redirect to their CDN. The fetch shelf returns
         // each 3xx without following it; fetch_response validates every
         // Location before making the next request.
@@ -689,6 +761,65 @@ fn pexels_hit(video: &Value) -> Option<Hit> {
         preview,
         author,
         license: license_of(Provider::Pexels),
+        photo: false,
+    })
+}
+
+/// Reads a Pexels photo search page: `photos[].{id, width, height, alt,
+/// photographer, src.original}` - the original is the file to keep, the
+/// photograph's own words are the caption, and a still has no run of
+/// seconds to constrain the gap it fills.
+fn pexels_photo_found(json: &Value) -> Found {
+    let photos = json
+        .get("photos")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let total = json
+        .get("total_results")
+        .and_then(Value::as_u64)
+        .unwrap_or(photos.len() as u64);
+    Found {
+        hits: photos.iter().filter_map(pexels_photo_hit).collect(),
+        total,
+    }
+}
+
+/// One Pexels photograph row.
+fn pexels_photo_hit(photo: &Value) -> Option<Hit> {
+    let id = photo.get("id").and_then(Value::as_i64)?;
+    let alt = photo
+        .get("alt")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let author = photo
+        .get("photographer")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let url = photo
+        .pointer("/src/original")
+        .and_then(Value::as_str)?
+        .to_owned();
+    let width = photo.get("width").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let height = photo.get("height").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let name = name_of(&alt);
+    Some(Hit {
+        id: id.to_string(),
+        provider: Provider::Pexels,
+        caption: alt,
+        name,
+        seconds: 0.0,
+        width,
+        height,
+        fps: None,
+        bytes: 0,
+        url,
+        preview: String::new(),
+        author,
+        license: license_of(Provider::Pexels),
+        photo: true,
     })
 }
 
@@ -761,10 +892,66 @@ fn pixabay_hit(hit: &Value) -> Option<Hit> {
                 preview,
                 author: String::new(),
                 license: license_of(Provider::Pixabay),
+                photo: false,
             });
         }
     }
     None
+}
+
+/// Reads a Pixabay photo search page: `hits[].{id, tags,
+/// largeImageURL, imageWidth, imageHeight, user}` - the large image is
+/// the file to keep, the tags are the caption, and a still has no run of
+/// seconds.
+fn pixabay_photo_found(json: &Value) -> Found {
+    let hits = json
+        .get("hits")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let total = json
+        .get("totalHits")
+        .and_then(Value::as_u64)
+        .unwrap_or(hits.len() as u64);
+    Found {
+        hits: hits.iter().filter_map(pixabay_photo_hit).collect(),
+        total,
+    }
+}
+
+/// One Pixabay photograph row.
+fn pixabay_photo_hit(hit: &Value) -> Option<Hit> {
+    let id = hit.get("id").and_then(Value::as_i64)?;
+    let tags = hit
+        .get("tags")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let url = hit.get("largeImageURL").and_then(Value::as_str)?.to_owned();
+    let width = hit.get("imageWidth").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let height = hit.get("imageHeight").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let author = hit
+        .get("user")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let name = name_of(&tags);
+    Some(Hit {
+        id: id.to_string(),
+        provider: Provider::Pixabay,
+        caption: tags,
+        name,
+        seconds: 0.0,
+        width,
+        height,
+        fps: None,
+        bytes: 0,
+        url,
+        preview: String::new(),
+        author,
+        license: license_of(Provider::Pixabay),
+        photo: true,
+    })
 }
 
 /// A file-name out of a caption's first words: the words a bin entry can
@@ -995,16 +1182,77 @@ mod tests {
 
     #[test]
     fn the_search_urls_carry_the_filters() {
-        let url = Provider::Pexels.search_url("ocean waves", 20, "portrait");
+        let url = Provider::Pexels.search_url(StockKind::Video, "ocean waves", 20, "portrait");
         assert!(url.contains("per_page=20"));
         assert!(url.contains("query=ocean%20waves"));
         assert!(url.contains("orientation=portrait"));
-        let url = Provider::Pixabay.search_url("ocean", 20, "vertical");
+        let url = Provider::Pixabay.search_url(StockKind::Video, "ocean", 20, "vertical");
         assert!(url.contains("safesearch=true"));
         assert!(url.contains("q=ocean"));
         assert!(url.contains("orientation=vertical"));
         // Pixabay's video search has no square; the shape is left off.
-        let url = Provider::Pixabay.search_url("", 20, "square");
+        let url = Provider::Pixabay.search_url(StockKind::Video, "", 20, "square");
         assert!(!url.contains("orientation="));
+    }
+
+    #[test]
+    fn the_photo_aisle_is_its_own_shelf() {
+        // Pexels' photographs live under /v1/search, orientation and all.
+        let url = Provider::Pexels.search_url(StockKind::Photo, "harbour", 20, "portrait");
+        assert!(url.starts_with("https://api.pexels.com/v1/search?"));
+        assert!(url.contains("query=harbour"));
+        assert!(url.contains("orientation=portrait"));
+        // Pixabay's image API asks for photos by name and takes the same
+        // two orientation words the video search does.
+        let url = Provider::Pixabay.search_url(StockKind::Photo, "harbour", 20, "vertical");
+        assert!(url.contains("image_type=photo"));
+        assert!(url.contains("q=harbour"));
+        assert!(url.contains("orientation=vertical"));
+        // The video shelf is untouched by the aisle beside it.
+        let url = Provider::Pexels.search_url(StockKind::Video, "harbour", 20, "");
+        assert!(url.starts_with("https://api.pexels.com/videos/search?"));
+    }
+
+    #[test]
+    fn the_photo_rows_read_their_own_dialect() {
+        // A Pexels photograph row: the original is the file to keep, the
+        // photographer is the author, and a still has no run of seconds.
+        let page = json!({
+            "total_results": 2,
+            "photos": [
+                { "id": 41, "width": 4000, "height": 6000, "alt": "a harbour at dusk",
+                  "photographer": "Sam Shot",
+                  "src": { "original": "https://images.pexels.com/photos/41/pexels-41.jpeg" } },
+            ],
+        });
+        let found = pexels_photo_found(&page);
+        assert_eq!(found.total, 2);
+        let hit = &found.hits[0];
+        assert_eq!(hit.id, "41");
+        assert!(hit.photo, "the row is a still");
+        assert_eq!(hit.seconds, 0.0, "a still has no run of seconds");
+        assert_eq!(hit.width, 4000);
+        assert_eq!(hit.height, 6000);
+        assert_eq!(hit.author, "Sam Shot");
+        assert_eq!(
+            hit.url,
+            "https://images.pexels.com/photos/41/pexels-41.jpeg"
+        );
+        // A Pixabay photograph row: the large image is the file to keep.
+        let page = json!({
+            "totalHits": 1,
+            "hits": [
+                { "id": 7, "tags": "harbour, dusk, water", "user": "pixabay-person",
+                  "imageWidth": 3000, "imageHeight": 4000,
+                  "largeImageURL": "https://cdn.pixabay.com/photo/2026/harbour.jpg" },
+            ],
+        });
+        let found = pixabay_photo_found(&page);
+        let hit = &found.hits[0];
+        assert_eq!(hit.id, "7");
+        assert!(hit.photo);
+        assert_eq!(hit.caption, "harbour, dusk, water");
+        assert_eq!(hit.url, "https://cdn.pixabay.com/photo/2026/harbour.jpg");
+        assert_eq!(hit.width, 3000);
     }
 }

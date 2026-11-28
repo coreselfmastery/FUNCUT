@@ -5565,8 +5565,8 @@ fn frame_of(view: &Value) -> FrameOf {
     FrameOf { width, height }
 }
 
-/// The A-roll's deterministic fill: every video clip the run began with
-/// - the talking head, the carried picture - whose measured source
+/// The A-roll's deterministic fill: every video clip the run began
+/// with (the talking head, the carried picture) whose measured source
 /// aspect disagrees with the frame the orientation set gets the same
 /// fill the B-roll's own placement applies, at the Timeline stage where
 /// the frame's edits live. The subtraction of two numbers knows what

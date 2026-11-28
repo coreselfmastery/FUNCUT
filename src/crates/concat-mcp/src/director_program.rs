@@ -5565,6 +5565,78 @@ fn frame_of(view: &Value) -> FrameOf {
     FrameOf { width, height }
 }
 
+/// The A-roll's deterministic fill: every video clip the run began with
+/// - the talking head, the carried picture - whose measured source
+/// aspect disagrees with the frame the orientation set gets the same
+/// fill the B-roll's own placement applies, at the Timeline stage where
+/// the frame's edits live. The subtraction of two numbers knows what
+/// the export's letterbox bars could only tell the Revise stage's
+/// critic after a render: a vertical frame with a horizontal source is
+/// bars, deterministically. A clip whose media carries no dimensions -
+/// an unprobed file, a fixture - is left exactly as it was, for the
+/// measured fill the Revise stage still runs when the critic sees bars.
+fn arroll_fill_calls(log: &[Value], project: &str) -> Vec<ToolCall> {
+    let Some(view) = latest_view(log) else {
+        return Vec::new();
+    };
+    let frame = frame_of(view);
+    if frame.width <= 0.0 || frame.height <= 0.0 {
+        return Vec::new();
+    }
+    let frame_ratio = frame.width / frame.height;
+    // The measured dimensions each media row carries, by id: the probe's
+    // own answer, which the view has always held - the deterministic
+    // fix's missing half was the reading of it, not the carrying.
+    let dims: Vec<(String, (f64, f64))> = view["media"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = item["id"].as_str()?.to_owned();
+            let width = item["width"].and_then(Value::as_f64)?;
+            let height = item["height"].and_then(Value::as_f64)?;
+            Some((id, (width, height)))
+        })
+        .collect();
+    let mut calls = Vec::new();
+    for clip in view["timeline"]["clips"].as_array().into_iter().flatten() {
+        if clip["kind"].as_str() != Some("video") {
+            continue;
+        }
+        let Some(media_id) = clip["media"].as_str() else {
+            continue;
+        };
+        let Some((width, height)) = dims
+            .iter()
+            .find(|(id, _)| id == media_id)
+            .map(|(_, dims)| *dims)
+        else {
+            // Unmeasured is not a verdict: the Revise stage's measured
+            // fill owns the clip the numbers never spoke about.
+            continue;
+        };
+        if width <= 0.0 || height <= 0.0 {
+            continue;
+        }
+        let source_ratio = width / height;
+        // A disagreement of more than a fiftieth is bars on some edge -
+        // the fill crop that removes them; an agreement is a clip
+        // already shaped for the frame, left alone.
+        if ((source_ratio - frame_ratio) / frame_ratio).abs() < 0.02 {
+            continue;
+        }
+        let id = clip["id"].as_str().unwrap_or_default().to_owned();
+        calls.push(call(
+            "edit_apply",
+            json!({
+                "path": project,
+                "command": { "op": "frameClip", "clipId": id, "framing": "fill" },
+            }),
+        ));
+    }
+    calls
+}
+
 /// The three visual directions the one-click edit auditions before it
 /// commits. They are deliberately different films, not three grades of the
 /// same film: the documentary trusts evidence and archive, the kinetic
@@ -11951,8 +12023,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
                         let read = emotion_lines(log, &grade_source);
-                        let mut calls =
-                            dead_air_cuts(log, &tighten_source, &tighten_project, &read);
+                        // The A-roll's fill comes first, before the cut:
+                        // the frame the orientation set is the one the
+                        // whole stage edits inside, and a talking head
+                        // letterboxed into it is bars under every cut
+                        // that follows. Deterministic - two measured
+                        // numbers - so the Revise stage's critic never
+                        // has to see them in a render.
+                        let mut calls = arroll_fill_calls(log, &tighten_project);
+                        calls.extend(dead_air_cuts(log, &tighten_source, &tighten_project, &read));
                         calls.push(call("timeline_read", json!({ "path": tighten_project })));
                         calls
                     });
@@ -21054,6 +21133,94 @@ mod tests {
         // gains on the same clip.
         log.push(view);
         assert_eq!((timeline.next)(log.as_slice()), None);
+    }
+
+    /// The A-roll fills the frame deterministically: a talking head whose
+    /// measured 16:9 source sits in the 9:16 frame a vertical pick set is
+    /// bars on both sides, and the Timeline stage crops it to fill before
+    /// any cut lands - the same fill the B-roll's own placement applies,
+    /// taken from the two numbers the view carries instead of a render
+    /// the Revise stage's critic would have to watch. A clip already
+    /// shaped for the frame, and one whose media never measured, are
+    /// left for the stage that always owned them.
+    #[test]
+    fn the_aroll_fills_the_frame_the_orientation_set() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(timeline) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "timeline")
+            .expect("the program has a timeline stage")
+        else {
+            panic!("the timeline stage is derived");
+        };
+        // A vertical frame with three video clips and the voice: the
+        // talking head whose 16:9 source letterboxes into it, a vertical
+        // source already shaped for it, and a clip whose media never
+        // measured.
+        let view = json!({
+            "project": { "name": "Cut", "width": 1080.0, "height": 1920.0 },
+            "timeline": { "id": "t1", "clips": [
+                { "id": "head", "kind": "video", "media": "m-head",
+                  "start": 0.0, "duration": 6.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "phone", "kind": "video", "media": "m-phone",
+                  "start": 0.0, "duration": 6.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "mystery", "kind": "video", "media": "m-mystery",
+                  "start": 0.0, "duration": 6.0, "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "voice", "kind": "audio", "media": "m-voice",
+                  "start": 0.0, "duration": 6.0, "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [
+                { "id": "m-head", "path": "/edits/Reel/aroll/take-000.mp4",
+                  "width": 1920.0, "height": 1080.0 },
+                { "id": "m-phone", "path": "/edits/Reel/aroll/take-001.mp4",
+                  "width": 1080.0, "height": 1920.0 },
+                { "id": "m-mystery", "path": "/edits/Reel/aroll/take-002.mp4" },
+                { "id": "m-voice", "path": "/edits/Reel/voiceover/take-000-a.wav" },
+            ],
+        });
+        let mut log = vec![
+            view.clone(),
+            json!({
+                "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                "wholeTake": {},
+                "pauses": [],
+            }),
+        ];
+        // The fill is the stage's first edit: the one clip whose numbers
+        // say bars, and no other.
+        let fill = (timeline.next)(log.as_slice()).expect("the letterboxed head is filled");
+        assert_eq!(fill.tool, "edit_apply");
+        assert_eq!(fill.arguments["command"]["op"], "frameClip");
+        assert_eq!(fill.arguments["command"]["clipId"], "head");
+        assert_eq!(fill.arguments["command"]["framing"], "fill");
+        // The fill's reply is a view: the queue moves on to the read,
+        // with no fill for the clip already shaped and the clip whose
+        // media never measured.
+        log.push(view.clone());
+        assert_eq!(
+            (timeline.next)(log.as_slice()).map(|call| call.tool),
+            Some("timeline_read".to_owned())
+        );
+        log.push(view.clone());
+        let grade = (timeline.next)(log.as_slice()).expect("the look is laid over the cut");
+        assert_eq!(grade.tool, "edit_apply");
     }
 
     /// The mix is only made from a measured loudness: a take the profile

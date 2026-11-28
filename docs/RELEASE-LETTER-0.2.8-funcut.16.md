@@ -121,6 +121,18 @@ numbered - instead of taking the exit code's word. The fixed spine's
 nineteen stages keep their own receipts; the two systems stay
 distinct, and the gate says so when it skips.
 
+And one defect the release's own cold-machine run found, which no
+mock had ever seen: **the sense proxy's `setup` answer lost the word
+the preflight polls for.** The spine asks `local_vlm setup` until a
+reply carries the `setup` key - the word `vlm.py`'s own command has
+always answered with - but the proxy through which the app's calls
+actually travel returned only the server-start shape, so on a real
+machine the preflight re-asked a healthy, reused server forever. The
+one key rides the reply again, and the sense selftest pins it with a
+stubbed start, the same seam-pinning the emotion proxy already had:
+the run that found it watched the spine clear Preflight in seconds
+once the word came back.
+
 ## The picture, the platform, the product
 
 - **The stills aisle.** Stock searches fall back to licensed still

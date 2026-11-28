@@ -1480,6 +1480,13 @@ struct SlotChoice {
     slot: BrollSlot,
     /// The looked-at candidates, the sheet's ranking first.
     candidates: Vec<StockCandidate>,
+    /// The candidates the gates passed - the picture's veto and the
+    /// emotion gate's order both spoke before the choice - as indices
+    /// into `candidates`. A continuity swap walks this set only: the
+    /// flag asks for a different picture, never for one a gate
+    /// refused, so the replacement path preserves the same rejection
+    /// rules as the initial selection.
+    approved: Vec<usize>,
     /// Which candidate holds the slot.
     chosen: usize,
     /// A slot the continuity pass downgraded: the A-roll holds its span
@@ -1494,8 +1501,12 @@ struct SlotChoice {
 impl SlotChoice {
     /// Advance to the next alternate the sheet measured as a different
     /// picture: a new clip id, a new frame hash, and not a clip another
-    /// slot already chose. No such alternate leaves the flag standing,
-    /// recorded by the check's own second pass.
+    /// slot already chose. The walk stays inside `approved` - the
+    /// candidates the picture passed and the emotion gate allowed - so
+    /// a swap can never seat a candidate either gate refused: the
+    /// replacement respects every rule the initial choice did. No such
+    /// alternate leaves the flag standing, recorded by the check's own
+    /// second pass.
     fn swap_past(
         &mut self,
         used_ids: &[String],
@@ -1504,8 +1515,17 @@ impl SlotChoice {
         let current = &self.candidates[self.chosen];
         let current_hash = current.tile["hash"].as_str().unwrap_or_default().to_owned();
         let current_id = current.id.clone();
-        for step in 1..self.candidates.len() {
-            let at = (self.chosen + step) % self.candidates.len();
+        // The order the walk reads: the approved set, starting after the
+        // choice that holds the slot. A choice somehow outside the set
+        // (a defensive shape no caller leaves today) walks the whole
+        // set rather than none of it.
+        let walk: Vec<usize> = match self.approved.iter().position(|at| *at == self.chosen) {
+            Some(start) => (1..self.approved.len())
+                .map(|step| self.approved[(start + step) % self.approved.len()])
+                .collect(),
+            None => self.approved.clone(),
+        };
+        for at in walk {
             let candidate = &self.candidates[at];
             let hash = candidate.tile["hash"].as_str().unwrap_or_default();
             if candidate.id == current_id || hash == current_hash {
@@ -12910,6 +12930,23 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             } else {
                                 eligible(&visual)
                             };
+                            // The approved set the swap walks: the pool the
+                            // choice itself was drawn from - the gate's own
+                            // order when it answered, the visually-scored
+                            // page when it did not - still carrying the
+                            // picture's veto and the visual-score floor
+                            // `eligible` itself applies. A later continuity
+                            // swap may only spend what these gates already
+                            // passed.
+                            let approved: Vec<usize> = (if gate_answered {
+                                passing.clone()
+                            } else {
+                                visual.clone()
+                            })
+                            .into_iter()
+                            .filter(|index| visual.contains(index))
+                            .filter(|index| !any_picture_ok || picture_ok(*index))
+                            .collect();
                             if let Some(chosen) = chosen {
                                 let best = &pending_gate[chosen];
                                 used_ids.push(best.id.clone());
@@ -12932,6 +12969,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     id: format!("slot-{:02}", shopped.len()),
                                     slot: slots[shopping].clone(),
                                     candidates: std::mem::take(&mut pending_gate),
+                                    approved,
                                     chosen,
                                     held: false,
                                     force_push: false,
@@ -14774,6 +14812,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // at unity would discard the base the levels call just
                 // set and blast the bed at full source level.
                 let mut bed_level: Option<f64> = None;
+                // The duck's own depth, as the recording-quality door's
+                // verdict set it when the base landed: a clean floor
+                // ducks deeper under the speech, an audible one keeps
+                // the bed above the floor it exists to mask. `None`
+                // until then - the share the binary fallback reads.
+                let mut bed_duck: Option<f64> = None;
                 // The cut's own length, measured before the bed was laid:
                 // a bed longer than the cut is trimmed to it, or the
                 // export gains a black, scored tail.
@@ -14920,15 +14964,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 _ => merged.push((at, to)),
                             }
                         }
-                        const DUCK: f64 = 0.45;
                         const MOST_KEYS: usize = 28;
+                        // The verdict's own share of the lift the duck
+                        // sinks to: the same recording-quality word that
+                        // set the base - 0.30 for a floor graded clean
+                        // (the door's own 12 dB sentence), 0.45 beside an
+                        // audible floor the bed must stay above.
+                        let duck_share = bed_duck.unwrap_or(0.45);
                         // Volume keys are absolute linear values, so the
                         // shape rides at the base the levels call set:
                         // unity keys would cancel that base and the bed
                         // would play at its source's full level. The duck
                         // is the base dropped by the shape's own share.
                         let lift = bed_level.unwrap_or(0.1);
-                        let duck = lift * DUCK;
+                        let duck = lift * duck_share;
                         let mut commands: Vec<Value> = vec![json!({
                             "op": "setClipKey", "clipId": bed_id,
                             "property": "volume", "at": 0.0, "value": round3(lift),
@@ -14960,8 +15009,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 if fraction <= 0.0 || fraction >= 1.0 {
                                     continue;
                                 }
-                                let depth =
-                                    (0.45 - (level - reference) * 0.02).clamp(0.25, 1.0) * lift;
+                                let depth = (duck_share - (level - reference) * 0.02)
+                                    .clamp(duck_share * 0.55, 1.0)
+                                    * lift;
                                 ride.push((fraction, depth));
                             }
                         }
@@ -15639,13 +15689,58 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         } else {
                             0.0
                         };
+                        // The recording-quality door's bed hint, spent as
+                        // the gate it always meant to be rather than the
+                        // plan note it used to die as: the door graded the
+                        // floor before the repair chain touched it, and
+                        // its verdict is the bed's own placement word. An
+                        // audible floor (home, rough) is masked by a bed
+                        // that sits 2 dB closer and ducks shallower - a
+                        // bed ducked below the floor is inaudible, and the
+                        // floor it was meant to hide stays naked under
+                        // the lines. A floor the door graded broadcast or
+                        // clean lets the bed whisper: 2 dB further down,
+                        // ducked deeper under the speech, the -28 LUFS
+                        // sentence the door's own hint carries. A take
+                        // the door never graded keeps the act-and-density
+                        // level untouched - unmeasured is not a verdict.
+                        let graded: Vec<&str> = music_source
+                            .iter()
+                            .filter_map(|take| {
+                                classify_of(log, &take.take).and_then(|reply| {
+                                    reply.get("verdict").and_then(Value::as_str)
+                                })
+                            })
+                            .collect();
+                        let (quality_db, duck_share) = if graded
+                            .iter()
+                            .any(|verdict| *verdict == "home" || *verdict == "rough")
+                        {
+                            (2.0, 0.45)
+                        } else if graded
+                            .iter()
+                            .any(|verdict| *verdict == "broadcast" || *verdict == "clean")
+                        {
+                            (-2.0, 0.30)
+                        } else {
+                            (0.0, 0.45)
+                        };
                         let base_db = round3(
-                            (act_db + density_db + conversation_db + room_db + band_db)
+                            (act_db
+                                + density_db
+                                + conversation_db
+                                + room_db
+                                + band_db
+                                + quality_db)
                                 .clamp(-30.0, -6.0),
                         );
                         // The shape's keys ride at this base: kept as
-                        // the linear gain the volume keys carry.
+                        // the linear gain the volume keys carry. The
+                        // duck's own share rides with it - the verdict
+                        // that set the base sets the depth the keys duck
+                        // to.
                         bed_level = Some(f64::powf(10.0, base_db / 20.0));
+                        bed_duck = Some(duck_share);
                         return Some(call(
                             "clip_audio_levels_db",
                             json!({
@@ -21477,6 +21572,117 @@ mod tests {
         assert_eq!((music.next)(log.as_slice()), None);
     }
 
+    /// The recording-quality door's bed hint reaches the Music stage's
+    /// own decision gate: a take the door graded `home` - an audible
+    /// floor - is masked by a bed that sits 2 dB closer than the
+    /// act-only default, and the base the duck rides on carries the
+    /// door's verdict in the level call itself. The hint used to die as
+    /// a plan note; the gate reads it now.
+    #[test]
+    fn the_recording_quality_verdict_gates_the_music_stage_s_bed() {
+        let take = "/edits/Reel/voiceover/take-000-a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "music")
+            .expect("the program has a music stage")
+        else {
+            panic!("the music stage is derived");
+        };
+        let mut log = vec![
+            json!({
+                "project": { "name": "Reel" },
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1", "path": take }],
+            }),
+            // The voice-quality door's own verdict on the take: a floor
+            // it graded `home`, with the bed hint the plan used to only
+            // note - "the floor is audible: BGM at or above the floor
+            // masks it".
+            json!({
+                "tool": "classify_recording_quality", "ok": true,
+                "action": "classify_recording_quality", "audio": take,
+                "verdict": "home",
+                "measures": { "noiseFloorDbfs": -36.0, "snrDb": 15.0 },
+                "bgmDecision": "the floor is audible: BGM at or above the floor masks it",
+            }),
+        ];
+        // The same bed walk the stage always takes: the generator is
+        // absent, the shelf serves one candidate, it listens as music
+        // and stays.
+        let _ = (music.next)(&log).expect("the bed is asked for");
+        log.push(
+            json!({ "tool": "generate", "ok": true, "model": "absent", "generated": false,
+                      "reason": "the model is not downloaded" }),
+        );
+        let _ = (music.next)(&log).expect("the shelf's state");
+        log.push(json!({ "freepd": "missing", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is prepared");
+        log.push(json!({ "freepd": "ready", "lofi": "missing" }));
+        let _ = (music.next)(&log).expect("the shelf is searched");
+        log.push(json!({ "tracks": [{ "id": "freepd-abc123" }] }));
+        let _ = (music.next)(&log).expect("the bed is imported");
+        log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
+        let _ = (music.next)(&log).expect("the timeline is read");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
+        }));
+        let listen = (music.next)(&log).expect("the bed is listened to");
+        assert_eq!(listen.tool, "sense_sound_model");
+        log.push(json!({
+            "tool": "describe", "ok": true, "action": "describe",
+            "sound": { "model": { "state": "absent" }, "soundSense": {} },
+        }));
+        let _ = (music.next)(&log).expect("the bed is read back after the listen");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
+        }));
+        let trim = (music.next)(&log).expect("the bed is trimmed to the cut");
+        assert_eq!(trim.arguments["command"]["op"], "trimClip");
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 2.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
+        }));
+        // The verdict in the level call: the act's -20 dB default plus
+        // the door's own 2 dB - a floor graded `home` is masked by a
+        // bed that sits closer, the decision the hint always named.
+        let duck = (music.next)(&log).expect("the bed is ducked");
+        assert_eq!(duck.tool, "clip_audio_levels_db");
+        assert_eq!(duck.arguments["clipId"], "bed1");
+        assert_eq!(
+            duck.arguments["baseDb"], -18.0,
+            "the recording-quality door's verdict moves the Music stage's own gate"
+        );
+    }
+
     /// The bed's volume ride follows the measured loudness curve, not a
     /// span average: deeper under the voice's own lift, lifted where the
     /// take settles - and a machine whose loudness pass left no curve
@@ -23722,6 +23928,185 @@ mod tests {
         assert_eq!(
             second.arguments["id"], "99002211",
             "a near-duplicate of a placed clip never takes the next slot"
+        );
+    }
+
+    /// A continuity swap never seats a candidate the emotion gate
+    /// refused: the gate's order named one survivor, the choice took
+    /// it, and the colour flag asks for a different picture - the walk
+    /// stays inside the approved set, so the refusal stands and the
+    /// flag is left recorded by the check's second pass rather than
+    /// repaired with a candidate the gate rejected. The replacement
+    /// path preserves every rule the initial choice ran.
+    #[test]
+    fn a_continuity_swap_never_seats_a_candidate_the_gate_refused() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+                aroll: None,
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "voice", "media": "voice-media",
+                "start": 0.0, "duration": 7.0, "sourceStart": 0.0, "speed": 1.0
+            }]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 5.0, "end": 7.0, "text": "crowds crossing the bridge at night" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+        let search_hits = |ids: [&str; 2]| {
+            json!({
+                "provider": "pexels",
+                "license": "Pexels License",
+                "hits": [
+                    {
+                        "id": ids[0], "provider": "pexels",
+                        "url": format!("https://videos.pexels.com/files/{}.mp4", ids[0]),
+                        "license": "Pexels License",
+                        "caption": "aerial city skyline at dusk",
+                        "width": 1920.0, "height": 1080.0, "seconds": 10.0
+                    },
+                    {
+                        "id": ids[1], "provider": "pexels",
+                        "url": format!("https://videos.pexels.com/files/{}.mp4", ids[1]),
+                        "license": "Pexels License",
+                        "caption": "drone over neon skyscrapers at night",
+                        "width": 1920.0, "height": 1080.0, "seconds": 8.0
+                    },
+                ],
+            })
+        };
+        let fetch_reply = |id: &str| {
+            json!({
+                "id": id, "provider": "pexels",
+                "path": format!("/cache/stock/pexels/{id}.mp4"), "bytes": 8_000_000,
+            })
+        };
+        let sheet_reply = |ids: [&str; 2]| {
+            json!({
+                "pngPath": "/cache/sense/sheet-1.png",
+                "tiles": ids.iter().enumerate().map(|(index, id)| json!({
+                    "index": index,
+                    "localPath": format!("/cache/stock/pexels/{id}.mp4"),
+                    "luma": 128.0, "contrast": 40.0, "detail": 4.0,
+                    "blackFraction": 0.0, "blownFraction": 0.0, "barRatio": 0.0,
+                    "saturation": 0.4, "warmth": 0.2,
+                    "hash": format!("hash-{id}"),
+                    "cropHint": { "x": 0.0, "y": 0.0 },
+                    "reframeHint": { "clipTransform": { "offsetX": 0.0, "offsetY": 0.0 } },
+                })).collect::<Vec<_>>(),
+            })
+        };
+        let visual_reply = |ids: [&str; 2]| {
+            json!({
+                "clips": ids.iter().map(|id| json!({
+                    "path": format!("/cache/stock/pexels/{id}.mp4"),
+                    "ok": true,
+                    "motion": { "mean": 0.03, "peak": 0.09, "peakAt": 1.2, "still": false },
+                    "camera": { "kind": "pan", "cameraMoving": true,
+                                "subjectMoving": false, "travel": "left" },
+                    "shotScale": { "scale": "wide" },
+                    "quality": { "verdict": "pass" },
+                    "saliency": { "focus": "center" },
+                    "scene": { "cuts": 0 },
+                    "visualScore": 74.0,
+                })).collect::<Vec<_>>(),
+            })
+        };
+        let rerank_reply = |scores: [f64; 2], vectors: [Vec<f64>; 2]| {
+            json!({
+                "ok": true,
+                "order": [0, 1],
+                "scores": { "0": scores[0], "1": scores[1] },
+                "vectors": { "0": vectors[0], "1": vectors[1] },
+                "scored": 2,
+            })
+        };
+
+        // Slot one: the gate REFUSES the first hit - its order names the
+        // second alone - and the choice follows the gate's survivors.
+        let _ = (gather.next)(&log).expect("the first slot is searched");
+        log.push(search_hits(["110011", "88110022"]));
+        let _ = (gather.next)(&log).expect("the first hit is fetched");
+        log.push(fetch_reply("110011"));
+        let _ = (gather.next)(&log).expect("the second hit is fetched");
+        log.push(fetch_reply("88110022"));
+        let _ = (gather.next)(&log).expect("both are looked at");
+        log.push(sheet_reply(["110011", "88110022"]));
+        let _ = (gather.next)(&log).expect("both pictures are measured");
+        log.push(visual_reply(["110011", "88110022"]));
+        let _ = (gather.next)(&log).expect("both frames are ranked");
+        log.push(rerank_reply([0.18, 0.41], [vec![1.0, 0.0], vec![0.0, 1.0]]));
+        let gate = (gather.next)(&log).expect("the gate is asked");
+        assert_eq!(gate.tool, "emotion");
+        log.push(json!({ "ok": true, "order": [1] }));
+
+        // Slot two: both candidates pass, the first takes the slot.
+        let _ = (gather.next)(&log).expect("the second slot is searched");
+        log.push(search_hits(["77220033", "99002211"]));
+        let _ = (gather.next)(&log).expect("the first hit is fetched");
+        log.push(fetch_reply("77220033"));
+        let _ = (gather.next)(&log).expect("the second hit is fetched");
+        log.push(fetch_reply("99002211"));
+        let _ = (gather.next)(&log).expect("both are looked at");
+        log.push(sheet_reply(["77220033", "99002211"]));
+        let _ = (gather.next)(&log).expect("both pictures are measured");
+        log.push(visual_reply(["77220033", "99002211"]));
+        let _ = (gather.next)(&log).expect("both frames are ranked");
+        log.push(rerank_reply([0.40, 0.22], [vec![0.0, 0.99], vec![0.7, 0.71]]));
+        let gate = (gather.next)(&log).expect("the gate is asked");
+        assert_eq!(gate.tool, "emotion");
+        log.push(json!({ "ok": true, "order": [0, 1] }));
+
+        // The continuity gate flags the first slot's colour jump. The
+        // only approved alternate is the clip already holding the slot,
+        // so the swap finds nothing inside the rules - the flag stands,
+        // recorded by the second pass, and the refused candidate stays
+        // refused.
+        let continuity = (gather.next)(&log).expect("the continuity gate runs");
+        assert_eq!(continuity.tool, "footage_continuity");
+        log.push(json!({ "flags": [{ "slotId": "slot-00", "rule": "colour" }] }));
+        let second = (gather.next)(&log).expect("the repair pass re-reads the manifest");
+        assert_eq!(second.tool, "footage_continuity");
+        log.push(json!({ "flags": [] }));
+
+        // The import spends the choice the rules left standing: the
+        // gate-approved clip, never the one the gate refused.
+        let first = (gather.next)(&log).expect("the first choice is imported");
+        assert_eq!(
+            first.arguments["id"], "88110022",
+            "a continuity swap never seats a candidate the emotion gate refused"
         );
     }
 

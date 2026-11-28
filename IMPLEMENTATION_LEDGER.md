@@ -91,17 +91,28 @@ this box.
 
 The docs PR #245's head (`b87758cb`) is cherry-picked onto this branch
 (its counts held against the tree); PR #228's status table is stale
-against a main that merged #226 and is closed pointing here. The
-known-unfixed left open by the audit, named: the A-roll is still
-letterboxed in a vertical pick until the Revise stage's measured fill
-catches it (the deterministic fix needs source dimensions the timeline
-view does not carry); the recording-quality door's bed hint still feeds
-a plan note rather than the Music stage's gate; `swap_past` can still
-walk a candidate the emotion gate refused; the local VLM's own setup
-download is bounded by the DEEP class's 1200 s rather than the job
-machinery the model sets use; the live-follow refresh still drops the
-selection on every autosave; and the ~4,256-line translation backlog
-the locales gate does not fail on stands.
+against a main that merged #226 and is closed pointing here. The five
+code gaps the 27 Nov audit named are closed by the
+`audit/gap-closures-2026-11-28` branch (PR #248): a continuity swap
+walks only the candidates the gates approved (`SlotChoice.approved`,
+the emotion gate's refusals survive the replacement path); the
+recording-quality door's bed verdict gates the Music stage's own level
+decision (audible floor sits 2 dB closer with a shallower duck, clean
+floor whispers lower and deeper, ungraded keeps the act level); the
+A-roll fills the frame deterministically at the Timeline stage from the
+measured source dimensions the view's media rows carry (unmeasured
+media keeps the Revise stage's measured fill); the local VLM's weights
+are a model set behind `models.download` kind "vlm" (profiles
+mini/image/minicpm) that rides the whole-registry "all" job beside the
+sound and picture sets - resumable, digest-pinned, cancellable, into
+the same `vlm/models/<profile>` folder the setup call reads, so
+`local_vlm setup` only starts the server; the live-follow refresh
+retains the selection's hold on the clips the refreshed document still
+carries. The Director's twenty-five phases are now a receipt the pane
+keeps and the acceptance gates (a phase the run's own output never
+named refuses the receipt; the fixed spine's nineteen stages skip the
+gate with their own reason). Still open: the ~4,256-line translation
+backlog the locales gate does not fail on stands.
 # IMPLEMENTATION_LEDGER.md — what is done, what is next
 
 Legend: each unit is a coherent implementation with tests, committed and

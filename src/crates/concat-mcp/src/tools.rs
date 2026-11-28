@@ -883,11 +883,9 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "models_download",
             title: "Download an AI model",
-            description: "Download a missing voice, whisper, sound set \
-             (sound-models|sfx-small|sfx-large|bgm), picture set or vision critic profile \
-             (mini|image|minicpm); kind \"all\" fetches every family, the critic's default \
-             included - the preflight. Wait with analysis_wait; the server itself starts \
-             with local_vlm.",
+            description: "Download a missing model: voice, whisper, sound set, picture set or \
+             vision critic profile (mini|image|minicpm); kind \"all\" fetches every family - the \
+             cold-machine preflight. Wait with analysis_wait.",
             read_only: false,
             destructive: false,
             // A second call finds everything the first one fetched and
@@ -1541,12 +1539,11 @@ fn models_download_schema(schemas: &Schemas) -> Option<Value> {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         if let Some(kind) = properties.get_mut("kind") {
             kind["description"] = json!(
-                "Which family: \"tts\", \"whisper\", \"sound\", \"picture\" or \"vlm\" - or \
-                 \"all\", every family in one job. \"vlm\" takes the local vision critic's \
-                 profile id (mini, image or minicpm). \"all\" is the setup preflight on a cold \
-                 machine: call it once before auto_edit or a director run so no stage meets a \
-                 missing model - it fetches the critic's default profile too, and \
-                 local_vlm {\"action\": \"setup\"} afterwards starts the server."
+                "Which family: \"tts\", \"whisper\", \"sound\", \"picture\" or \"vlm\" (the vision \
+                 critic's profile id - mini, image or minicpm) - or \"all\", every family in one \
+                 job: the setup preflight on a cold machine, which also fetches the critic's \
+                 default profile; call it once before auto_edit or a director run so no stage \
+                 meets a missing model."
             );
         }
         if let Some(id) = properties.get_mut("id") {

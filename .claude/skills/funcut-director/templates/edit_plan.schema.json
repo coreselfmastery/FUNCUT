@@ -1007,7 +1007,7 @@
       "type": "array"
     },
     "signalLog": {
-      "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM, transition, repair, mix, grade, SFX and motion decision, naming the signals (from the profile's decisionPolicy) behind it, with their confidence and a one-sentence basis. A `cut` entry must land on a segment boundary; an entry at an arbitrary time is not evidence that a cut was driven. A plan with a voiceover and no signalLog is NOT creativeReady.",
+      "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM, transition, repair, mix, grade, SFX, motion and assemble decision, naming the signals (from the profile's decisionPolicy) behind it, with their confidence and a one-sentence basis. A `cut` entry must land on a segment boundary; an entry at an arbitrary time is not evidence that a cut was driven. A plan with a voiceover and no signalLog is NOT creativeReady.",
       "items": {
         "additionalProperties": false,
         "properties": {
@@ -1035,7 +1035,8 @@
               "mix",
               "grade",
               "sfx",
-              "motion"
+              "motion",
+              "assemble"
             ],
             "type": "string"
           },

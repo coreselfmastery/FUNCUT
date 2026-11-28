@@ -17479,13 +17479,25 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // one this stage asked for; a render that named no
                         // pixels ends the critique rather than scoring a
                         // stale sheet, exactly as the preview and revise
-                        // stages end on theirs.
+                        // stages end on theirs. The comparison is the
+                        // file's own name, not the whole route: the reply
+                        // carries the sheet path the backend resolved -
+                        // the project-anchored name this stage asked for,
+                        // joined to the project - so a string equality
+                        // with the asked-for name never matched, the
+                        // critique never ran, and the stage's gate went
+                        // unanswered on a sheet that existed.
                         let sheet = log
                             .iter()
                             .rev()
                             .find(|reply| {
-                                reply.get("pngPath").and_then(Value::as_str)
-                                    == Some(watch_sheet.as_str())
+                                reply.get("pngPath").and_then(Value::as_str).is_some_and(
+                                    |png| {
+                                        std::path::Path::new(png).file_name()
+                                            == std::path::Path::new(watch_sheet.as_str())
+                                                .file_name()
+                                    },
+                                )
                             })
                             .cloned();
                         let sheet = sheet?;
@@ -20849,6 +20861,88 @@ mod tests {
         );
         assert_eq!(second.arguments["project"], source.project);
         assert!((preview.next)(&[json!({}), json!({})]).is_none());
+    }
+
+    /// The watch's critique runs on the sheet the watch's own render
+    /// named. The reply carries the path the backend resolved - the
+    /// project-anchored name the stage asked for, joined to the project -
+    /// so the stage finds its sheet by the file's own name, never by a
+    /// string equality with the relative name it asked for: that
+    /// equality never matched, the critique never ran, and the stage's
+    /// overall gate went unanswered on a sheet that existed. A foreign
+    /// sheet - the preview's, the stock contact sheet's - is still not
+    /// the watch's, and must not be scored as the final timeline.
+    #[test]
+    fn the_watch_critiques_the_sheet_its_render_named_by_file_name() {
+        use concat_director::ProgramStep;
+
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: Vec::new(),
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+            script: None,
+            orientation: None,
+            frame_rate: None,
+            monetized: true,
+        };
+        let mut program = auto_edit_program(&source);
+        let at = program
+            .steps
+            .iter()
+            .position(|step| step.stage() == Stage::Watch)
+            .expect("the watch stage is in the program");
+        let ProgramStep::Derived(watch) = &mut program.steps[at] else {
+            panic!("the watch reacts to the render it just made");
+        };
+
+        let first = (watch.next)(&[]).expect("the watch renders the final timeline");
+        assert_eq!(first.tool, "watch_render");
+        assert_eq!(first.arguments["out"], "auto-edit-sheet.png");
+
+        // The render's reply names the sheet by the path the backend
+        // resolved - the joined, absolute route - not the relative name
+        // the stage asked for. The critique must still find it.
+        let rendered = json!({
+            "ok": true,
+            "pngPath": "/edits/Reel/auto-edit-sheet.png",
+            "craft": { "samples": 12 },
+        });
+        let second =
+            (watch.next)(&[rendered]).expect("the watch's own sheet is critiqued");
+        assert_eq!(second.tool, "craft_critique");
+        assert_eq!(
+            second.arguments["pngPath"],
+            "/edits/Reel/auto-edit-sheet.png"
+        );
+
+        // A foreign sheet - the preview's - is not the watch's: a fresh
+        // step whose only render named the preview's file ends at the
+        // search, never scoring another stage's sheet as the timeline.
+        let mut foreign_program = auto_edit_program(&source);
+        let foreign_at = foreign_program
+            .steps
+            .iter()
+            .position(|step| step.stage() == Stage::Watch)
+            .expect("the watch stage is in the program");
+        let ProgramStep::Derived(foreign_watch) = &mut foreign_program.steps[foreign_at]
+        else {
+            panic!("the watch reacts to the render it just made");
+        };
+        assert!(
+            (foreign_watch.next)(&[]).is_some(),
+            "the fresh watch renders first"
+        );
+        let foreign = json!({
+            "ok": true,
+            "pngPath": "/edits/Reel/auto-edit-sheet-preview.png",
+        });
+        assert!(
+            (foreign_watch.next)(&[foreign]).is_none(),
+            "the preview's sheet is never scored as the final timeline"
+        );
     }
 
     /// A revision that landed must be in the file that ships. The revise

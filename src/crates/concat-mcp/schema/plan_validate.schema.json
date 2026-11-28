@@ -426,7 +426,8 @@
                   "mix",
                   "grade",
                   "sfx",
-                  "motion"
+                  "motion",
+                  "assemble"
                 ],
                 "type": "string"
               },

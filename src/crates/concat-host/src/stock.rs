@@ -1051,12 +1051,11 @@ mod tests {
         std::fs::write(&video, b"video").expect("video cache");
         std::fs::write(&photo, b"photo").expect("photo cache");
 
-        let pexels_photo = Url::parse(
-            "https://images.pexels.com/photos/41/pexels-41.jpeg?auto=compress",
-        )
-        .expect("photo URL");
-        let pexels_video = Url::parse("https://videos.pexels.com/video-files/41.mp4")
-            .expect("video URL");
+        let pexels_photo =
+            Url::parse("https://images.pexels.com/photos/41/pexels-41.jpeg?auto=compress")
+                .expect("photo URL");
+        let pexels_video =
+            Url::parse("https://videos.pexels.com/video-files/41.mp4").expect("video URL");
 
         assert_eq!(extension_of_url(&pexels_photo), "jpeg");
         assert_eq!(extension_of_url(&pexels_video), "mp4");

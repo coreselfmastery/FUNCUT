@@ -76,7 +76,10 @@ fn preserve_recorded_take(project: &Path, index: usize, path: &Path) -> Result<(
         .unwrap_or("take.wav");
     let kept = folder.join(format!("recorded-{index:03}-{name}"));
     let mut input = std::fs::File::open(path).map_err(|error| {
-        format!("could not open the original take {} before repair: {error}", path.display())
+        format!(
+            "could not open the original take {} before repair: {error}",
+            path.display()
+        )
     })?;
 
     // Write beside the destination under an exclusive name, then rename
@@ -129,7 +132,6 @@ fn preserve_recorded_take(project: &Path, index: usize, path: &Path) -> Result<(
     }
     Ok(())
 }
-
 
 /// The headless tool has no channel metadata to inspect. Default to the
 /// restrictive licensing path; personal/research use must be an explicit
@@ -853,13 +855,15 @@ mod tests {
     fn a_failed_recorded_take_snapshot_is_not_silently_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("Reel");
-        std::fs::create_dir_all(project.join("auto-edit").join("recorded-000-take.wav"))
-            .unwrap();
+        std::fs::create_dir_all(project.join("auto-edit").join("recorded-000-take.wav")).unwrap();
         let source = dir.path().join("take.wav");
         std::fs::write(&source, b"original").unwrap();
 
         let error = preserve_recorded_take(&project, 0, &source).unwrap_err();
-        assert!(error.contains("could not preserve the original take"), "{error}");
+        assert!(
+            error.contains("could not preserve the original take"),
+            "{error}"
+        );
     }
 
     #[test]

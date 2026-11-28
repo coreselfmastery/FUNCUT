@@ -8223,5 +8223,4 @@ mod tests {
             .expect("the monetization policy is described");
         assert!(description.contains("personal/research use"));
     }
-
 }

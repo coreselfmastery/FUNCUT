@@ -1570,7 +1570,6 @@ pub fn new_token() -> String {
     format!("{:016x}{:016x}", word(1), word(2))
 }
 
-
 /// Clears stale row-cancellation state before a new whole-shelf download.
 /// The individual sound and picture rows share these flags with Download-all.
 fn reset_model_download_cancellation(sound: &AtomicBool, visual: &AtomicBool) {

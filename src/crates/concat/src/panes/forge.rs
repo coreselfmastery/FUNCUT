@@ -4681,7 +4681,9 @@ mod tests {
         assert!(!configured_value(None));
         assert!(!configured_value(Some(String::new())));
         assert!(!configured_value(Some("  \t\n".to_owned())));
-        assert!(configured_value(Some("https://critic.example/v1".to_owned())));
+        assert!(configured_value(Some(
+            "https://critic.example/v1".to_owned()
+        )));
         assert!(configured_value(Some("api-key".to_owned())));
     }
 

@@ -1375,6 +1375,7 @@ impl ForgePane {
             pending: None,
             stage_index: None,
             stage_events: 0,
+            phases_seen: [false; 25],
             job: Some(Arc::clone(&job)),
         };
         self.set_status(t("forge.autoEditRunning"));

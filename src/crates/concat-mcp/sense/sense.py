@@ -2221,7 +2221,11 @@ def vlm_command(spec):
             p = spec.get("profile", "mini")
             if p not in local_vlm.PROFILES:
                 return {"ok": False, "error": f"unknown profile {p}; choose from {list(local_vlm.PROFILES)}"}
-            return {"ok": True, **local_vlm.start(p)}
+            # `setup` rides the reply: the AUTO EDIT's preflight polls this
+            # action until a reply carries the key, the same word vlm.py's
+            # own setup command always answered with. A proxy that dropped
+            # it left a healthy server and a preflight that looped on it.
+            return {"ok": True, "setup": True, **local_vlm.start(p)}
         if action == "providers":
             return {
                 "ok": True,
@@ -2657,6 +2661,21 @@ def main():
                 })
                 assert gate_probe.get("ok") and gate_probe["order"] == [0], gate_probe
                 out["emotionProxy"] = "ok"
+            # The vlm setup proxy is the seam the AUTO EDIT's preflight
+            # waits on: the spine re-asks `local_vlm setup` until a reply
+            # carries `setup`, the word vlm.py's own command answers with.
+            # A stubbed start pins the key without paying a server here -
+            # the regression was a proxy that returned the start's own
+            # shape and left the preflight polling a healthy server.
+            if local_vlm is not None:
+                real_start = local_vlm.start
+                local_vlm.start = lambda *a, **k: {"reused": True}
+                try:
+                    vlm_probe = vlm_command({"action": "setup", "profile": "mini"})
+                finally:
+                    local_vlm.start = real_start
+                assert vlm_probe.get("ok") and vlm_probe.get("setup") is True, vlm_probe
+                out["vlmProxy"] = "ok"
             # The ffmpeg bootstrap is pinned: every asset it can name has
             # a digest, and the URL names one immutable release tag - never
             # a rolling pointer that changes under the bytes somebody

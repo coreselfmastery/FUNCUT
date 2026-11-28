@@ -133,6 +133,27 @@ stubbed start, the same seam-pinning the emotion proxy already had:
 the run that found it watched the spine clear Preflight in seconds
 once the word came back.
 
+The same run's receipt refused to bless its own export, and its two
+reasons were two more wiring faults no mock had seen. **The plan
+validator refused the spine's own vocabulary**: the restart marks the
+voice readings write carry a decision the plan schema's enum never
+learned - `assemble` was in the Rust tests' accepted list and in the
+prose, but not in the enum the validator actually reads - so the plan
+stage warned and the story gate skipped. The word rides all three
+committed schemas now, regenerated the same way the generator writes
+them. And **the Watch stage never scored the sheet it had just
+rendered**: the stage matched its contact sheet by string equality
+with the relative name it asked for, but the reply carries the path
+the backend resolved - joined to the project - so the critique never
+ran and the overall gate went unanswered. The match is the file's own
+name now, with a regression test that also pins the foreign sheet
+staying foreign: the preview's sheet is never scored as the final
+timeline. What the receipt still says honestly, no fix owed: the
+craft scores were low because a run with no stock key has no B-roll,
+and the words gate said revise on a voice whose word timings were
+estimated - the gates did their job on a degraded run, which is what
+they are for.
+
 ## The picture, the platform, the product
 
 - **The stills aisle.** Stock searches fall back to licensed still

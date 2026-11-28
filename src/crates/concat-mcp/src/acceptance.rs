@@ -45,6 +45,13 @@ pub struct DirectorCheck<'a> {
     pub project: &'a str,
     /// The file the run was told to land, when it was asked to render one.
     pub export: Option<&'a str>,
+    /// Which of the director skill's twenty-five phases the harness's own
+    /// output named, one flag per phase: `Some` for a handed-over Director
+    /// run, whose phases are the only process evidence it has. `None` for
+    /// a run whose stages carry their own receipts (the fixed AUTO EDIT
+    /// spine): the two systems are not confused, and the gate skips with
+    /// that reason rather than guessing.
+    pub phases: Option<[bool; 25]>,
 }
 
 /// The check's answer: the receipt, and whether the pane may present the
@@ -504,6 +511,15 @@ pub fn check(
         },
         true,
     ));
+    // The phase receipt: a handed-over Director run's only process
+    // evidence is the twenty-five numbered headings its own output
+    // printed, and a run that never named a phase cannot prove it ran
+    // one. The gate refuses with the missing phases named - the skill
+    // runs its phases IN ORDER, so a gap is a phase skipped, not a
+    // phase that ran quietly. A run with no phase record (the fixed
+    // AUTO EDIT spine) is not guessed about: its nineteen stages carry
+    // their own receipts, and this gate says exactly that.
+    gates.push(phase_gate(check.phases));
     let verdict = verdict_of(&gates);
     let failure = gates
         .iter()
@@ -532,6 +548,53 @@ pub fn check(
         warnings,
     );
     DirectorAcceptance { receipt }
+}
+
+/// The director skill's phase receipt, as a gate: a handed-over run's
+/// twenty-five phases are proven by the numbered headings its own output
+/// printed - a phase that never appeared is a phase the run cannot prove
+/// it ran, named in the refusal. A run with no phase record is the fixed
+/// AUTO EDIT spine, whose nineteen stages carry their own receipts; its
+/// gate skips with that reason, required by nobody.
+fn phase_gate(phases: Option<[bool; 25]>) -> GateRecord {
+    match phases {
+        Some(seen) => {
+            let missing: Vec<String> = seen
+                .iter()
+                .enumerate()
+                .filter(|(_, seen)| !**seen)
+                .map(|(index, _)| (index + 1).to_string())
+                .collect();
+            if missing.is_empty() {
+                GateRecord::new(
+                    "phases",
+                    GateStatus::Pass,
+                    "the run's own output named all twenty-five director phases".to_owned(),
+                    true,
+                )
+            } else {
+                GateRecord::new(
+                    "phases",
+                    GateStatus::Fail,
+                    format!(
+                        "the run's output never named phase{} {} of the director skill's \
+                         twenty-five - a phase the run cannot prove it ran",
+                        if missing.len() == 1 { "" } else { "s" },
+                        missing.join(", "),
+                    ),
+                    true,
+                )
+            }
+        }
+        None => GateRecord::new(
+            "phases",
+            GateStatus::Skipped,
+            "the run was the fixed AUTO EDIT spine, whose nineteen stages carry their \
+             own receipts - the director skill's phases are not its contract"
+                .to_owned(),
+            false,
+        ),
+    }
 }
 
 /// The standing the gates earn: a failure rejects, a required gate with no
@@ -870,5 +933,57 @@ mod tests {
             true,
         )];
         assert_eq!(verdict_of(&clean), Verdict::Accepted);
+    }
+
+    /// The phase receipt: a handed-over run that named every phase of
+    /// the skill passes; one whose output never named a phase is refused
+    /// with the missing phases named; and a run with no phase record -
+    /// the fixed AUTO EDIT spine - is skipped, not guessed about, with
+    /// the reason the two systems are not confused.
+    #[test]
+    fn the_phase_receipt_names_the_phases_the_run_never_proved() {
+        let all = [true; 25];
+        let passed = phase_gate(Some(all));
+        assert_eq!(passed.status, GateStatus::Pass);
+        assert!(passed.required);
+
+        let skipped = phase_gate(None);
+        assert_eq!(skipped.status, GateStatus::Skipped);
+        assert!(!skipped.required, "a spine run is not held to the phases");
+        assert!(
+            skipped.evidence.contains("nineteen stages"),
+            "{}",
+            skipped.evidence
+        );
+
+        let mut gapped = all;
+        gapped[6] = false; // Phase 7, the tighten
+        gapped[12] = false; // Phase 13, the gather
+        let refused = phase_gate(Some(gapped));
+        assert_eq!(refused.status, GateStatus::Fail);
+        assert!(refused.required);
+        assert!(refused.evidence.contains("7"), "{}", refused.evidence);
+        assert!(refused.evidence.contains("13"), "{}", refused.evidence);
+        assert!(refused.evidence.contains("phases"), "{}", refused.evidence);
+
+        // A single missing phase reads in the singular.
+        let mut one = all;
+        one[24] = false;
+        let singular = phase_gate(Some(one));
+        assert_eq!(singular.status, GateStatus::Fail);
+        assert!(
+            singular.evidence.contains("phase 25"),
+            "{}",
+            singular.evidence
+        );
+
+        // The gate's refusal is a rejection the receipt records: the
+        // verdict follows it the way it follows every failing gate.
+        assert_eq!(
+            verdict_of(&[passed.clone(), refused]),
+            Verdict::Rejected,
+            "a phase the run cannot prove it ran rejects the acceptance"
+        );
+        assert_eq!(verdict_of(&[passed, skipped]), Verdict::Accepted);
     }
 }

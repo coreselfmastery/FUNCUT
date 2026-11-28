@@ -9537,11 +9537,21 @@ impl Studio {
         if let Some(live) = &mut self.live_follow {
             live.stamp = stamp;
         }
-        // The playhead survives the swap; everything the document's own
-        // ids key (the selection) does not, and the art of clips that
-        // left is dropped so the filmstrips of the ones that arrived are
-        // asked for afresh.
-        self.selection.clear();
+        // The playhead survives the swap, and so does the selection's
+        // hold on the clips the refreshed document still carries: the
+        // ids the new session holds keep their selection, the ones that
+        // left are dropped. Losing the whole selection on every autosave
+        // the run wrote was the watcher's hand slipping off the clip it
+        // was holding; the document's own ids - not the pane's memory -
+        // decide what stays.
+        let survivors: HashSet<String> = session
+            .project()
+            .timelines
+            .iter()
+            .flat_map(|timeline| timeline.clips.iter())
+            .map(|clip| clip.id.clone())
+            .collect();
+        self.selection.retain(|id| survivors.contains(id));
         self.forget_art();
         self.art_stamp = None;
         self.session = Some(session);

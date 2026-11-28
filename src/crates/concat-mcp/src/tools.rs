@@ -875,7 +875,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "models_list",
             "List the AI models",
-            "List the local AI models - voices, transcribers, the sound sets and the picture set - and which are missing.",
+            "List the local AI models - voices, transcribers, the sound sets, the picture set and the vision critic's profiles - and which are missing.",
             "models.list",
             Raw,
         )
@@ -883,9 +883,9 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "models_download",
             title: "Download an AI model",
-            description: "Download a missing voice, whisper, sound set \
-             (sound-models|sfx-small|sfx-large|bgm) or picture set; kind \"all\" fetches every \
-             family - the preflight. Wait with analysis_wait; the critic is local_vlm.",
+            description: "Download a missing model: voice, whisper, sound set, picture set or \
+             vision critic (kind vlm: mini|image|minicpm); kind \"all\" fetches every family - \
+             the cold-machine preflight. Wait with analysis_wait.",
             read_only: false,
             destructive: false,
             // A second call finds everything the first one fetched and
@@ -1539,9 +1539,11 @@ fn models_download_schema(schemas: &Schemas) -> Option<Value> {
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         if let Some(kind) = properties.get_mut("kind") {
             kind["description"] = json!(
-                "Which family: \"tts\", \"whisper\", \"sound\" or \"picture\" - or \"all\", \
-                 every family in one job. \"all\" is the setup preflight on a cold machine: \
-                 call it once before auto_edit or a director run so no stage meets a missing model."
+                "Which family: \"tts\", \"whisper\", \"sound\", \"picture\" or \"vlm\" (the vision \
+                 critic's profile id - mini, image or minicpm) - or \"all\", every family in one \
+                 job: the setup preflight on a cold machine, which also fetches the critic's \
+                 default profile; call it once before auto_edit or a director run so no stage \
+                 meets a missing model."
             );
         }
         if let Some(id) = properties.get_mut("id") {
@@ -2871,11 +2873,12 @@ fn models_download(arguments: Value, backend: &mut dyn Backend) -> Result<Outcom
 /// preflight that failed loudly would cost a download that started
 /// fine.
 fn vlm_preflight() -> Value {
-    const NEXT: &str = "the local vision critic's model is not part of this download - it is the \
-                        one model that lives behind local_vlm rather than the model registry; call \
-                        local_vlm {\"action\": \"setup\"} once (about 546 MB for the default mini \
-                        profile) and craft_critique scores with the full six-axis critic instead of \
-                        measured pixels";
+    const NEXT: &str = "the local vision critic's weights are behind local_vlm rather than the \
+                        model registry's per-model ids - fetch them with models_download \
+                        {\"kind\": \"vlm\", \"id\": \"mini\"} (or the whole-registry kind \"all\", \
+                        which carries the default profile) and then call \
+                        local_vlm {\"action\": \"setup\"} to start the server, so craft_critique \
+                        scores with the full six-axis critic instead of measured pixels";
     match crate::sense::local_vlm(json!({ "action": "status" })) {
         Ok(outcome) => {
             let said = outcome.structured.unwrap_or_else(|| json!({}));

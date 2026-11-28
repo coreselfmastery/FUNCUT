@@ -586,7 +586,12 @@ mod tests {
         // auto_edit schema with its three-word enum and the frame it
         // maps each word to - the user-picked frame the whole pipeline
         // already knows how to build on. Measured 278,144 on the branch.
-        assert!(total < 280_000, "{total}: {sizes:?}");
+        // 280,000 -> 282,000: the vision critic joins the model
+        // registry - a "vlm" row in models.list's own state type, and
+        // the "vlm" word in the download's kind description - so the
+        // one preflight call a cold machine makes names every family
+        // it fetches.
+        assert!(total < 282_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

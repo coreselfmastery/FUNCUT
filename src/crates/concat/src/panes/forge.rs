@@ -287,6 +287,14 @@ pub struct AutoEditPane {
     /// own accepted end does.
     stage_index: Option<usize>,
     stage_events: usize,
+    /// Which of the Director skill's twenty-five phases the harness's
+    /// own output named, one flag per phase. A handed-over run has no
+    /// runner to receipt its stages, so the phases it printed are the
+    /// only evidence each one ran - evidence the acceptance gate reads
+    /// before the pane may call the edit finished. The fixed spine's
+    /// runs leave it empty: their nineteen stages carry their own
+    /// receipts, and the two systems are not confused.
+    phases_seen: [bool; 25],
     /// A waiting job's own reading of its progress - the export's
     /// frames, as a fraction of a thousand - shared with the wait that
     /// reports it and read by the tick: the one piece of a run that
@@ -411,10 +419,17 @@ impl ForgePane {
                 if self.auto.running
                     && self.auto.runner.is_none()
                     && let Some((phase, fraction)) = director_phase(&line)
-                    && fraction > self.auto.fraction
                 {
-                    self.auto.stage = director_phase_stage(phase);
-                    self.auto.fraction = fraction;
+                    // The same match is the phase's evidence, kept for the
+                    // acceptance gate: a phase the output never named is a
+                    // phase the run cannot prove it ran.
+                    if let Some(seen) = self.auto.phases_seen.get_mut(phase) {
+                        *seen = true;
+                    }
+                    if fraction > self.auto.fraction {
+                        self.auto.stage = director_phase_stage(phase);
+                        self.auto.fraction = fraction;
+                    }
                 }
                 // The handed-over run has no ticker of its own: its clock
                 // is the harness's own output, which arrives as long as
@@ -966,6 +981,7 @@ impl ForgePane {
             self.auto.outcome = 0;
             self.auto.stage_index = None;
             self.auto.stage_events = 0;
+            self.auto.phases_seen = [false; 25];
             self.auto.started = Some(Instant::now());
             self.set_status(t("forge.probing"));
             if !self.probing {
@@ -1036,6 +1052,7 @@ impl ForgePane {
             self.auto.visible = true;
             self.auto.outcome = 0;
             self.auto.check_cancel = None;
+            self.auto.phases_seen = [false; 25];
             self.auto.started = Some(Instant::now());
             self.auto.project = Some(source.project.clone());
             self.auto.source = Some(source.clone());
@@ -1141,6 +1158,7 @@ impl ForgePane {
                 pending: None,
                 stage_index: None,
                 stage_events: 0,
+                phases_seen: [false; 25],
                 job: Some(Arc::clone(&job)),
             };
             self.set_status(t("forge.autoEditRunning"));
@@ -1299,6 +1317,7 @@ impl ForgePane {
                     pending: None,
                     stage_index: None,
                     stage_events: 0,
+                    phases_seen: [false; 25],
                     job: None,
                 };
                 self.set_status(t("forge.autoEditDirectorStage"));
@@ -1356,6 +1375,7 @@ impl ForgePane {
             pending: None,
             stage_index: None,
             stage_events: 0,
+            phases_seen: [false; 25],
             job: Some(Arc::clone(&job)),
         };
         self.set_status(t("forge.autoEditRunning"));
@@ -1461,6 +1481,12 @@ impl ForgePane {
                 .filter(|export| {
                     !export.trim().is_empty() && std::path::Path::new(export).is_file()
                 });
+            // The phases the harness's own output named, one flag per
+            // phase of the skill's twenty-five: the only evidence a
+            // handed-over run has that each phase ran, now the
+            // acceptance's to weigh. Copied before the thread takes the
+            // closure, because the pane's state is not Send.
+            let phases_seen = self.auto.phases_seen;
             crate::host::spawn_detached(move || {
                 let checked = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
                     Ok(mut backend) => {
@@ -1468,6 +1494,7 @@ impl ForgePane {
                         let check = concat_mcp::acceptance::DirectorCheck {
                             project: &project,
                             export: export.as_deref(),
+                            phases: Some(phases_seen),
                         };
                         concat_mcp::acceptance::check(
                             &check,

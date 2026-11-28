@@ -5593,8 +5593,8 @@ fn arroll_fill_calls(log: &[Value], project: &str) -> Vec<ToolCall> {
         .flatten()
         .filter_map(|item| {
             let id = item["id"].as_str()?.to_owned();
-            let width = item["width"].and_then(Value::as_f64)?;
-            let height = item["height"].and_then(Value::as_f64)?;
+            let width = item["width"].as_f64()?;
+            let height = item["height"].as_f64()?;
             Some((id, (width, height)))
         })
         .collect();
@@ -5626,13 +5626,13 @@ fn arroll_fill_calls(log: &[Value], project: &str) -> Vec<ToolCall> {
             continue;
         }
         let id = clip["id"].as_str().unwrap_or_default().to_owned();
-        calls.push(call(
-            "edit_apply",
-            json!({
+        calls.push(ToolCall {
+            tool: "edit_apply".to_owned(),
+            arguments: json!({
                 "path": project,
                 "command": { "op": "frameClip", "clipId": id, "framing": "fill" },
             }),
-        ));
+        });
     }
     calls
 }

@@ -716,7 +716,7 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     );
     assert!(picture["downloaded"].is_boolean(), "{picture}");
 
-    // A kind that is not one of the five is refused before a job is booked.
+    // A kind that is not one of the six is refused before a job is booked.
     let (_, reply) = agent.ask(
         "tools/call",
         json!({ "name": "models_download", "arguments": { "kind": "gpu", "id": "x" } }),
@@ -725,7 +725,7 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     assert_eq!(refused["isError"], true, "{refused}");
     let said = refused["content"][0]["text"].as_str().expect("the refusal");
     assert!(
-        said.contains("tts, whisper, sound, picture or all"),
+        said.contains("tts, whisper, sound, picture, vlm or all"),
         "{said}"
     );
 
@@ -743,12 +743,36 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     assert!(said.contains("takes no model id"), "{said}");
     assert!(said.contains("id \"all\""), "{said}");
 
+    // The vision critic's profiles are rows the same shape as the sound
+    // sets: the ids `local_vlm` takes as `profile`, licensed as visibly,
+    // and downloadable headlessly the same way - the one family whose
+    // weights used to live behind a bounded call alone.
+    let vlm = listed["structuredContent"]["vlm"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(vlm.len(), 3, "{listed}");
+    for id in ["mini", "image", "minicpm"] {
+        let profile = vlm
+            .iter()
+            .find(|profile| profile["id"] == json!(id))
+            .unwrap_or_else(|| panic!("{id} is not in {listed}"));
+        assert!(
+            profile["licence"]
+                .as_str()
+                .is_some_and(|said| !said.is_empty()),
+            "{profile}"
+        );
+        assert!(profile["downloaded"].is_boolean(), "{profile}");
+    }
+
     // The whole-registry spelling a cold machine's setup writes is the
     // kind alone: the tool's schema takes it without an id, and its
     // description tells an agent when to use it - the setup preflight -
-    // and that the vision critic is the one model it does not fetch.
-    // (The download itself is not started here: a test that downloaded
-    // gigabytes would be a test of the network, and this suite is not.)
+    // and that the vision critic's profiles are a family it fetches
+    // like the rest. (The download itself is not started here: a test
+    // that downloaded gigabytes would be a test of the network, and
+    // this suite is not.)
     let (_, listed) = agent.ask("tools/list", json!({}));
     let tools = listed["result"]["tools"]
         .as_array()
@@ -774,8 +798,8 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
         "says when to use it: {described}"
     );
     assert!(
-        described.contains("local_vlm"),
-        "names the one model the whole-registry job does not fetch: {described}"
+        described.contains("vlm"),
+        "names the vision critic's family among what a download fetches: {described}"
     );
 
     // The picture kind takes its id from the row the sheet shows: any other

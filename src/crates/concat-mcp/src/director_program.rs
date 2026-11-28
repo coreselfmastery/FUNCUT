@@ -15786,9 +15786,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         let graded: Vec<&str> = music_source
                             .iter()
                             .filter_map(|take| {
-                                classify_of(log, &take.take).and_then(|reply| {
-                                    reply.get("verdict").and_then(Value::as_str)
-                                })
+                                classify_of(log, &take.take)
+                                    .and_then(|reply| reply.get("verdict").and_then(Value::as_str))
                             })
                             .collect();
                         let (quality_db, duck_share) = if graded
@@ -24251,7 +24250,10 @@ mod tests {
         let _ = (gather.next)(&log).expect("both pictures are measured");
         log.push(visual_reply(["77220033", "99002211"]));
         let _ = (gather.next)(&log).expect("both frames are ranked");
-        log.push(rerank_reply([0.40, 0.22], [vec![0.0, 0.99], vec![0.7, 0.71]]));
+        log.push(rerank_reply(
+            [0.40, 0.22],
+            [vec![0.0, 0.99], vec![0.7, 0.71]],
+        ));
         let gate = (gather.next)(&log).expect("the gate is asked");
         assert_eq!(gate.tool, "emotion");
         log.push(json!({ "ok": true, "order": [0, 1] }));

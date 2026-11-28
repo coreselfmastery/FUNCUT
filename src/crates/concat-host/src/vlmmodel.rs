@@ -178,7 +178,10 @@ pub fn download(
         progress(base, total);
         crate::models::fetch(
             file.file,
-            &format!("https://huggingface.co/{}/resolve/main/{}", profile.repo, file.file),
+            &format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                profile.repo, file.file
+            ),
             &partial,
             file.mb * 1024 * 1024,
             file.sha256,
@@ -255,7 +258,10 @@ mod tests {
         .unwrap();
         assert!(installed(&dir, profile, &profile.model));
         assert!(!ready(&dir, profile));
-        assert_eq!(missing_bytes(&dir, profile), profile.mmproj.mb * 1024 * 1024);
+        assert_eq!(
+            missing_bytes(&dir, profile),
+            profile.mmproj.mb * 1024 * 1024
+        );
         remove(&dir, profile).unwrap();
         assert!(!installed(&dir, profile, &profile.model));
         let _ = std::fs::remove_dir_all(&dir);
@@ -263,16 +269,13 @@ mod tests {
 
     #[test]
     fn an_empty_download_is_done_without_touching_the_network() {
-        let dir = std::env::temp_dir().join(format!("concat-vlmmodel-empty-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("concat-vlmmodel-empty-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let profile = default_profile();
         std::fs::create_dir_all(folder(&dir, profile)).unwrap();
         for file in [&profile.model, &profile.mmproj] {
-            std::fs::write(
-                folder(&dir, profile).join(file.file),
-                vec![0u8; 1_100_000],
-            )
-            .unwrap();
+            std::fs::write(folder(&dir, profile).join(file.file), vec![0u8; 1_100_000]).unwrap();
         }
         assert!(ready(&dir, profile));
         let cancel = AtomicBool::new(false);

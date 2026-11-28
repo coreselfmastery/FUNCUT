@@ -884,8 +884,8 @@ pub fn catalogue() -> Vec<Tool> {
             name: "models_download",
             title: "Download an AI model",
             description: "Download a missing model: voice, whisper, sound set, picture set or \
-             vision critic profile (mini|image|minicpm); kind \"all\" fetches every family - the \
-             cold-machine preflight. Wait with analysis_wait.",
+             vision critic (kind vlm: mini|image|minicpm); kind \"all\" fetches every family - \
+             the cold-machine preflight. Wait with analysis_wait.",
             read_only: false,
             destructive: false,
             // A second call finds everything the first one fetched and

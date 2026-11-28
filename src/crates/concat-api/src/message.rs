@@ -918,10 +918,12 @@ pub enum Request {
     /// model already on disk is a no-op that ends at once.
     #[serde(rename = "models.download")]
     ModelsDownload {
-        /// Which family: "tts", "whisper", "sound", "picture" - or "all",
-        /// the whole shelf in one job: every missing model, walked in the
-        /// settings sheet's own order, with the already-present rows
-        /// passed by and each refusal named in the job's answer.
+        /// Which family: "tts", "whisper", "sound", "picture", "vlm" - or
+        /// "all", the whole shelf in one job: every missing model, walked
+        /// in the settings sheet's own order, with the already-present
+        /// rows passed by and each refusal named in the job's answer. The
+        /// "vlm" family takes a vision critic profile id (mini, image,
+        /// minicpm) and lands the two GGUFs its setup call starts from.
         kind: String,
         /// The model's id, from `models.list` - the word "all" when the
         /// kind is "all".
@@ -1094,6 +1096,12 @@ pub struct ModelsState {
     /// `kind: "picture"`. Absent from nothing - a machine that has not
     /// fetched it is shown the row missing, never told it is not there.
     pub visual: Vec<SoundModelStatus>,
+    /// The local vision critic's profiles, one row each: the ids are the
+    /// ones `models.download` takes with `kind: "vlm"` and `local_vlm`
+    /// takes as `profile`. The default profile rides the whole-registry
+    /// download, so the one setup call a cold machine makes covers the
+    /// critic's weights too.
+    pub vlm: Vec<SoundModelStatus>,
 }
 
 /// One downloadable sound set, as `models.list` shows it: a row of the

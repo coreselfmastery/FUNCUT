@@ -51,6 +51,7 @@ pub mod sounds;
 pub mod stabilize;
 pub mod stock;
 pub mod visualmodel;
+pub mod vlmmodel;
 // The startup I/O ordering gate (RES-03): the OpenVid index's warm and
 // proxy generation serialize behind it. Private - it is this crate's
 // own openvid and proxy that hold and honour it.

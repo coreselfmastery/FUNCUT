@@ -536,6 +536,7 @@ impl Api {
             transcriber: transcriber.models,
             sound: sound_sets(&self.dirs.data),
             visual: picture_sets(&self.dirs.data),
+            vlm: vlm_sets(&self.dirs.data),
         })
     }
 
@@ -561,6 +562,12 @@ impl Api {
             // sound sets are, so a headless caller installs the first-edit
             // picture reader the same way it installs a voice.
             "picture" => id == concat_host::visualmodel::SET_ID,
+            // The local vision critic's profile: the two GGUFs the critic
+            // starts from, fetched by the host's own table into the folder
+            // the critic's setup reads - so the one bounded call that used
+            // to carry half a gigabyte is a job like every other model,
+            // waited on with analysis_wait and cancellable like one.
+            "vlm" => concat_host::vlmmodel::profile_by_id(id).is_some(),
             // The whole registry in one job: every voice, every
             // transcriber, the four sound sets and the picture set, each
             // through the same code path its own kind takes - the one
@@ -584,7 +591,9 @@ impl Api {
             other => {
                 return Err(ApiError::new(
                     ErrorCode::Invalid,
-                    format!("unknown model kind {other:?} - tts, whisper, sound, picture or all"),
+                    format!(
+                        "unknown model kind {other:?} - tts, whisper, sound, picture, vlm or all"
+                    ),
                 ));
             }
         };
@@ -677,6 +686,28 @@ fn picture_sets(data: &std::path::Path) -> Vec<SoundModelStatus> {
         missing_bytes: concat_host::visualmodel::missing_bytes(data),
         downloaded: concat_host::visualmodel::ready(data),
     }]
+}
+
+/// The vision critic's rows `models.list` reports, one per profile: the
+/// ids are the ones `models.download` takes with `kind: "vlm"` and
+/// `local_vlm` takes as `profile`, so a row downloaded here is the
+/// profile the critic starts.
+fn vlm_sets(data: &std::path::Path) -> Vec<SoundModelStatus> {
+    concat_host::vlmmodel::PROFILES
+        .iter()
+        .map(|profile| SoundModelStatus {
+            id: profile.id.to_owned(),
+            label: profile.label.to_owned(),
+            // The critic's weights are the upstream's own licences (the
+            // GGUF repos' Apache-2.0 and the projector's), named by the
+            // repository each file resolves from: the row says where the
+            // bytes come from, the same visibility the sound rows carry.
+            licence: "Apache-2.0 (ggml-org / openbmb GGUF releases)".to_owned(),
+            bytes: concat_host::vlmmodel::bytes(profile),
+            missing_bytes: concat_host::vlmmodel::missing_bytes(data, profile),
+            downloaded: concat_host::vlmmodel::ready(data, profile),
+        })
+        .collect()
 }
 
 /// What one speech job is.
@@ -814,6 +845,19 @@ impl SpeechJob {
                         &self.cancel,
                         &mut |_, _| {},
                     ),
+                    // The vision critic's profile, the same table the
+                    // settings sheet's row takes: the job carries the
+                    // fetch the critic's bounded setup call never could.
+                    "vlm" => concat_host::vlmmodel::profile_by_id(id)
+                        .ok_or_else(|| format!("unknown vision critic profile {id:?}"))
+                        .and_then(|profile| {
+                            concat_host::vlmmodel::download(
+                                &self.dirs.data,
+                                profile,
+                                &self.cancel,
+                                &mut |_, _| {},
+                            )
+                        }),
                     // The sound sets are files of the app's model folder,
                     // fetched by the host's own table: the same path the
                     // settings sheet's row takes, so a headless caller and
@@ -876,6 +920,27 @@ impl SpeechJob {
                         Ok(()) => fetched.push(concat_host::visualmodel::SET_ID.to_owned()),
                         Err(error) => {
                             refused.push(format!("{}: {error}", concat_host::visualmodel::SET_ID))
+                        }
+                    }
+                }
+                // The vision critic's default profile rides the same job:
+                // the one call a cold machine's setup makes promised every
+                // model, and the critic's half gigabyte is a model like the
+                // rest - fetched here, started by the setup call that
+                // follows it. A refusal is named and the walk goes on.
+                let critic = concat_host::vlmmodel::default_profile();
+                if !self.cancel.load(Ordering::Relaxed)
+                    && concat_host::vlmmodel::missing_bytes(data, critic) > 0
+                {
+                    match concat_host::vlmmodel::download(
+                        data,
+                        critic,
+                        &self.cancel,
+                        &mut |_, _| {},
+                    ) {
+                        Ok(()) => fetched.push(concat_host::vlmmodel::SET_ID.to_owned()),
+                        Err(error) => {
+                            refused.push(format!("{}: {error}", concat_host::vlmmodel::SET_ID))
                         }
                     }
                 }

@@ -45,6 +45,16 @@ pub enum AutoEditState {
         error: AutoEditError,
         /// Which attempt of that call failed, counted from one.
         attempt: u32,
+        /// The run's partial evidence, the same receipt a completed
+        /// run ships beside its edit: the stages that had completed
+        /// before the failure, the gates their answers had measured,
+        /// the assets their calls had brought in. A stage that never
+        /// got its turn stays `NotReached` and a gate whose measurement
+        /// never landed is `Skipped` - never a pass the run did not
+        /// earn. A run that fails before its first call made it lands
+        /// `None` - there is no evidence to ship.
+        #[serde(default)]
+        receipt: Option<Box<crate::receipt::AcceptanceReceipt>>,
     },
     /// The export is rendered, verified and shipped.
     Completed {
@@ -94,6 +104,14 @@ pub enum AutoEditState {
         rolled_back: bool,
         /// The earliest stage whose edits were undone, when any were.
         undone_to: Option<Stage>,
+        /// The run's partial evidence, the same receipt a completed run
+        /// ships beside its edit - see
+        /// [`Failed`](AutoEditState::Failed). The receipt names what the
+        /// run had done when it was asked to stop; the rollback says
+        /// what the timeline keeps, and the two are not the same
+        /// record.
+        #[serde(default)]
+        receipt: Option<Box<crate::receipt::AcceptanceReceipt>>,
     },
 }
 
@@ -337,6 +355,7 @@ mod tests {
             at: "2026-11-13T16:09:02Z".to_owned(),
             rolled_back: true,
             undone_to: Some(Stage::Timeline),
+            receipt: None,
         };
         let wire = serde_json::to_value(&state).expect("a state is JSON");
         assert_eq!(wire["state"], "cancelled");

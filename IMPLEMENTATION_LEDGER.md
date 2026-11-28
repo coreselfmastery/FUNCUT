@@ -3,6 +3,112 @@
 Legend: each unit is a coherent implementation with tests, committed and
 pushed separately. Status: done / in-progress / planned / dropped(why).
 
+## Addendum — 2026-11-27, the all-signals pass (PR #246)
+
+Branch `audit/all-signals-2026-11-27`, one unit per commit, every
+non-GUI file parsed with the pinned rustfmt and every Python gate run
+local (selftests, `models.py --check`, `check-signal-matrix.py`,
+`check-signal-coverage.py`, `locales.py --check`,
+`auto_director.py --self-test`); the Rust suites are CI's, as always on
+this box.
+
+1. `ci`: a documentation-only pull request is decided by a `changes` job
+   and skips the engine and analysis lanes by job-level `if` (never a
+   workflow `paths` filter - that leaves the required checks pending);
+   Geneva's pull_request takes `paths-ignore` and both its jobs pay for
+   the same 16 GB swap the engine lane pays; the app lane's rust-cache
+   saves on failure. The class: PRs #228 and #245, two docs-only trees,
+   each paid the engine lane's cold two-and-a-half-hour price and one of
+   the runners died mid-build - the red lanes this pass was born from.
+2. `director`: the fan run on the one caller (no lanes) left every group
+   reply in the log twice - the drive pushed each reply and the merge
+   extended the same log again - and the log is what later derived
+   stages read. The drive draws against a scratch log now, regression
+   test included. A new warn-TOOLS policy (stage tool failures warned,
+   gates held hard) is the plan stage's own stance: a plan the
+   validator refuses stops the run now, as its comment always claimed.
+   Every lane's failure rides as its own warning; lane progress names
+   its lane ("lane 3/5: transcribe").
+3. `forge/auto-edit`: every Director landing that keeps the sibling
+   (unproven, check-failed, cancelled, failed) releases the server
+   session before anything opens it - the missing release left the
+   sibling refused as "open through a remote connection" and the window
+   on the launch screen. The harness probe is bounded (30 s) and a
+   failed probe is remembered as failed, not re-asked on every press. A
+   cancelled fixed-spine run says retry. The headless `auto_edit` closes
+   its project on every path (early refusal included), falls back to
+   closing without a save when the save refuses, and drops the event
+   receiver it never read. The sibling is reserved by an exclusive
+   create (test included), not named after a check two concurrent runs
+   can both pass.
+4. `setup`: the preflight is a setup queue - the whisper base, the
+   sound set, the picture set, the SFX set, and the critic's eye last
+   (warn-tools, so a VLM that cannot set up is a warning and the
+   critique falls back to its heuristic tier) - every model the spine
+   spends, waited for before the edit starts. `models_download` learns
+   `kind:"all"` (every missing model in one job, refusals named in the
+   answer); Settings grows a "Download all models" button whose worker
+   walks every missing row through the same progress messages, in 26
+   languages. The e2e kind-refusal sentence is updated with it.
+5. `signals`: the `visual_sync` ask carries the candidate's path and
+   the movement half rides in as the onsets the contact sheet already
+   measured (the ask could only refuse before); the two depth readers,
+   the two aesthetic judges, the two gaze trackers, the two object
+   trackers and the describe_scene quad all name whichever of their
+   models is ready; `score_emphasis_type`'s reply carries the audio it
+   read and the caption accent pass admits the typed words (the call
+   was made by every run and read by nothing); an imperative earns the
+   card the comment promised; the monetized word is threaded from the
+   caller (`auto_edit`'s own argument, default false like `bgm.import`'s)
+   instead of a hardcoded true that made the music model's bed a door
+   no run could open; four test-drive regressions pin each fix.
+6. `lanes`: the accents and the bed ride their own dedicated lanes -
+   minted before the first placement, shared by every hit and every
+   swap (the swap lands on the lane the bed it replaced rode). The
+   gather, plan-bed and SFX test drives walk the mints now.
+7. `stock`: the stills aisle - `stock_search` takes `kind:"photo"`
+   (Pexels /v1/search, Pixabay's image API; two parsers; every hit says
+   whether it is a still), the fetch and import read a still's head
+   (JPEG/PNG/WebP) and keep its own extension, `images.pexels.com`
+   joins the fetch allowlist, and a video page that fits nothing gets
+   one still search before the gap is left empty. Fitting admits a
+   still on orientation alone - a still holds its frame for the gap it
+   fills. Parser and aisle tests included.
+8. `orientation`: the pick keeps the project's own size tier (a 4K
+   project picked vertical is born 4K); `aspect_of` grows 4:3, 3:4 and
+   21:9; the Director handover prompt names THE FRAME in numbers; a
+   square edit's style word says center like the band it places;
+   `track_subject`'s metadata says read_only.
+9. `watch`: the stage scores only its own sheet (a backward scan took
+   any pngPath - stock thumbnails scored as the timeline); the critic's
+   shift fix divides by the timeline's real frame; the emphasis
+   thumbnails ask for the true frame size (not the quarter-size
+   proxies); `preview_frame` joins the RENDER class; the
+   open-project branch of `watch_render` never touches the soundtrack,
+   and both the Watch stage and the acceptance now ask only for what
+   that branch measures, with a note naming the call that measures a
+   mix.
+
+The docs PR #245's head (`b87758cb`) is cherry-picked onto this branch
+(its counts held against the tree); PR #228's status table is stale
+against a main that merged #226 and is closed pointing here. The
+known-unfixed left open by the audit, named: the A-roll is still
+letterboxed in a vertical pick until the Revise stage's measured fill
+catches it (the deterministic fix needs source dimensions the timeline
+view does not carry); the recording-quality door's bed hint still feeds
+a plan note rather than the Music stage's gate; `swap_past` can still
+walk a candidate the emotion gate refused; the local VLM's own setup
+download is bounded by the DEEP class's 1200 s rather than the job
+machinery the model sets use; the live-follow refresh still drops the
+selection on every autosave; and the ~4,256-line translation backlog
+the locales gate does not fail on stands.
+# IMPLEMENTATION_LEDGER.md — what is done, what is next
+
+Legend: each unit is a coherent implementation with tests, committed and
+pushed separately. Status: done / in-progress / planned / dropped(why).
+
+
+
 ## Current state — the `.15` release (2026-11-23)
 
 | Item | State | Evidence |

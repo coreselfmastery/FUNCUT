@@ -48,6 +48,33 @@
     <memory>2048</memory>
   </requires>
   <releases>
+    <release version="0.2.8-funcut.15" date="2026-11-24">
+      <description>
+        <p>Everything .14 carries plus the side-branch work: a native CPU
+           3D scene layer (five geometries, three lights, a camera
+           path, per-pixel Phong), an AUTO EDIT fallback that directs
+           the film from the material, and a transcription repair that
+           no longer runs English-only Whisper on a non-English
+           take.</p>
+      </description>
+    </release>
+    <release version="0.2.8-funcut.14" date="2026-11-23">
+      <description>
+        <p>The .13 tree with its Geneva lane green again, plus the work
+           that missed the .13 tag: a shared-memory frame pipe, a
+           streaming playback ring, safe zones and a WCAG gate, and the
+           headless door to AUTO EDIT - a whole faceless edit from one
+           call.</p>
+      </description>
+    </release>
+    <release version="0.2.8-funcut.13" date="2026-11-16">
+      <description>
+        <p>A re-cut of the 0.2.8 line: the motion engine gained the
+           pieces that let an agent compose real motion, the AUTO EDIT
+           button and the live stock shelves landed, and a long
+           hardening sweep followed them.</p>
+      </description>
+    </release>
     <release version="0.2.8" date="2026-10-23">
       <description>
         <p>Auto-captions with local Whisper, text-to-speech with free

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The coverage ledger: which of the sense readings anyone actually asks.
 
-The eight sense doors dispatch 83 actions; 75 of them read the material and
+The eight sense doors dispatch 84 actions; 76 of them read the material and
 8 install, index, bench or self-test. This script holds three layers:
 
 1. The catalogue is the code. Every reading is read out of the door
@@ -14,9 +14,12 @@ The eight sense doors dispatch 83 actions; 75 of them read the material and
    `director_program.rs` is matched to the action it asks, and the ledger
    prints asked / missing per door.
 
-Layer 3 prints and does not fail: the spine asks 10 of the 75 today, and a
-check that fails on a known gap is a check that gets deleted. It becomes a
-gate the day the wiring lands, by adding `--require-button` to the CI step.
+Layer 3 is a gate: a reading is covered when the spine asks it or the
+`NOT_APPLICABLE` ledger names why it does not apply, and CI runs this with
+`--require-button`. The spine asks 67 of the 76; the other 9 are answered
+by another call or do not apply to the one-click material, and each says
+which. A ledger entry that goes stale - the reading is asked now, or no
+door defines it - fails too.
 """
 
 from __future__ import annotations
@@ -45,6 +48,55 @@ TOOL_TO_DOOR = {
     "captions": "captions",
     "audio_repair": "audio_repair",
     "discourse": "discourse",
+}
+
+# Readings the one-click spine deliberately does not ask, with the reason
+# each is answered by another call or does not apply to its material. A
+# reading left here is a decision, not a gap: the ledger prints it and the
+# `--require-button` gate counts it as covered. Anything neither asked nor
+# listed here is the gap the gate exists to catch.
+NOT_APPLICABLE = {
+    ("sound_sense", "describe_sound"): (
+        "the shelf's hits are remote until fetched; the chosen bed is "
+        "described by sense_sound_model describe, and a placed accent is "
+        "held to the moment by sense_sound check_placement"
+    ),
+    ("sound_sense", "rank_sounds"): (
+        "the accent shelf is ranked by CLAP through sense_sound_model rank "
+        "on the written index; rank_sounds measures local candidate files, "
+        "which the shelf does not hand over before a pick"
+    ),
+    ("sound_model", "plan"): (
+        "the accent map is measured from the delivery - emphasis peaks, "
+        "emotion, room, SNR - so a script-side plan would be a second "
+        "opinion laid over the measurement that already decided"
+    ),
+    ("captions", "evaluate_tts_quality"): (
+        "auto_edit edits the caller's own voiceover and never synthesises "
+        "one, so there is no generated take to score"
+    ),
+    ("captions", "seal_voice"): (
+        "same material: no generated voice is shipped by the one-click spine"
+    ),
+    ("audio_repair", "normalize_loudness"): (
+        "enhance_speech's measured chain ends at the loudness target; a "
+        "second explicit pass would re-encode the take again for no gain"
+    ),
+    ("audio_repair", "remove_hiss_hum_rumble"): (
+        "enhance_speech already cuts the rumble and gates the floor, and "
+        "repair_by_diagnosis applies the explicit removal when the "
+        "diagnosis names it"
+    ),
+    ("audio_repair", "analyze_music_structure"): (
+        "the bed's grid comes from the analysis job's own beats "
+        "(downbeatsMs); a second structure pass would decode the same file "
+        "twice for a map the cut already holds"
+    ),
+    ("audio_repair", "identify_music"): (
+        "the bed is chosen by the sound-model gate (licence, mood, CLAP) "
+        "and its music-presence veto is detect_music_segments; naming the "
+        "track adds nothing the mix spends"
+    ),
 }
 
 DOORS = (
@@ -158,16 +210,39 @@ def catalogue() -> dict[str, list[str]]:
 
 
 def spine_asked() -> dict[str, set[str]]:
-    """The `sense_* {action: ...}` pairs the AUTO EDIT program issues."""
+    """The `sense_* {action: ...}` pairs the AUTO EDIT program issues.
+
+    Two shapes are read: the inline `call("sense_x", json!({ "action": ...
+    }))`, and the built-then-spent `let mut ask = json!({"action": ...});
+    call("sense_x", ask)` that a conditional field (visual_sync's
+    `motionOnsets`) needs. The built shape is matched to the `let` that
+    names the same identifier, so a variable reused for a second action
+    cannot borrow its neighbour's name.
+    """
     text = PROGRAM.read_text()
     asked: dict[str, set[str]] = {door: set() for door in DOORS}
-    pattern = re.compile(r'"(sense_[a-z_]+)"\s*,\s*json!\(\{')
+    pattern = re.compile(r'"(sense_[a-z_]+)"\s*,\s*(json!\(\{|\s*([a-z_]+)\))')
     for match in pattern.finditer(text):
         door = TOOL_TO_DOOR.get(match.group(1).removeprefix("sense_"))
-        window = text[match.end(): match.end() + 700]
-        action = re.search(r'"action"\s*:\s*"([a-z_0-9]+)"', window)
-        if door in asked and action:
-            asked[door].add(action.group(1))
+        if door not in asked:
+            continue
+        action: str | None = None
+        if match.group(2).startswith("json!("):
+            window = text[match.end(): match.end() + 700]
+            found = re.search(r'"action"\s*:\s*"([a-z_0-9]+)"', window)
+            action = found.group(1) if found else None
+        else:
+            ident = match.group(3)
+            before = text[max(0, match.start() - 1500): match.start()]
+            built = re.findall(
+                r"let\s+mut\s+" + re.escape(ident)
+                + r"\s*=\s*json!\(\{.*?\"action\"\s*:\s*\"([a-z_0-9]+)\"",
+                before,
+                re.DOTALL,
+            )
+            action = built[-1] if built else None
+        if action:
+            asked[door].add(action)
     return asked
 
 
@@ -196,6 +271,21 @@ def main() -> int:
     asked_total = sum(
         len([a for a in readings[door] if a in asked[door]]) for door in readings
     )
+    # A reading counts as covered when the button asks it or the ledger
+    # names why it does not apply. An entry for a reading that no door
+    # defines, or for one the button now asks, is stale and fails: the
+    # ledger is a record of decisions, not a place to hide a gap.
+    stale = sorted(
+        f"{door}.{action}"
+        for (door, action) in NOT_APPLICABLE
+        if action not in readings.get(door, []) or action in asked.get(door, set())
+    )
+    reasoned = sorted(
+        f"{door}.{action}"
+        for (door, action) in NOT_APPLICABLE
+        if f"{door}.{action}" not in stale
+    )
+    covered_total = asked_total + len(reasoned)
 
     untaught = sorted(
         f"{door}.{action}"
@@ -219,7 +309,10 @@ def main() -> int:
     ledger = {
         "readings": total,
         "asked": asked_total,
-        "missing": total - asked_total,
+        "reasoned": reasoned,
+        "covered": covered_total,
+        "missing": total - covered_total,
+        "stale": stale,
         "untaught": untaught,
         "unknown_names": unknown,
         "picture_families_missing": families_missing,
@@ -237,15 +330,26 @@ def main() -> int:
         print(json.dumps(ledger, indent=2, sort_keys=True))
     else:
         print(f"sense readings: {total}")
-        print(f"asked by AUTO EDIT: {asked_total}  ({asked_total * 100 // max(1, total)}%)")
-        print(f"missing: {total - asked_total}")
+        print(
+            f"asked by AUTO EDIT: {asked_total}  "
+            f"({asked_total * 100 // max(1, total)}%)"
+        )
+        print(f"reasoned not applicable: {len(reasoned)}")
+        print(f"covered: {covered_total}  ({covered_total * 100 // max(1, total)}%)")
+        print(f"missing: {total - covered_total}")
         print()
         for door, row in ledger["doors"].items():
-            mark = "OK " if len(row["asked"]) == row["readings"] else "-- "
+            unreasoned = [a for a in row["missing"] if f"{door}.{a}" not in reasoned]
+            mark = "OK " if not unreasoned else "-- "
             print(
                 f"{mark}{door:14} {len(row['asked']):2}/{row['readings']:2} asked"
                 f"  missing: {' '.join(row['missing']) or '-'}"
             )
+        for name in reasoned:
+            print(f"   reasoned {name}: {NOT_APPLICABLE[tuple(name.split('.', 1))]}")
+        if stale:
+            print("  stale ledger entries (asked now, or no such reading): "
+                  + " ".join(stale))
         print()
         print(f"taught in signal_matrix.md: {total - len(untaught)}/{total}")
         if untaught:
@@ -256,8 +360,9 @@ def main() -> int:
             print("  picture families plan_validate accepts but the matrix omits: "
                   + " ".join(families_missing))
         print()
-        print("The button's coverage is reported, not enforced: a check that")
-        print("fails on a known gap gets deleted. Add --require-button to gate it.")
+        print("Coverage is asked + reasoned: every reading is either spent by")
+        print("the spine or named here with why it does not apply. CI runs")
+        print("this with --require-button, so an unledgered gap fails.")
 
     failures = []
     if untaught:
@@ -269,9 +374,11 @@ def main() -> int:
             f"{len(families_missing)} picture families are accepted by plan_validate "
             "and absent from the matrix"
         )
-    if require_button and asked_total < total:
+    if stale:
+        failures.append(f"{len(stale)} stale ledger entries")
+    if require_button and covered_total < total:
         failures.append(
-            f"the button asks {asked_total} of {total} readings (--require-button)"
+            f"the button covers {covered_total} of {total} readings (--require-button)"
         )
 
     if failures:

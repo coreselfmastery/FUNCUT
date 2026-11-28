@@ -116,7 +116,7 @@ a texture the shelf lacks — `sense_sound_model {action: "generate"}`
 writes it. `sfx-small` (TinyAudio-MF, MIT) is the default for accents;
 `sfx-large` (Stable Audio Open Small) spends its longer call on the
 hook; `bgm` (TinyMusician) never reaches a monetized project — the
-action itself refuses with `model: "refused"`, because TinyMusician
+action itself answers `ok: true, generated: false, reason: "licence", model: "tinymusician"`, because TinyMusician
 ships no licence file. An absent model and a near-silent generation
 both answer without a `path`: shop the shelf, do not retry. The file
 lands in `<project>/generated-audio/`; `sounds_add {file}` places it

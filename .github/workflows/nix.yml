@@ -33,6 +33,12 @@ on:
       - .github/workflows/release.yml
   workflow_dispatch:
 
+# Keep every run for this ref: older commits finish and newer commits queue.
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   build:
     name: nix build

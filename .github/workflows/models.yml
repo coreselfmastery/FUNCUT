@@ -11,7 +11,8 @@ name: Mirror models
 # Run it when a model is added to the table, or when one's bytes change and
 # its release tag is bumped. It is not part of cutting an app release: the
 # mirror has its own tag, app releases point at it by name, and an unchanged
-# model is never re-uploaded. Roughly 2 GB down and 2 GB up, so give it time.
+# model is never re-uploaded. Roughly 5 GB down and 5 GB up - the table's 51
+# models - so give it time.
 #
 # A model whose row has no digest yet is recorded: the job fetches it,
 # computes the sha256, writes it into models/manifest.toml and into the
@@ -22,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: A family (cutout, tts, chatterbox, whisper) or one model id; blank for all
+        description: A manifest family (cutout, tts, chatterbox, whisper) or one model id; the sfx-*/bgm-* sound generators sit in the cutout family, so they are selectable by id only; blank for all
         required: false
         default: ""
       publish:
@@ -40,8 +41,8 @@ jobs:
   mirror:
     name: Fill and publish
     runs-on: ubuntu-24.04
-    # Two gigabytes down and two up, which takes a runner well under an
-    # hour; past three, something is stuck.
+    # Five gigabytes down and five up - the table's 51 models - which takes
+    # a runner well under an hour; past three, something is stuck.
     timeout-minutes: 180
     permissions:
       contents: write

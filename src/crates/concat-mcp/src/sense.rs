@@ -735,6 +735,7 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
     // the audio measurement rides on; the reply says so instead of the
     // missing loudness reading having to.
     let mut pinned_frames = false;
+    let mut asked_audio = false;
     if let Some(file) = fields.get("path").and_then(Value::as_str) {
         // A rendered movie: ffmpeg decodes frames and the audio envelope.
         spec["path"] = json!(file);
@@ -835,6 +836,16 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
                 String::new()
             }
         );
+        // The open-project branch renders frames; it never touches the
+        // soundtrack, whatever `audio` asked - the loudness lives in the
+        // mixed file, and this branch has none. The note says how to
+        // actually measure the mix instead of letting the critic's own
+        // "call watch_render with audio:true" advice point at a call that
+        // was already made and never measures.
+        asked_audio = fields
+            .get("audio")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     }
     if let Some(out) = fields.get("out").and_then(Value::as_str) {
         spec["out"] = json!(
@@ -873,6 +884,11 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
     if pinned_frames && let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
         notes.push(json!(
             "`times` pinned the exact frames, so the audio envelope and loudness were not measured; call measure_loudness on the file for the mix."
+        ));
+    }
+    if asked_audio && let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
+        notes.push(json!(
+            "the open-project branch reads frames only; the soundtrack's loudness is measured on a rendered file: render, then watch_render with `path` and `audio:true`"
         ));
     }
     Ok(image_outcome(&result, &caption))

@@ -40,6 +40,7 @@ import ipaddress
 import json
 import os
 import platform
+import re
 import stat
 import subprocess
 import sys
@@ -59,6 +60,12 @@ DEFAULT_PORT = 8099
 # server are hundreds of MB; a mirror that lies about Content-Length - or
 # an endless stream - must not be able to fill the disk.
 MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+# hf-mirror.com serves whatever Hugging Face does, under the same path -
+# the last-resort source the engine's own fetch chain ends with (mirror
+# -> HF -> upstream -> hf-mirror.com), for networks huggingface.co is
+# unreachable on. No other host is mirrored there.
+HF_MIRROR_HOST = "https://hf-mirror.com"
 
 # SHA-256 of every artifact setup() fetches, pinned so that "verified,
 # public, pinned artifacts" in the module docstring is enforced by code
@@ -565,12 +572,29 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _hf_mirror(url: str):
+    """`url` served by hf-mirror.com instead, for a Hugging Face URL; None
+    for any other host, which that mirror does not carry - the same
+    rewrite scripts/models.py and the engine's own fetch make of one."""
+    for host in ("https://huggingface.co/", "https://hf.co/"):
+        if url.startswith(host):
+            return HF_MIRROR_HOST + "/" + url[len(host):]
+    return None
+
+
 def _download(url: str, dest: Path, label: str, progress=None, sha256: str = None):
     """Fetch `url` into `dest`. When `sha256` is pinned, the bytes must
     match it or the file is deleted and the fetch fails: an artifact that
     arrives wrong is never left where a later call would find and use it.
     The stream is also capped, so a mirror that never ends cannot fill
-    the disk."""
+    the disk.
+
+    A Hugging Face URL that fails - unreachable, incomplete, or not the
+    pinned bytes - is retried on hf-mirror.com, the one source of the
+    engine's chain this module can walk: the same path on the mirror
+    host, and the pin faces whatever arrives from it too. When every
+    source fails, the error names them all rather than whatever the last
+    one said."""
     if dest.exists() and dest.stat().st_size > 1_000_000:
         if sha256 and _sha256(dest) != sha256:
             raise RuntimeError(
@@ -583,44 +607,65 @@ def _download(url: str, dest: Path, label: str, progress=None, sha256: str = Non
     # on some earlier download having created it (or failed outright).
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    tmp.unlink(missing_ok=True)
+    sources = [url]
+    twin = _hf_mirror(url)
+    if twin:
+        sources.append(twin)
+    failures = []
     try:
-        with _http(url, 30.0) as resp, open(tmp, "wb") as out:
-            total = int(resp.headers.get("Content-Length") or 0)
-            if total > MAX_DOWNLOAD_BYTES:
-                raise RuntimeError(
-                    f"{label} claims {total} bytes; the most this module fetches is "
-                    f"{MAX_DOWNLOAD_BYTES}"
+        for source in sources:
+            tmp.unlink(missing_ok=True)
+            try:
+                with _http(source, 30.0) as resp, open(tmp, "wb") as out:
+                    total = int(resp.headers.get("Content-Length") or 0)
+                    if total > MAX_DOWNLOAD_BYTES:
+                        raise RuntimeError(
+                            f"{label} claims {total} bytes; the most this module fetches is "
+                            f"{MAX_DOWNLOAD_BYTES}"
+                        )
+                    done, chunk = 0, 1 << 20
+                    last_report = 0.0
+                    while True:
+                        buf = resp.read(chunk)
+                        if not buf:
+                            break
+                        out.write(buf)
+                        done += len(buf)
+                        if done > MAX_DOWNLOAD_BYTES:
+                            raise RuntimeError(
+                                f"{label} passed {MAX_DOWNLOAD_BYTES} bytes without ending"
+                            )
+                        now = time.time()
+                        if progress and (now - last_report > 1.0 or done == total):
+                            last_report = now
+                            progress(label, done, total)
+                if total and tmp.stat().st_size != total:
+                    raise RuntimeError(f"incomplete download for {label}: {tmp.stat().st_size}/{total} bytes")
+                if sha256:
+                    actual = _sha256(tmp)
+                    if actual != sha256:
+                        raise RuntimeError(
+                            f"{label} is not the file it should be: sha256 {actual}, pinned "
+                            f"{sha256}. The download was discarded."
+                        )
+                tmp.replace(dest)
+                return dest
+            except Exception as error:
+                # One source down: its bytes go, and the failure is carried
+                # into the message that names every host tried - a source
+                # whose digest failed is a reason to try the next one, not
+                # to end the setup, exactly as the engine's fetch treats it.
+                failures.append(
+                    f"{urllib.parse.urlparse(source).hostname or source}: {error}"
                 )
-            done, chunk = 0, 1 << 20
-            last_report = 0.0
-            while True:
-                buf = resp.read(chunk)
-                if not buf:
-                    break
-                out.write(buf)
-                done += len(buf)
-                if done > MAX_DOWNLOAD_BYTES:
-                    raise RuntimeError(
-                        f"{label} passed {MAX_DOWNLOAD_BYTES} bytes without ending"
-                    )
-                now = time.time()
-                if progress and (now - last_report > 1.0 or done == total):
-                    last_report = now
-                    progress(label, done, total)
-        if total and tmp.stat().st_size != total:
-            raise RuntimeError(f"incomplete download for {label}: {tmp.stat().st_size}/{total} bytes")
-        if sha256:
-            actual = _sha256(tmp)
-            if actual != sha256:
-                raise RuntimeError(
-                    f"{label} is not the file it should be: sha256 {actual}, pinned "
-                    f"{sha256}. The download was discarded."
-                )
-        tmp.replace(dest)
+        hosts = ", ".join(
+            urllib.parse.urlparse(source).hostname or source for source in sources
+        )
+        raise RuntimeError(
+            f"could not download {label} from {hosts}. The last one said: {failures[-1]}"
+        )
     finally:
         tmp.unlink(missing_ok=True)
-    return dest
 
 
 def _safe_members(archive_names):
@@ -683,8 +728,42 @@ def server_binary(progress=None):
     if not found:
         raise RuntimeError("llama-server binary missing from downloaded archive")
     found.chmod(found.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    _link_sonames(found.parent)
     archive.unlink(missing_ok=True)
     return found
+
+
+def _link_sonames(folder):
+    """The loader's short names for the shared libraries the release
+    archive ships versioned only.
+
+    The llama.cpp release carries `libllama-common.so.0.7.0` beside the
+    server, but the binary's own NEEDED entries ask for the short
+    `libllama-common.so.0` - and the safe extraction above drops
+    whatever links the archive itself carried, on purpose, so the short
+    names have to be recreated from the files that remain. Without them
+    the server dies at once with "error while loading shared
+    libraries", and the health wait reports a ninety-second timeout on
+    a server that never started. Every `lib*.so.MAJOR.MINOR.PATCH`
+    gains its `lib*.so.MAJOR` short name, inside the folder the app
+    owns, pointing at a file that folder already holds.
+    """
+    if os.name == "nt":
+        return
+    for name in os.listdir(folder):
+        match = re.match(r"^(lib[^/]+)\.so\.(\d+)\.\d+\.\d+$", name)
+        if not match or not (folder / name).is_file():
+            continue
+        short = folder / f"{match.group(1)}.so.{match.group(2)}"
+        if not short.exists():
+            try:
+                short.symlink_to(name)
+            except OSError:
+                # A filesystem that refuses links (some FAT sticks, some
+                # sandboxes) keeps the versioned names only; the server
+                # may still find its libraries another way, and the
+                # health wait reports the truth if it does not.
+                pass
 
 
 def model_files(profile: str, progress=None):
@@ -701,6 +780,28 @@ def model_files(profile: str, progress=None):
         MODEL_SHA256.get(p["mmproj"]),
     )
     return model, mmproj
+
+
+def _server_env(binary):
+    """The loader path llama-server's own shared libraries need.
+
+    The Linux and macOS release archives put `libllama.so`,
+    `libllama-common.so.0` and the ggml libraries beside the binary, and
+    the binary carries no rpath: started with the caller's environment it
+    dies at once with "error while loading shared libraries:
+    libllama-common.so.0", which the health wait then reported as a
+    ninety-second timeout on a server that never started. The binary's
+    own folder goes first so the pinned build's libraries win over any
+    the machine has installed.
+    """
+    if os.name == "nt":
+        return None
+    folder = str(Path(binary).resolve().parent)
+    env = dict(os.environ)
+    key = "DYLD_LIBRARY_PATH" if platform.system() == "Darwin" else "LD_LIBRARY_PATH"
+    current = env.get(key, "")
+    env[key] = folder if not current else folder + os.pathsep + current
+    return env
 
 
 def _server_alive(base: str):
@@ -740,6 +841,9 @@ def start(profile: str = "mini", port: int = DEFAULT_PORT, progress=None):
         kwargs = {"stdout": log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        env = _server_env(binary)
+        if env:
+            kwargs["env"] = env
         subprocess.Popen(cmd, **kwargs)
     base = f"http://127.0.0.1:{port}"
     for _ in range(90):
@@ -958,6 +1062,36 @@ def selftest():
     assert _mask("short") == "****"
     assert _mask("sk-1234567890abcdef") == "sk-1...cdef"
     out["mask"] = "ok"
+    # The loader path the server is started with: the archive's own
+    # folder, ahead of whatever the caller's environment had, because the
+    # binary ships its libraries beside itself and carries no rpath - the
+    # bug that made every fresh install's vision critic a 90-second
+    # timeout instead of a start.
+    if os.name != "nt":
+        key = "DYLD_LIBRARY_PATH" if platform.system() == "Darwin" else "LD_LIBRARY_PATH"
+        kept = os.environ.get(key, "")
+        env = _server_env("/opt/llama/bin/llama-server")
+        assert env[key].split(os.pathsep)[0] == "/opt/llama/bin", env[key]
+        if kept:
+            assert env[key].endswith(os.pathsep + kept)
+        out["serverEnv"] = "ok"
+        # The archive is extracted without symlinks. Recreate the short
+        # SONAME that the loader asks for, and preserve any existing file
+        # rather than replacing an operator-provided alias.
+        with tempfile.TemporaryDirectory(prefix="vlm-sonames-") as scratch:
+            folder = Path(scratch)
+            versioned = folder / "libllama-common.so.0.7.0"
+            versioned.write_bytes(b"versioned library")
+            existing = folder / "libggml.so.0"
+            existing.write_text("keep", encoding="utf-8")
+            (folder / "libggml.so.0.1.0").write_bytes(b"other library")
+            _link_sonames(folder)
+            alias = folder / "libllama-common.so.0"
+            assert alias.is_symlink(), "the short SONAME was not recreated"
+            assert alias.resolve() == versioned.resolve(), alias
+            assert existing.read_text(encoding="utf-8") == "keep"
+            assert not existing.is_symlink(), "an existing alias was replaced"
+        out["sonames"] = "ok"
     # The provider-key resolution: the first named provider whose key is
     # exported is the critic, in the table's own order, and none is
     # reported when no provider key is set. This is the seam that lets a
@@ -981,6 +1115,13 @@ def selftest():
     assert _is_local("http://[::1]:8099") is True
     assert _is_local("https://api.groq.com/openai/v1") is False
     out["localProbe"] = "ok"
+    # The mirror fallback a Hugging Face download carries: the same path on
+    # hf-mirror.com, and no twin for a host that mirror does not serve.
+    hf = "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/x.gguf"
+    assert _hf_mirror(hf) == "https://hf-mirror.com/" + hf[len("https://huggingface.co/"):]
+    assert _hf_mirror("https://hf.co/a/b") == "https://hf-mirror.com/a/b"
+    assert _hf_mirror("https://github.com/ggml-org/llama.cpp/releases/download/b11930/x.zip") is None
+    out["mirrorFallback"] = "ok"
     # The extraction allow-list: absolute paths, `..`, drive letters and
     # mixed separators must all fall away however they are spelled.
     keep = _safe_members(

@@ -22,7 +22,7 @@ use std::sync::atomic::AtomicBool;
 
 use concat_host::AppDirs;
 use concat_host::openvid::{self as library, Found, Orientation, Query, Sort, Source};
-use concat_host::stock::{self as live, Provider};
+use concat_host::stock::{self as live, Provider, StockKind};
 
 use crate::i18n::{t, tf};
 use crate::panes::Msg;
@@ -588,6 +588,7 @@ impl OpenvidPane {
             move || {
                 live::Library::shared(&dirs).search(
                     provider,
+                    StockKind::Video,
                     &words,
                     PAGE,
                     page,

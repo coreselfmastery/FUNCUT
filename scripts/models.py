@@ -136,6 +136,43 @@ def digest(path: pathlib.Path) -> str:
 # ── check ────────────────────────────────────────────────────────────────
 
 
+def engine_rows(text: str, row: str) -> dict[str, dict]:
+    """The engine's own model rows, keyed the way the family is keyed: one
+    block per row, its literal fields read back out - the bytes, the
+    licence and the upstream a download is checked against - so the table
+    can be compared with them field by field, not only digest by digest.
+    """
+    parsed: dict[str, dict] = {}
+    consts = dict(re.findall(r'const (\w+): &str = "([^"]+)"', text))
+    for block in re.finditer(rf"\b{row}\s*\{{([^{{}}]*)\}}", text):
+        body = block.group(1)
+        fields = dict(re.findall(r'^\s*(\w+):\s*"([^"]*)"', body, re.M))
+        fields.update({key: consts[name] for key, name in
+                       re.findall(r"^\s*(\w+):\s*(\w+),\s*$", body, re.M)
+                       if name in consts})
+        size = re.search(r"^\s*(?:approx_)?bytes:\s*([0-9][0-9_]*),", body, re.M)
+        if size:
+            fields["bytes"] = int(size.group(1).replace("_", ""))
+        key = fields.get("file") or fields.get("id")
+        if key:
+            parsed[key] = fields
+    return parsed
+
+
+def engine_upstream_template(text: str) -> str | None:
+    """The family's `model_upstream` format string, its consts resolved:
+    the URL a download falls back to when the engine builds its upstreams
+    from a template instead of a per-row field."""
+    found = re.search(
+        r'fn model_upstream\(id: &str\) -> String \{\s*format!\("([^"]+)"\)', text)
+    if not found:
+        return None
+    template = found.group(1)
+    for name, value in re.findall(r'const (\w+): &str = "([^"]+)"', text):
+        template = template.replace("{" + name + "}", value)
+    return template
+
+
 def check() -> int:
     data = table()
     models = data.get("model", [])
@@ -187,7 +224,11 @@ def check() -> int:
     # Every model this table carries must be one the engine offers, with the
     # same digest: the table is what the mirror is filled from, the engine's
     # constant is what a download is checked against, and a download checked
-    # against a digest nothing was mirrored under can never pass.
+    # against a digest nothing was mirrored under can never pass. The licence,
+    # the size and the upstream are the engine's too, so the table and the
+    # engine cannot drift apart on them either: a row whose licence says one
+    # thing while the engine's says another is a licence the settings sheet
+    # shows that the download never honors.
     for family, path in TABLES.items():
         rows = [model for model in models if model.get("family") == family]
         text = re.split(r'\n(?:#\[cfg\(test\)\]\s*)?mod tests?\s*\{', path.read_text(encoding="utf-8"))[0]
@@ -207,6 +248,28 @@ def check() -> int:
             sha = model.get("sha256", "")
             if sha and f'sha256: "{sha}"' not in text:
                 bad(f"{path.relative_to(ROOT)} does not carry the digest of {model['id']!r}")
+        parsed = engine_rows(text, "ModelSpec" if family == "cutout" else "KnownModel")
+        template = engine_upstream_template(text)
+        for model in rows:
+            fields = parsed.get(engine_id(model))
+            if fields is None:
+                if engine_id(model) in ids:
+                    bad(f"could not read the row of {model['id']!r} in {path.relative_to(ROOT)}")
+                continue
+            licence = fields.get("licence")
+            if licence is not None and licence != model.get("licence"):
+                bad(f"{path.relative_to(ROOT)} calls {model['id']!r} {licence!r}, "
+                    f"the table says {model.get('licence')!r}")
+            size = fields.get("bytes")
+            if size is not None and size != model.get("bytes"):
+                bad(f"{path.relative_to(ROOT)} says {model['id']!r} is {size} bytes, "
+                    f"the table says {model.get('bytes')}")
+            upstream = fields.get("upstream")
+            if upstream is None and template is not None:
+                upstream = template.replace("{id}", engine_id(model))
+            if upstream is not None and upstream != model.get("upstream"):
+                bad(f"{path.relative_to(ROOT)} fetches {model['id']!r} from {upstream}, "
+                    f"the table says {model.get('upstream')!r}")
 
     empty = [model["id"] for model in models if not model.get("sha256")]
     total = sum(model.get("bytes", 0) for model in models)

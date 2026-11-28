@@ -539,10 +539,11 @@ impl Api {
         })
     }
 
-    /// [`crate::Request::ModelsDownload`]: one model from Concat's mirror,
-    /// on a job of its own - the download a headless caller had no way to
-    /// start before, which the errors used to point at a Settings window
-    /// that is not there without the window.
+    /// [`crate::Request::ModelsDownload`]: one model from Concat's
+    /// mirror, or the whole registry with kind "all" - each on a job of
+    /// its own, the download a headless caller had no way to start
+    /// before, which the errors used to point at a Settings window that
+    /// is not there without the window.
     pub fn models_download(&mut self, kind: &str, id: &str) -> Result<Started, ApiError> {
         let known = match kind {
             "tts" => concat_speech::Speech::status(&self.dirs)
@@ -560,10 +561,30 @@ impl Api {
             // sound sets are, so a headless caller installs the first-edit
             // picture reader the same way it installs a voice.
             "picture" => id == concat_host::visualmodel::SET_ID,
+            // The whole registry in one job: every voice, every
+            // transcriber, the four sound sets and the picture set, each
+            // through the same code path its own kind takes - the one
+            // call a cold machine's setup makes, so the fixed spine and a
+            // director run never meet a model that is not there. The id
+            // names no model under this kind, so exactly one spelling
+            // passes: "all", the word the MCP layer fills in for a caller
+            // that sends none. A caller that sends a model id here is
+            // thinking of another kind, and the refusal is one round trip
+            // before a job is booked, the same door the other kinds keep.
+            "all" => {
+                if id != "all" {
+                    return Err(ApiError::new(
+                        ErrorCode::Invalid,
+                        "kind \"all\" takes no model id - it downloads every family; pass id \"all\""
+                            .to_owned(),
+                    ));
+                }
+                true
+            }
             other => {
                 return Err(ApiError::new(
                     ErrorCode::Invalid,
-                    format!("unknown model kind {other:?} - tts, whisper, sound or picture"),
+                    format!("unknown model kind {other:?} - tts, whisper, sound, picture or all"),
                 ));
             }
         };
@@ -573,13 +594,15 @@ impl Api {
                 format!("unknown {kind} model {id:?} - the ids are in models.list"),
             ));
         }
-        self.begin_speech(
-            id,
+        let work = if kind == "all" {
+            Work::DownloadAll
+        } else {
             Work::Download {
                 kind: kind.to_owned(),
                 id: id.to_owned(),
-            },
-        )
+            }
+        };
+        self.begin_speech(id, work)
     }
 
     /// One speech job: named and booked like an export, run on its own
@@ -675,12 +698,19 @@ enum Work {
     },
     /// Bring one model down from the mirror: the headless download.
     Download {
-        /// Which engine the model serves: "tts", "whisper", "sound" or
-        /// "picture".
+        /// Which engine the model serves: "tts", "whisper", "sound",
+        /// "picture" - or "all", the whole registry on this one job.
         kind: String,
-        /// The model's id.
+        /// The model's id; "all" for the whole-registry kind, which names
+        /// no model.
         id: String,
     },
+    /// Bring the whole shelf down: every missing model, one job, in the
+    /// order the settings sheet shows them - the sound sets, the picture
+    /// set, the transcribers, the voices. Rows already on disk are
+    /// walked past, not re-fetched, and a row that refuses is named in
+    /// the answer while the walk goes on.
+    DownloadAll,
 }
 
 /// One speech job on its thread.
@@ -807,6 +837,91 @@ impl SpeechJob {
                     })
                     .to_string()
                 })
+            }
+            Work::DownloadAll => {
+                // The whole shelf, one job, in the settings sheet's own
+                // order: sound sets, picture set, transcribers, voices.
+                // Rows already on disk are walked past - the `downloaded`
+                // word of a status row is the whole question - and a row
+                // that refuses is named in the answer while the walk goes
+                // on, because the point of one job is everything it could
+                // fetch, not the first refusal it met.
+                let mut fetched: Vec<String> = Vec::new();
+                let mut refused: Vec<String> = Vec::new();
+                let data = &self.dirs.data;
+                for set_id in concat_host::soundmodel::SETS {
+                    if self.cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let Some(set) = concat_host::soundmodel::set_by_id(set_id) else {
+                        continue;
+                    };
+                    if concat_host::soundmodel::set_missing_bytes(data, set) == 0 {
+                        continue;
+                    }
+                    match concat_host::soundmodel::set_download(
+                        data,
+                        set,
+                        &self.cancel,
+                        &mut |_, _| {},
+                    ) {
+                        Ok(()) => fetched.push(set_id.to_owned()),
+                        Err(error) => refused.push(format!("{set_id}: {error}")),
+                    }
+                }
+                if !self.cancel.load(Ordering::Relaxed)
+                    && concat_host::visualmodel::missing_bytes(data) > 0
+                {
+                    match concat_host::visualmodel::download(data, &self.cancel, &mut |_, _| {}) {
+                        Ok(()) => fetched.push(concat_host::visualmodel::SET_ID.to_owned()),
+                        Err(error) => {
+                            refused.push(format!("{}: {error}", concat_host::visualmodel::SET_ID))
+                        }
+                    }
+                }
+                if !self.cancel.load(Ordering::Relaxed)
+                    && let Ok(standing) = concat_speech::Transcriber::status(&self.dirs)
+                {
+                    for model in standing.models {
+                        if model.downloaded {
+                            continue;
+                        }
+                        match self
+                            .transcriber
+                            .download_model(&self.dirs, &model.id, |_| {})
+                        {
+                            Ok(()) => fetched.push(format!("whisper {}", model.id)),
+                            Err(error) => refused.push(format!("whisper {}: {error}", model.id)),
+                        }
+                        if self.cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                }
+                if !self.cancel.load(Ordering::Relaxed)
+                    && let Ok(standing) = concat_speech::Speech::status(&self.dirs)
+                {
+                    for model in standing.models {
+                        if model.downloaded {
+                            continue;
+                        }
+                        match self.speech.download_model(&self.dirs, &model.id, |_| {}) {
+                            Ok(()) => fetched.push(format!("tts {}", model.id)),
+                            Err(error) => refused.push(format!("tts {}: {error}", model.id)),
+                        }
+                        if self.cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                }
+                Ok(serde_json::json!({
+                    "kind": "all",
+                    "id": "all",
+                    "downloaded": true,
+                    "fetched": fetched,
+                    "refused": refused,
+                })
+                .to_string())
             }
         };
         let event = if self.cancel.load(Ordering::Relaxed) {

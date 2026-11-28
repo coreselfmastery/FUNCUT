@@ -99,7 +99,10 @@ pub fn checks(project: &str, export: Option<&str>) -> Vec<(&'static str, Value)>
         ],
         None => vec![
             ("timeline_read", json!({ "path": project })),
-            ("watch_render", json!({ "project": project, "audio": true })),
+            // No `audio`: the open-project branch renders frames only -
+            // an audio:true it cannot honour used to leave the critic
+            // advising the exact call that had just been made.
+            ("watch_render", json!({ "project": project })),
             ("collision_check", json!({ "path": project })),
         ],
     }
@@ -627,7 +630,10 @@ mod tests {
         assert_eq!(asked[0].1["path"], "/edits/Reel");
         assert_eq!(asked[1].1["project"], "/edits/Reel");
         assert!(asked[1].1.get("path").is_none());
-        assert_eq!(asked[1].1["audio"], true);
+        // The open-project watch renders frames only, so the ask carries
+        // no audio flag: one it could not honour left the critic advising
+        // the call that had just been made.
+        assert!(asked[1].1.get("audio").is_none());
         assert_eq!(asked[2].1["path"], "/edits/Reel");
     }
 

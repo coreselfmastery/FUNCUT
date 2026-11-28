@@ -77,6 +77,12 @@ pub fn view(view: &Value) -> Value {
     if let Some(created) = view.get("createdId").filter(|id| !id.is_null()) {
         summary["createdId"] = created.clone();
     }
+    // The folder the view is of: the path every later tool takes, and the
+    // one thing `project_create`'s reply has to carry for a caller that
+    // named only a location and a name.
+    if let Some(path) = view.get("path").filter(|path| !path.is_null()) {
+        summary["path"] = path.clone();
+    }
     summary
 }
 

@@ -7,21 +7,36 @@ one by hand (`sha256sum --check SHA256SUMS --ignore-missing`).
 ## How a release is made
 
 - Every package is built by GitHub Actions from a tagged commit of
-  <https://github.com/jub0t/concat>, by the workflows in
-  [`.github/workflows`](.github/workflows) (`release.yml`, which calls
-  `build-app.yml`).
+  <https://github.com/coreselfmastery/FUNCUT>, a fork of
+  <https://github.com/jub0t/Concat> whose tags are re-cuts of the
+  upstream 0.2.8 line (`v0.2.8-funcut.15` is the current one), by the
+  workflows in [`.github/workflows`](.github/workflows) (`release.yml`,
+  which calls `build-app.yml`).
 - A release is built only after the tests pass on the tagged commit, and each
   bundle is launched before it is uploaded (see
   [`scripts/ci`](scripts/ci)).
 - The workflows and build scripts are part of the source and are reviewed like
   any other change.
 
+## The data releases and their digests
+
+The app's own downloads are mirrored on this repository's data releases
+rather than fetched from whoever published them: `models-v1` (the AI
+models), `audio-v1` (the bundled CC0 sounds), `openvid-index-v1` (the
+stock index) and `fluent-emoji-index-v1` (the sticker index). These
+carry no `SHA256SUMS` beside them; their digests are pinned where the
+app reads them - the models' in `models/manifest.toml`, the sounds' in
+`audio/manifest.json`, and the two indexes' in the code constants beside
+the URLs that fetch them (`openvid.rs` and `magick.rs`, each an
+`INDEX_SHA256`). Every download is checked against its digest before it
+is installed, and a mismatch is deleted, never used.
+
 ## Team and roles
 
 | Role | Members |
 |---|---|
-| Committers and reviewers | [@jub0t](https://github.com/jub0t) |
-| Approvers | [@jub0t](https://github.com/jub0t) |
+| Committers and reviewers | the FUNCUT fork's maintainer |
+| Approvers | the FUNCUT fork's maintainer |
 
 Committers may change the source without further review. Every change from
 anyone else, such as a pull request, is reviewed by a reviewer before it is

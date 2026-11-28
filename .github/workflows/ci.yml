@@ -1,7 +1,9 @@
 name: CI
 
-# The engine's tests and lints on every push and pull request. The bundles
-# are built by release.yml, on a tag; see that file.
+# The engine's tests and lints on pushes to main and on every pull
+# request (a push to another branch waits for its pull request, which is
+# the only trigger that starts this file's jobs for it). The bundles are
+# built by release.yml, on a tag; see that file.
 #
 # Every action is pinned to a commit, with the tag it was in a comment
 # beside it: a tag can be moved to other code after a run has trusted it,
@@ -25,14 +27,69 @@ on:
 
 # The tests and lints read the tree and post their results; nothing a
 # green run needs the token to write.
+# Keep every run for this ref: older commits finish and newer commits queue.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 
 jobs:
+  # A documentation-only pull request is decided here, in a job of its
+  # own, so the two heavy lanes below can skip it by the job's own
+  # `if` rather than by a workflow-level `paths` filter: a filter that
+  # suppresses the whole run leaves the three required checks this file
+  # carries forever pending - unmergeable - while a skipped job reports
+  # `skipped`, which branch protection counts as met. The docs-only
+  # class is real: two documentation pull requests (#228, #245) each
+  # paid the engine lane's cold-cache price - two and a half hours,
+  # `--build-jobs 1` across the whole workspace - for trees that cannot
+  # change a compiled byte, and one of the runners died mid-build and
+  # showed the pull request red for an infrastructure death no change
+  # of the code could have caused. Markdown at any depth, and anything
+  # under docs/, is documentation; anything else, including this
+  # directory and the workflows in it, is code and runs the lanes.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so the three-dot diff below can name the
+          # merge base however far behind the branch is.
+          fetch-depth: 0
+      - name: Which files the pull request touches
+        id: filter
+        run: |
+          set -uo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          if ! files=$(git diff --name-only "$base...HEAD"); then
+            echo "the diff against $base could not be read; the lanes run" >&2
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          docs_only=true
+          while IFS= read -r f; do
+            case "$f" in
+              ""|docs/*|*.md) ;;
+              *) docs_only=false ;;
+            esac
+          done <<< "$files"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
   # The checks that need no libraries, in a job of their own: a string
   # slip or an unformatted line fails here in a minute, and no longer
   # skips clippy and the tests behind it.
   checks:
+    # This name is a branch-protection required check; do not rename it
+    # without moving the required check with it. It runs on every pull
+    # request, documentation included: the locale, model and sense tables
+    # the markdown ships beside are what this lane holds.
     name: Format, locales and models
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -101,10 +158,11 @@ jobs:
       - run: python3 scripts/check-signal-matrix.py
         if: ${{ !cancelled() }}
       # The coverage ledger: every sense reading is taught in the matrix,
-      # and the button's own coverage is measured rather than asserted.
-      # It prints asked/missing per door and fails only on documentation
-      # drift - the wiring gap is reported, not hidden.
-      - run: python3 scripts/check-signal-coverage.py
+      # and every reading is either asked by the AUTO EDIT spine or named
+      # in its NOT_APPLICABLE ledger with the call that answers it. The
+      # gate is on now that the wiring is complete, so a reading added
+      # without a consumer - or a ledger entry gone stale - fails here.
+      - run: python3 scripts/check-signal-coverage.py --require-button
         if: ${{ !cancelled() }}
       - run: python3 scripts/ci/check-release-gates.py
         if: ${{ !cancelled() }}
@@ -148,6 +206,17 @@ jobs:
   # to print is what serde_json refuses, and this catches it in CI
   # instead of as "the analysis did not print JSON" in production.
   analysis:
+    # `changes` decides: a documentation-only pull request cannot change
+    # what this lane senses, and skips it. Anything else - a push, a
+    # dispatch, a workflow_call from release.yml - runs it.
+    needs: changes
+    # The changes job is skipped on push and workflow_call. This status
+    # function overrides GitHub's implicit success() so those events still
+    # run the required lane. A docs-only PR still skips, and a failed filter
+    # falls through to run rather than hiding a failed required check.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true') }}
+    # This name is a branch-protection required check; do not rename it
+    # without moving the required check with it.
     name: The analysis senses against real fixtures
     runs-on: ubuntu-24.04
     # The fixtures themselves are about a minute's work; the job's cost is
@@ -180,6 +249,16 @@ jobs:
       - run: python3 src/crates/concat-api/analysis/tests/run_tests.py
 
   engine:
+    # `changes` decides: a documentation-only pull request cannot change a
+    # compiled byte, and skips the two-and-a-half-hour cold lane rather
+    # than paying for it on a runner that keeps dying under it. Anything
+    # else - a push, a dispatch, a workflow_call from release.yml - runs
+    # it. A skipped job still reports its check run as `skipped`, which
+    # branch protection counts as met, so the required check holds.
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.docs_only != 'true') }}
+    # This name is a branch-protection required check; do not rename it
+    # without moving the required check with it.
     name: Engine tests and lints
     runs-on: ubuntu-24.04
     # The steps that can run long have timeouts of their own, 245 minutes

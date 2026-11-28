@@ -4,6 +4,7 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../primitives/primitives.slint";
 import { Select } from "../primitives/select.slint";
+import { Switch } from "../inspector/controls.slint";
 
 // The library's Forge page (#12): an AI director for the project.
 //
@@ -68,6 +69,12 @@ export global Forge {
     /// 0 while idle or running; 1 when the run failed retryably (the
     /// button offers Retry); 2 when it failed hard (Fix and restart).
     in property <int> auto-edit-outcome;
+    /// The licence word the AUTO EDIT is made under: a monetized edit
+    /// is refused the non-commercial beds - the music model's, the free
+    /// shelves - so the switch is on by default, the licence-safe side.
+    /// The choice belongs to the press and travels with it, the way the
+    /// script box's own text does.
+    in-out property <bool> monetized: true;
 
     /// The voice-signal lab: the catalogue's families, as its own order
     /// names them, and the selected family's signals as button labels.
@@ -432,6 +439,32 @@ export component ForgePage inherits VerticalLayout {
                         : orientation-select.current == 2 ? "vertical"
                         : orientation-select.current == 3 ? "square"
                         : "");
+                }
+            }
+        }
+
+        // The licence word the edit is made under, beside the button that
+        // spends it: a monetized channel may not use the non-commercial
+        // beds, so the switch is on by default - the licence-safe side -
+        // and a press reads it exactly where it reads the script box.
+        // Held while the run it armed goes: the word belongs to the next
+        // press, not the one that already left.
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+
+            Text {
+                text: I18n.t("forge.monetized");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+                vertical-alignment: center;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Switch {
+                    checked <=> Forge.monetized;
+                    enabled: !Forge.auto-edit-running;
                 }
             }
         }

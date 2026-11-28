@@ -37,6 +37,12 @@ on:
   workflow_dispatch:
 
 
+# Keep every run for this ref: older commits finish and newer commits queue.
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
 permissions:
   contents: read
 

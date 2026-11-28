@@ -5,7 +5,7 @@ contains **71 named readings across 14 families**. The eight sense doors dispatc
 76 of which read the material (8 install, index, bench or self-test):
 **35** on the voice side - repair, captions, prosody style, voice
 quality, discourse - **7** sound and **34** picture (12 that need
-nothing installed, 22 behind a door). **146 readings in all**, spent the
+nothing installed, 22 behind a door). **147 readings in all**, spent the
 same way: a reading is spent only when it changes something on the
 timeline. This matrix uses the
 catalogue's exact identifiers, not aliases or guessed field paths. Reading
@@ -135,9 +135,9 @@ their doctrine is `prompts/sfx_design.md` (SFX) and
 
 ## Beyond the voice and the sound: the picture's readings
 
-`sense_visual` is 38 actions: **33 read**, 5 install (`models`,
-`download`, `hf_search`, `hf_files`, `bench`). Twelve of the 33 need
-nothing installed; twenty-one are doors, backed by 30 checkpoints.
+`sense_visual` is 39 actions: **34 read**, 5 install (`models`,
+`download`, `hf_search`, `hf_files`, `bench`). Twelve of the 34 need
+nothing installed; twenty-two are doors, backed by 30 checkpoints.
 
 A picture reading is spent only when it changes one of seven things: the
 **stock/B-roll pick**, the **cut seam**, the **caption band**, the
@@ -166,7 +166,7 @@ candidate; the leaves in brackets are the ones the runtime parses
 | `visual_sync` | picture change against the beat grid | **cut on the change**, not on the clock |
 | `measure_clips` | all of the above, per clip, plus `visualScore` | the candidate **ranking** |
 
-### The twenty-one that need a door
+### The twenty-two that need a door
 
 Each is a tool action; the door column names the checkpoint that backs
 it, and the alternates are listed so a 4 GB machine and a 24 GB one run
@@ -242,8 +242,8 @@ itself:
 
 ## The rest of the shelf: the forty-two the voice table does not name
 
-The voice catalogue's 70 rows are the profile's own readings. The eight
-doors add 75 more; 33 are the picture's (above) and 42 are these. Same
+The voice catalogue's 71 rows are the profile's own readings. The eight
+doors add 76 more; 34 are the picture's (above) and 42 are these. Same
 rule: cite the reading, name the decision, or say why it did not apply.
 
 ### Voice quality - is this take usable at all

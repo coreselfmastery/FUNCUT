@@ -30,11 +30,26 @@ The shelves the index names, and what is known about each:
 | `celebv` | CelebV-HQ-derived person/face clips | **Identity and likeness rights.** Highest-risk shelf for commercial or political content. Avoid for ads, endorsements or anything implying a real person said or did something. |
 | `other` / WebVid | Web-crawled video with scraped alt-text | Unknown provenance. Treat as research-only unless you clear it yourself. |
 
-The live shelves (`stock_search`) are **video-only** in this build: Pexels
-and Pixabay video APIs are called, and every hit is an MP4. There is no
-stock-photo result to import. A still for a beat comes from
-`preview_frame` on a clip, a generated image (`prompts/ai_media.md`), or a
-Geneva comp - not from a stock-photo call that does not exist.
+The live shelves (`stock_search`) walk two aisles in this build. The
+default is video - Pexels' and Pixabay's video APIs, every hit an MP4 -
+and `kind: "photo"` walks the stills aisle beside it: Pexels'
+`/v1/search` photographs and Pixabay's image API with
+`image_type=photo`, the same orientation dialects. Every hit says
+whether it is a still (`photo`), and a still has no run of seconds to
+constrain the gap it fills. Both aisles of a shelf answer under the one
+licence, spelled on every hit in `license`: the **Pexels License** and
+the **Pixabay Content License** - free for commercial use, no
+attribution required, and neither lets you resell the files themselves
+as stock. The fetch knows a still when it sees one: the download URL's
+extension names the aisle, the head check reads a JPEG/PNG/WebP
+signature instead of an MP4 `ftyp`, the cache and the project copy
+carry the file's own extension, and `images.pexels.com` sits in the
+fetch allowlist beside the video hosts. The AUTO EDIT's gather shops
+the video aisle first, and a page that fits nothing earns one photo
+search - the same words, the same frame - before the gap is left
+empty; a still is admitted on its orientation alone. A still for a
+beat can also come from `preview_frame` on a clip, a generated image
+(`prompts/ai_media.md`), or a Geneva comp.
 
 Additional facts from the code, not guesses:
 

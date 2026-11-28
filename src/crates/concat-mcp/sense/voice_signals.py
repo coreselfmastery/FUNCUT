@@ -1721,12 +1721,29 @@ def _rust_binary():
     # target/ (this repo keeps its Cargo workspace under src/, so the
     # script's grandparents are the workspace root) and, for a checkout
     # whose workspace sits at the root, the repository's own target/.
-    for base in (here.parents[2], here.parents[3]):
+    # The walk is sliced, never indexed: the runtime copy of this script
+    # lives two or three levels deep in the sense runtime's own temp
+    # directory, where the third or fourth parent does not exist, and
+    # indexing one that is not there raised IndexError before the walk
+    # could even start - which took the whole voice-signals read down
+    # with it, on every run whose ears were simply absent. A shallow
+    # tree offers fewer bases; the absent ears stay absent, as designed.
+    for base in _rust_binary_search_bases(here):
         for profile in ("release", "debug"):
             built = base / "target" / profile / "voice-signals"
             if built.is_file():
                 return str(built)
     return None
+
+
+def _rust_binary_search_bases(here):
+    """The two checkout roots beside the sense scripts, if they exist.
+
+    Runtime copies can live in a shallow temporary directory. Slicing the
+    parents sequence returns the available roots without indexing a parent
+    that the runtime tree does not have.
+    """
+    return list(Path(here).parents)[2:4]
 
 
 def _rust_ears(spec, lines, audio, ff):
@@ -1854,7 +1871,7 @@ def _whisperx_words(audio, lines, language):
 
 
 def _motion_design(lines_out, pauses, motifs, entities, arc, speaker,
-                   forensic_whole):
+                   forensic_whole, whole_prosody=None):
     """The twenty motion-design readings, derived from the profile.
 
     They add no pass: each one turns a reading the profile already made
@@ -1963,7 +1980,13 @@ def _motion_design(lines_out, pauses, motifs, entities, arc, speaker,
             "speed": round(max(0.6, min(1.6, (wpm or 150.0) / 150.0)), 3),
         })
 
-        layers = prosody.get("rhythmLayers") or []
+        # The rhythm layers are a WHOLE-TAKE reading: the Rust ear emits
+        # them at prosody.rhythmLayers and never per line (LineProsody
+        # carries no layers), so the stagger draws on the take's own
+        # layers, handed in beside the forensic whole - the per-line
+        # prosody keeps the fields that ARE per-line (emphasis, pitch,
+        # rise) above.
+        layers = (whole_prosody or {}).get("rhythmLayers") or []
         rhythm_stagger.append({
             "line": index,
             "layers": layers,
@@ -2327,7 +2350,7 @@ def _director_hints(lines_out, pauses, rust, language, arc, bgm):
     }
 
 
-def _bgm_decision(rust, speech_ratio):
+def _bgm_decision(rust, speech_ratio, duration=None):
     """Dry voice wants music under it; a take that already carries music
     wants none added."""
     whole = (rust or {}).get("forensic", {}).get("whole")
@@ -2344,13 +2367,21 @@ def _bgm_decision(rust, speech_ratio):
                     "reason": f"music likelihood {likelihood:.2f}: dense, regular "
                               "onsets with a music-like spectrum - this take "
                               "already carries music"}
-        if flatness is not None and flatness > 0.25 and onsets >= 60:
-            # 60 onsets in ANY window is a length claim, not a density one:
-            # a 30-minute narration clears it in dead speech. The rate is
-            # the measured form (onsetRatePerMin >= 60 is one onset per
-            # second sustained, the same bar the director reads).
+        # The rate, never the raw count: a count bar is a length claim,
+        # not a density one - a 30-minute narration clears 60 raw onsets
+        # in dead speech. onsetRatePerMin >= 60 is one onset per second
+        # sustained, the same bar the director reads. An older ear that
+        # did not serialize the rate is answered honestly by deriving it
+        # from the count over the take's duration; with neither a rate
+        # nor a duration the gate stays silent rather than guess.
+        onset_rate = whole.get("onsetRatePerMin")
+        if not isinstance(onset_rate, (int, float)):
+            onset_rate = onsets / duration * 60.0 if duration else None
+        if flatness is not None and flatness > 0.25 and \
+                isinstance(onset_rate, (int, float)) and onset_rate >= 60.0:
             return {"recommendation": "skip",
-                    "reason": f"spectral flatness {flatness:.2f} with {onsets} flux onsets: "
+                    "reason": f"spectral flatness {flatness:.2f} with an onset "
+                              f"rate of {onset_rate:.0f}/min: "
                               "this take already carries music-like content"}
         if floor is not None and floor < -45.0:
             return {"recommendation": "add",
@@ -2630,13 +2661,14 @@ def extract(spec):
                      for l in lines
                      if isinstance(l.get("start"), (int, float)) and isinstance(l.get("end"), (int, float)))
         speech_ratio = max(0.0, min(1.0, spoken / max(0.1, duration)))
-    bgm = _bgm_decision(rust, speech_ratio)
+    bgm = _bgm_decision(rust, speech_ratio, duration)
     hints = _director_hints(lines_out, pauses, rust, language, arc, bgm)
     motifs_out = _motifs(lines)
     motion = _motion_design(
         lines_out, pauses, motifs_out, entities, arc,
         (rust or {}).get("speaker"),
-        (rust or {}).get("forensic", {}).get("whole"))
+        (rust or {}).get("forensic", {}).get("whole"),
+        (rust or {}).get("prosody"))
     sources["motion"] = ("derived from the profile's own readings "
                          "(no extra pass)")
     # The filter's own note lands before the confidence builder reads the
@@ -2842,6 +2874,13 @@ def selftest():
         # binary is built, and their absence is a note, not a failure.
         result = extract(spec)
         failures = []
+        # A runtime copy can be only one directory below its temporary
+        # root. The checkout-root walk must then be empty, not an IndexError
+        # that aborts the entire voice-signals stage when its Rust binary is
+        # absent.
+        shallow_runtime = Path("/runtime")
+        if _rust_binary_search_bases(shallow_runtime):
+            failures.append("a shallow runtime tree exposed nonexistent checkout roots")
         if not result.get("ok"):
             return {"ok": False, "selftest": "extract failed", "error": result.get("error")}
         lines = result["lines"]
@@ -2861,6 +2900,29 @@ def selftest():
                      "rateTempo", "rhythmStagger", "sentenceEntry"):
             if len(motion.get(name) or []) != len(lines):
                 failures.append(f"motion.{name} did not answer every line")
+        # rhythmStagger draws on the WHOLE-TAKE prosody: the Rust ear
+        # emits the rhythm layers at prosody.rhythmLayers and never per
+        # line, so the reading is proven by handing _motion_design a
+        # fully-populated whole-take prosody directly - two differing
+        # layers must yield non-empty layers and a non-zero stagger for
+        # every line, whatever the per-line prosody carries.
+        two_layers = [
+            {"eigenvalue": 0.12, "periodSec": 2.4, "strength": 0.8},
+            {"eigenvalue": 0.41, "periodSec": 1.1, "strength": 0.4},
+        ]
+        staged = _motion_design(
+            lines, result["pauses"], result["motifs"], result["entities"],
+            result.get("arc"), result.get("speaker"),
+            (result.get("wholeTake") or {}).get("forensic"),
+            {"rhythmLayers": two_layers})
+        staggered = staged.get("rhythmStagger") or []
+        if len(staggered) != len(lines):
+            failures.append("rhythmStagger did not answer every line on the whole-take read")
+        elif not all(entry.get("layers") == two_layers for entry in staggered):
+            failures.append(f"the whole-take layers did not reach the stagger: "
+                            f"{staggered[:1]}")
+        elif not all((entry.get("staggerSec") or 0.0) > 0.0 for entry in staggered):
+            failures.append("differing layers staggered the entries by nothing")
         # Half the signals ride ffmpeg (silencedetect, ebur128); the rest
         # are pure Python. The selftest proves everything it can on this
         # machine and names the half it proved.
@@ -3012,6 +3074,44 @@ def selftest():
             failures.append("no cut style")
         if result["directorHints"]["bgm"]["recommendation"] not in ("add", "skip", "duck_only"):
             failures.append(f"bgm said {result['directorHints']['bgm']}")
+        # The bgm gate reads the RATE, never the raw count: a 30-minute dry
+        # narration carries 360 onsets (one every 5 s) - a count bar of 60
+        # would strip its music bed - while its rate is 12/min, far below
+        # the one-onset-a-second bar the director reads. A dense take (a
+        # click every 0.5 s, 120/min) skips. Both proven directly, so the
+        # gate answers without the Rust ears on this machine.
+        dry_take = {"forensic": {"whole": {
+            "noiseFloorDbfs": -60.0, "snrDb": 30.0,
+            "spectralFlatness": 0.4, "musicLikelihood": 0.1,
+            "onsetRatePerMin": 12.0,
+            "fluxOnsetsSec": [i * 5.0 for i in range(360)],
+        }}}
+        long_dry = _bgm_decision(dry_take, 0.9, 1800.0)
+        if long_dry["recommendation"] != "add":
+            failures.append(
+                f"a 30-minute dry narration said {long_dry['recommendation']}, not add: "
+                f"{long_dry}")
+        # The same take without the rate key (an older ear) is answered by
+        # the derived rate - count over duration - and still beds.
+        older_ear = {"forensic": {"whole": {
+            k: v for k, v in dry_take["forensic"]["whole"].items()
+            if k != "onsetRatePerMin"}}}
+        derived = _bgm_decision(older_ear, 0.9, 1800.0)
+        if derived["recommendation"] != "add":
+            failures.append(
+                f"the derived-rate fallback said {derived['recommendation']}, not add: "
+                f"{derived}")
+        dense_take = {"forensic": {"whole": {
+            "noiseFloorDbfs": -60.0, "snrDb": 30.0,
+            "spectralFlatness": 0.4, "musicLikelihood": 0.1,
+            "onsetRatePerMin": 120.0,
+            "fluxOnsetsSec": [i * 0.5 for i in range(120)],
+        }}}
+        dense = _bgm_decision(dense_take, 0.9, 60.0)
+        if dense["recommendation"] != "skip":
+            failures.append(
+                f"a 120-onsets-a-minute take said {dense['recommendation']}, not skip: "
+                f"{dense}")
         # The Rust ears' new readings flow through the merge whole: the
         # fifty-ear keys exist whenever the binary ran, so a shape that
         # drifts (a renamed key on the Rust side) fails here rather than

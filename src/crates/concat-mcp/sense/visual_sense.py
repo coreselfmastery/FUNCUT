@@ -114,14 +114,20 @@ CONSUMERS = {
                  "shot pushes, two of one scale in a row is flagged",
     "quality": "the stock veto: a soft, noisy, letterboxed, flat, dark or "
                "blown candidate sinks behind one that passed",
-    "palette": "recorded, not spent: the sheet's own colour temperature is "
-               "the continuity seam today; a palette seam is a later bench",
+    "palette": "the measured temperature: the grade's own look "
+               "(cool-blue, warm) is chosen on it and the next slot's "
+               "near-duplicate line is drawn against the chosen clip's; "
+               "the dominant colours themselves are recorded for the bench",
     "saliency": "the caption band: words move away from where the eye is",
-    "composition": "the stock ranking's taste term and the caption band: a "
-                   "subject on a third holds a caption without a fight",
+    "composition": "the stock ranking's taste term, inside the sheet's own "
+                   "score: a subject on a third ranks over one dead-centre "
+                   "(the caption band reads saliency, not this)",
     "blur": "the stock veto: motion that is a pan's smear is not an entrance",
     "scene": "the stock veto: a clip that cuts inside itself is a montage, "
              "not a take",
+    "models": "the enrich doors' readings, parsed from this row by the "
+              "Rust reader: the film-shot word, the depth room, the "
+              "action and the aesthetic score all join the stock choice",
     "visualScore": "the stock ranking: the sheet's combined score breaks "
                    "the choice within a class",
     "motion.mean": "the drift veto and the continuity gate's motion floor",
@@ -1094,17 +1100,23 @@ def _resize_square(rgb, w, h, size, height=None):
     return bytes(out)
 
 
+def _sample_indices(count, time=None):
+    """The frames `_tensor` keeps: one index per chosen frame. A temporal
+    door keeps `time` of them, spread evenly (the tail repeats the last
+    frame when the take is shorter than the window); a still door keeps
+    the middle one. The selection lives here alone, so a decoder can
+    name the moment each sample stands for."""
+    if time:
+        if count >= time:
+            step = count / time
+            return [int(i * step) for i in range(time)]
+        return list(range(count)) + [count - 1] * (time - count)
+    return [count // 2] if count else []
+
+
 def _tensor(frames, size, time=None, mean=0.0, std=255.0, height=None):
     """A float32 NCHW (or NTCHW) tensor from the sampled frames."""
-    chosen = frames
-    if time:
-        if len(chosen) >= time:
-            step = len(chosen) / time
-            chosen = [chosen[int(i * step)] for i in range(time)]
-        else:
-            chosen = chosen + [chosen[-1]] * (time - len(chosen))
-    else:
-        chosen = [chosen[len(chosen) // 2]]
+    chosen = [frames[i] for i in _sample_indices(len(frames), time)]
     out_h = height or size
     planes = []
     for _, rgb, w, h in chosen:
@@ -1909,7 +1921,8 @@ VISUAL_MODELS = [
         "id": "transnetv2",
         "tier": 1,
         "file": "transnetv2.onnx",
-        "bytes": 30_000_000,
+        "bytes": 31_250_929,
+        "sha256": "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c",
         "licence": "MIT",
         "tool": "shot_boundaries",
         "signal": "shot-boundary probability per frame",
@@ -1979,7 +1992,8 @@ VISUAL_MODELS = [
         "id": "depth-anything-v2-small",
         "tier": 2,
         "file": "depth-anything-v2-small.onnx",
-        "bytes": 27_300_000,
+        "bytes": 27_258_801,
+        "sha256": "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d",
         "licence": "Apache-2.0",
         "tool": "depth_map",
         "signal": "per-pixel relative depth",
@@ -2039,7 +2053,8 @@ VISUAL_MODELS = [
         "id": "dinov2-small",
         "tier": 3,
         "file": "dinov2-small.onnx",
-        "bytes": 84_400_000,
+        "bytes": 24_446_700,
+        "sha256": "c179f8f7f592449c4c1bca4cd124a7538021428c5ffb89afde9503935b197efb",
         "licence": "Apache-2.0",
         "tool": "visual_embedding",
         "signal": "384-d visual embedding per frame",
@@ -2052,7 +2067,8 @@ VISUAL_MODELS = [
         "id": "clip-vit-b32",
         "tier": 3,
         "file": "clip-vit-b32-visual.onnx",
-        "bytes": 150_000_000,
+        "bytes": 89_117_001,
+        "sha256": "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299",
         "licence": "MIT",
         "tool": "visual_embedding",
         "signal": "image-text similarity embedding",
@@ -2359,6 +2375,16 @@ def _decode_logits(raw, labels=None, top=3):
 
 
 def _decode_prob(raw, times=None, floor=0.5):
+    """A curve over the clip's own span, answered as FRACTIONS.
+
+    The consumer (the auto-edit's shot seam) multiplies `boundaries` and
+    `peakAt` by the clip's own length, so every value is a 0..=1 fraction
+    of the clip - never a raw frame index into the tensor, which a clip
+    longer than the tensor's window would reject outright. The fractions
+    come from the sampled times when the door hands them in (one time per
+    sample, the frames the tensor actually kept), and fall back to the
+    sample positions themselves when it does not.
+    """
     a = _np().asarray(raw, dtype=_np().float32)
     if a.ndim >= 3 and a.shape[0] == 1:
         a = a[0]
@@ -2368,16 +2394,29 @@ def _decode_prob(raw, times=None, floor=0.5):
     if a.max() > 1.0 or a.min() < 0.0:
         a = 1.0 / (1.0 + _np().exp(-a))
     peak_index = int(_np().argmax(a))
-    boundaries = [int(i) for i in _np().nonzero(a >= floor)[0]]
-    span = float(times[-1] - times[0]) if times and len(times) > 1 else 1.0
-    per = span / max(1, a.size - 1) if times else None
+    over = [int(i) for i in _np().nonzero(a >= floor)[0]]
+    count = int(a.size)
+    moments = None
+    if times and len(times) == count and count > 1:
+        moments = [float(t) for t in times]
+        span = moments[-1] - moments[0]
+        if span <= 0.0:
+            moments = None
+    if moments is not None:
+        # A moment's fraction is its own place in the clip's sampled span
+        # - anchored at the span's own start, so a clip read from `from:`
+        # still reports its own fraction and not an offset from the file.
+        def fraction(index):
+            return _r(min(1.0, max(0.0, (moments[index] - moments[0]) / span)))
+    else:
+        def fraction(index):
+            return _r(index / max(1, count - 1)) if count > 1 else 0.0
     return {
-        "frames": int(a.size),
+        "frames": count,
         "peak": _r(float(a[peak_index])),
-        "peakAt": _r((times[0] + peak_index * per) if times and per else
-                     peak_index / max(1, a.size - 1)),
-        "boundaries": [int(i) for i in boundaries[:32]],
-        "boundaryCount": len(boundaries),
+        "peakAt": fraction(peak_index),
+        "boundaries": [fraction(i) for i in over[:32]],
+        "boundaryCount": len(over),
     }
 
 
@@ -2593,6 +2632,14 @@ def _generic_door(spec, model_id, frames=None):
         kwargs = {}
         if door.get("decoder") in ("logits", "boxes", "segments"):
             kwargs["labels"] = _labels(spec) or door.get("labels") or None
+        if door.get("decoder") == "prob":
+            # A prob curve reads TIME, not tensor slots: a shot boundary
+            # is a moment in the clip, so the decoder gets the times of
+            # the frames the tensor actually kept - the same selection,
+            # sample for sample - and answers fractions of the clip's own
+            # span, the shape its consumer multiplies by the clip length.
+            kwargs["times"] = [frames[i][0] for i in
+                               _sample_indices(len(frames), time)]
         decoded = decoder(raw[0], **kwargs) if raw else {}
         return {
             "ok": True,
@@ -2998,7 +3045,10 @@ def models(spec):
             "path": found,
             "onDiskBytes": Path(found).stat().st_size if found else 0,
             "pinned": pin.get("sha256"),
-            "ready": found is not None and np is not None,
+            # The same readiness `_ready_door` gates every door on: a file
+            # on disk, numpy for the tensors AND onnxruntime to run them -
+            # a file with no runtime is listed, not ready.
+            "ready": found is not None and np is not None and _has_onnxruntime(),
         })
     present = [row["id"] for row in rows if row["present"]]
     missing = [row["id"] for row in rows if not row["present"]]
@@ -3168,10 +3218,14 @@ def download(spec):
     Three ways to name the file, in this order: `url` (any address),
     `hfRepo` + `file` (the Hub's own resolve URL, with `HF_TOKEN` when the
     repo is gated), or the registry's `download` when a row carries one.
-    With `sha256` the digest is checked before anything is kept. Without
-    it the digest of what arrived is **pinned** in the folder's
-    `index.json` and checked on every later `download` of the same file:
-    trust on first use, recorded, not silent.
+    With `sha256` the digest is checked before anything is kept - and a
+    registry row that carries its own digest (the four core picture
+    models carry the same digests the Rust fetch pins, so a door download
+    and a settings download cannot disagree) is checked against it too:
+    a mismatch is refused and nothing is kept. Without either the digest
+    of what arrived is **pinned** in the folder's `index.json` and checked
+    on every later `download` of the same file: trust on first use,
+    recorded, not silent.
     """
     wanted = spec.get("modelId") or spec.get("id")
     model = _model_row(wanted) if wanted else None
@@ -3227,7 +3281,14 @@ def download(spec):
                 sink.write(chunk)
                 written += len(chunk)
         actual = digest.hexdigest()
-        expected = str(spec.get("sha256") or pinned or "").lower().strip()
+        # The digest to expect, in the order the trust is earned: the
+        # caller's own `sha256` first, then the registry row's own pin (the
+        # four core picture models - the same digests the Rust fetch
+        # pins, so a door download and a settings download cannot
+        # disagree), then the folder's previous pin - trust on first use,
+        # recorded. A mismatch refuses and keeps nothing.
+        row_digest = str((model or {}).get("sha256") or "").lower().strip()
+        expected = str(spec.get("sha256") or row_digest or pinned or "").lower().strip()
         if expected and actual != expected:
             partial.unlink(missing_ok=True)
             return {"ok": False, "model": model["id"] if model else name,
@@ -3240,7 +3301,10 @@ def download(spec):
                 "path": str(target), "bytes": written, "sha256": actual,
                 "verified": bool(expected), "pinned": not bool(expected),
                 "licence": model["licence"] if model else None,
-                "note": ("Digest matched the one given." if expected else
+                "note": (("Digest matched the one the caller gave."
+                          if spec.get("sha256") else
+                          "Digest matched the registry row's own pin.")
+                         if expected else
                          "No digest was given, so the one that arrived is now "
                          "pinned in index.json and checked on every later "
                          "download of this file. Re-run `models` to see the "
@@ -3523,9 +3587,33 @@ def selftest(only=None):
               and top["top"][0]["p"] > 0.5, top["top"][0])
         curve = _decode_prob(np.array([0.0, 0.1, 0.9, 0.05], dtype=np.float32),
                              times=[0.0, 0.5, 1.0, 1.5])
-        check("a boundary curve names the frame it peaks on",
-              curve["boundaryCount"] == 1 and abs(curve["peakAt"] - 1.0) < 1e-6,
+        # The fraction contract: the consumer multiplies `boundaries` and
+        # `peakAt` by the clip's own length, so a boundary at 1.0 s of a
+        # 1.5 s sampled span answers 2/3 of the clip, never the raw
+        # tensor index the old reader emitted.
+        check("a boundary curve answers fractions of the clip",
+              curve["boundaryCount"] == 1
+              and abs(curve["peakAt"] - 1.0 / 1.5) < 1e-3
+              and abs(curve["boundaries"][0] - 1.0 / 1.5) < 1e-3,
               curve)
+        # A boundary at half the samples sits at half the clip, whatever
+        # the take's own start or length: the shot seam the auto-edit
+        # reads lands mid-clip, not at tensor slot 2.
+        half = _decode_prob(np.array([0.05, 0.05, 0.9, 0.05, 0.05],
+                                    dtype=np.float32),
+                            times=[20.0, 20.5, 21.0, 21.5, 22.0])
+        check("a boundary at half the samples is half the clip",
+              half["boundaryCount"] == 1
+              and abs(half["boundaries"][0] - 0.5) < 1e-6
+              and abs(half["peakAt"] - 0.5) < 1e-6,
+              half)
+        # Without times the sample positions stand for themselves - still
+        # fractions, never indices.
+        bare = _decode_prob(np.array([0.0, 0.0, 0.9, 0.0, 0.0], dtype=np.float32))
+        check("without times the sample positions are the fractions",
+              abs(bare["peakAt"] - 0.5) < 1e-6
+              and abs(bare["boundaries"][0] - 0.5) < 1e-6,
+              bare)
         mask = _decode_masks(np.pad(np.ones((4, 4), dtype=np.float32), 2))
         check("a mask reports the area it covers",
               0.1 < mask["areaShare"] < 0.9 and mask["present"], mask["areaShare"])
@@ -3553,17 +3641,25 @@ def selftest(only=None):
     measured = measure_clips({"paths": ["synthetic"], "frames": encoded,
                               "width": 32, "intent": "cut"})
     row = measured["clips"][0] if measured.get("clips") else {}
-    expected = {"motion", "camera", "shotScale", "quality", "palette",
-                "saliency", "scene", "visualScore"}
-    missing = expected - set(row)
+    # The guard reads the row the sheet itself emitted, never a
+    # hand-written list that can drift from it: a reading the sheet emits
+    # with no consumer entry is a measurement the edit paid for and threw
+    # away, and a table entry the sheet no longer emits is a claim about
+    # nothing. Bookkeeping keys are not readings: the path, the ok flag,
+    # the sample count, the door report, the notes and the per-frame
+    # evidence sheet.
+    bookkeeping = {"path", "ok", "samples", "doors", "notes", "perFrame"}
+    expected = {key for key in row if key not in bookkeeping}
     unnamed = [key for key in expected if key not in CONSUMERS]
+    unemitted = [key for key in CONSUMERS
+                 if "." not in key and key not in row]
     unnamed += [f"motion.{key}" for key in ("mean", "peak", "peakAt",
                                             "onsets", "still")
                 if f"motion.{key}" not in CONSUMERS]
     unnamed += ["camera.travel"] if "camera.travel" not in CONSUMERS else []
     check("every visual reading names its consumer",
-          not missing and not unnamed,
-          f"missing={sorted(missing)} unnamed={unnamed}")
+          row.get("ok") and not unnamed and not unemitted,
+          f"unnamed={unnamed} unemitted={unemitted}")
 
     montage_score = _visual_score({"peak": 0.2, "peakAt": 0.2},
                                   {"sharpness": 25, "noise": 1, "letterbox": 0,
@@ -3667,6 +3763,42 @@ def selftest(only=None):
                 globals()["_onnx_session"] = original
             if not said.get("ok") or not said.get("decoded"):
                 failures.append(f"{row['id']}: {said.get('error', 'no reading')}")
+        # The shot door's own path, through the real runner: a temporal
+        # graph whose boundary curve fires on the middle sample of nine,
+        # over nine caller frames spread evenly over the clip. The door
+        # hands the decoder the sampled times, so the seam lands at half
+        # the clip - where the auto-edit's fraction consumer puts it -
+        # and not at tensor slot 4, the raw index the old reader emitted.
+        class _TemporalStub:
+            def __init__(self, curve):
+                self.curve = curve
+
+            def get_inputs(self):
+                span = self.curve.shape[1] if self.curve.ndim == 3 else 8
+                return [type("In", (), {"name": "x", "shape": [1, span, 3, 32, 32]})()]
+
+            def get_outputs(self):
+                return [type("Out", (), {"name": "y",
+                                         "shape": list(self.curve.shape)})()]
+
+            def run(self, _names, _feeds):
+                return [self.curve]
+
+        nine = np.array([0.1, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.1],
+                        dtype=np.float32).reshape(1, 9, 1)
+        _SESSIONS.clear()
+        globals()["_onnx_session"] = lambda _path: _TemporalStub(nine)
+        try:
+            said = _generic_door({"model": handle.name, "size": 32, "time": 9},
+                                 "transnetv2",
+                                 frames=[(i / 9.0, pattern, w, h) for i in range(9)])
+        finally:
+            globals()["_onnx_session"] = original
+        shot = said.get("decoded") or {}
+        check("the shot door lands its seam at half the clip",
+              said.get("ok") and abs((shot.get("peakAt") or -1.0) - 0.5) < 1e-6
+              and abs((shot.get("boundaries") or [-1.0])[0] - 0.5) < 1e-6,
+              shot)
         os.unlink(handle.name)
         check("every door on the shelf runs its own row end to end", not failures,
               failures)
@@ -3704,6 +3836,57 @@ def selftest(only=None):
               == "abc", _pins({"modelDir": str(pin_dir)}))
         import shutil
         shutil.rmtree(pin_dir, ignore_errors=True)
+
+        # The four core rows pin their own digests - the same hex the Rust
+        # fetch pins and models/manifest.toml records - so a door download
+        # is verified from its first byte, not trust-on-first-use. The
+        # mechanism itself is proven on a local file:// address, so the
+        # check never reaches the network: a row digest that matches keeps
+        # the file and says verified, one that does not refuses and keeps
+        # nothing - the same refusal the Rust fetch answers.
+        import hashlib
+        core_pins = {
+            "transnetv2":
+                "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c",
+            "depth-anything-v2-small":
+                "fcf51f1b230362b28690bb9d1809bf0431f29cad20534e3f589bd7285547f20d",
+            "dinov2-small":
+                "c179f8f7f592449c4c1bca4cd124a7538021428c5ffb89afde9503935b197efb",
+            "clip-vit-b32":
+                "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299",
+        }
+        by_id = {row["id"]: row for row in VISUAL_MODELS}
+        check("the four core rows pin the digests the Rust fetch pins",
+              all(by_id[row_id].get("sha256") == digest
+                  for row_id, digest in core_pins.items()),
+              {row_id: by_id[row_id].get("sha256") for row_id in core_pins})
+        good_dir = Path(tempfile.mkdtemp(prefix="funcut-digest-good-"))
+        bad_dir = Path(tempfile.mkdtemp(prefix="funcut-digest-bad-"))
+        (good_dir / "weights.onnx").write_bytes(b"stub weights, not the real graph")
+        (bad_dir / "weights.onnx").write_bytes(b"different bytes, a different digest")
+        row = by_id["transnetv2"]
+        original_digest = row.get("sha256")
+        row["sha256"] = hashlib.sha256(
+            (good_dir / "weights.onnx").read_bytes()).hexdigest()
+        try:
+            fetched = download({"modelId": "transnetv2", "modelDir": str(good_dir),
+                               "url": (good_dir / "weights.onnx").as_uri()})
+            refused = download({"modelId": "transnetv2", "modelDir": str(bad_dir),
+                                "url": (bad_dir / "weights.onnx").as_uri()})
+        finally:
+            row["sha256"] = original_digest
+        check("a row digest that matches keeps the file and says verified",
+              fetched.get("ok") and fetched.get("verified") is True
+              and (good_dir / "transnetv2.onnx").is_file(),
+              fetched.get("note") or fetched)
+        check("a row digest that does not match refuses and keeps nothing",
+              not refused.get("ok")
+              and "digest mismatch" in str(refused.get("error"))
+              and not (bad_dir / "transnetv2.onnx").is_file()
+              and not list(bad_dir.glob("*.part")),
+              refused.get("error", "")[:60])
+        shutil.rmtree(good_dir, ignore_errors=True)
+        shutil.rmtree(bad_dir, ignore_errors=True)
 
         check("the sheet enriches nothing when no door is installed",
               _enrich({"modelDir": "/tmp/no-doors-here"}, stub_frames) == {},

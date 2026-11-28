@@ -28,8 +28,120 @@ use serde_json::{Value, json};
 
 use crate::backend::Backend;
 use crate::director::{BackendToolCaller, LaneOpener};
-use crate::director_program::{auto_edit_program, auto_edit_source_from_view};
+use crate::director_program::{
+    AutoEditProgramSource, auto_edit_program, auto_edit_source_from_view,
+};
 use crate::tools::{Context, Outcome, Toolbox};
+
+/// Keeps the recorded copy of every take that lives outside the project.
+///
+/// The repair chain lands its result on the take the timeline plays - it
+/// has to, because a project's clip names its media and nothing relinks
+/// it - so a take imported by reference from the user's own folder would
+/// be rewritten in place. The recorded file is copied into the edit's
+/// own folder first, so the take as recorded always survives a repair
+/// that lands badly. A take already inside the project needs no copy:
+/// the project holds it.
+fn keep_recorded_takes(project: &Path, source: &AutoEditProgramSource) -> Result<(), String> {
+    for (index, take) in source.takes.iter().enumerate() {
+        preserve_recorded_take(project, index, Path::new(&take.take))?;
+    }
+    Ok(())
+}
+
+/// Preserve the current bytes before the repair chain can write back to an
+/// externally referenced take. Refresh an earlier snapshot on every run:
+/// an old copy is not evidence of the current source. A failed copy stops
+/// the edit rather than silently risking the only original.
+fn preserve_recorded_take(project: &Path, index: usize, path: &Path) -> Result<(), String> {
+    if path.starts_with(project) || !path.is_file() {
+        return Ok(());
+    }
+    let folder = project.join("auto-edit");
+    let metadata = std::fs::symlink_metadata(&folder).map_err(|error| {
+        format!(
+            "could not inspect the recorded-takes folder {}: {error}",
+            folder.display()
+        )
+    })?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!(
+            "the recorded-takes folder {} is not a real directory",
+            folder.display()
+        ));
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("take.wav");
+    let kept = folder.join(format!("recorded-{index:03}-{name}"));
+    let mut input = std::fs::File::open(path).map_err(|error| {
+        format!(
+            "could not open the original take {} before repair: {error}",
+            path.display()
+        )
+    })?;
+
+    // Write beside the destination under an exclusive name, then rename
+    // over the old snapshot. On Linux this replaces a stale file or a
+    // symlink itself; it never follows a destination symlink and writes
+    // through it into an unrelated file.
+    let mut reserved = None;
+    for attempt in 0..50 {
+        let temporary = folder.join(format!(
+            ".recorded-{index:03}-{name}.tmp-{}-{attempt}",
+            std::process::id()
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(output) => {
+                reserved = Some((temporary, output));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not reserve a temporary snapshot for {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    let Some((temporary, mut output)) = reserved else {
+        return Err(format!(
+            "could not reserve a temporary snapshot for {} after 50 attempts",
+            path.display()
+        ));
+    };
+    let copied = (|| {
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        std::fs::rename(&temporary, &kept)?;
+        Ok::<(), std::io::Error>(())
+    })();
+    if let Err(error) = copied {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(format!(
+            "could not preserve the original take {} at {} before repair: {error}",
+            path.display(),
+            kept.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The headless tool has no channel metadata to inspect. Default to the
+/// restrictive licensing path; personal/research use must be an explicit
+/// opt-out rather than an accidental omission by an unattended caller.
+fn monetized_argument(arguments: &Value) -> bool {
+    arguments
+        .get("monetized")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
 
 /// Run the fixed AUTO EDIT spine over `path`, or over a sibling copy of
 /// it. The terminal state is returned whether the run completed, warned,
@@ -73,6 +185,19 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         .and_then(Value::as_str)
         .map(|word| word.trim().to_owned())
         .filter(|word| matches!(word.as_str(), "horizontal" | "vertical" | "square"));
+    // Whether the edit is monetized, threaded into the brief and the bed
+    // calls. The unattended default is the licence-safe side: non-commercial
+    // beds and the research-only OpenVid shelf stay refused unless a caller
+    // explicitly opts into a personal/research edit with `monetized: false`.
+    let monetized = monetized_argument(&arguments);
+    // The author's own creative intent, when the caller carries one: the
+    // same `creative-brief.json` every later turn reads, merged field by
+    // field over whatever the project already persisted so a second run
+    // can change the tone without losing the audience it set last time.
+    let brief = arguments
+        .get("brief")
+        .filter(|brief| brief.is_object())
+        .cloned();
 
     let project = if copy {
         copy_project(&source)?
@@ -85,6 +210,30 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
             "could not make the auto-edit folder in {project_path}: {error}"
         ))
     })?;
+    if let Some(brief) = brief {
+        let path = project.join("creative-brief.json");
+        let mut merged = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if let Some(fields) = brief.as_object() {
+            for (key, value) in fields {
+                if !value.is_null() {
+                    merged.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        let bytes = serde_json::to_vec_pretty(&Value::Object(merged)).map_err(|error| {
+            ApiError::failed(format!("could not serialise the creative brief: {error}"))
+        })?;
+        std::fs::write(&path, bytes).map_err(|error| {
+            ApiError::failed(format!(
+                "could not write the creative brief to {}: {error}",
+                path.display()
+            ))
+        })?;
+    }
 
     call_json(
         toolbox,
@@ -93,18 +242,54 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         "project_open",
         json!({ "path": project_path }),
     )?;
-    let view = call_json(
+    // Every refusal from here to the close below closes what this call
+    // opened first: the open took the session's claim on the project,
+    // and a claim that outlives its failed run leaves the window's own
+    // open refused - the project is open in another process - until the
+    // server exits. A failed run must hand the project back, not hold
+    // it.
+    let view = match call_json(
         toolbox,
         backend,
         cancelled,
         "timeline_read",
         json!({ "path": project_path }),
-    )?;
-    let program_source =
-        auto_edit_source_from_view(&project_path, &view, script, stock_provider, orientation)
-            .map_err(ApiError::invalid)?;
+    ) {
+        Ok(view) => view,
+        Err(error) => {
+            let _ = close_project(toolbox, backend, cancelled, &project_path);
+            return Err(error);
+        }
+    };
+    let program_source = match auto_edit_source_from_view(
+        &project_path,
+        &view,
+        script,
+        stock_provider,
+        orientation,
+        monetized,
+    ) {
+        Ok(source) => source,
+        Err(error) => {
+            let _ = close_project(toolbox, backend, cancelled, &project_path);
+            return Err(ApiError::invalid(error));
+        }
+    };
+    if let Err(error) = keep_recorded_takes(&project, &program_source) {
+        let close_error = close_project(toolbox, backend, cancelled, &project_path).err();
+        return Err(ApiError::failed(match close_error {
+            Some(close) => format!("{error}; additionally, {close}"),
+            None => error,
+        }));
+    }
     let mut program = auto_edit_program(&program_source);
+    // The runner's event receiver is dropped on purpose: a headless call
+    // has no watcher to read it, and a receiver held and never drained
+    // buffers every progress event the run emits in memory for the whole
+    // run. Dropped, the runner's sends fail and discard - the contract
+    // its own "a receiver nobody reads is fine" note names.
     let (runner, _events) = Runner::new(project.clone());
+    drop(_events);
     // The mode is read before the caller takes the backend: the lanes
     // open the way this run's own backend was opened, so a run served by
     // the window's server gets more connections to it and a headless
@@ -158,13 +343,15 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
     };
     // Leave the project closed: a headless server holds its locks until
     // it exits, and the next call may be the window opening this edit.
-    let _ = call_json(
-        toolbox,
-        backend,
-        cancelled,
-        "project_close",
-        json!({ "path": project_path, "save": true }),
-    );
+    // The close saves what the run left - though the run's own edits
+    // autosaved as they were applied - and a save that cannot land (a
+    // read-only copy, a full disk) falls back to closing without one
+    // rather than leaving the claim standing behind a refused save. A
+    // close that still cannot land is named in the answer, not
+    // answered as if it had.
+    if let Err(error) = close_project(toolbox, backend, cancelled, &project_path) {
+        write_errors.push(error);
+    }
     let mut value = json!({
         "project": project_path,
         "source": path,
@@ -185,6 +372,47 @@ pub fn run(toolbox: &Toolbox, arguments: Value, context: Context<'_>) -> Result<
         result.is_error = true;
     }
     Ok(result)
+}
+
+/// Close the project a run opened, saving what it left. The first close
+/// saves; when the save itself is what refuses, the fallback closes
+/// without one - the run's edits autosaved as they were applied, so the
+/// save is a courtesy, while the claim the close releases is the thing
+/// the window's next open needs gone. The sentence is the close's own
+/// failure, for the caller to name in its answer.
+fn close_project(
+    toolbox: &Toolbox,
+    backend: &mut dyn Backend,
+    cancelled: &AtomicBool,
+    path: &str,
+) -> Result<(), String> {
+    let saved = call_json(
+        toolbox,
+        backend,
+        cancelled,
+        "project_close",
+        json!({ "path": path, "save": true }),
+    );
+    match saved {
+        Ok(_) => Ok(()),
+        Err(save_error) => {
+            match call_json(
+                toolbox,
+                backend,
+                cancelled,
+                "project_close",
+                json!({ "path": path, "save": false }),
+            ) {
+                Ok(_) => Err(format!(
+                    "the run's project was closed without a save ({save_error})"
+                )),
+                Err(close_error) => Err(format!(
+                    "the run's project could not be closed (saving said: {save_error}; \
+                     closing without a save said: {close_error})"
+                )),
+            }
+        }
+    }
 }
 
 fn call_json(
@@ -249,13 +477,18 @@ fn write_report(project: &Path, state_value: &Value) -> Result<String, String> {
         .map_err(|error| format!("could not write {}: {error}", path.display()))
 }
 
-/// Write the run's receipt beside the edit, when its state carries one.
-/// A state with no receipt to write is `Ok(None)`, not a failure: only a
-/// receipt that existed and could not be written answers `Err`.
+/// Write the run's receipt beside the edit, whatever its standing: a
+/// completed run's receipt and a failed or cancelled run's partial one
+/// (the stages that had completed, the gates their answers had measured)
+/// are both evidence the caller keeps. A state with no receipt to write
+/// is `Ok(None)`, not a failure: only a receipt that existed and could
+/// not be written answers `Err`.
 fn write_receipt(project: &Path, state: &AutoEditState) -> Result<Option<String>, String> {
     let receipt = match state {
         AutoEditState::Completed { receipt, .. }
-        | AutoEditState::CompletedWithWarnings { receipt, .. } => receipt.as_deref(),
+        | AutoEditState::CompletedWithWarnings { receipt, .. }
+        | AutoEditState::Failed { receipt, .. }
+        | AutoEditState::Cancelled { receipt, .. } => receipt.as_deref(),
         _ => None,
     };
     let Some(receipt) = receipt else {
@@ -312,7 +545,7 @@ fn sibling_path(source: &Path) -> PathBuf {
 }
 
 fn copy_project(source: &Path) -> Result<PathBuf, ApiError> {
-    let destination = sibling_path(source);
+    let destination = reserve_sibling(source);
     copy_tree(source, &destination).map_err(|error| {
         ApiError::failed(format!(
             "could not copy {} to {}: {error}",
@@ -322,6 +555,27 @@ fn copy_project(source: &Path) -> Result<PathBuf, ApiError> {
     })?;
     rewrite_media_paths(&destination, source)?;
     Ok(destination)
+}
+
+/// The sibling a copy-mode run edits, reserved on the filesystem the
+/// moment it is chosen. `sibling_path` names the first name that does not
+/// stand, and the reservation is an exclusive create, so two concurrent
+/// runs that both read the same free name cannot both copy into it - the
+/// second takes `edit 2` instead of writing over the first's edits. The
+/// reservation is the copy's first act, so a run that fails after
+/// reserving leaves an empty folder behind, not a second run's edits
+/// overwritten.
+fn reserve_sibling(source: &Path) -> PathBuf {
+    for _ in 0..50 {
+        let candidate = sibling_path(source);
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            // Taken, whatever took it - another run's reservation or a
+            // folder that predates the run: the next name is asked for.
+            Err(_) => continue,
+        }
+    }
+    sibling_path(source)
 }
 
 /// What a copy never carries from the source project's own root: the
@@ -551,6 +805,79 @@ mod tests {
     }
 
     #[test]
+    fn a_recorded_take_snapshot_is_refreshed_before_each_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Reel");
+        std::fs::create_dir_all(project.join("auto-edit")).unwrap();
+        let source = dir.path().join("take.wav");
+        let kept = project.join("auto-edit").join("recorded-000-take.wav");
+
+        std::fs::write(&source, b"first take").unwrap();
+        preserve_recorded_take(&project, 0, &source).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"first take");
+
+        // copy=false can revisit a project with an earlier snapshot. It
+        // must refresh that file before the next repair, not trust stale bytes.
+        std::fs::write(&source, b"new take").unwrap();
+        preserve_recorded_take(&project, 0, &source).unwrap();
+        assert_eq!(std::fs::read(&kept).unwrap(), b"new take");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_recorded_take_snapshot_replaces_a_symlink_without_writing_through_it() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Reel");
+        std::fs::create_dir_all(project.join("auto-edit")).unwrap();
+        let source = dir.path().join("take.wav");
+        let protected = dir.path().join("protected.bin");
+        let kept = project.join("auto-edit").join("recorded-000-take.wav");
+        std::fs::write(&source, b"new original").unwrap();
+        std::fs::write(&protected, b"do not overwrite").unwrap();
+        symlink(&protected, &kept).unwrap();
+
+        preserve_recorded_take(&project, 0, &source).unwrap();
+
+        assert_eq!(std::fs::read(&protected).unwrap(), b"do not overwrite");
+        assert!(
+            !std::fs::symlink_metadata(&kept)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the snapshot replaces the link itself"
+        );
+        assert_eq!(std::fs::read(&kept).unwrap(), b"new original");
+    }
+
+    #[test]
+    fn a_failed_recorded_take_snapshot_is_not_silently_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Reel");
+        std::fs::create_dir_all(project.join("auto-edit").join("recorded-000-take.wav")).unwrap();
+        let source = dir.path().join("take.wav");
+        std::fs::write(&source, b"original").unwrap();
+
+        let error = preserve_recorded_take(&project, 0, &source).unwrap_err();
+        assert!(
+            error.contains("could not preserve the original take"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_omitted_monetized_flag_defaults_to_the_licence_safe_path() {
+        assert!(monetized_argument(&json!({})));
+        assert!(monetized_argument(&json!({"monetized": true})));
+        assert!(!monetized_argument(&json!({"monetized": false})));
+        assert!(
+            monetized_argument(&json!({"monetized": "false"})),
+            "a malformed flag must not loosen the licensing gate"
+        );
+    }
+
+    #[test]
     fn a_sibling_name_never_overwrites_an_earlier_edit() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("Reel");
@@ -558,6 +885,22 @@ mod tests {
         assert_eq!(sibling_path(&source), dir.path().join("Reel edit"));
         std::fs::create_dir_all(dir.path().join("Reel edit")).unwrap();
         assert_eq!(sibling_path(&source), dir.path().join("Reel edit 2"));
+    }
+
+    #[test]
+    fn a_reserved_sibling_is_held_not_just_named() {
+        // The reservation is the copy's first act: an exclusive create,
+        // so two concurrent runs that both read the same free name
+        // cannot both copy into it - the second takes `edit 2` instead
+        // of writing over the first's edits.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("Reel");
+        std::fs::create_dir_all(&source).unwrap();
+        let first = reserve_sibling(&source);
+        assert_eq!(first, dir.path().join("Reel edit"));
+        assert!(first.is_dir(), "the reservation is a folder, not a plan");
+        let second = reserve_sibling(&source);
+        assert_eq!(second, dir.path().join("Reel edit 2"));
     }
 
     #[test]

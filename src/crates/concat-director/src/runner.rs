@@ -480,6 +480,9 @@ impl Runner {
                     stage: Stage::Plan,
                     error: error.clone(),
                     attempt: 1,
+                    // No receipt: the program never walked a stage, so
+                    // there is no evidence a receipt could name.
+                    receipt: None,
                 },
                 AutoEditProgress::new(
                     Stage::Plan,
@@ -551,6 +554,7 @@ impl Runner {
                         Duration::ZERO,
                         "cancel asked for before the stage began",
                     ),
+                    self.partial_receipt(program, &records, &observed, &warnings),
                 );
             }
             // IDEM: a stage a prior run on this runner completed is
@@ -629,6 +633,11 @@ impl Runner {
 
             let mut failure: Option<AutoEditError> = None;
             let mut failed_attempt = 1;
+            // Whether the failure, when there is one, came from a gate:
+            // the warn-tools policy warns a tool's own failure but
+            // holds its gates hard, so the two must arrive at the
+            // policy decision separately.
+            let mut gate_failure = false;
             // The gate evidence: every reply this stage's calls drew, kept
             // for the gates below and dropped with them - only the Verify
             // stage's last answer travels on in `verification`.
@@ -671,11 +680,13 @@ impl Runner {
                         .iter()
                         .map(|group| group.iter().cloned().map(stamp(epoch, stage)).collect())
                         .collect();
+                    let groups_len = groups.len();
                     let lane_results: Vec<DriveResult> = match lanes {
                         Some(lanes) => std::thread::scope(|scope| {
                             let handles: Vec<_> = groups
                                 .into_iter()
-                                .map(|group| {
+                                .enumerate()
+                                .map(|(group_at, group)| {
                                     let runner = self.clone();
                                     let running = running.clone();
                                     scope.spawn(move || match lanes.lane() {
@@ -685,6 +696,8 @@ impl Runner {
                                             total,
                                             run_started,
                                             running,
+                                            group_at,
+                                            groups_len,
                                             group,
                                             &mut lane,
                                         ),
@@ -745,17 +758,27 @@ impl Runner {
                         }),
                         // No lanes: the groups still run, one after
                         // another on the one caller - correct, only
-                        // slower.
+                        // slower. The drive draws against a scratch log,
+                        // because the merge below is the log's single
+                        // write point for a fan's replies, lanes or
+                        // not: a drive that pushed into the caller's
+                        // log and a merge that extended it with the same
+                        // replies would leave every fan reply in the
+                        // log twice for a caller of the plain `run`, and
+                        // the log is the memory every later derived step
+                        // reads - a doubled reply is a doubled
+                        // caption, a doubled cut.
                         None => groups
                             .into_iter()
                             .map(|group| {
+                                let mut scratch = Vec::new();
                                 self.drive_calls(
                                     stage,
                                     index,
                                     total,
                                     run_started,
                                     &running,
-                                    &mut log,
+                                    &mut scratch,
                                     &mut applied,
                                     group,
                                     caller,
@@ -769,7 +792,19 @@ impl Runner {
                     // paths leave behind.
                     for (lane_failure, lane_replies) in lane_results {
                         if let Some((error, attempt)) = lane_failure {
-                            failure.get_or_insert(error);
+                            // The first lane's failure is the stage's own
+                            // error - the one the terminal state names -
+                            // but a fan is N lanes, and a repair where
+                            // three takes failed is three failures, not
+                            // one the other two never surface. Every
+                            // further lane failure rides as its own
+                            // warning, so the report the run ships names
+                            // each lane that did not make it.
+                            if failure.is_some() {
+                                warnings.push(error.line());
+                            } else {
+                                failure = Some(error);
+                            }
                             failed_attempt = failed_attempt.max(attempt);
                         }
                         // The log is the memory every later derived
@@ -948,6 +983,7 @@ impl Runner {
                         ));
                     }
                     if let Some(sentence) = failed {
+                        gate_failure = true;
                         failure = Some(AutoEditError::new(
                             stage,
                             last_call.clone(),
@@ -996,9 +1032,20 @@ impl Runner {
                             stage_started.elapsed(),
                             "the stage stopped: a cancel was asked for",
                         ),
+                        self.partial_receipt(program, &records, &observed, &warnings),
                     );
                 }
-                Some(error) if policy == ErrorPolicy::Warn => {
+                // The warn policy warns the failure, whichever side of
+                // the stage it came from. The warn-tools policy warns
+                // the stage's TOOL failures - a cold shelf, a missing
+                // model - and holds its GATES hard: a gate the program
+                // named is the one thing the run cannot run without,
+                // and a stage that proved it absent stops the run
+                // rather than shipping past its own proof.
+                Some(error)
+                    if policy == ErrorPolicy::Warn
+                        || (policy == ErrorPolicy::WarnTools && !gate_failure) =>
+                {
                     records[index].outcome = StageOutcome::Warned;
                     records[index].elapsed_ms = Some(stage_elapsed_ms);
                     records[index].failure = Some(error.line());
@@ -1008,11 +1055,13 @@ impl Runner {
                     records[index].outcome = StageOutcome::Failed;
                     records[index].elapsed_ms = Some(stage_elapsed_ms);
                     records[index].failure = Some(error.line());
+                    let receipt = self.partial_receipt(program, &records, &observed, &warnings);
                     self.emit(
                         AutoEditState::Failed {
                             stage,
                             error: error.clone(),
                             attempt: failed_attempt,
+                            receipt: Some(receipt),
                         },
                         AutoEditProgress::new(
                             stage,
@@ -1223,6 +1272,8 @@ impl Runner {
         total: usize,
         run_started: Instant,
         running: AutoEditState,
+        group_at: usize,
+        groups_len: usize,
         calls: Vec<ToolCall>,
         caller: &mut Box<dyn ToolCaller>,
     ) -> DriveResult {
@@ -1248,6 +1299,12 @@ impl Runner {
                 ));
                 break 'calls;
             }
+            // The lane's own identity rides the detail, because a fan
+            // is N lanes answering at once: without it, a five-take fan
+            // reads as five interleaved "transcribe" lines no reader
+            // can tell apart, and the window cannot say which take a
+            // reading belongs to.
+            let detail = format!("lane {}/{}: {}", group_at + 1, groups_len, call.tool);
             self.emit(
                 running.clone(),
                 AutoEditProgress::new(
@@ -1256,7 +1313,7 @@ impl Runner {
                     total,
                     run_started.elapsed(),
                     Duration::ZERO,
-                    call.tool.as_str(),
+                    detail,
                 ),
             );
             let mut attempt = 1;
@@ -1343,6 +1400,7 @@ impl Runner {
         applied: &[Stage],
         exported: bool,
         boundary: AutoEditProgress,
+        receipt: Box<crate::receipt::AcceptanceReceipt>,
     ) -> RunOutcome {
         let running = self.state();
         let mut rolled_back = true;
@@ -1408,10 +1466,39 @@ impl Runner {
                 at: timestamp(),
                 rolled_back,
                 undone_to,
+                receipt: Some(receipt),
             },
             note,
         );
         RunOutcome::Cancelled
+    }
+
+    /// The receipt a run that stopped early still owes its caller: the
+    /// same evidence a completed run ships beside its edit - the
+    /// stages, the gates, the warnings, the assets - read from whatever
+    /// the run had done when it stopped. A stage that never got its
+    /// turn stays `NotReached` and a gate whose measurement never
+    /// landed is `Skipped`, never a pass the run did not earn: a failed
+    /// or cancelled run's terminal state carries no `Completed` receipt
+    /// of its own, so this partial one is the evidence the report
+    /// beside the edit writes and the retry reads.
+    fn partial_receipt(
+        &self,
+        program: &EditProgram,
+        records: &[StageRecord],
+        observed: &[(ToolCall, Value)],
+        warnings: &[String],
+    ) -> Box<crate::receipt::AcceptanceReceipt> {
+        Box::new(
+            AcceptanceReceipt::new(
+                self.project().display().to_string(),
+                program.export.display().to_string(),
+                records.to_vec(),
+                derive_gates_with_stages(observed, records),
+                warnings.to_vec(),
+            )
+            .with_assets(provenance_of(observed)),
+        )
     }
 
     /// One event: the state and the last event move together, so a
@@ -1556,7 +1643,98 @@ mod tests {
         );
         assert_eq!(outcome, RunOutcome::Cancelled);
         assert!(caller.calls.is_empty(), "a cancelled run made a tool call");
-        assert!(matches!(runner.state(), AutoEditState::Cancelled { .. }));
+        // The stop still ships its receipt: the evidence of a run that
+        // never walked a stage - every stage `NotReached`, no gate a
+        // pass it did not earn - is still evidence, not nothing.
+        let AutoEditState::Cancelled {
+            receipt: Some(receipt),
+            ..
+        } = runner.state()
+        else {
+            panic!("a cancelled run shipped no receipt");
+        };
+        assert_eq!(receipt.stages.len(), 1);
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::NotReached);
+    }
+
+    #[test]
+    fn a_failed_run_ships_the_partial_receipt_it_earned() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "valid": true })),
+            refused("the read is refused"),
+        ]);
+        let mut program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan")]),
+            StageStep::run(Stage::Timeline, vec![call("timeline_read")]),
+            StageStep::run(Stage::Watch, vec![call("watch")]),
+        ]);
+
+        let outcome = runner.run(&mut program, &mut caller);
+        assert!(matches!(outcome, RunOutcome::Failed(_)));
+        let AutoEditState::Failed {
+            receipt: Some(receipt),
+            ..
+        } = runner.state()
+        else {
+            panic!("a failed run shipped no receipt");
+        };
+        // The stages exactly as far as the run walked them: the plan
+        // completed, the timeline failed, and the watch stage - the
+        // one the run never reached - stays `NotReached` rather than
+        // borrowing a verdict it did not earn.
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::Completed);
+        assert_eq!(receipt.stages[0].calls, vec!["plan"]);
+        assert_eq!(receipt.stages[1].outcome, StageOutcome::Failed);
+        // The failure's own line: the stage, the tool, the sentence.
+        assert_eq!(
+            receipt.stages[1].failure.as_deref(),
+            Some("timeline timeline_read: the read is refused")
+        );
+        assert_eq!(receipt.stages[2].outcome, StageOutcome::NotReached);
+        // The receipt names the run it belonged to: the project and the
+        // export the program had promised, whether or not it landed.
+        assert_eq!(receipt.project, "/edits/Reel");
+        assert_eq!(receipt.export, "/edits/Reel/export.mp4");
+    }
+
+    #[test]
+    fn a_run_cancelled_mid_stage_ships_the_receipt_of_what_had_landed() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        // The plan answers, then the timeline's call asks for the stop
+        // as it fails - the way a cancel lands mid-stage: a stop asked
+        // while a call was in flight lands cancelled, not failed.
+        let mut caller = Cancelling {
+            runner: runner.clone(),
+            when: "timeline_read",
+            replies: vec![
+                Ok(json!({ "valid": true })),
+                refused("the read stopped: the run was asked to stop"),
+            ]
+            .into_iter()
+            .collect(),
+            calls: Vec::new(),
+        };
+        let mut program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan")]),
+            StageStep::run(Stage::Timeline, vec![call("timeline_read")]),
+        ]);
+
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Cancelled);
+        let AutoEditState::Cancelled {
+            receipt: Some(receipt),
+            ..
+        } = runner.state()
+        else {
+            panic!("a cancelled run shipped no receipt");
+        };
+        // What had landed before the stop: the plan completed, and the
+        // stage the stop landed in never finished, so it stays
+        // `NotReached` - the receipt claims no completed work the
+        // rollback took back off the timeline.
+        assert_eq!(receipt.stages[0].outcome, StageOutcome::Completed);
+        assert_eq!(receipt.stages[1].outcome, StageOutcome::NotReached);
     }
 
     #[test]
@@ -1771,6 +1949,128 @@ mod tests {
         assert_eq!(caller.calls.len(), 2, "both groups ran, in order");
         assert_eq!(caller.calls[0].arguments["path"], "/takes/one.wav");
         assert_eq!(caller.calls[1].arguments["path"], "/takes/two.wav");
+    }
+
+    #[test]
+    fn a_fan_step_without_lanes_leaves_each_reply_once() {
+        // The regression this test holds: a fan step run on the one
+        // caller - no lanes - used to leave every group reply in the log
+        // TWICE. The drive pushed each reply into the log as it drew it,
+        // and the merge afterwards extended the same log with the same
+        // replies again, so a caller of the plain `run` handed every
+        // later derived step a doubled memory - and the log is what a
+        // later derived step reads: a doubled reply is a doubled
+        // caption, a doubled cut. The merge is the log's single write
+        // point for a fan's replies now, lanes or not.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "take": "one" })),
+            Ok(json!({ "take": "two" })),
+        ]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                FanStep::fan(
+                    Stage::Transcribe,
+                    vec![
+                        vec![call_with("transcribe", json!({ "path": "one" }))],
+                        vec![call_with("transcribe", json!({ "path": "two" }))],
+                    ],
+                )
+                .into(),
+                // A reader that answers with one call per reply the log
+                // actually carries, in group order: a doubled log would
+                // draw doubled calls, in the log's own doubled order.
+                DerivedStep::react(
+                    Stage::Timeline,
+                    Box::new({
+                        let mut issued = 0;
+                        move |log| {
+                            let takes: Vec<&str> = log
+                                .iter()
+                                .filter_map(|reply| reply.get("take").and_then(Value::as_str))
+                                .collect();
+                            let next = issued < takes.len();
+                            issued += 1;
+                            next.then(|| {
+                                call_with("clip_cut_spans", json!({ "take": takes[issued - 1] }))
+                            })
+                        }
+                    }),
+                )
+                .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Completed);
+        // The fan's own two calls, then one reader call per reply the
+        // log carried: a doubled log would have drawn four.
+        assert_eq!(caller.calls.len(), 4, "each fan reply reached the log once");
+        assert_eq!(caller.calls[2].arguments["take"], "one");
+        assert_eq!(caller.calls[3].arguments["take"], "two");
+    }
+
+    #[test]
+    fn a_warn_tools_stage_warns_its_tools_and_holds_its_gate() {
+        // The plan stage's own stance, held as a runner law: a call that
+        // fails is a warning the run ships - a cold shelf, a network the
+        // beat analysis never reached - while the stage's gate stays
+        // hard, and a reply that fails it stops the run rather than
+        // letting an edit the program cannot justify ship as one more
+        // warning.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+
+        // A tool's failure is warned, and the run completes.
+        let mut caller = Scripted::new(vec![
+            Err(ToolError {
+                message: "the shelf is cold".to_owned(),
+                retryable: Some(false),
+                retry_after: None,
+                code: None,
+            }),
+            Ok(json!({ "valid": true })),
+        ]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::Plan, vec![call_with("plan_validate", json!({}))])
+                    .warn_tools()
+                    .gate(ReplyGate::True {
+                        field: "valid",
+                        what: "the plan the run wrote did not validate",
+                    })
+                    .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(
+            outcome,
+            RunOutcome::CompletedWithWarnings,
+            "a warn-tools stage warns its tool's own failure"
+        );
+
+        // The same stage, the same warning tools, a gate that refuses:
+        // the run fails, because the gate is the one thing the run
+        // cannot run without.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({ "valid": false }))]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::Plan, vec![call_with("plan_validate", json!({}))])
+                    .warn_tools()
+                    .gate(ReplyGate::True {
+                        field: "valid",
+                        what: "the plan the run wrote did not validate",
+                    })
+                    .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert!(
+            matches!(outcome, RunOutcome::Failed(_)),
+            "a warn-tools stage holds its gate hard: {outcome:?}"
+        );
     }
 
     #[test]

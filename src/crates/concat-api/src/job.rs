@@ -21,8 +21,19 @@ use std::sync::{Arc, Mutex};
 
 use crate::message::{ApiError, ErrorCode, Event, JobState, JobStatus};
 
-/// How many finished jobs are remembered, oldest forgotten first.
-const FINISHED_KEPT: usize = 32;
+/// How many finished jobs are remembered, oldest forgotten first. The
+/// auto-edit's own run is the ceiling that decides this number: a whole
+/// one-click edit starts dozens of analysis jobs - the transcription,
+/// its upgrade pass, the per-take signal reads, the beat and emotion
+/// extracts, the contact sheets, the watches and the previews - and its
+/// LAST stage re-reads the FIRST job's transcript (the words the export
+/// is verified against, fetched by path because the program was written
+/// before the job was minted). A cap of 32 evicted the take's
+/// transcription mid-run, and the export honestly refused to verify
+/// against words it could no longer see. 256 holds a whole run's
+/// history with room for a much longer one; a job's status is a small
+/// record, and the biggest outputs - transcripts - are kilobytes.
+const FINISHED_KEPT: usize = 256;
 
 /// The running jobs' flags and every job's last known state.
 #[derive(Default)]
@@ -304,6 +315,44 @@ mod tests {
             error: ApiError::new(ErrorCode::Cancelled, "The export was cancelled"),
         });
         assert_eq!(book.status("j1").expect("known").state, JobState::Cancelled);
+    }
+
+    #[test]
+    fn the_first_transcript_job_survives_a_full_auto_edit_fan() {
+        let book = Book::default();
+        book.start(
+            JobStatus::running("j1", "/take.wav", "/transcript.json"),
+            Arc::new(AtomicBool::new(false)),
+            Side::Own,
+        );
+        book.record(&Event::AnalysisDone {
+            job: "j1".to_owned(),
+            path: "/take.wav".to_owned(),
+            output: "/transcript.json".to_owned(),
+        });
+
+        // One-click AUTO EDIT can finish dozens of jobs after transcription
+        // but before export verification asks for that first transcript.
+        for index in 2..=65 {
+            let job = format!("j{index}");
+            let path = format!("/analysis/{index}.json");
+            book.start(
+                JobStatus::running(&job, &path, "/result.json"),
+                Arc::new(AtomicBool::new(false)),
+                Side::Own,
+            );
+            book.record(&Event::AnalysisDone {
+                job,
+                path,
+                output: "/result.json".to_owned(),
+            });
+        }
+
+        assert_eq!(
+            book.status_for_path("/take.wav").map(|status| status.job),
+            Some("j1".to_owned()),
+            "the transcript must remain addressable until the edit's final verification",
+        );
     }
 
     #[test]

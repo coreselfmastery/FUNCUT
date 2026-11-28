@@ -2420,6 +2420,9 @@ fn start(
     app.on_model_download(on_window!(|state, id: SharedString| {
         state.handle(Msg::Settings(SettingsMsg::ModelDownload(id.to_string())));
     }));
+    app.on_model_download_all(on_window!(|state| {
+        state.handle(Msg::Settings(SettingsMsg::ModelsDownloadAll));
+    }));
     app.on_model_cancel(on_window!(|state, id: SharedString| {
         state.handle(Msg::Settings(SettingsMsg::ModelCancel(id.to_string())));
     }));

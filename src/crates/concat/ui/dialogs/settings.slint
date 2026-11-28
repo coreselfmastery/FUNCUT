@@ -66,6 +66,12 @@ export struct ShortcutData {
 
 export struct SettingsData {
     open: bool,
+    /// the whole-shelf download is walking: one worker, every missing
+    /// model, one row at a time
+    models-all: bool,
+    /// any single row is mid-download, so the whole-shelf button does
+    /// not offer a second fetch of what a row already fetches
+    models-busy: bool,
     /// 0 General, 1 Appearance, 2 Transcriber, 3 Speech, 4 Remote, 5 About,
     /// 6 Version, 7 Shortcuts
     tab: int,
@@ -691,6 +697,7 @@ export component SettingsDialog inherits Modal {
     callback install-cancel();
     callback model-activated(id: string);
     callback model-download(id: string);
+    callback download-all();
     callback model-cancel(id: string);
     callback model-remove(id: string);
     callback model-open-link(id: string);
@@ -1281,6 +1288,31 @@ export component SettingsDialog inherits Modal {
                         remove => { root.model-remove(model.id); }
                         open-link => { root.model-open-link(model.id); }
                         choose-file => { root.model-choose-file(model.id); }
+                    }
+
+                    // The whole shelf in one click: every missing model,
+                    // one row at a time, through the same rows and the
+                    // same progress this sheet already shows. Hidden
+                    // while the walk runs - the rows themselves are the
+                    // walk's progress.
+                    if !root.data.models-all && !root.data.models-busy: HorizontalLayout {
+                        padding-top: 6px;
+                        padding-bottom: 2px;
+                        spacing: 6px;
+
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.t("settings.downloadAllHint");
+                            color: Theme.fg-muted;
+                            font-size: Theme.fs-sm;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        Button {
+                            label: I18n.t("settings.downloadAll");
+                            clicked => { root.download-all(); }
+                        }
                     }
 
                     HorizontalLayout {

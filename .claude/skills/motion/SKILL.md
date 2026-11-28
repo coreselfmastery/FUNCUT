@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, agendas, terminals, diffs, before/after splits, logo stings, end cards, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the eighteen shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), the `geneva-adapt` adapters (Lottie in, GSAP timelines on), multi-layer scenes (parallax plates, light leaks, grain and vignettes stacked under and over a comp, each on its own clock), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
+description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, agendas, terminals, diffs, before/after splits, logo stings, end cards, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the thirty-three shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), the `geneva-adapt` adapters (Lottie in, GSAP timelines on), multi-layer scenes (parallax plates, light leaks, grain and vignettes stacked under and over a comp, each on its own clock), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
 ---
 
 # Motion comps
@@ -20,7 +20,7 @@ The full reference is `docs/MOTION.md`; this file is the working manual **and th
 
 ## 0. You are the director, not the operator
 
-The eighteen presets are a **vocabulary**, not a menu. A reel that runs the presets in order is a
+Thirty-three presets are a **vocabulary**, not a menu. A reel that runs the presets in order is a
 catalogue; a reel that *argues* something is design. This layer is one of the most expressive things in
 the product — masks, blends, effects, five curve families, markup that can draw anything CSS can draw —
 and it is wasted if every scene is "preset, default slot, three seconds".
@@ -242,7 +242,7 @@ kicker) is ~440 lines of pretty-printed JSON and is in the repository as a templ
 
 ---
 
-## 5. The library — eighteen comps
+## 5. The library — thirty-three comps
 
 | Id | Category | Slot | What it is |
 | --- | --- | --- | --- |
@@ -264,6 +264,12 @@ kicker) is ~440 lines of pretty-printed JSON and is in the repository as a templ
 | `funcut.code.diff` | Code | File, Removed, Added | a code diff — red minus, green plus, landing beat by beat |
 | `funcut.compare.split` | Before / after | After label | split frame, wipe, knob |
 | `funcut.backdrop.mesh` | Backdrops | — | mesh gradient + grid + vignette (opaque) |
+
+Fifteen more joined after this table was written: the line, donut and area charts
+and the bar race, the comparison table, the social quote/stat pair, the
+headline flash, the phone/tablet/laptop frames, the pin-route map, the
+horizontal timeline, the flowchart and the 3D showcase — `motion_presets`
+`list` names all thirty-three, and `docs/MOTION.md` carries the full table.
 
 **How to use a preset without looking like you did:**
 

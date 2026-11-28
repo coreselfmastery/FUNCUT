@@ -263,7 +263,14 @@ fn an_agent_edits_previews_and_exports_a_project_headless() {
         }),
     );
     assert_eq!(created["structuredContent"]["project"]["name"], "Agent Cut");
-    let path = home.join("Agent Cut").to_string_lossy().into_owned();
+    // The reply names the folder it made: every later tool takes that
+    // path, and a caller that named only a location and a name has no
+    // other way to learn it.
+    let path = created["structuredContent"]["path"]
+        .as_str()
+        .expect("the created project's path")
+        .to_owned();
+    assert_eq!(path, home.join("Agent Cut").to_string_lossy());
 
     let titled = agent.tool(
         "title_add",
@@ -709,7 +716,7 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     );
     assert!(picture["downloaded"].is_boolean(), "{picture}");
 
-    // A kind that is not one of the four is refused before a job is booked.
+    // A kind that is not one of the five is refused before a job is booked.
     let (_, reply) = agent.ask(
         "tools/call",
         json!({ "name": "models_download", "arguments": { "kind": "gpu", "id": "x" } }),
@@ -717,7 +724,59 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     let refused = reply.get("result").cloned().expect("a result");
     assert_eq!(refused["isError"], true, "{refused}");
     let said = refused["content"][0]["text"].as_str().expect("the refusal");
-    assert!(said.contains("tts, whisper, sound or picture"), "{said}");
+    assert!(
+        said.contains("tts, whisper, sound, picture or all"),
+        "{said}"
+    );
+
+    // The whole-registry kind names no model, so a model id under it is
+    // refused as the other half of a call that means something else -
+    // one round trip before a job is booked, the same door the other
+    // kinds keep.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "models_download", "arguments": { "kind": "all", "id": "gpu" } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("takes no model id"), "{said}");
+    assert!(said.contains("id \"all\""), "{said}");
+
+    // The whole-registry spelling a cold machine's setup writes is the
+    // kind alone: the tool's schema takes it without an id, and its
+    // description tells an agent when to use it - the setup preflight -
+    // and that the vision critic is the one model it does not fetch.
+    // (The download itself is not started here: a test that downloaded
+    // gigabytes would be a test of the network, and this suite is not.)
+    let (_, listed) = agent.ask("tools/list", json!({}));
+    let tools = listed["result"]["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "models_download")
+        .expect("models_download is listed");
+    assert_eq!(
+        tool["inputSchema"]["required"],
+        json!(["kind"]),
+        "only the kind is required - \"all\" names no model: {tool}"
+    );
+    assert!(
+        tool["inputSchema"]["properties"]["id"].is_object(),
+        "the id is still a field, only no longer required: {tool}"
+    );
+    let described = tool["description"].as_str().expect("described");
+    assert!(described.contains("\"all\""), "{described}");
+    assert!(
+        described.to_lowercase().contains("preflight"),
+        "says when to use it: {described}"
+    );
+    assert!(
+        described.contains("local_vlm"),
+        "names the one model the whole-registry job does not fetch: {described}"
+    );
 
     // The picture kind takes its id from the row the sheet shows: any other
     // id under that kind is named as unknown, the ids being in models.list.

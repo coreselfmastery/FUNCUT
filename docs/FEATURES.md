@@ -38,11 +38,11 @@ with one click.
 | --- | --- | --- |
 | MCP tools | **117** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 52 requests + 7 progress notifications | `src/crates/concat-api/src/message.rs` |
-| Core edit commands (`edit.apply` ops) | **55** plus `batch`, the atomic wrapper | `src/crates/concat-project/src/commands/mod.rs` |
+| Core edit commands (`edit.apply` ops) | **56** plus `batch`, the atomic wrapper | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
 | Motion presets | **33** | `src/crates/concat-motion/src/presets.rs` |
-| Motion authoring ops | **30** | `src/crates/concat-motion/src/authoring.rs` |
+| Motion authoring ops | **31** | `src/crates/concat-motion/src/authoring.rs` |
 | Bundled CC0 sounds | 530 (16 MB, 12 categories; 110 of them designed in-repo — the 100-sound Hollywood pack and ten risers and sweeps) | `audio/` |
 | BGM library | 1,025 CC0 tracks (FreePD) + 166 MobyGratis (**non-commercial only**) | fetched on demand |
 | Stock clips (OpenVid) | 937,957 — the OpenVid-1M **research dataset**, not rights-cleared stock | ~435 MB local index, fetched per clip |
@@ -50,7 +50,7 @@ with one click.
 | Bundled fonts | 41 title faces + 6 script fallbacks + UI face | `src/crates/concat-text/src/lib.rs` |
 | UI languages | 26 | `src/crates/concat/src/i18n.rs` |
 | Rebindable keyboard actions | 30 | `src/crates/concat/src/keymap.rs` |
-| Director-skill prompt playbooks | 19 | `.claude/skills/funcut-director/prompts/` |
+| Director-skill prompt playbooks | 27 | `.claude/skills/funcut-director/prompts/` |
 | maestro reference modules | 28 over 10 corpora; **157** shot cards | `.claude/skills/maestro/` |
 | Whisper models offered | 6 (tiny.en/tiny/base.en/base/small.en/small) | `src/crates/concat-speech/src/transcribe.rs` |
 | Neural models in the engine | 9 ONNX + 1 compiled-in | see *Models* below |
@@ -356,7 +356,7 @@ instead of randomly calling tools. **Twenty-five phases, numbered 1–25**:
 2. **Understand the material** — TTS delivery, transcription, silence,
    scenes, beats and `suggest_cuts` when the Python extras are absent.
 3. **Emotion** — `emotion {action:"extract"}`; a flat script is fixed first.
-4. **Voice signals** — `voice_signals`: the 14 families and 70 readings.
+4. **Voice signals** — `voice_signals`: the 14 families and 71 readings.
 5. **Story map and shot budget** — sections, beats, seconds and shot count.
 6. **Scene, beat and transition map** — measured boundaries and the change
    each transition carries.
@@ -548,7 +548,7 @@ and the music bed AUTO EDIT places — see
 rerank model fetch on demand into the app data dir. Stabilization is
 classical CV — no model at all.
 
-The picture reader's shelf is thirty ONNX models behind twenty-one door
+The picture reader's shelf is thirty ONNX models behind twenty-two door
 actions (several models share an action), and four of them are in
 `models/manifest.toml` with a real digest: `transnetv2` (MIT, 31 MB, a shot
 boundary) · `depth-anything-v2-small` (Apache-2.0, 27 MB quantized, a depth

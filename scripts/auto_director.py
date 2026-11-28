@@ -3486,7 +3486,12 @@ def run_pipeline(
         view = imported.get("view") if isinstance(imported, dict) else None
         placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
-            view = transport.call("project_get", {"path": project})
+            # The import's own view did not answer the placement: read
+            # the project back through the same recording helper every
+            # other read rides (advance), never a bare transport.call -
+            # a read outside the record is a call count the run record
+            # pretends never happened.
+            view = advance("project_get", {"path": project})
             placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
             raise PipelineError(f"{slot_id}: imported media is not present on the timeline")
@@ -4476,7 +4481,10 @@ def run_pipeline(
                     bed_view = imported.get("view") if isinstance(imported, dict) else None
                     bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
                     if bed_clip is None:
-                        bed_view = transport.call("project_get", {"path": project})
+                        # Same recording rule as the B-roll read above: a
+                        # re-read the run record does not count is a
+                        # placement story with a hole in it.
+                        bed_view = advance("project_get", {"path": project})
                         bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
                     if bed_clip is None:
                         raise PipelineError("the music bed was imported but never placed on the timeline")
@@ -5080,7 +5088,10 @@ def run_pipeline(
         view = imported.get("view") if isinstance(imported, dict) else None
         placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
-            view = transport.call("project_get", {"path": project})
+            # Recorded like every other read (see the B-roll read back
+            # in the placement walk): the revision's own re-read rides
+            # the run record with the rest of the loop's calls.
+            view = advance("project_get", {"path": project})
             placed = _clip_for_media(view, media_id, start_at)
         if placed is None:
             raise PipelineError(f"{slot_id}: replacement media is not present on the timeline")
@@ -5207,7 +5218,10 @@ def run_pipeline(
             old_id = graphic_clip_ids.get(index)
             if isinstance(old_id, str) and old_id:
                 try:
-                    view = transport.call("project_get", {"path": project})
+                    # A courtesy, but a recorded one: the read rides
+                    # advance so the run record counts it like every
+                    # other call the run made.
+                    view = advance("project_get", {"path": project})
                 except Exception as error:  # noqa: BLE001 - the read is a courtesy
                     log(f"{key}: could not read the old graphic's lane: {error}")
                     view = None
@@ -5896,22 +5910,25 @@ def _sense_replies(**actions: Any) -> Any:
     """One `sense_audio_repair` mock: the call's own `action` picks the
     reply, because one tool serves every repair and music reading now.
     A world that overrides one action still answers the others, and an
-    override may itself be a callable - for the action that must fail."""
-    replies: dict[str, Any] = {
-        "enhance_speech": {
-            "ok": True, "file": "/tmp/funcut-selftest/voiceover-enhanced.wav",
-            "noiseFloorDbfs": -22.7, "snrDb": 5.9,
-        },
-        "remove_hiss_hum_rumble": {
-            "ok": True, "file": "/tmp/funcut-selftest/voiceover-cleaned.wav",
-            "noiseFloorDbfs": -34.1,
-        },
-        "detect_music_segments": {"musicPresent": False, "segments": []},
-        "identify_music": {"musicPresent": False},
-    }
-    replies.update(actions)
-
+    override may itself be a callable - for the action that must fail.
+    The replies are built inside the callable, on the self-test's own
+    clock: the claimed files live under selftest_path, and a closure
+    capturing paths built at import time would still spell the fixed
+    root the re-root walk cannot see into."""
     def reply(args: dict[str, Any]) -> Any:
+        replies: dict[str, Any] = {
+            "enhance_speech": {
+                "ok": True, "file": selftest_path("voiceover-enhanced.wav"),
+                "noiseFloorDbfs": -22.7, "snrDb": 5.9,
+            },
+            "remove_hiss_hum_rumble": {
+                "ok": True, "file": selftest_path("voiceover-cleaned.wav"),
+                "noiseFloorDbfs": -34.1,
+            },
+            "detect_music_segments": {"musicPresent": False, "segments": []},
+            "identify_music": {"musicPresent": False},
+        }
+        replies.update(actions)
         value = replies.get(str(args.get("action") or ""))
         return value(args) if callable(value) else value
 
@@ -5919,7 +5936,26 @@ def _sense_replies(**actions: Any) -> Any:
 
 
 SELF_TEST_REPLIES = {
-    "concat_version": {"version": "0.2.8-funcut.12", "tools": 110},
+    # The reply's own shape, as the server actually sends it
+    # (VersionInfo in concat-api/src/message.rs, with the mcp layer's
+    # own describe() folded in by tools.rs): apiVersion is the API's
+    # own "0.2" (API_VERSION, message.rs - not the MCP handshake's
+    # 2025-11-25), concat the running build's fork-iterated version,
+    # dirs the config/data pair, capabilities the served-transport
+    # names, mcp the mode the server serves over. The old mock's
+    # {"version", "tools"} was fiction in both keys: the reply never
+    # carried them, and its remembered 110 named a catalogue the
+    # server outgrew long ago. The log-only consumer just prints it.
+    "concat_version": {
+        "apiVersion": "0.2",
+        "concat": "0.2.8-funcut.15",
+        "dirs": {
+            "config": "/tmp/funcut-selftest/config",
+            "data": "/tmp/funcut-selftest/data",
+        },
+        "capabilities": ["events", "json-rpc"],
+        "mcp": {"mode": "window", "address": "127.0.0.1:7420"},
+    },
     "local_vlm": {"status": "heuristic", "installed": False},
     "sense_audio_repair": _sense_replies(),
     "transcribe": {"job": "speech-job"},
@@ -5962,7 +5998,23 @@ SELF_TEST_REPLIES = {
         "valid": True,
         "creativeReady": True,
         "creativeBlockers": [],
-        "signalLog": {"driven": True, "coverage": 1.0, "blockers": [], "problems": []},
+        # The gate's signalLog answer in the shape the real tool sends
+        # it (tools.rs' driven/entries/coverage/perDecision/problems/
+        # how): the old mock carried a `blockers` key the reply never
+        # had, teaching the reader's compat fallback as the primary
+        # shape. The reader's blockers->problems fallback stays, for
+        # servers that predate the key; the mock teaches the shape the
+        # server sends.
+        "signalLog": {
+            "driven": True,
+            "entries": 1,
+            "coverage": 1.0,
+            "perDecision": {"cut": 1},
+            "problems": [],
+            "how": "voice_signals (action extract) on the take, then "
+                   "record {at, decision, signals, confidence, note} "
+                   "for each choice",
+        },
         "craftScore": 8.0,
     },
     "openvid_rank_for_slot": {
@@ -6133,6 +6185,61 @@ SELF_TEST_GROWN_BIN = {
 }
 
 
+#: The self-test world's old, fixed root: every mock path below it is
+#: re-rooted under the private root (selftest_root) once, before any
+#: scenario runs, so a mock's claimed file and the assertion that
+#: reads it can never disagree about where the world lives.
+SELFTEST_FIXED_ROOT = "/tmp/funcut-selftest"
+
+#: This invocation's own private root, created on first use (P2): the
+#: world used to live at the fixed /tmp/funcut-selftest with no locking,
+#: so two concurrent invocations wrote their media, runs and records
+#: into the same folder and corrupted each other's scenarios. No lock
+#: was added: the root is private instead - tempfile.mkdtemp hands each
+#: invocation its own, and the media is left standing on success the
+#: way the fixed root always was.
+_SELFTEST_ROOT: str | None = None
+
+
+def selftest_root() -> str:
+    """This invocation's own self-test root, short (ffmpeg media is
+    created under it), created once on first use."""
+    global _SELFTEST_ROOT
+    if _SELFTEST_ROOT is None:
+        _SELFTEST_ROOT = tempfile.mkdtemp(prefix="funcut-selftest-")
+    return _SELFTEST_ROOT
+
+
+def selftest_path(*parts: str) -> str:
+    """One path inside the self-test world's private root."""
+    return os.path.join(selftest_root(), *parts)
+
+
+def _re_root_selftest_world() -> None:
+    """Re-root the module's mock world under the private root: every
+    path literal below the old fixed root - the mocks' claimed files,
+    the bins' paths, the plan's export output - is rewritten to the same
+    place relative to selftest_root(), once, before any scenario runs.
+    A deep walk, not a hand list: a path the walk missed is a path the
+    scenarios would spell under the shared root again."""
+    def re_root(value: Any) -> Any:
+        if isinstance(value, str) and value.startswith(SELFTEST_FIXED_ROOT):
+            return selftest_root() + value[len(SELFTEST_FIXED_ROOT):]
+        if isinstance(value, list):
+            return [re_root(item) for item in value]
+        if isinstance(value, dict):
+            return {key: re_root(item) for key, item in value.items()}
+        return value
+
+    for world in (
+        SELF_TEST_PLAN, SELF_TEST_REPLIES,
+        SELF_TEST_BASELINE_BIN, SELF_TEST_GROWN_BIN,
+    ):
+        re_rooted = re_root(world)
+        world.clear()
+        world.update(re_rooted)
+
+
 def selftest_world() -> dict[str, Any]:
     """A fresh mock world, one per run: the stateful replies start from
     scratch, so two runs never share a call count. The bin reads its
@@ -6158,7 +6265,7 @@ def selftest_world() -> dict[str, Any]:
 
     def export_wait(_args: dict[str, Any]) -> dict[str, Any]:
         output = renders["output"]
-        master = "/tmp/funcut-selftest/master.mp4"
+        master = selftest_path("master.mp4")
         if output and os.path.isfile(master):
             try:
                 shutil.copyfile(master, output)
@@ -6180,7 +6287,7 @@ def selftest_media() -> bool:
     project folder for the records the run writes. Without ffmpeg the
     files still exist, empty: the probe checks answer `skipped` for them,
     and the run proves the honest skip instead of a pretend pass."""
-    root = "/tmp/funcut-selftest"
+    root = selftest_root()
     os.makedirs(os.path.join(root, "project"), exist_ok=True)
     renders = [
         ["ffmpeg", "-y", "-v", "error",
@@ -6231,6 +6338,11 @@ def selftest_media() -> bool:
 
 def self_test() -> int:
     """A synthetic canonical plan exercises the real execution contract."""
+    # The world lives under this invocation's own private root first
+    # (P2): every mock path and assertion below it is re-rooted in one
+    # pass, before the media is rendered under the same root and any
+    # scenario runs.
+    _re_root_selftest_world()
     have_media = selftest_media()
     if not have_media or not shutil.which("ffprobe"):
         print(
@@ -6238,8 +6350,8 @@ def self_test() -> int:
             "and ffprobe; skipped media checks cannot prove export integrity"
         )
         return 1
-    project = "/tmp/funcut-selftest/project"
-    audio = "/tmp/funcut-selftest/voiceover.wav"
+    project = selftest_path("project")
+    audio = selftest_path("voiceover.wav")
     # A self-test starts as a first run, not a resume of whatever the
     # last invocation's final scenario left in the shared project dir.
     _scenario_state_clear(project)
@@ -6294,7 +6406,7 @@ def self_test() -> int:
     print("voiceover ok: repaired take placed on its own lane, speed 1.2x applied, plan timing untouched")
 
     transcribed = next(args for tool, args in by_tool if tool == "transcribe")
-    if transcribed.get("path") != "/tmp/funcut-selftest/voiceover-cleaned.wav":
+    if transcribed.get("path") != selftest_path("voiceover-cleaned.wav"):
         print(f"FAIL: transcription did not read the repaired take: {transcribed}")
         return 1
     if transcribed.get("initialPrompt") != "FUNCUT, Kokoro, OpenVid":
@@ -6452,7 +6564,7 @@ def self_test() -> int:
         print(f"FAIL: exported speech was not verified against the source: {verified}")
         return 1
     loudness = next(args for tool, args in by_tool if tool == "measure_loudness")
-    if loudness.get("path") != "/tmp/funcut-selftest/final.mp4" or loudness.get("targetLufs") != -14.0:
+    if loudness.get("path") != selftest_path("final.mp4") or loudness.get("targetLufs") != -14.0:
         print(f"FAIL: the export's loudness was not measured against the platform target: {loudness}")
         return 1
     print("export ok: awaited, speech verified to 60 ms, loudness measured and in target")
@@ -6518,7 +6630,7 @@ def self_test() -> int:
     # so the test writes it - the resumed run's bin, the repair's reuse
     # check and VERIFY-05 all read the disk, and the world must not name
     # a file it never made. The path is the mock's own claimed one.
-    cleaned_path = "/tmp/funcut-selftest/voiceover-cleaned.wav"
+    cleaned_path = selftest_path("voiceover-cleaned.wav")
     try:
         os.makedirs(os.path.dirname(cleaned_path), exist_ok=True)
         shutil.copyfile(audio, cleaned_path)
@@ -6800,7 +6912,7 @@ def self_test() -> int:
     # has audio. The Director must refuse an unmeasured export rather than
     # treating VERIFY-16 as a harmless skip.
     unprobed = _probe_checks(
-        "/tmp/funcut-selftest/unprobed.mp4",
+        selftest_path("unprobed.mp4"),
         SELF_TEST_PLAN,
         SELF_TEST_PLAN["export"],
         None,
@@ -6893,7 +7005,7 @@ def self_test() -> int:
     def silent_export_wait(args: dict[str, Any]) -> dict[str, Any]:
         reply = base_export_wait(args)
         output = reply.get("output") if isinstance(reply, dict) else None
-        silent = "/tmp/funcut-selftest/silent.mp4"
+        silent = selftest_path("silent.mp4")
         if output and os.path.isfile(silent):
             try:
                 shutil.copyfile(silent, output)
@@ -7024,7 +7136,7 @@ def self_test() -> int:
     # visual-quality scan; the plan's codec, size and rate are measured
     # against what the render carries; the caption band that fits says so.
     if have_media:
-        render = "/tmp/funcut-selftest/final.mp4"
+        render = selftest_path("final.mp4")
         probe = _ffprobe(render)
         frames = _sample_frames(render, (probe or {}).get("duration"))
         checks = {
@@ -7035,7 +7147,7 @@ def self_test() -> int:
             if checks[check_id]["status"] != "pass":
                 print(f"FAIL: {check_id} did not pass on a clean render: {checks[check_id]}")
                 return 1
-        black = "/tmp/funcut-selftest/final-black.mp4"
+        black = selftest_path("final-black.mp4")
         black_probe = _ffprobe(black)
         black_frames = _sample_frames(black, (black_probe or {}).get("duration"))
         black_checks = {
@@ -7240,7 +7352,20 @@ def self_test() -> int:
         "valid": True,
         "creativeReady": False,
         "creativeBlockers": ["missing signal log"],
-        "signalLog": {"driven": False, "coverage": 0.0, "blockers": ["missing signal log"]},
+        # The refusal in the same shape the ready answer uses:
+        # problems, the key the real gate sends (the reader's
+        # blockers->problems compat fallback stays, for older
+        # servers, but the mock teaches the shape the server sends).
+        "signalLog": {
+            "driven": False,
+            "entries": 0,
+            "coverage": 0.0,
+            "perDecision": {},
+            "problems": ["missing signal log"],
+            "how": "voice_signals (action extract) on the take, then "
+                   "record {at, decision, signals, confidence, note} "
+                   "for each choice",
+        },
     }
     unready = MockMcp(unready_replies)
     _scenario_state_clear(project)
@@ -7263,7 +7388,7 @@ def self_test() -> int:
     # degradation, the shape the plan's signalLog entries will be held to.
 
     def deg_project(name: str) -> str:
-        folder = os.path.join("/tmp/funcut-selftest", name)
+        folder = selftest_path(name)
         os.makedirs(folder, exist_ok=True)
         runs = os.path.join(folder, ".auto-director-runs.jsonl")
         if os.path.exists(runs):
@@ -7649,8 +7774,14 @@ def self_test() -> int:
     # monetized flag said aloud, so the server enforces the licence too.
     risk02c_world = selftest_world()
     risk02c_world["bgm_search"] = {
+        # The track in BgmTrack's own serialization (seconds, the field
+        # the struct names, message.rs): the old mock spelled
+        # `duration`, a key the reply never carries, and leaned on the
+        # reader's seconds->duration compat path as if it were the
+        # shape. The compat path stays, for older servers; the mock
+        # teaches the real one.
         "tracks": [{"id": "freepd-0123456789ab", "title": "Daylight",
-                    "duration": 180.0, "license": "CC0-1.0"}],
+                    "seconds": 180.0, "license": "CC0-1.0"}],
         "total": 1,
     }
     risk02c_plan = copy.deepcopy(SELF_TEST_PLAN)
@@ -7676,8 +7807,8 @@ def revision_self_test() -> int:
     critic that never clears the line ships the edit anyway after two
     passes, with the failures recorded - never a crash that throws away
     a fixable cut (P1-006/007, the revision.rs contract)."""
-    audio = "/tmp/funcut-selftest/voiceover.wav"
-    project = "/tmp/funcut-selftest/project"
+    audio = selftest_path("voiceover.wav")
+    project = selftest_path("project")
 
     def replies_always_low(scores: list[float]) -> dict[str, Any]:
         """One mock world: the shelf offers a fresh candidate every time,

@@ -1188,10 +1188,11 @@ pub fn derive_gates(observed: &[(ToolCall, Value)]) -> Vec<GateRecord> {
         )),
     }
 
-    // The fixed AUTO EDIT delivers a saved, editable timeline by default.
-    // Encoded-file gates are required only when an export was explicitly
-    // requested; timeline integrity, lane cleanliness and a final preview
-    // remain required in either mode.
+    // The fixed AUTO EDIT renders its own MP4, so a whole run's
+    // encoded-file gates are required: the export stage's render, probes
+    // and words-verify are exactly the evidence they read. A partial
+    // program - a resume, a probe, a unit test's stages - may carry no
+    // export, and for it the timeline gates remain the required ones.
     let has_export = observed.iter().any(|(call, _)| {
         matches!(
             call.tool.as_str(),
@@ -1529,6 +1530,142 @@ pub fn derive_gates_with_stages(
             evidence,
             voiceover_required,
         ));
+    }
+    // The picture over the words: a narration span the timeline plays
+    // with no picture over it is a voiceover over a black screen - the
+    // flaw the verify stage's repair stretches a neighbouring shot
+    // across, and the span no honest stretch could reach is named here,
+    // span by span, rather than shipped silently. The narration spans
+    // are the words-verify's own expected takes (the voiceover clips as
+    // the edit placed them, in the export stage's coordinates) and the
+    // picture is the final read-back's own clips, so the gate measures
+    // the timeline the run actually saved - the repair's outcome, not
+    // its intention. A run that named no narration spans, or read no
+    // timeline back, is recorded as unmeasured: an unmeasured edit is
+    // not a measured one.
+    let expected_takes = observed
+        .iter()
+        .rev()
+        .find(|(call, _)| {
+            call.tool == "emotion"
+                && call.arguments.get("action").and_then(Value::as_str) == Some("verify")
+                && call.arguments.get("expectedTakes").is_some()
+        })
+        .and_then(|(call, _)| {
+            call.arguments
+                .get("expectedTakes")
+                .and_then(Value::as_array)
+        });
+    if let Some(takes) = expected_takes {
+        let view = observed
+            .iter()
+            .rev()
+            .find(|(call, _)| call.tool == "timeline_read")
+            .map(|(_, reply)| reply);
+        let (status, evidence, required) = match view {
+            Some(view) => {
+                // The picture the final view shows over the words:
+                // footage, stills, motion cards and shapes, the kinds
+                // that put pixels on screen. Titles are not picture - a
+                // caption over black is not coverage.
+                let mut picture: Vec<(f64, f64)> = view
+                    .pointer("/timeline/clips")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|clip| {
+                        matches!(
+                            clip["kind"].as_str(),
+                            Some("video" | "image" | "motion" | "shape")
+                        )
+                    })
+                    .filter_map(|clip| {
+                        let start = clip["start"].as_f64()?;
+                        let duration = clip["duration"].as_f64()?;
+                        Some((start, start + duration))
+                    })
+                    .collect();
+                picture.sort_by(|left, right| left.0.total_cmp(&right.0));
+                // The holes, merged and named: the same 0.3 s floor the
+                // program's own coverage repair keeps, so the two never
+                // disagree over what a hole is.
+                let mut measured = 0usize;
+                let mut holes: Vec<(f64, f64)> = Vec::new();
+                for row in takes {
+                    let (Some(start), Some(source_in), Some(source_out)) = (
+                        row.get("start").and_then(Value::as_f64),
+                        row.get("sourceIn").and_then(Value::as_f64),
+                        row.get("sourceOut").and_then(Value::as_f64),
+                    ) else {
+                        continue;
+                    };
+                    let speed = row.get("speed").and_then(Value::as_f64).unwrap_or(1.0);
+                    if speed <= 0.0 || source_out <= source_in {
+                        continue;
+                    }
+                    measured += 1;
+                    let end = start + (source_out - source_in) / speed;
+                    let mut cursor = start;
+                    for (shown_from, shown_to) in &picture {
+                        if *shown_to <= cursor {
+                            continue;
+                        }
+                        if *shown_from >= end {
+                            break;
+                        }
+                        if *shown_from > cursor {
+                            holes.push((cursor, shown_from.min(end)));
+                        }
+                        cursor = cursor.max(shown_to.min(end));
+                        if cursor >= end {
+                            break;
+                        }
+                    }
+                    if cursor < end {
+                        holes.push((cursor, end));
+                    }
+                }
+                holes.retain(|(from, to)| to - from > 0.3);
+                holes.sort_by(|left, right| left.0.total_cmp(&right.0));
+                let mut merged: Vec<(f64, f64)> = Vec::new();
+                for (from, to) in holes {
+                    match merged.last_mut() {
+                        Some((_, until)) if *until + 1e-6 >= from => *until = (*until).max(to),
+                        _ => merged.push((from, to)),
+                    }
+                }
+                if merged.is_empty() {
+                    (
+                        GateStatus::Pass,
+                        format!(
+                            "every narration span plays over picture \
+                             ({measured} voiceover span(s) measured)"
+                        ),
+                        true,
+                    )
+                } else {
+                    (
+                        GateStatus::Fail,
+                        format!(
+                            "narration {} plays over no picture",
+                            merged
+                                .iter()
+                                .map(|(from, to)| format!("{from:.1}-{to:.1}s"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        true,
+                    )
+                }
+            }
+            None => (
+                GateStatus::Skipped,
+                "the final timeline was never read back; picture coverage was not measured"
+                    .to_owned(),
+                false,
+            ),
+        };
+        gates.push(GateRecord::new("coverage", status, evidence, required));
     }
     gates
 }
